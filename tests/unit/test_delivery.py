@@ -27,8 +27,10 @@ class TestRenderRowName:
     def test_top_seed_substitution(self):
         assert render_row_name("Because you watched {top_seed}", make_profile(), picks()) == "Because you watched Fargo"
 
-    def test_empty_template_falls_back(self):
-        assert render_row_name("{top_seed}", make_profile(), [Pick(1, 1, "X", 1, "r")]) == "Picked for You"
+    def test_unfillable_template_falls_back_to_the_default_row_name(self):
+        from rowarr.engine.delivery import DEFAULT_ROW_NAME
+
+        assert render_row_name("{top_seed}", make_profile(), [Pick(1, 1, "X", 1, "r")]) == DEFAULT_ROW_NAME
 
 
 class TestDeliverRow:

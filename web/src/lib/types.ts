@@ -57,10 +57,14 @@ export interface Pick {
   reason: string;
 }
 
+/**
+ * A user's collection diff. Every field is optional: the API returns `{}` for a user the run
+ * left alone (no picks produced, so no row was touched), not a diff of three empty lists.
+ */
 export interface RunDiff {
-  added: string[];
-  removed: string[];
-  kept: string[];
+  added?: string[];
+  removed?: string[];
+  kept?: string[];
 }
 
 /** Per-user slice of GET /api/runs/{id}. */

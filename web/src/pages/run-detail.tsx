@@ -84,6 +84,10 @@ function UserResultCard({
   result: RunUserResult;
 }) {
   const failed = result.error !== null;
+  // A user the run left alone comes back with `diff: {}` — not three empty lists.
+  const added = result.diff.added ?? [];
+  const removed = result.diff.removed ?? [];
+  const kept = result.diff.kept ?? [];
   return (
     <Card className={failed ? "border-destructive/50" : ""}>
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
@@ -115,24 +119,12 @@ function UserResultCard({
           </div>
         ) : (
           <>
-            <DiffList
-              label="Added"
-              items={result.diff.added}
-              tone="text-success"
-            />
-            <DiffList
-              label="Removed"
-              items={result.diff.removed}
-              tone="text-destructive"
-            />
-            <DiffList
-              label="Kept"
-              items={result.diff.kept}
-              tone="text-muted-foreground"
-            />
-            {result.diff.added.length === 0 &&
-              result.diff.removed.length === 0 &&
-              result.diff.kept.length === 0 && (
+            <DiffList label="Added" items={added} tone="text-success" />
+            <DiffList label="Removed" items={removed} tone="text-destructive" />
+            <DiffList label="Kept" items={kept} tone="text-muted-foreground" />
+            {added.length === 0 &&
+              removed.length === 0 &&
+              kept.length === 0 && (
                 <p className="text-sm text-muted-foreground">
                   No changes — the row was already up to date.
                 </p>

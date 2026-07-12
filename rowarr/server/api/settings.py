@@ -71,17 +71,21 @@ async def test_connection(service: str, request: Request) -> dict:
         if service == "tmdb":
             from rowarr.engine.clients.tmdb import TmdbClient
 
-            TmdbClient(config["tmdb.apikey"]).ping()
+            if not TmdbClient(config["tmdb.apikey"]).ping():
+                raise RuntimeError("TMDB rejected the key")
             return "TMDB key works"
         if service == "llm":
             from rowarr.engine.curator import make_curator
 
+            provider = config["curator.provider"]
             kwargs = {}
-            if config["curator.api_key"]:
+            if provider == "ollama":
+                kwargs["base_url"] = config["curator.ollama_url"]
+            elif config["curator.api_key"]:
                 kwargs["api_key"] = config["curator.api_key"]
             if config["curator.model"]:
                 kwargs["model"] = config["curator.model"]
-            curator = make_curator(config["curator.provider"], **kwargs)
+            curator = make_curator(provider, **kwargs)
             if hasattr(curator, "ping"):
                 return f"Curator replied: {curator.ping()!r}"
             return "Heuristic mode — nothing to test, always works"

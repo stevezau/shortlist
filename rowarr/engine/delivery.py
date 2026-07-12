@@ -7,10 +7,20 @@ from loguru import logger
 from rowarr.engine.clients.plex import PlexClient
 from rowarr.engine.models import CollectionDiff, EngineConfig, Pick, UserProfile
 
+DEFAULT_ROW_NAME = "✨ Picked for You"
+
 
 def render_row_name(template: str, profile: UserProfile, picks: list[Pick]) -> str:
+    """Render the row title, falling back when a placeholder has nothing to fill it with.
+
+    A cold-start user has no seed, so a `{top_seed}` template would otherwise render the
+    dangling half-sentence "Because you watched" onto a real Plex Home screen.
+    """
     top_seed = picks[0].seed_title if picks and picks[0].seed_title else ""
-    return template.replace("{top_seed}", top_seed).replace("{user}", profile.username).strip() or "Picked for You"
+    if "{top_seed}" in template and not top_seed:
+        return DEFAULT_ROW_NAME
+    rendered = template.replace("{top_seed}", top_seed).replace("{user}", profile.username).strip()
+    return rendered or DEFAULT_ROW_NAME
 
 
 def deliver_row(

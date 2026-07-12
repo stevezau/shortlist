@@ -26,7 +26,8 @@ export function StepPrivacy({ data, update }: StepProps) {
   });
 
   const check = useMutation({
-    mutationFn: api.runPrivacyCheck,
+    // Step 5 runs the FULL probe (throwaway collection + canary view), not the read-only pass.
+    mutationFn: () => api.runPrivacyCheck({ probe: true }),
     onMutate: () => {
       setLogLines([]);
       setResult(null);

@@ -159,10 +159,17 @@ export const api = {
   getPrivacyStatus: (): Promise<PrivacyStatus> =>
     request("/api/privacy/status"),
 
-  runPrivacyCheck: (): Promise<PrivacyCheckResult> =>
+  /**
+   * Run a Privacy Check. Default is the fast read-only pass (T1 filter read-back + T2 canary
+   * view). `probe: true` runs the full ~90s probe, which creates and removes a throwaway
+   * labelled collection to prove the whole mechanism end to end.
+   */
+  runPrivacyCheck: (
+    opts: { probe?: boolean } = {},
+  ): Promise<PrivacyCheckResult> =>
     request("/api/privacy/check", {
       method: "POST",
-      body: JSON.stringify({ probe: true }),
+      body: JSON.stringify({ probe: opts.probe ?? false }),
     }),
 
   // --- Settings ---

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel
 
@@ -74,7 +74,12 @@ async def run_check(request: Request, body: CheckRequest | None = None) -> dict:
                 logger.exception("T2 check failed to execute")
         return results
 
-    results = await asyncio.get_running_loop().run_in_executor(None, check)
+    try:
+        results = await asyncio.get_running_loop().run_in_executor(None, check)
+    except RuntimeError as e:
+        # e.g. "the Privacy Probe needs a Home user without a PIN as canary" — that's a setup
+        # problem the owner can fix, not a server fault. Say so plainly instead of a raw 500.
+        raise HTTPException(status_code=409, detail=str(e)) from e
     with state.sessions() as session:
         for result in results:
             session.add(PrivacyCheck(tier=result.tier, passed=result.passed, detail=result.detail))

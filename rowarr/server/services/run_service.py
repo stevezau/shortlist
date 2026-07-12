@@ -124,12 +124,16 @@ class RunService:
                 )
             else:
                 history = PlexHistorySource(plex)
+            provider = store.get("curator.provider")
             curator_kwargs = {}
-            if store.get("curator.api_key"):
+            if provider == "ollama":
+                # Ollama takes a base URL and no key — a key would be rejected by its ctor.
+                curator_kwargs["base_url"] = store.get("curator.ollama_url")
+            elif store.get("curator.api_key"):
                 curator_kwargs["api_key"] = store.get("curator.api_key")
             if store.get("curator.model"):
                 curator_kwargs["model"] = store.get("curator.model")
-            curator = make_curator(store.get("curator.provider"), **curator_kwargs)
+            curator = make_curator(provider, **curator_kwargs)
             config = EngineConfig(
                 row_size=int(store.get("row.size")),
                 row_name_template=store.get("row.name_template"),
@@ -171,7 +175,14 @@ class RunService:
         return recent
 
     def enabled_profiles(self, session: Session, user_ids: list[int] | None = None) -> list[UserProfile]:
-        """Enabled users, optionally narrowed to user_ids — never widened past enabled=True."""
+        """Enabled users, optionally narrowed to user_ids — never widened past enabled=True.
+
+        The Danger Zone's "pause all" switch stops every run without disabling anyone, so the
+        user list survives a pause/unpause round trip.
+        """
+        if SettingsStore(session, self._secrets).get("paused_all"):
+            logger.info("all runs are paused (Settings → Danger Zone) — no users will be processed")
+            return []
         query = session.query(User).filter_by(enabled=True)
         if user_ids is not None:
             if not user_ids:

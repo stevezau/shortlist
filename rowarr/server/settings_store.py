@@ -20,13 +20,16 @@ DEFAULTS: dict[str, Any] = {
     "tmdb.apikey": "",
     "curator.provider": "none",
     "curator.model": "",
+    "curator.ollama_url": "http://localhost:11434",  # Ollama needs a URL, not a key
     "row.name_template": "✨ Picked for You",
     "row.size": 15,
     "schedule.cron": "30 3 * * *",
     "staleness_runs": 3,
     "plextv.throttle_s": 1.0,
+    "paused_all": False,  # Danger zone: stop all scheduled + manual runs without disabling users
     "setup.completed": False,
     "setup.step": 0,
+    "setup.state": {},
 }
 
 # Secrets are stored Fernet-encrypted under these keys (never in the clear, never logged).
