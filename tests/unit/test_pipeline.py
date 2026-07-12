@@ -9,7 +9,7 @@ import pytest
 
 import rowarr.engine.pipeline as pipeline_mod
 from rowarr.engine.curator.base import CuratorError
-from rowarr.engine.models import EngineConfig
+from rowarr.engine.models import EngineConfig, MediaType, OwnedRow
 from rowarr.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -20,6 +20,7 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     movie_section = MagicMock()
     movie_section.type = "movie"
     plex.sections.return_value = [movie_section]
+    plex.sections_by_type.return_value = {MediaType.MOVIE: movie_section}
     movie_section.collections.return_value = []
     # Library: watched item 900 (ratingKey 999) + candidates 10 and 20.
     plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020}
@@ -67,15 +68,23 @@ class TestRun:
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
         ctx.curator.curate.side_effect = curated_picks
 
-        # None during delivery (create path); the created collection during the promote phase.
-        created = MagicMock()
-        lookups = []
+        # A collection does not exist until it is created — model that, rather than counting
+        # lookups: the run legitimately looks a user's row up several times (sweep, deliver,
+        # promote), and a stub keyed on call order silently changes meaning when it does.
+        created: dict[str, MagicMock] = {}
+        looking_up = {"slug": ""}
 
         def find(section, prefix, slug):
-            lookups.append(slug)
-            return None if lookups.count(slug) == 1 else created
+            looking_up["slug"] = slug
+            return created.get(slug)
+
+        def create(section, title, items):
+            collection = MagicMock()
+            created[looking_up["slug"]] = collection
+            return collection
 
         ctx.plex.find_owned_collection.side_effect = find
+        ctx.plex.create_collection.side_effect = create
 
         report = pipeline_mod.run(ctx, [sarah, mike])
 
@@ -209,8 +218,8 @@ class TestRun:
         ctx.config.dry_run = True
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         ctx.plex.owned_collections.return_value = {
-            "sarah": ("Rowarr_sarah", 1),
-            "mike": ("Rowarr_mike", 2),
+            "sarah": OwnedRow("Rowarr_sarah", [1]),
+            "mike": OwnedRow("Rowarr_mike", [2]),
         }
         mock_plextv.users = [
             plextv_user(

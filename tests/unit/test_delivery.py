@@ -1,26 +1,49 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from rowarr.engine.clients.plex import PlexClient
-from rowarr.engine.delivery import deliver_row, render_row_name
-from rowarr.engine.models import EngineConfig, Pick
+from rowarr.engine.delivery import deliver_rows, render_row_name, sweep_unhidable_rows
+from rowarr.engine.models import EngineConfig, MediaType, Pick
 from tests.conftest import make_profile
 
 
-def picks(n: int = 2) -> list[Pick]:
+def picks(n: int = 2, media_type: MediaType = MediaType.MOVIE, start: int = 1) -> list[Pick]:
+    kind = "Movie" if media_type is MediaType.MOVIE else "Show"
     return [
         Pick(
             tmdb_id=i,
             rating_key=1000 + i,
-            title=f"Movie {i}",
+            title=f"{kind} {i}",
             rank=i,
             reason="Because you watched Fargo",
+            media_type=media_type,
             seed_title="Fargo",
             seed_tmdb_id=900,
         )
-        for i in range(1, n + 1)
+        for i in range(start, start + n)
     ]
+
+
+def _section(title: str, kind: str, key: int) -> MagicMock:
+    section = MagicMock()
+    section.title = title
+    section.type = kind
+    section.key = key  # sections are matched by key, never by object identity
+    return section
+
+
+@pytest.fixture
+def movies() -> MagicMock:
+    return _section("Movies", "movie", 1)
+
+
+@pytest.fixture
+def shows() -> MagicMock:
+    return _section("TV Shows", "show", 2)
 
 
 class TestRenderRowName:
@@ -30,54 +53,115 @@ class TestRenderRowName:
     def test_unfillable_template_falls_back_to_the_default_row_name(self):
         from rowarr.engine.delivery import DEFAULT_ROW_NAME
 
-        assert render_row_name("{top_seed}", make_profile(), [Pick(1, 1, "X", 1, "r")]) == DEFAULT_ROW_NAME
+        cold = [Pick(1, 1, "X", 1, "r", MediaType.MOVIE)]
+        assert render_row_name("{top_seed}", make_profile(), cold) == DEFAULT_ROW_NAME
 
 
-class TestDeliverRow:
-    def _plex(self) -> MagicMock:
-        return MagicMock(spec=PlexClient)
+class TestDeliverRows:
+    """Delivery is split by media type because Plex collections belong to exactly one library.
 
-    def test_creates_collection_when_missing(self, engine_config: EngineConfig):
-        plex = self._plex()
+    The matrix that matters is the pick mix: movies only, shows only, both, and neither — the
+    "both" and "neither" cells are the ones that leaked on a live server.
+    """
+
+    def _plex(self, movies: MagicMock, shows: MagicMock) -> MagicMock:
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies, shows]
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
         plex.find_owned_collection.return_value = None
+        plex.matches_section.return_value = True
         plex.stored_label.return_value = "Rowarr_sarah"
-        section = MagicMock()
+        return plex
 
-        diff, stored = deliver_row(plex, section, make_profile(), picks(), engine_config)
+    def test_creates_collection_when_missing(self, engine_config: EngineConfig, movies, shows):
+        plex = self._plex(movies, shows)
+
+        diff, stored = deliver_rows(plex, make_profile(), picks(), engine_config)
 
         assert diff.created is True
         assert diff.added == ["Movie 1", "Movie 2"]
         assert stored == "Rowarr_sarah"
         plex.fetch_items.assert_called_once_with([1001, 1002])
         create = plex.create_collection.call_args
+        assert create.args[0] is movies
         assert create.args[1] == "✨ Picked for You"
-        label_call = plex.stored_label.call_args
-        assert label_call.args[1] == "rowarr_sarah"
+        assert plex.stored_label.call_args.args[1] == "rowarr_sarah"
         # Promotion is the pipeline's job, AFTER filters are merged — never delivery's.
         plex.promote.assert_not_called()
 
-    def test_updates_existing_collection_found_by_label_not_title(self, engine_config: EngineConfig):
-        plex = self._plex()
+    def test_show_picks_go_to_the_tv_library_not_the_movie_one(self, engine_config: EngineConfig, movies, shows):
+        """A show delivered into a movie collection is matched by neither filterMovies nor
+        filterTelevision, so its label exclude does nothing and the row leaks to every user."""
+        plex = self._plex(movies, shows)
+
+        deliver_rows(plex, make_profile(), picks(media_type=MediaType.SHOW), engine_config)
+
+        assert plex.create_collection.call_args.args[0] is shows
+
+    def test_mixed_picks_are_split_into_one_collection_per_library(self, engine_config: EngineConfig, movies, shows):
+        plex = self._plex(movies, shows)
+        mixed = picks(2, MediaType.MOVIE) + picks(3, MediaType.SHOW, start=5)
+
+        diff, _ = deliver_rows(plex, make_profile(), mixed, engine_config)
+
+        sections_written = [call.args[0] for call in plex.create_collection.call_args_list]
+        assert sections_written == [movies, shows]
+        # each collection gets ONLY its own type — never the whole pick list
+        assert plex.fetch_items.call_args_list[0].args[0] == [1001, 1002]
+        assert plex.fetch_items.call_args_list[1].args[0] == [1005, 1006, 1007]
+        assert sorted(diff.added) == ["Movie 1", "Movie 2", "Show 5", "Show 6", "Show 7"]
+        # Both collections carry the SAME label — that one label is what every other user's
+        # share filter excludes, so a second label would leave one of the two rows visible.
+        assert [c.args[1] for c in plex.stored_label.call_args_list] == ["rowarr_sarah", "rowarr_sarah"]
+
+    def test_a_library_with_no_picks_keeps_its_existing_row(self, engine_config: EngineConfig, movies, shows):
+        """A row nobody wrote to this run is stale, NOT leaking: it still carries its label, so
+        every other user's `label!=` exclude still hides it.
+
+        Deleting it would mean one bad night upstream — a TMDB 404 on a show id, a lopsided
+        candidate pool — destroys an established row. The user simply gets no show picks tonight.
+        """
+        untouched = MagicMock()
+        untouched.title = "✨ Picked for You"
+        plex = self._plex(movies, shows)
+        plex.find_owned_collection.side_effect = lambda section, prefix, slug: untouched if section is shows else None
+
+        diff, _ = deliver_rows(plex, make_profile(), picks(media_type=MediaType.MOVIE), engine_config)
+
+        plex.delete_owned_collection.assert_not_called()
+        assert diff.deleted == []
+
+    def test_no_stale_row_means_nothing_is_deleted(self, engine_config: EngineConfig, movies, shows):
+        plex = self._plex(movies, shows)
+
+        diff, _ = deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        plex.delete_owned_collection.assert_not_called()
+        assert diff.deleted == []
+
+    def test_updates_existing_collection_found_by_label_not_title(self, engine_config: EngineConfig, movies, shows):
+        plex = self._plex(movies, shows)
         existing = MagicMock()
         existing.title = "Old Name"
         existing.items.return_value = [MagicMock(title="Movie 1"), MagicMock(title="Stale Movie")]
-        plex.find_owned_collection.return_value = existing
-        plex.stored_label.return_value = "Rowarr_sarah"
+        plex.find_owned_collection.side_effect = lambda section, prefix, slug: existing if section is movies else None
 
-        diff, _ = deliver_row(plex, MagicMock(), make_profile(), picks(), engine_config)
+        diff, _ = deliver_rows(plex, make_profile(), picks(), engine_config)
 
         assert diff.created is False
         assert diff.added == ["Movie 2"]
         assert diff.removed == ["Stale Movie"]
         assert diff.kept == ["Movie 1"]
         existing.editTitle.assert_called_once_with("✨ Picked for You")
-        plex.set_items.assert_called_once()
+        # The items actually pushed, not just "set_items happened": feeding one library's picks
+        # into the other library's collection would otherwise pass this test.
+        plex.fetch_items.assert_called_once_with([1001, 1002])
+        assert plex.set_items.call_args.args == (existing, plex.fetch_items.return_value)
 
-    def test_dry_run_makes_zero_writes(self, engine_config: EngineConfig):
-        plex = self._plex()
-        plex.find_owned_collection.return_value = None
+    def test_dry_run_makes_zero_writes(self, engine_config: EngineConfig, movies, shows):
+        plex = self._plex(movies, shows)
 
-        diff, stored = deliver_row(plex, MagicMock(), make_profile(), picks(), engine_config, dry_run=True)
+        diff, stored = deliver_rows(plex, make_profile(), picks(), engine_config, dry_run=True)
 
         assert diff.created is True
         assert stored == "rowarr_sarah"  # requested form; nothing was written to read back
@@ -86,12 +170,228 @@ class TestDeliverRow:
         plex.stored_label.assert_not_called()
         plex.promote.assert_not_called()
 
-    def test_per_user_template_override(self, engine_config: EngineConfig):
-        plex = self._plex()
+    def test_picks_for_a_library_the_server_lacks_are_dropped(self, engine_config: EngineConfig, movies):
+        """A movies-only server must not crash on a show pick — it just can't deliver it."""
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         plex.find_owned_collection.return_value = None
+        plex.matches_section.return_value = True
         plex.stored_label.return_value = "Rowarr_sarah"
+
+        diff, _ = deliver_rows(plex, make_profile(), picks(media_type=MediaType.SHOW), engine_config)
+
+        plex.create_collection.assert_not_called()
+        assert diff.added == []
+
+    def test_a_row_of_the_wrong_type_is_rebuilt_not_patched(self, engine_config: EngineConfig, movies, shows):
+        """The sweep has already removed it, so delivery must build a NEW row rather than edit
+        the old one. Plex fixes a collection's subtype at creation and never revises it: swapping
+        the items would leave the row unhidable and still visible to everyone."""
+        mistyped = MagicMock()
+        mistyped.title = "✨ Picked for You"
+        plex = self._plex(movies, shows)
+        plex.find_owned_collection.side_effect = lambda section, prefix, slug: mistyped if section is movies else None
+        plex.matches_section.side_effect = lambda collection, section: collection is not mistyped
+
+        diff, stored = deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        plex.set_items.assert_not_called()  # never patched in place
+        plex.create_collection.assert_called_once()
+        assert plex.create_collection.call_args.args[0] is movies
+        assert diff.created is True
+        assert stored == "Rowarr_sarah"
+        # The deletion is the SWEEP's to report — counting it here too would tell an owner
+        # approving a dry run that twice as many rows would be destroyed as actually would.
+        assert diff.deleted == []
+
+    def test_a_single_pick_still_gets_a_row_rather_than_deleting_it(self, engine_config: EngineConfig, movies, shows):
+        """Deleting an existing row because a library earned only one pick tonight would be a
+        destructive answer to a cosmetic problem."""
+        plex = self._plex(movies, shows)
+
+        diff, _ = deliver_rows(plex, make_profile(), picks(1), engine_config)
+
+        plex.create_collection.assert_called_once()
+        plex.delete_owned_collection.assert_not_called()
+        assert diff.added == ["Movie 1"]
+
+    def test_nothing_delivered_reports_no_stored_label(self, engine_config: EngineConfig, movies, shows):
+        """The requested label is NOT the stored one — Plex title-cases it. Handing the raw form
+        back would write `label!=rowarr_sarah` onto every other user's share, and since excludes
+        are compared case-insensitively that wrong casing would look present forever."""
+        plex = self._plex(movies, shows)
+
+        diff, stored = deliver_rows(plex, make_profile(), [], engine_config)
+
+        assert stored is None
+        assert diff.added == []
+        plex.stored_label.assert_not_called()
+
+    def test_per_user_template_override(self, engine_config: EngineConfig, movies, shows):
+        plex = self._plex(movies, shows)
         profile = make_profile(row_name_template="Sarah's Picks")
 
-        deliver_row(plex, MagicMock(), profile, picks(), engine_config)
+        deliver_rows(plex, profile, picks(), engine_config)
 
         assert plex.create_collection.call_args.args[1] == "Sarah's Picks"
+
+
+class TestServerWithTwoLibrariesOfTheSameType:
+    """ "Movies" + "4K Movies" is a very common Plex layout. Rows are built in exactly one of
+    them, and the choice must not depend on the order the PMS happens to list them in."""
+
+    def test_rows_go_to_the_lowest_keyed_library_of_each_type(self, engine_config: EngineConfig):
+        movies, movies_4k = _section("Movies", "movie", 1), _section("4K Movies", "movie", 3)
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies_4k, movies]  # PMS lists 4K first — must not matter
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        plex.find_owned_collection.return_value = None
+        plex.matches_section.return_value = True
+        plex.stored_label.return_value = "Rowarr_sarah"
+
+        deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        assert plex.create_collection.call_args.args[0] is movies
+        assert plex.create_collection.call_count == 1  # never both
+
+    def test_a_well_typed_row_in_the_other_library_is_left_alone(self, engine_config: EngineConfig):
+        """It is not the row we maintain, but it still carries its label — so it is still hidden
+        from everyone else, and deleting someone's collection we aren't going to replace is not
+        our call to make."""
+        movies, movies_4k = _section("Movies", "movie", 1), _section("4K Movies", "movie", 3)
+        stray = MagicMock()
+        stray.title = "✨ Picked for You"
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies, movies_4k]
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        plex.find_owned_collection.side_effect = lambda section, prefix, slug: stray if section is movies_4k else None
+        plex.matches_section.return_value = True
+        plex.stored_label.return_value = "Rowarr_sarah"
+
+        deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        plex.delete_owned_collection.assert_not_called()
+
+
+class TestSweepUnhidableRows:
+    """The sweep is the one thing standing between a stranded row and every user on the server.
+
+    It runs server-wide, before any per-user work, on every run. Its whole branch matrix is here
+    because nothing else in the suite can catch a regression in it: an earlier version's dry-run
+    guard could be deleted — making `--dry-run` destroy real collections — with the entire suite
+    still green.
+    """
+
+    def _plex(self, movies: MagicMock, shows: MagicMock, *collections: MagicMock) -> MagicMock:
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies, shows]
+        movies.collections.return_value = [c for c in collections if c.section is movies]
+        shows.collections.return_value = [c for c in collections if c.section is shows]
+        return plex
+
+    def _collection(self, section: MagicMock, *labels: str, title: str = "✨ Picked for You") -> MagicMock:
+        collection = MagicMock()
+        collection.title = title
+        collection.section = section
+        collection.labels = [SimpleNamespace(tag=label) for label in labels]
+        return collection
+
+    def test_deletes_a_row_that_cannot_be_hidden_and_names_its_owner(self, engine_config: EngineConfig, movies, shows):
+        stranded = self._collection(movies, "Rowarr_mike")  # a show-subtype row in the movie library
+        plex = self._plex(movies, shows, stranded)
+        plex.matches_section.return_value = False
+
+        deleted = sweep_unhidable_rows(plex, engine_config)
+
+        assert deleted == {"mike": ["✨ Picked for You"]}
+        plex.delete_owned_collection.assert_called_once_with(stranded, "rowarr")
+
+    def test_leaves_a_well_typed_row_alone(self, engine_config: EngineConfig, movies, shows):
+        healthy = self._collection(movies, "Rowarr_mike")
+        plex = self._plex(movies, shows, healthy)
+        plex.matches_section.return_value = True
+
+        assert sweep_unhidable_rows(plex, engine_config) == {}
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_never_touches_a_collection_it_does_not_own(self, engine_config: EngineConfig, movies, shows):
+        """Kometa coexistence (rule 4). A foreign collection may well be "mistyped" by our
+        definition — that is not our business, and deleting it would be unforgivable."""
+        kometa = self._collection(movies, "Overlay", title="Kometa: Best of the 90s")
+        plex = self._plex(movies, shows, kometa)
+        plex.matches_section.return_value = False  # even so
+
+        assert sweep_unhidable_rows(plex, engine_config) == {}
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_dry_run_reports_the_deletion_without_making_it(self, engine_config: EngineConfig, movies, shows):
+        """`--dry-run` exists so an owner can see what a run would do to a live server. If this
+        guard ever breaks, dry-run silently destroys real collections."""
+        stranded = self._collection(movies, "Rowarr_mike")
+        plex = self._plex(movies, shows, stranded)
+        plex.matches_section.return_value = False
+
+        deleted = sweep_unhidable_rows(plex, engine_config, dry_run=True)
+
+        assert deleted == {"mike": ["✨ Picked for You"]}
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_sweeps_every_library_and_every_user(self, engine_config: EngineConfig, movies, shows):
+        """It is not scoped to tonight's users: a paused user's leaking row is still a leak."""
+        stranded_movie = self._collection(movies, "Rowarr_mike")
+        stranded_show = self._collection(shows, "Rowarr_sarah", title="Because you watched Fargo")
+        plex = self._plex(movies, shows, stranded_movie, stranded_show)
+        plex.matches_section.return_value = False
+
+        deleted = sweep_unhidable_rows(plex, engine_config)
+
+        assert deleted == {"mike": ["✨ Picked for You"], "sarah": ["Because you watched Fargo"]}
+        assert plex.delete_owned_collection.call_count == 2
+
+    def test_an_empty_server_is_not_an_error(self, engine_config: EngineConfig, movies, shows):
+        plex = self._plex(movies, shows)
+        assert sweep_unhidable_rows(plex, engine_config) == {}
+
+
+class TestAnUnlabelledRowIsNeverLeftBehind:
+    """A collection without a `rowarr_*` label is invisible to Rowarr forever.
+
+    `find_owned_collection`, `owned_collections`, `sweep_unhidable_rows` and uninstall ALL match
+    on that label prefix. So a row created but not labelled can never be found, never be hidden
+    by a share filter, and never be cleaned up — it just sits there, visible to everyone. Create
+    and label must therefore succeed together or not at all.
+    """
+
+    def test_a_failure_to_label_deletes_the_row_it_just_created(self, engine_config: EngineConfig):
+        movies = _section("Movies", "movie", 1)
+        created = MagicMock()
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        plex.find_owned_collection.return_value = None
+        plex.matches_section.return_value = True
+        plex.create_collection.return_value = created
+        plex.stored_label.side_effect = RuntimeError("PMS timed out")
+
+        with pytest.raises(RuntimeError, match="PMS timed out"):
+            deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        created.delete.assert_called_once()
+
+    def test_the_original_failure_is_raised_even_if_the_cleanup_also_fails(self, engine_config: EngineConfig):
+        """The owner needs to know the LABEL write failed — that is the actionable fault. The
+        orphan is logged with its ratingKey for a human to remove by hand."""
+        movies = _section("Movies", "movie", 1)
+        created = MagicMock()
+        created.delete.side_effect = RuntimeError("PMS still down")
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        plex.find_owned_collection.return_value = None
+        plex.matches_section.return_value = True
+        plex.create_collection.return_value = created
+        plex.stored_label.side_effect = RuntimeError("label write failed")
+
+        with pytest.raises(RuntimeError, match="label write failed"):
+            deliver_rows(plex, make_profile(), picks(), engine_config)

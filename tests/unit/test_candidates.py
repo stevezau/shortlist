@@ -46,8 +46,24 @@ class TestFilterCandidates:
         kept = filter_candidates(
             cands,
             self._index(),
-            watched_tmdb_ids={10},
+            watched_tmdb_ids={(10, MediaType.MOVIE)},
             excluded_genres={"horror"},
-            recent_pick_ids={30},
+            recent_pick_ids={(30, MediaType.MOVIE)},
         )
         assert kept == []
+
+    def test_a_watched_movie_does_not_suppress_the_show_that_shares_its_id(self):
+        """TMDB ids are unique only within a namespace: movie 550 and TV 550 are different
+        titles. Keying the guards on the bare id silently drops valid recommendations."""
+        show = make_candidate(550, "Some Show", media_type=MediaType.SHOW)
+        index = {MediaType.MOVIE: {550: 1550}, MediaType.SHOW: {550: 2550}}
+
+        kept = filter_candidates(
+            [show],
+            index,
+            watched_tmdb_ids={(550, MediaType.MOVIE)},  # they watched the FILM
+            excluded_genres=set(),
+            recent_pick_ids={(550, MediaType.MOVIE)},  # and it was recently picked
+        )
+
+        assert [c.title for c in kept] == ["Some Show"]

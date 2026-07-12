@@ -37,18 +37,22 @@ def filter_candidates(
     candidates: list[Candidate],
     library_index: dict[MediaType, dict[int, int]],
     *,
-    watched_tmdb_ids: set[int],
+    watched_tmdb_ids: set[tuple[int, MediaType]],
     excluded_genres: set[str],
-    recent_pick_ids: set[int],
+    recent_pick_ids: set[tuple[int, MediaType]],
 ) -> list[Candidate]:
     """Intersect with the library and drop watched/excluded/stale titles.
+
+    Titles are identified by (tmdb_id, media_type), never by id alone: TMDB ids are unique only
+    WITHIN a namespace, so movie 550 and TV 550 are different titles. Keying on the bare id makes
+    watching a film silently blacklist the show that happens to share its number.
 
     Args:
         candidates: The pooled TMDB candidates.
         library_index: media_type -> {tmdb_id -> ratingKey} built once per run.
-        watched_tmdb_ids: TMDB ids this user has already watched.
+        watched_tmdb_ids: (tmdb_id, media_type) this user has already watched.
         excluded_genres: Per-user genre exclusions (case-insensitive).
-        recent_pick_ids: TMDB ids recommended within the last N runs (staleness guard).
+        recent_pick_ids: (tmdb_id, media_type) recommended within the last N runs (staleness guard).
     """
     excluded = {g.lower() for g in excluded_genres}
     kept = []
@@ -56,7 +60,7 @@ def filter_candidates(
         rating_key = library_index.get(c.media_type, {}).get(c.tmdb_id)
         if rating_key is None:
             continue
-        if c.tmdb_id in watched_tmdb_ids or c.tmdb_id in recent_pick_ids:
+        if (c.tmdb_id, c.media_type) in watched_tmdb_ids or (c.tmdb_id, c.media_type) in recent_pick_ids:
             continue
         if excluded and any(g.lower() in excluded for g in c.genres):
             continue

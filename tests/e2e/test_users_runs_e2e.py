@@ -102,51 +102,80 @@ class TestRuns:
         page.reload()
         expect(page.get_by_text("ok", exact=True)).to_be_visible(timeout=LOAD)
         expect(page.get_by_role("cell", name="3 ok")).to_be_visible()
-        assert len(state.collections) == 3
+        # 5 rows for 3 users: sarah and the cold-start canary each get one per library; mike watches only TV.
+        assert len(state.collections) == 5
 
         page.get_by_role("link", name="#1").click()
         expect(page.get_by_role("heading", name="Run #1")).to_be_visible(timeout=LOAD)
         for username in ("sarah", "mike", "canary"):
             expect(page.get_by_role("link", name=username, exact=True)).to_be_visible()
 
-    def test_run_detail_shows_what_changed(self, page: Page, app: RowarrApp):
-        """Added on the first run; Kept on the next — the diff is the audit trail (rule 10)."""
+    def test_run_detail_shows_what_changed(self, page: Page, app: RowarrApp, reset_fake_plex):
+        """The diff is the audit trail (rule 10): everything Added on the first run, and on the
+        next run the staleness guard rotates fresh titles in — without ever shrinking a row."""
+        state = reset_fake_plex
         first = build_real_rows(app)
+        # The diff shown must be the diff the engine reported, per user — asserting literal
+        # counts here just re-encodes today's fixture data and breaks whenever it shifts.
+        added = {u["slug"]: len(u["picks"]) for u in app.api("GET", f"/api/runs/{first['id']}").json()["users"]}
 
         page.goto(f"/runs/{first['id']}")
         expect(page.get_by_role("heading", name=f"Run #{first['id']}")).to_be_visible(timeout=LOAD)
-        # sarah and mike can only be offered the 10 unwatched titles TMDB suggests for their
-        # seeds; the cold-start canary draws from the whole library and fills all 15.
-        expect(page.get_by_text(re.compile(r"^Added \(10\)$"))).to_have_count(2)
-        expect(page.get_by_text(re.compile(r"^Added \(15\)$"))).to_have_count(1)
+        for count in set(added.values()):
+            expect(page.get_by_text(re.compile(rf"^Added \({count}\)$"))).to_have_count(
+                sum(1 for n in added.values() if n == count)
+            )
         expect(page.get_by_text(re.compile(r"^Removed"))).to_have_count(0)
         # Titles, not counts: "which titles landed on whose row" must be answerable from here.
-        expect(page.locator("body")).to_contain_text("Movie 13")
+        expect(page.locator("body")).to_contain_text(re.compile(r"(Movie|Show) \d+"))
 
+        def row_sizes() -> dict[str, int]:
+            sizes: dict[str, int] = {}
+            for collection in state.collections.values():
+                for label in collection.labels:
+                    if label.lower().startswith("rowarr_"):
+                        sizes[label.lower()] = sizes.get(label.lower(), 0) + len(collection.item_keys)
+            return sizes
+
+        before = row_sizes()
         second = build_real_rows(app)
         page.goto(f"/runs/{second['id']}")
         expect(page.get_by_role("heading", name=f"Run #{second['id']}")).to_be_visible(timeout=LOAD)
-        # The canary's cold-start row is rebuilt identically -> everything kept, nothing churned.
-        expect(page.get_by_text(re.compile(r"^Kept \(15\)$"))).to_have_count(1)
-        # sarah and mike have no unseen titles left, so their rows are deliberately left alone.
-        expect(page.get_by_text("No changes — the row was already up to date.")).to_have_count(2)
+
+        # "Don't repeat the last 3 runs' picks" rotates the row; it must never leave it short.
+        # When fresh candidates run out, held-back titles backfill — a row shrinking (or being
+        # pruned) because the pool was thin for one night would be a regression, not variety.
+        assert row_sizes() == before, "a re-run must keep every row exactly as full as it was"
+
+        for user in app.api("GET", f"/api/runs/{second['id']}").json()["users"]:
+            diff = user["diff"]
+            assert len(diff.get("added", [])) == len(diff.get("removed", [])), (
+                f"{user['slug']}: a rotated-out title must be replaced, not simply dropped"
+            )
+        expect(page.get_by_text(re.compile(r"^(Added|Kept) \(\d+\)$")).first).to_be_visible()
 
     def test_a_users_picks_explain_themselves(self, page: Page, app: RowarrApp):
         """Every pick carries its "Because you watched …" reason — the product's whole promise."""
         build_real_rows(app)
         sarah_id = _users_by_name(app)["sarah"]["id"]
+        run_id = app.api("GET", "/api/runs").json()[0]["id"]
+        sarah_picks = next(
+            u["picks"] for u in app.api("GET", f"/api/runs/{run_id}").json()["users"] if u["slug"] == "sarah"
+        )
 
         page.goto(f"/users/{sarah_id}")
         expect(page.get_by_role("heading", name="sarah")).to_be_visible(timeout=LOAD)
 
         picks = page.get_by_role("listitem").filter(has_text="#1")
         expect(picks.first).to_be_visible(timeout=LOAD)
-        reasons = page.get_by_text(re.compile(r"^Because you watched Movie \d+$"))
-        expect(reasons).to_have_count(10)
+        # sarah watches movies AND TV, so her reasons cite seeds of both kinds.
+        reasons = page.get_by_text(re.compile(r"^Because you watched (Movie|Show) \d+$"))
+        expect(reasons).to_have_count(len(sarah_picks))
+        assert {p["title"].split()[0] for p in sarah_picks} == {"Movie", "Show"}, (
+            "sarah's row should mix both libraries — otherwise this test proves nothing about them"
+        )
 
         # Ranked, and the rank the engine chose is the rank shown.
-        detail = app.api("GET", f"/api/runs/{app.api('GET', '/api/runs').json()[0]['id']}").json()
-        sarah_picks = next(u["picks"] for u in detail["users"] if u["slug"] == "sarah")
         expect(page.get_by_text(sarah_picks[0]["title"], exact=True).first).to_be_visible()
 
     def test_the_canary_gets_the_cold_start_row_and_says_so(self, page: Page, app: RowarrApp):

@@ -12,7 +12,7 @@ from types import SimpleNamespace
 import pytest
 
 import rowarr.server.services.run_service as run_service_mod
-from rowarr.engine.models import CollectionDiff, FilterSnapshot, Pick, RunReport, StageCounts, UserRunReport
+from rowarr.engine.models import CollectionDiff, FilterSnapshot, MediaType, Pick, RunReport, StageCounts, UserRunReport
 from rowarr.server.db.models import Event, PickRow, Run, RunUser, User
 from rowarr.server.db.session import make_engine, make_session_factory, run_migrations
 from rowarr.server.services.run_service import DbCache, DbSnapshotStore, RunService
@@ -66,7 +66,9 @@ def fake_report(dry_run: bool = False) -> RunReport:
                 username=slug,
                 slug=slug,
                 status=status,
-                picks=[Pick(tmdb_id=1, rating_key=10, title="Movie", rank=1, reason="r")] if status == "ok" else [],
+                picks=[Pick(tmdb_id=1, rating_key=10, title="Movie", rank=1, reason="r", media_type=MediaType.MOVIE)]
+                if status == "ok"
+                else [],
                 counts=StageCounts(picks=1 if status == "ok" else 0),
                 diff=CollectionDiff(added=["Movie"]),
                 error=None if status == "ok" else "boom",
@@ -103,7 +105,14 @@ class TestRunExecution:
 
         run = asyncio.run(scenario())
         assert run.status == "error"  # one user errored -> run status error
-        assert run.stats == {"users_ok": 1, "users_error": 1, "dry_run": False}
+        assert run.stats == {
+            "users_ok": 1,
+            "users_error": 1,
+            "dry_run": False,
+            "rows_swept": 0,
+            "shares_updated": 0,
+            "error": None,
+        }
         with sessions() as session:
             run_users = session.query(RunUser).filter_by(run_id=run.id).all()
             assert {r.status for r in run_users} == {"ok", "error"}
@@ -170,3 +179,60 @@ class TestRunExecution:
         assert [p.slug for p in profiles] == ["sarah"]
         assert profiles[0].row_size == 10
         assert profiles[0].excluded_genres == {"Horror"}
+
+
+class TestSnapshotsForAccountsRowarrDoesNotKnow:
+    """The server must be able to write share filters for accounts that aren't in its users table.
+
+    A row is visible to anyone whose filter doesn't exclude it, so every account sharing the
+    server needs the excludes — including someone the owner invited to Plex ten minutes ago, who
+    has never appeared on the Users page. Rule 2 forbids writing a filter without snapshotting it
+    first, so if the snapshot store cannot record a stranger, that account's filter is never
+    written and they go on seeing other people's rows, forever, with the run reporting green.
+    """
+
+    def test_snapshotting_a_stranger_records_them_so_uninstall_can_restore_them(self, sessions):
+        from rowarr.server.services.run_service import DbSnapshotStore
+
+        store = DbSnapshotStore(sessions)
+        snapshot = FilterSnapshot(
+            plex_account_id=987654,
+            username="brand.new",
+            taken_at=datetime.now(UTC),
+            filters={"filterMovies": "contentRating!=R", "filterTelevision": ""},
+        )
+
+        store.save(snapshot)
+
+        # Round-trips: uninstall reads snapshots back through the users table.
+        restored = store.get(987654)
+        assert restored is not None
+        assert restored.filters["filterMovies"] == "contentRating!=R"
+
+        with sessions() as session:
+            user = session.query(User).filter_by(plex_account_id=987654).one()
+            assert user.username == "brand.new"
+            assert user.enabled is False, "a stranger gets excludes, not a row"
+
+    def test_two_display_names_that_slugify_alike_do_not_collide(self, sessions):
+        """Plex display names are free text, and the slug column is UNIQUE. If two accounts
+        slugified to the same string, the second one's snapshot would fail to save — and a
+        snapshot that cannot be saved means a share filter that is never written, which means
+        that account goes on seeing everyone else's rows."""
+        from rowarr.server.services.run_service import DbSnapshotStore
+
+        store = DbSnapshotStore(sessions)
+        for account_id, username in ((111, "Bob Smith"), (222, "bob-smith")):
+            store.save(
+                FilterSnapshot(
+                    plex_account_id=account_id,
+                    username=username,
+                    taken_at=datetime.now(UTC),
+                    filters={"filterMovies": "", "filterTelevision": ""},
+                )
+            )
+
+        with sessions() as session:
+            slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
+        assert slugs[111] != slugs[222], "two accounts must never share a slug — the label is built from it"
+        assert store.get(111) is not None and store.get(222) is not None

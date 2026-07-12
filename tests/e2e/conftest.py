@@ -42,8 +42,12 @@ PMS_VERSION = "1.43.3.10793"
 # push every user down the cold-start path and never exercise seeds -> TMDB -> curator. Top both
 # up to 12 distinct titles so the real recommendation path runs (and reasons say "Because you
 # watched …"); the canary keeps its empty history, which is exactly the cold-start case.
-SARAH_WATCHED = range(101, 113)
-MIKE_WATCHED = range(113, 125)
+#
+# Sarah watches movies AND TV, mike watches only TV: a suite where everyone watches movies can
+# never catch a show being delivered into the movie library, which is the one leak that reached
+# a live server. Rating keys 1xx are movies, 3xx are shows.
+SARAH_WATCHED = [*range(101, 109), *range(301, 305)]
+MIKE_WATCHED = [*range(305, 317)]
 
 
 def _free_port() -> int:
@@ -81,6 +85,21 @@ class RowarrApp:
     url: str
     session_secret: str
     config_dir: Path
+    pms_url: str = ""
+
+    def plex_hubs_as(self, plex_account_id: int) -> list[dict]:
+        """The Home hubs a given user actually sees — Plex's answer, not Rowarr's.
+
+        The only way to prove a row is private is to look through the other user's eyes: the
+        share filters can be perfectly correct while the row is still visible to everyone.
+        """
+        r = httpx.get(
+            f"{self.pms_url}/hubs",
+            headers={"X-Plex-Token": f"server-{plex_account_id}", "Accept": "application/json"},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()["MediaContainer"]["Hub"]
 
     def api(self, method: str, path: str, **kwargs) -> httpx.Response:
         """Call the real API as the owner, the way the SPA does (session cookie + CSRF header)."""
@@ -130,10 +149,32 @@ def fake_plex() -> Iterator[tuple[str, str, FakePlexState]]:
 
 
 def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
-    """Suggestions = the next 10 catalog titles after the seed — deterministic, always in-library."""
+    """Suggestions = the next 10 catalog titles after the seed — deterministic, always in-library.
+
+    Movie seeds suggest movies and TV seeds suggest shows, exactly as TMDB does. A movies-only
+    fake would never produce a show pick, so it could never catch a show being delivered into a
+    movie collection.
+    """
     app = FastAPI()
-    catalog = sorted(state.movies.values(), key=lambda m: m.tmdb_id)
-    index = {movie.tmdb_id: i for i, movie in enumerate(catalog)}
+    movies = sorted(state.movies.values(), key=lambda m: m.tmdb_id)
+    shows = sorted(state.shows.values(), key=lambda m: m.tmdb_id)
+
+    def _suggest(catalog: list, tmdb_id: int, key: str) -> dict:
+        index = {item.tmdb_id: i for i, item in enumerate(catalog)}
+        base = index.get(tmdb_id, 0)
+        results = []
+        for offset in range(1, 11):
+            item = catalog[(base + offset) % len(catalog)]
+            results.append(
+                {
+                    "id": item.tmdb_id,
+                    key: item.title,
+                    "vote_average": item.audience_rating,
+                    "genre_ids": [1],
+                    ("release_date" if key == "title" else "first_air_date"): f"{item.year}-06-01",
+                }
+            )
+        return {"results": results}
 
     @app.get("/configuration")
     def configuration() -> dict:
@@ -145,19 +186,12 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
         return {"genres": [{"id": 1, "name": "Drama"}]}
 
     @app.get("/movie/{tmdb_id}/{endpoint}")
-    def suggestions(tmdb_id: int, endpoint: str) -> dict:
-        base = index.get(tmdb_id, 0)
-        results = [
-            {
-                "id": catalog[(base + offset) % len(catalog)].tmdb_id,
-                "title": catalog[(base + offset) % len(catalog)].title,
-                "vote_average": catalog[(base + offset) % len(catalog)].audience_rating,
-                "genre_ids": [1],
-                "release_date": f"{catalog[(base + offset) % len(catalog)].year}-06-01",
-            }
-            for offset in range(1, 11)
-        ]
-        return {"results": results}
+    def movie_suggestions(tmdb_id: int, endpoint: str) -> dict:
+        return _suggest(movies, tmdb_id, "title")
+
+    @app.get("/tv/{tmdb_id}/{endpoint}")
+    def tv_suggestions(tmdb_id: int, endpoint: str) -> dict:
+        return _suggest(shows, tmdb_id, "name")
 
     return app
 
@@ -184,6 +218,8 @@ def reset_fake_plex(fake_plex) -> Iterator[FakePlexState]:
     state.collections.clear()
     state.movies.clear()
     state.movies.update(fresh.movies)
+    state.shows.clear()
+    state.shows.update(fresh.shows)
     state.users.clear()
     state.users.update(fresh.users)
     state.history.clear()
@@ -250,6 +286,7 @@ def app(fake_plex, fake_tmdb, reset_fake_plex, tmp_path: Path, monkeypatch) -> I
         url=f"http://127.0.0.1:{server.port}",
         session_secret=fastapi_app.state.session_secret,
         config_dir=tmp_path,
+        pms_url=state.pms_url,
     )
     server.stop()
 

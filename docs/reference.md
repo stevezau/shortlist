@@ -20,9 +20,9 @@
 | `curator.provider`                  | `none`              | `anthropic` \| `openai` \| `google` \| `ollama` \| `none` |
 | `curator.api_key` / `curator.model` | —                   | BYO key; sensible default model per provider              |
 | `row.name_template`                 | `✨ Picked for You` | `{top_seed}` and `{user}` placeholders                    |
-| `row.size`                          | `15`                | 10/15/20 in the UI                                        |
+| `row.size`                          | `15`                | 10/15/20 in the UI; budget across a user's rows           |
 | `schedule.cron`                     | `30 3 * * *`        | full cron, applied live                                   |
-| `staleness_runs`                    | `3`                 | don't repeat a pick for N runs                            |
+| `staleness_runs`                    | `3`                 | prefer titles not picked in the last N runs               |
 | `plextv.throttle_s`                 | `1.0`               | plex.tv write spacing (rule: ≤1 write/s)                  |
 
 ## CLI config file (`<config-dir>/config.yml`)
@@ -64,7 +64,7 @@ is recorded as an errored run with a plain-English reason — it never half-appl
 
 | Tier      | What it does                                                                                                                                                                                           | Cost                   |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- |
-| **T1**    | Reads every user's share filters back from plex.tv and asserts the expected exclusions are present                                                                                                     | seconds, read-only     |
+| **T1**    | Reads back the share filters of EVERY account the server is shared with and asserts the expected exclusions are present                                                                                                     | seconds, read-only     |
 | **T2**    | Fetches a canary Home user's own Home hubs and asserts no other user's collection id appears                                                                                                           | seconds, read-only     |
 | **PROBE** | Creates a throwaway labeled collection, promotes it, confirms the canary can see it, excludes it, confirms it disappears — then restores filters byte-identically and deletes the probe (in `finally`) | ~90s, fully reversible |
 
@@ -74,4 +74,5 @@ PROBE from the CLI.
 ## Files under /config
 
 `rowarr.db` (SQLite) · `secret.key` (Fernet, 600) · `session.secret` · `logs/` ·
-`privacy_check.json` (CLI gate record) · `snapshots/` (CLI mode).
+`privacy_check.json` (CLI gate record) · `snapshots/` (CLI mode) · `slugs.json` (CLI mode: the
+durable plex-account-id → slug map a row's label is built from — never reassigned).

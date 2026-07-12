@@ -16,7 +16,7 @@ import re
 from loguru import logger
 
 from rowarr.engine.clients.plex import PlexClient, PlexTvClient
-from rowarr.engine.models import PrivacyCheckResult, UserProfile, UserType
+from rowarr.engine.models import OwnedRow, PrivacyCheckResult, UserProfile, UserType
 from rowarr.engine.privacy import desired_excludes, rowarr_labels_in
 
 _COLLECTION_KEY = re.compile(r"/library/collections/(\d+)")
@@ -30,29 +30,35 @@ def collection_id_from_hub(hub: dict) -> int | None:
 
 def check_t1(
     plextv: PlexTvClient,
-    enabled_users: list[UserProfile],
+    known_slugs: dict[int, str],
     stored_labels: dict[str, str],
     *,
     label_prefix: str = "rowarr",
 ) -> PrivacyCheckResult:
-    """Assert every non-owner user's share filters exclude every other user's existing label."""
+    """Assert EVERY account sharing this server excludes every row that isn't theirs.
+
+    Every account, not just the ones Rowarr manages: a row is visible to anyone whose filter
+    doesn't exclude it, so a check that only looked at managed users would have reported PASS
+    while 45 of a live server's 48 accounts could see three other people's rows — which is
+    exactly what it did (SFLIX, 2026-07-12).
+
+    `known_slugs` maps plex account id -> the slug Rowarr gave that account, and is how "whose row
+    is this?" is answered. Never by name: people rename themselves, and two display names can
+    slugify identically — either would quietly excuse an account from an exclude it needs.
+    """
     failures = {}
-    remote = {u.id: u for u in plextv.list_users()}
-    for user in enabled_users:
-        if user.user_type is UserType.OWNER:
-            continue
-        wanted = desired_excludes(user, enabled_users, stored_labels)
+    for remote in plextv.list_users():
+        if remote.user_type is UserType.OWNER:
+            continue  # Plex cannot restrict the owner (rule 5)
+        own_slug = known_slugs.get(remote.id)
+        wanted = desired_excludes(stored_labels.get(own_slug) if own_slug else None, stored_labels)
         if not wanted:
             continue
-        got = remote.get(user.plex_account_id)
-        if got is None:
-            failures[user.username] = "not found on plex.tv"
-            continue
         for fieldname in ("filterMovies", "filterTelevision"):
-            present = rowarr_labels_in(got.filters.get(fieldname, ""), label_prefix)
+            present = rowarr_labels_in(remote.filters.get(fieldname, ""), label_prefix)
             missing = {w for w in wanted if w.lower() not in {p.lower() for p in present}}
             if missing:
-                failures[user.username] = f"{fieldname} missing excludes: {sorted(missing)}"
+                failures[remote.username] = f"{fieldname} missing excludes: {sorted(missing)}"
     passed = not failures
     logger.info("Privacy Check T1: {}", "PASS" if passed else f"FAIL {failures}")
     return PrivacyCheckResult(tier="T1", passed=passed, detail=failures)
@@ -62,13 +68,19 @@ def check_t2(
     plex: PlexClient,
     plextv: PlexTvClient,
     canary: UserProfile,
-    collections: dict[str, tuple[str, int]],
+    collections: dict[str, OwnedRow],
 ) -> PrivacyCheckResult:
-    """Fetch Home hubs AS the canary; assert no other user's collection id appears."""
+    """Fetch Home hubs AS the canary; assert no other user's collection id appears.
+
+    Every id of every other user counts — a user owns one collection per library, and a leak in
+    any one of them is a leak.
+    """
     token = plextv.canary_server_token(canary.plex_account_id)
     hubs = plex.user_hubs(token)
-    foreign_ids = {rating_key: slug for slug, (_, rating_key) in collections.items() if slug != canary.slug}
-    own = collections.get(canary.slug)
+    foreign_ids = {
+        rating_key: slug for slug, row in collections.items() if slug != canary.slug for rating_key in row.rating_keys
+    }
+    own_ids = set(collections[canary.slug].rating_keys) if canary.slug in collections else set()
 
     leaked = []
     own_visible = False
@@ -78,7 +90,7 @@ def check_t2(
             continue
         if cid in foreign_ids:
             leaked.append({"title": hub.get("title"), "collection_id": cid, "slug": foreign_ids[cid]})
-        if own and cid == own[1]:
+        if cid in own_ids:
             own_visible = True
 
     detail = {

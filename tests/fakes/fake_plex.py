@@ -34,12 +34,15 @@ _SORT_KEYS = {
 
 @dataclass
 class FakeMovie:
+    """A library item. `media_type` is what decides which library it belongs in."""
+
     rating_key: int
     title: str
     year: int
     added_at: int  # epoch seconds
     tmdb_id: int
     audience_rating: float
+    media_type: str = "movie"  # "movie" | "show"
 
 
 @dataclass
@@ -48,7 +51,11 @@ class FakeCollection:
     title: str
     section_id: int
     labels: list[str] = field(default_factory=list)  # stored casing, like the PMS keeps them
-    item_keys: list[int] = field(default_factory=list)  # ordered movie rating keys
+    item_keys: list[int] = field(default_factory=list)  # ordered item rating keys
+    # Plex fixes a collection's subtype at CREATION from the items it is created with, and never
+    # revises it — swapping the contents later does not re-type it. That stickiness is why a
+    # mistyped collection cannot be repaired in place: it has to be deleted and recreated.
+    subtype: str = "movie"
     mode: int = -1  # -1 default / 0 hide (plexapi collectionMode enum)
     sort: int = 0  # 0 release / 1 alpha / 2 custom
     promoted_recommended: bool = False
@@ -84,8 +91,10 @@ class FakePlexState:
     owner_token: str = "owner-token"
     owner_account_id: int = 555000001
     pms_url: str = "http://127.0.0.1:32400"  # set by the harness once the fake PMS has a port
-    section_id: int = 1
+    section_id: int = 1  # Movies
+    show_section_id: int = 2  # TV Shows
     movies: dict[int, FakeMovie] = field(default_factory=dict)
+    shows: dict[int, FakeMovie] = field(default_factory=dict)
     collections: dict[int, FakeCollection] = field(default_factory=dict)
     users: dict[int, FakeUser] = field(default_factory=dict)  # owner is NOT in this dict
     history: list[FakeHistoryEntry] = field(default_factory=list)
@@ -94,6 +103,30 @@ class FakePlexState:
     def new_rating_key(self) -> int:
         self.next_rating_key += 1
         return self.next_rating_key
+
+    def item(self, rating_key: int) -> FakeMovie | None:
+        return self.movies.get(rating_key) or self.shows.get(rating_key)
+
+    def section_type(self, section_id: int) -> str:
+        return "movie" if section_id == self.section_id else "show"
+
+    def items_in(self, section_id: int) -> dict[int, FakeMovie]:
+        return self.movies if section_id == self.section_id else self.shows
+
+    def filterable(self, collection: FakeCollection) -> bool:
+        """Whether a real PMS could hide this collection with a `label!=` share filter.
+
+        Share filters are applied per library: `filterMovies` to the movie libraries,
+        `filterTelevision` to the TV ones. A collection whose SUBTYPE doesn't match the library
+        it sits in (e.g. a show-subtype collection inside a movie library) is matched by NEITHER
+        filter, so its label exclude does nothing and it stays visible to every user. That is not
+        a hypothetical: it is exactly how two users' rows ended up on everyone's Home screen on a
+        live server (SFLIX, 2026-07-12).
+
+        Subtype is sticky — see FakeCollection.subtype — so swapping in items of the right type
+        does NOT make a mistyped collection filterable again.
+        """
+        return collection.subtype == self.section_type(collection.section_id)
 
     @staticmethod
     def store_label(label: str) -> str:
@@ -118,7 +151,12 @@ class FakePlexState:
 
 
 def seed_state() -> FakePlexState:
-    """~30 movies with TMDB guids, 3 users (one Home canary without a PIN), history for 2 users."""
+    """Two libraries (30 movies, 30 shows), 3 users (one Home canary without a PIN), history.
+
+    The TV library is not decoration: a server with only movies cannot exhibit the class of bug
+    where a show is delivered into a movie collection, so every test would pass while the real
+    thing leaked.
+    """
     state = FakePlexState()
     base_added = 1_700_000_000
     for i in range(1, 31):
@@ -130,11 +168,30 @@ def seed_state() -> FakePlexState:
             tmdb_id=9000 + i,
             audience_rating=5.0 + (i * 7) % 40 / 10,
         )
+    # 30 shows, like the movie library: a TV catalog barely bigger than what a user has already
+    # watched starves the candidate pool and makes row sizes a property of the fixture, not the
+    # engine.
+    for i in range(1, 31):
+        state.shows[300 + i] = FakeMovie(
+            rating_key=300 + i,
+            title=f"Show {i:02d}",
+            year=2000 + i,
+            added_at=base_added + i * 86_400,
+            tmdb_id=7000 + i,
+            audience_rating=5.0 + (i * 3) % 40 / 10,
+            media_type="show",
+        )
     state.users[201] = FakeUser(id=201, username="sarah")
     state.users[202] = FakeUser(id=202, username="mike")
     state.users[203] = FakeUser(id=203, username="canary", home=True, uuid="uuid-203")
     base_viewed = 1_752_000_000
-    for account, keys in ((201, range(101, 109)), (202, range(110, 118))):
+    # One run then covers the whole delivery matrix: sarah watches both types (two rows), mike
+    # watches only TV (one row, in the TV library), the canary has no history (cold start).
+    watched = {
+        201: list(range(101, 109)) + list(range(301, 305)),
+        202: list(range(305, 313)),
+    }
+    for account, keys in watched.items():
         for offset, key in enumerate(keys):
             state.history.append(FakeHistoryEntry(account_id=account, rating_key=key, viewed_at=base_viewed + offset))
     return state
@@ -159,20 +216,22 @@ def _container(**attrs) -> Element:
 
 
 def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie) -> Element:
-    video = _el(
+    """One library item. Plex serves movies as <Video> and shows as <Directory>."""
+    is_show = movie.media_type == "show"
+    element = _el(
         parent,
-        "Video",
+        "Directory" if is_show else "Video",
         ratingKey=movie.rating_key,
-        key=f"/library/metadata/{movie.rating_key}",
-        type="movie",
+        key=f"/library/metadata/{movie.rating_key}" + ("/children" if is_show else ""),
+        type=movie.media_type,
         title=movie.title,
         year=movie.year,
         addedAt=movie.added_at,
         audienceRating=movie.audience_rating,
-        librarySectionID=state.section_id,
+        librarySectionID=state.show_section_id if is_show else state.section_id,
     )
-    _el(video, "Guid", id=f"tmdb://{movie.tmdb_id}")
-    return video
+    _el(element, "Guid", id=f"tmdb://{movie.tmdb_id}")
+    return element
 
 
 def _collection_xml(parent: Element, state: FakePlexState, collection: FakeCollection) -> Element:
@@ -182,7 +241,7 @@ def _collection_xml(parent: Element, state: FakePlexState, collection: FakeColle
         ratingKey=collection.rating_key,
         key=f"/library/metadata/{collection.rating_key}/children",
         type="collection",
-        subtype="movie",
+        subtype=collection.subtype,
         title=collection.title,
         smart="0",
         collectionMode=collection.mode,
@@ -227,30 +286,36 @@ def _page(request: Request, total: int) -> tuple[int, int]:
     return start, size
 
 
-def _meta_xml(state: FakePlexState, total: int) -> Element:
+def _meta_xml(state: FakePlexState, section_id: int, total: int) -> Element:
     """Filter metadata plexapi loads before validating any sort= argument."""
     root = _container(size=0, totalSize=total)
     meta = SubElement(root, "Meta")
-    movie_type = _el(meta, "Type", key=f"/library/sections/{state.section_id}/all?type=1", type="movie", title="Movies")
+    kind = state.section_type(section_id)
+    item_type = _el(
+        meta,
+        "Type",
+        key=f"/library/sections/{section_id}/all?type={1 if kind == 'movie' else 2}",
+        type=kind,
+        title="Movies" if kind == "movie" else "TV Shows",
+    )
     for key, direction, title in (
         ("addedAt", "asc", "Date Added"),
         ("audienceRating", "desc", "Audience Rating"),
         ("titleSort", "asc", "Title"),
     ):
-        _el(movie_type, "Sort", key=key, defaultDirection=direction, title=title)
+        _el(item_type, "Sort", key=key, defaultDirection=direction, title=title)
     collection_type = _el(
-        meta, "Type", key=f"/library/sections/{state.section_id}/all?type=18", type="collection", title="Collections"
+        meta, "Type", key=f"/library/sections/{section_id}/all?type=18", type="collection", title="Collections"
     )
     _el(collection_type, "Sort", key="titleSort", defaultDirection="asc", title="Title")
     return root
 
 
-def _sorted_movies(state: FakePlexState, sort: str | None) -> list[FakeMovie]:
-    movies = list(state.movies.values())
+def _sorted_items(items: list[FakeMovie], sort: str | None) -> list[FakeMovie]:
     if not sort:
-        return sorted(movies, key=lambda m: m.rating_key)
+        return sorted(items, key=lambda m: m.rating_key)
     fieldname, _, direction = sort.split(",")[0].rsplit(".", 1)[-1].partition(":")  # 'movie.addedAt:asc' -> addedAt
-    return sorted(movies, key=_SORT_KEYS.get(fieldname, lambda m: m.rating_key), reverse=direction == "desc")
+    return sorted(items, key=_SORT_KEYS.get(fieldname, lambda m: m.rating_key), reverse=direction == "desc")
 
 
 def make_fake_plex(state: FakePlexState) -> FastAPI:
@@ -275,30 +340,40 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
 
     @app.get("/library/sections")
     def sections() -> Response:
-        root = _container(size=1, allowSync="0", title1="Plex Library")
+        root = _container(size=2, allowSync="0", title1="Plex Library")
         _el(root, "Directory", key=state.section_id, type="movie", title="Movies", uuid="section-uuid-1", filters="1")
+        _el(
+            root,
+            "Directory",
+            key=state.show_section_id,
+            type="show",
+            title="TV Shows",
+            uuid="section-uuid-2",
+            filters="1",
+        )
         return _xml(root)
 
     @app.get("/library/sections/{section_id}/all")
     @app.get("/library/sections/{section_id}/collections")
     def section_all(section_id: int, request: Request) -> Response:
         query = request.query_params
+        items = state.items_in(section_id)
         if query.get("includeMeta") == "1":
-            return _xml(_meta_xml(state, len(state.movies)))
+            return _xml(_meta_xml(state, section_id, len(items)))
         if query.get("type") == "18" or request.url.path.endswith("/collections"):
             owned = [c for c in state.collections.values() if c.section_id == section_id]
             root = _container(size=len(owned), totalSize=len(owned), librarySectionID=section_id)
             for collection in owned:
                 _collection_xml(root, state, collection)
             return _xml(root)
-        movies = _sorted_movies(state, query.get("sort"))
+        listing = _sorted_items(list(items.values()), query.get("sort"))
         if query.get("limit") is not None:
-            movies = movies[: int(query["limit"])]
-        start, size = _page(request, len(movies))
-        page = movies[start : start + size]
-        root = _container(size=len(page), totalSize=len(movies), librarySectionID=section_id)
-        for movie in page:
-            _movie_xml(root, state, movie)
+            listing = listing[: int(query["limit"])]
+        start, size = _page(request, len(listing))
+        page = listing[start : start + size]
+        root = _container(size=len(page), totalSize=len(listing), librarySectionID=section_id)
+        for item in page:
+            _movie_xml(root, state, item)
         return _xml(root)
 
     @app.put("/library/sections/{section_id}/all")
@@ -321,11 +396,19 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
     def create_collection(request: Request) -> Response:
         query = request.query_params
         item_keys = [int(k) for k in query["uri"].rsplit("/library/metadata/", 1)[-1].split(",")]
+        kept = [k for k in item_keys if state.item(k)]
+        types = {state.item(k).media_type for k in kept}
         collection = FakeCollection(
             rating_key=state.new_rating_key(),
             title=query.get("title", ""),
             section_id=int(query.get("sectionId") or state.section_id),
-            item_keys=[k for k in item_keys if k in state.movies],
+            # The PMS happily puts a collection of shows in a movie library — it only objects to
+            # MIXING types in one collection (plexapi rejects that client-side). Refusing the
+            # wrong-library case here would hide the very bug this fake exists to catch.
+            item_keys=kept,
+            # Subtype comes from the items, NOT from the library — that is how a movie library
+            # ends up holding a show-subtype collection that no share filter can touch.
+            subtype=types.pop() if len(types) == 1 else "movie",
         )
         state.collections[collection.rating_key] = collection
         root = _container(size=1)
@@ -337,15 +420,17 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         collection = _collection(rating_key)
         root = _container(size=len(collection.item_keys), totalSize=len(collection.item_keys))
         for key in collection.item_keys:
-            _movie_xml(root, state, state.movies[key])
+            if (item := state.item(key)) is not None:
+                _movie_xml(root, state, item)
         return _xml(root)
 
     @app.put("/library/metadata/{rating_key}/items")
     def collection_add_items(rating_key: int, request: Request) -> Response:
         collection = _collection(rating_key)
-        for key in request.query_params["uri"].rsplit("/library/metadata/", 1)[-1].split(","):
-            if int(key) in state.movies and int(key) not in collection.item_keys:
-                collection.item_keys.append(int(key))
+        for raw in request.query_params["uri"].rsplit("/library/metadata/", 1)[-1].split(","):
+            key = int(raw)
+            if state.item(key) and key not in collection.item_keys:
+                collection.item_keys.append(key)
         return Response(status_code=200)
 
     @app.delete("/library/metadata/{rating_key}/items/{item_key}")
@@ -384,8 +469,8 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         found = 0
         for raw in rating_keys.split(","):
             key = int(raw)
-            if key in state.movies:
-                _movie_xml(root, state, state.movies[key])
+            if (item := state.item(key)) is not None:
+                _movie_xml(root, state, item)
                 found += 1
             elif key in state.collections:
                 _collection_xml(root, state, state.collections[key])
@@ -437,7 +522,12 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         ]
         for collection in state.collections.values():
             promoted = collection.promoted_shared_home if user else collection.promoted_own_home
-            if not promoted or {label.lower() for label in collection.labels} & excludes:
+            if not promoted:
+                continue
+            excluded = bool({label.lower() for label in collection.labels} & excludes)
+            # An exclude only takes effect if the PMS can actually match this collection with a
+            # library filter. Off-type collections are unfilterable and stay visible — the leak.
+            if excluded and state.filterable(collection):
                 continue
             children_key = f"/library/collections/{collection.rating_key}/children"
             hub_list.append(
@@ -445,7 +535,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
                     "key": children_key,
                     "hubKey": children_key,
                     "title": collection.title,
-                    "type": "movie",
+                    "type": collection.subtype,
                     "hubIdentifier": f"custom.collection.{collection.rating_key}",
                     "promoted": True,
                 }
@@ -461,18 +551,29 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         page = rows[start : start + size]
         root = _container(size=len(page), totalSize=len(rows))
         for i, row in enumerate(page):
-            movie = state.movies[row.rating_key]
-            _el(
-                root,
-                "Video",
-                historyKey=f"/status/sessions/history/{start + i + 1}",
-                key=f"/library/metadata/{movie.rating_key}",
-                ratingKey=movie.rating_key,
-                title=movie.title,
-                type="movie",
-                viewedAt=row.viewed_at,
-                accountID=row.account_id,
-            )
+            item = state.item(row.rating_key)
+            if item is None:
+                continue
+            attrs = {
+                "historyKey": f"/status/sessions/history/{start + i + 1}",
+                "key": f"/library/metadata/{item.rating_key}",
+                "ratingKey": item.rating_key,
+                "title": item.title,
+                "type": item.media_type,
+                "viewedAt": row.viewed_at,
+                "accountID": row.account_id,
+            }
+            if item.media_type == "show":
+                # Plex logs TV watches as EPISODE rows: the show is the grandparent, and the
+                # episode's own title/ratingKey are useless as a recommendation seed.
+                attrs |= {
+                    "type": "episode",
+                    "title": f"Episode {i + 1}",
+                    "ratingKey": 90_000 + item.rating_key,
+                    "grandparentTitle": item.title,
+                    "grandparentRatingKey": item.rating_key,
+                }
+            _el(root, "Video", **attrs)
         return _xml(root)
 
     return app

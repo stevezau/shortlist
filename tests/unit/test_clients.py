@@ -14,7 +14,7 @@ import rowarr.engine.clients.plex as plex_mod
 from rowarr.engine.clients.plex import MIN_PMS_VERSION, PlexClient, PlexTvClient, parse_pms_version
 from rowarr.engine.clients.tautulli import TautulliClient
 from rowarr.engine.clients.tmdb import TmdbClient
-from rowarr.engine.models import MediaType, UserType
+from rowarr.engine.models import MediaType, OwnedRow, UserType
 from tests.conftest import fake_media_item
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -266,4 +266,40 @@ class TestPlexClient:
         section.type = "movie"
         section.collections.return_value = [ours, kometa]
         mock_plex._server.library.sections.return_value = [section]
-        assert mock_plex.owned_collections("rowarr") == {"sarah": ("Rowarr_sarah", 571285)}
+        assert mock_plex.owned_collections("rowarr") == {"sarah": OwnedRow("Rowarr_sarah", [571285])}
+
+    def test_owned_collections_collects_a_users_row_from_every_library(self, mock_plex: PlexClient):
+        """One user, one collection per library. Collapsing them to a single id once hid a real
+        leak: T2 compared only the last collection it saw and passed while another was visible."""
+        movie_row = MagicMock(ratingKey=571285)
+        movie_row.labels = [SimpleNamespace(tag="Rowarr_sarah")]
+        show_row = MagicMock(ratingKey=571290)
+        show_row.labels = [SimpleNamespace(tag="Rowarr_sarah")]
+        movies, shows = MagicMock(), MagicMock()
+        movies.type, shows.type = "movie", "show"
+        movies.collections.return_value = [movie_row]
+        shows.collections.return_value = [show_row]
+        mock_plex._server.library.sections.return_value = [movies, shows]
+
+        assert mock_plex.owned_collections("rowarr") == {"sarah": OwnedRow("Rowarr_sarah", [571285, 571290])}
+
+    def test_sections_by_type_maps_each_media_type_to_its_library(self, mock_plex: PlexClient):
+        movies, shows = MagicMock(), MagicMock()
+        movies.type, movies.key = "movie", "1"
+        shows.type, shows.key = "show", "2"
+        mock_plex._server.library.sections.return_value = [movies, shows]
+
+        assert mock_plex.sections_by_type() == {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+
+
+class TestSectionsByType:
+    def test_the_lowest_keyed_library_of_each_type_wins(self, mock_plex: PlexClient):
+        """PMS list order must not decide where rows live: a reordering would silently move
+        every user's row into a different library."""
+        movies_4k, movies, shows = MagicMock(), MagicMock(), MagicMock()
+        movies_4k.type, movies_4k.key = "movie", "3"
+        movies.type, movies.key = "movie", "1"
+        shows.type, shows.key = "show", "2"
+        mock_plex._server.library.sections.return_value = [movies_4k, movies, shows]
+
+        assert mock_plex.sections_by_type() == {MediaType.MOVIE: movies, MediaType.SHOW: shows}

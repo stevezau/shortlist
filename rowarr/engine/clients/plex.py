@@ -22,7 +22,7 @@ from plexapi.collection import Collection
 from plexapi.library import LibrarySection
 from plexapi.server import PlexServer
 
-from rowarr.engine.models import UserType
+from rowarr.engine.models import MediaType, OwnedRow, UserType
 
 PLEXTV = "https://plex.tv"
 CLIENT_ID = "rowarr"
@@ -75,8 +75,21 @@ class PlexTvClient:
         self._last_write = time.monotonic()
 
     def list_users(self) -> list[PlexTvUser]:
-        """All shared + Home users with their share filters (the owner is not in this list)."""
-        r = httpx.get(f"{PLEXTV}/api/users", headers=self._headers(), timeout=self._timeout)
+        """All shared + Home users with their share filters (the owner is not in this list).
+
+        Retried with backoff on 429 like the write path: a rate-limited READ that raises would
+        abort the privacy sync, and the accounts we hadn't reached yet would keep seeing rows
+        that aren't theirs until some later run got luckier (rule 6).
+        """
+        url = f"{PLEXTV}/api/users"
+        backoff = 5.0
+        for attempt in range(4):
+            r = httpx.get(url, headers=self._headers(), timeout=self._timeout)
+            if r.status_code != 429:
+                break
+            logger.warning("plex.tv 429 on user list (attempt {}); backing off {}s", attempt + 1, backoff)
+            time.sleep(backoff)
+            backoff *= 2
         r.raise_for_status()
         users = []
         for el in ET.fromstring(r.text):
@@ -180,6 +193,23 @@ class PlexClient:
     def sections(self, types: tuple[str, ...] = ("movie", "show")) -> list[LibrarySection]:
         return [s for s in self._server.library.sections() if s.type in types]
 
+    def sections_by_type(self) -> dict[MediaType, LibrarySection]:
+        """The one library of each type rows are built in.
+
+        A pick can only go in a collection in a library of its own type: Plex applies
+        `filterMovies`/`filterTelevision` per library, so a show sitting in a movie collection
+        is filterable by neither.
+
+        A server can have several libraries of one type ("Movies" + "4K Movies"). The lowest
+        section key wins — deliberately NOT the order the PMS happens to list them in, because a
+        reordering would silently move every user's row to a different library.
+        """
+        by_type: dict[MediaType, LibrarySection] = {}
+        for section in sorted(self.sections(), key=lambda s: int(s.key)):
+            kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+            by_type.setdefault(kind, section)
+        return by_type
+
     def build_library_index(self, section: LibrarySection) -> dict[int, int]:
         """Map tmdb_id -> ratingKey for every item in a section (once per run, cached upstream)."""
         index: dict[int, int] = {}
@@ -193,20 +223,45 @@ class PlexClient:
         )
         return index
 
-    def owned_collections(self, label_prefix: str = "rowarr") -> dict[str, tuple[str, int]]:
-        """Map slug -> (label as stored, collection ratingKey) for every rowarr-owned collection.
+    def owned_collections(self, label_prefix: str = "rowarr") -> dict[str, OwnedRow]:
+        """Map slug -> OwnedRow for every rowarr-owned collection, across every library.
 
         The PMS is the source of truth for label casing (Plex title-cases new labels) and for
-        the collection ids the T2 privacy check compares hubs against.
+        the collection ids the T2 privacy check compares hubs against. A user has one collection
+        per library they get picks in, so ids accumulate — collapsing them to a single id once
+        hid a real leak: T2 only compared the last collection it saw and passed while two other
+        rows were visible to everyone.
         """
         prefix = f"{label_prefix}_".lower()
-        owned: dict[str, tuple[str, int]] = {}
+        owned: dict[str, OwnedRow] = {}
         for section in self.sections():
             for collection in section.collections():
                 for label in collection.labels:
                     if label.tag.lower().startswith(prefix):
-                        owned[label.tag[len(prefix) :].lower()] = (label.tag, collection.ratingKey)
+                        slug = label.tag[len(prefix) :].lower()
+                        row = owned.setdefault(slug, OwnedRow(label=label.tag))
+                        row.rating_keys.append(collection.ratingKey)
         return owned
+
+    def matches_section(self, collection: Collection, section: LibrarySection) -> bool:
+        """Whether this collection's type matches the library it lives in.
+
+        Plex fixes a collection's subtype from the items it is CREATED with and never revises it,
+        so a collection built from shows keeps `subtype="show"` even after its contents are
+        swapped for movies. A mismatched collection is matched by neither `filterMovies` nor
+        `filterTelevision`, which makes it impossible to hide from anyone — so it must be
+        deleted and recreated, never edited in place (SFLIX, 2026-07-12).
+
+        The subtype is conclusive, so it answers on its own: falling through to the items would
+        cost a PMS round-trip per user per library, every night, for rows that are already fine.
+        The item check is only the fallback for a collection with no subtype at all — and an
+        EMPTY one is deliberately treated as matching, because a collection with nothing in it
+        shows nobody anything.
+        """
+        subtype = getattr(collection, "subtype", None)
+        if subtype:
+            return subtype == section.type
+        return all(item.type == section.type for item in collection.items())
 
     def find_owned_collection(self, section: LibrarySection, label_prefix: str, slug: str) -> Collection | None:
         """Find the collection Rowarr owns for this user, matching by label (never title).

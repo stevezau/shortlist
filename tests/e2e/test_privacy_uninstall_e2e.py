@@ -20,6 +20,76 @@ LOAD = 20_000
 SLOW = 60_000
 
 
+class TestRowsStayPrivateAcrossLibraries:
+    """The promise of the product, end to end: after a real run, no user can see another
+    user's row — in ANY library.
+
+    This is the shape of the only leak that ever reached a live server (SFLIX, 2026-07-12).
+    Every user's picks were delivered into the movie library regardless of type, so the TV
+    watchers' rows sat in a movie library holding shows. Plex applies `label!=` share filters
+    per library, and a collection whose contents don't match its library is matched by neither
+    filterMovies nor filterTelevision — so those rows were unhidable, and every user saw them.
+    T1 passed the whole time (the excludes really were on the filters); only looking at a real
+    user's own Home hubs caught it.
+    """
+
+    def test_no_user_sees_another_users_row_in_any_library(self, app: RowarrApp, reset_fake_plex):
+        state = reset_fake_plex
+        build_real_rows(app)
+
+        owned = {}  # slug -> collection ids, from the labels the PMS actually stored
+        for collection in state.collections.values():
+            for label in collection.labels:
+                if label.lower().startswith("rowarr_"):
+                    owned.setdefault(label.lower().removeprefix("rowarr_"), []).append(collection.rating_key)
+
+        assert set(owned) == {"sarah", "mike", "canary"}
+        # sarah watches movies AND TV, so she has a row in each library — the case that leaked.
+        assert len(owned["sarah"]) == 2, "a both-types watcher must get one row per library"
+        libraries = {state.collections[key].section_id for key in owned["sarah"]}
+        assert libraries == {state.section_id, state.show_section_id}
+
+        for slug, ids in owned.items():
+            for key in ids:
+                collection = state.collections[key]
+                assert state.filterable(collection), (
+                    f"{slug}'s row in library {collection.section_id} holds items of the wrong type: "
+                    "no share filter can hide it, so every user can see it"
+                )
+
+        # Now look through each user's OWN eyes: their row, and nobody else's.
+        for account_id, slug in ((201, "sarah"), (202, "mike"), (203, "canary")):
+            hubs = app.plex_hubs_as(account_id)
+            visible = {
+                int(match.group(1))
+                for hub in hubs
+                if (match := re.search(r"/library/collections/(\d+)", str(hub.get("key") or "")))
+            }
+            assert set(owned[slug]) <= visible, f"{slug} cannot see their own row"
+            foreign = {key: other for other, ids in owned.items() if other != slug for key in ids}
+            leaked = {key: foreign[key] for key in visible & set(foreign)}
+            assert not leaked, f"{slug} can see {sorted(set(leaked.values()))}'s row ({leaked})"
+
+    def test_the_privacy_check_fails_when_a_row_lands_in_the_wrong_library(self, app: RowarrApp, reset_fake_plex):
+        """The check must catch this class of leak — T1 alone never did."""
+        state = reset_fake_plex
+        build_real_rows(app)
+        assert app.api("POST", "/api/privacy/check", json={}).json()["passed"] is True
+
+        # Put mike's row in the movie library while it still holds shows: exactly the broken
+        # state the old delivery produced.
+        mike_row = next(c for c in state.collections.values() if c.labels == ["Rowarr_mike"])
+        mike_row.section_id = state.section_id
+
+        result = app.api("POST", "/api/privacy/check", json={}).json()
+
+        assert result["passed"] is False
+        assert result["tiers"]["T1"] is True, "the filters are still correct — only the view is wrong"
+        assert result["tiers"]["T2"] is False
+        leaked = result["detail"]["T2"]["leaked"]
+        assert [entry["slug"] for entry in leaked] == ["mike"]
+
+
 class TestPrivacyBadge:
     def test_the_badge_starts_unverified_and_flips_when_a_check_passes(
         self, page: Page, app: RowarrApp, reset_fake_plex
@@ -101,7 +171,8 @@ class TestUninstall:
         """The typed-confirmation path, all the way through: rows deleted, filters restored."""
         state = reset_fake_plex
         build_real_rows(app)
-        assert len(state.collections) == 3
+        # 5 rows for 3 users: sarah and the cold-start canary each get one per library; mike watches only TV.
+        assert len(state.collections) == 5
         assert state.users[201].filters["filterMovies"] == "label!=Rowarr_canary,Rowarr_mike"
 
         page.goto("/settings")
@@ -142,7 +213,7 @@ class TestUninstall:
         dialog = page.get_by_role("dialog")
 
         dialog.get_by_role("button", name="Preview what would change").click()
-        expect(dialog).to_contain_text("3 collections deleted", timeout=SLOW)
+        expect(dialog).to_contain_text("5 collections deleted", timeout=SLOW)
         expect(dialog).not_to_contain_text("Kometa")
 
         dialog.get_by_role("textbox").fill("uninstall rowarr")
@@ -151,3 +222,62 @@ class TestUninstall:
 
         assert list(state.collections) == [9999], "uninstall deleted a collection Rowarr did not create"
         assert state.collections[9999].item_keys == [101, 102]
+
+
+class TestEveryAccountOnTheServerIsCovered:
+    """Rowarr's promise is that a user's row is private — from EVERYONE, not from the handful of
+    accounts Rowarr happens to manage.
+
+    On a live server this was not true: 45 of its 48 accounts had completely empty share filters
+    and could see all three managed users' private rows, because Rowarr only ever wrote filters
+    for the users it built rows for (SFLIX, 2026-07-12).
+    """
+
+    def test_an_account_rowarr_has_never_seen_still_gets_the_excludes(self, app: RowarrApp, reset_fake_plex):
+        """The owner invites someone to Plex and never opens the Users page. The nightly run must
+        still stop them seeing everyone else's rows — and must record what it changed on their
+        share (plex-safety rule 10)."""
+        from tests.fakes.fake_plex import FakeUser
+
+        state = reset_fake_plex
+        # A stranger: on the Plex server, absent from Rowarr's database entirely.
+        state.users[299] = FakeUser(id=299, username="stranger")
+
+        build_real_rows(app)
+
+        # Their share filter now excludes every row that isn't theirs...
+        stranger = state.users[299]
+        assert "Rowarr_sarah" in stranger.filters["filterMovies"]
+        assert "Rowarr_sarah" in stranger.filters["filterTelevision"]
+        assert "Rowarr_mike" in stranger.filters["filterMovies"]
+
+        # ...they see none of those rows on their own Home...
+        hubs = app.plex_hubs_as(299)
+        visible = {
+            int(match.group(1))
+            for hub in hubs
+            if (match := re.search(r"/library/collections/(\d+)", str(hub.get("key") or "")))
+        }
+        assert not visible, f"a stranger can see {len(visible)} of other people's rows"
+
+        # ...and the change to their share is on the record, with the before/after.
+        # (/api/events is the live SSE stream; /api/events/log is the audit table.)
+        events = app.api("GET", "/api/events/log?scope=run.privacy_sync").json()
+        writes = [e for e in events if e["message"]["username"] == "stranger"]
+        assert writes, "editing someone's Plex share permissions must never go unaudited"
+        fields = writes[0]["message"]["fields"]
+        assert fields["filterMovies"]["before"] == ""
+        assert "Rowarr_sarah" in fields["filterMovies"]["after"]
+
+    def test_the_privacy_check_fails_when_an_account_is_missing_its_excludes(self, app: RowarrApp, reset_fake_plex):
+        """T1 must look at every account too — a check that only inspected managed users reported
+        PASS the entire time 45 accounts were leaking."""
+        state = reset_fake_plex
+        build_real_rows(app)
+        assert app.api("POST", "/api/privacy/check", json={}).json()["passed"] is True
+
+        state.users[203].filters["filterMovies"] = ""  # the canary loses its excludes
+
+        result = app.api("POST", "/api/privacy/check", json={}).json()
+        assert result["passed"] is False
+        assert result["tiers"]["T1"] is False

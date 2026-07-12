@@ -88,6 +88,9 @@ function UserResultCard({
   const added = result.diff.added ?? [];
   const removed = result.diff.removed ?? [];
   const kept = result.diff.kept ?? [];
+  // Deleting a whole row is the most destructive thing a run does. It has to be on this page:
+  // "what changed on whose share at 03:31" must always be answerable from the UI.
+  const deleted = result.diff.deleted ?? [];
   return (
     <Card className={failed ? "border-destructive/50" : ""}>
       <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
@@ -122,9 +125,15 @@ function UserResultCard({
             <DiffList label="Added" items={added} tone="text-success" />
             <DiffList label="Removed" items={removed} tone="text-destructive" />
             <DiffList label="Kept" items={kept} tone="text-muted-foreground" />
+            <DiffList
+              label="Rows deleted"
+              items={deleted}
+              tone="text-destructive"
+            />
             {added.length === 0 &&
               removed.length === 0 &&
-              kept.length === 0 && (
+              kept.length === 0 &&
+              deleted.length === 0 && (
                 <p className="text-sm text-muted-foreground">
                   No changes — the row was already up to date.
                 </p>

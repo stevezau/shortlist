@@ -147,7 +147,8 @@ class TestDangerZone:
         build_real_rows(app)
         before_collections = {c.rating_key: c.title for c in state.collections.values()}
         before_filters = {user.id: dict(user.filters) for user in state.users.values()}
-        assert len(before_collections) == 3
+        # 5 rows for 3 users: sarah and the cold-start canary each get one per library; mike watches only TV.
+        assert len(before_collections) == 5
 
         _open_settings(page)
         page.get_by_role("button", name="Uninstall Rowarr…").click()
@@ -157,7 +158,7 @@ class TestDangerZone:
         expect(dialog).to_contain_text("Uninstall Rowarr from this server?")
 
         dialog.get_by_role("button", name="Preview what would change").click()
-        expect(dialog).to_contain_text("3 collections deleted", timeout=SLOW)
+        expect(dialog).to_contain_text("5 collections deleted", timeout=SLOW)
         expect(dialog).to_contain_text("3 share filters restored")
         expect(dialog).to_contain_text("Preview only — nothing was changed.")
         for title in before_collections.values():

@@ -5,7 +5,7 @@ from __future__ import annotations
 from loguru import logger
 
 from rowarr.engine.clients.plex import PlexClient
-from rowarr.engine.models import CollectionDiff, EngineConfig, Pick, UserProfile
+from rowarr.engine.models import CollectionDiff, EngineConfig, MediaType, Pick, UserProfile
 
 DEFAULT_ROW_NAME = "✨ Picked for You"
 
@@ -23,57 +23,233 @@ def render_row_name(template: str, profile: UserProfile, picks: list[Pick]) -> s
     return rendered or DEFAULT_ROW_NAME
 
 
-def deliver_row(
+def deliver_rows(
+    plex: PlexClient,
+    profile: UserProfile,
+    picks: list[Pick],
+    config: EngineConfig,
+    *,
+    dry_run: bool = False,
+    stored_labels: dict[str, str] | None = None,
+    diff: CollectionDiff | None = None,
+) -> tuple[CollectionDiff, str | None]:
+    """Deliver a user's picks as one collection per library. Returns (combined diff, stored label).
+
+    `stored_labels` and `diff` are caller-owned accumulators, written the moment the PMS confirms
+    each library's row. A user gets a row per library, so delivery can half-succeed: if the second
+    library raises after the first row was created and labelled, a local accumulator would be
+    discarded with the exception — and that row would then be missing from `stored_labels`, so NO
+    other user's share filter would exclude it. A live row nobody's filter hides is the exact leak
+    this whole change exists to prevent, so partial progress has to survive the failure.
+
+    The stored label is None when nothing was delivered — the caller must NOT treat the requested
+    label as the stored one. Plex title-cases labels, the excludes written onto other users'
+    shares are matched case-insensitively, and a wrongly-cased exclude would therefore look
+    "already present" forever and never heal.
+
+    Picks are split by media type because a Plex collection lives in exactly one library, and the
+    share-filter excludes that hide it (`filterMovies` / `filterTelevision`) are applied per
+    library. A collection holding the wrong type is matched by neither filter and is therefore
+    impossible to hide — so "one collection per library" is a privacy requirement, not a nicety.
+
+    A library the user has no picks for is LEFT ALONE: a row nobody wrote to this run still holds
+    its items and its label, so the excludes on everyone else's share still hide it. It is merely
+    stale, and deleting it would destroy an established row every time an upstream hiccup (a TMDB
+    404, a lopsided candidate pool) left a library with no picks for one night.
+
+    Rows Plex cannot hide are NOT this function's problem: `sweep_unhidable_rows` has already
+    removed them, server-wide, before any of this ran.
+    """
+    targets = plex.sections_by_type()
+    by_type: dict[MediaType, list[Pick]] = {}
+    for pick in picks:
+        by_type.setdefault(pick.media_type, []).append(pick)
+
+    for kind in by_type:
+        if kind not in targets:
+            logger.warning("{}: no {} library on this server — dropping those picks", profile.username, kind.value)
+
+    combined = diff if diff is not None else CollectionDiff()
+    combined.collection_title = render_row_name(profile.row_name_template or config.row_name_template, profile, picks)
+    stored: str | None = None
+
+    for kind, section in targets.items():
+        section_picks = by_type.get(kind, [])
+        if not section_picks:
+            continue
+        one, stored = _deliver_one(plex, section, profile, section_picks, config, dry_run=dry_run)
+        combined.added += one.added
+        combined.removed += one.removed
+        combined.kept += one.kept
+        combined.created = combined.created or one.created
+        # Recorded the instant the PMS confirms the label — if the NEXT library blows up, this
+        # row still gets excluded on every other user's share this run.
+        if stored_labels is not None and not dry_run:
+            stored_labels[profile.slug] = stored
+
+    return combined, stored
+
+
+def _deliver_one(
     plex: PlexClient,
     section,
     profile: UserProfile,
     picks: list[Pick],
     config: EngineConfig,
     *,
-    dry_run: bool = False,
+    dry_run: bool,
 ) -> tuple[CollectionDiff, str]:
-    """Upsert the user's collection to exactly `picks`, in order. Returns (diff, stored_label).
+    """Upsert one library's collection to exactly `picks`, in order. Returns (diff, stored_label).
 
-    The collection is found by label — never by title — so renames from dynamic templates
-    can't orphan it, and foreign (e.g. Kometa) collections are never touched.
+    The collection is found by label — never by title — so renames from dynamic templates can't
+    orphan it, and foreign (e.g. Kometa) collections are never touched.
     """
     template = profile.row_name_template or config.row_name_template
     title = render_row_name(template, profile, picks)
     label = f"{config.label_prefix}_{profile.slug}"
     collection = plex.find_owned_collection(section, config.label_prefix, profile.slug)
 
+    if collection is not None and not plex.matches_section(collection, section):
+        # The sweep already deleted this one (or, in a dry run, already reported that it would),
+        # so treat it as gone and build a fresh, correctly-typed row in its place. Plex will not
+        # re-type a collection: swapping its contents leaves the old subtype, and the row goes on
+        # being visible to everyone. It must be rebuilt, never edited.
+        logger.info(
+            "{}: rebuilding their row in '{}' — the old one was the wrong type", profile.username, section.title
+        )
+        collection = None
+
     wanted_titles = [p.title for p in picks]
     if collection is None:
         diff = CollectionDiff(added=wanted_titles, collection_title=title, created=True)
         if dry_run:
-            logger.info("[dry-run] {}: would create '{}' with {} items", profile.username, title, len(picks))
+            logger.info(
+                "[dry-run] {}: would create '{}' in '{}' with {} items",
+                profile.username,
+                title,
+                section.title,
+                len(picks),
+            )
             return diff, label
         items = plex.fetch_items([p.rating_key for p in picks])
         collection = plex.create_collection(section, title, items)
-    else:
-        current_titles = [i.title for i in collection.items()]
-        diff = CollectionDiff(
-            added=[t for t in wanted_titles if t not in current_titles],
-            removed=[t for t in current_titles if t not in wanted_titles],
-            kept=[t for t in wanted_titles if t in current_titles],
-            collection_title=title,
+        try:
+            stored = plex.stored_label(collection, label)
+        except Exception:
+            # A collection with no rowarr_* label is invisible to every lookup we have — all of
+            # them key off that prefix — so nothing would ever find it again, no filter could
+            # hide it, and it would be visible to everyone forever. An unlabelled row must not be
+            # allowed to outlive this call.
+            logger.error("{}: could not label the new row in '{}' — removing it", profile.username, section.title)
+            try:
+                collection.delete()
+            except Exception:
+                # Two PMS failures back to back. Name the orphan loudly: it is unlabelled, so no
+                # future run can find it, and only a human with this ratingKey can remove it.
+                logger.critical(
+                    "{}: ORPHANED COLLECTION — '{}' (ratingKey {}) in '{}' exists with NO rowarr "
+                    "label. Rowarr cannot find or remove it and no share filter can hide it. "
+                    "Delete it in Plex.",
+                    profile.username,
+                    title,
+                    getattr(collection, "ratingKey", "?"),
+                    section.title,
+                )
+            raise
+        logger.info(
+            "{}: delivered '{}' to '{}' ({} items, label {})",
+            profile.username,
+            title,
+            section.title,
+            len(picks),
+            stored,
         )
-        if dry_run:
-            logger.info(
-                "[dry-run] {}: would update '{}' (+{} -{} ={})",
-                profile.username,
-                title,
-                len(diff.added),
-                len(diff.removed),
-                len(diff.kept),
-            )
-            return diff, label
-        if collection.title != title:
-            collection.editTitle(title)
-        plex.set_items(collection, plex.fetch_items([p.rating_key for p in picks]))
+        return diff, stored
+
+    current_titles = [i.title for i in collection.items()]
+    diff = CollectionDiff(
+        added=[t for t in wanted_titles if t not in current_titles],
+        removed=[t for t in current_titles if t not in wanted_titles],
+        kept=[t for t in wanted_titles if t in current_titles],
+        collection_title=title,
+    )
+    if dry_run:
+        logger.info(
+            "[dry-run] {}: would update '{}' in '{}' (+{} -{} ={})",
+            profile.username,
+            title,
+            section.title,
+            len(diff.added),
+            len(diff.removed),
+            len(diff.kept),
+        )
+        return diff, label
+    if collection.title != title:
+        collection.editTitle(title)
+    plex.set_items(collection, plex.fetch_items([p.rating_key for p in picks]))
 
     stored = plex.stored_label(collection, label)
     # Promotion is deliberately NOT done here: the pipeline promotes only after every user's
     # share filters have been merged, so a new row is never visible before its exclusions exist.
-    logger.info("{}: delivered '{}' ({} items, label {})", profile.username, title, len(picks), stored)
+    logger.info(
+        "{}: delivered '{}' to '{}' ({} items, label {})", profile.username, title, section.title, len(picks), stored
+    )
     return diff, stored
+
+
+def sweep_unhidable_rows(
+    plex: PlexClient,
+    config: EngineConfig,
+    *,
+    dry_run: bool = False,
+    deleted: dict[str, list[str]] | None = None,
+) -> dict[str, list[str]]:
+    """Delete every Rowarr row on the SERVER that Plex cannot hide. Returns slug -> titles.
+
+    `deleted` lets the caller own the accumulator, so that what was ALREADY deleted survives an
+    exception part-way through the walk. Deleting rows and then losing the record of it because
+    the next PMS call timed out would leave "whose row did you delete at 03:31" unanswerable —
+    which is the one question the audit trail exists to answer (plex-safety rule 10).
+
+    A row whose type doesn't match its library is matched by neither `filterMovies` nor
+    `filterTelevision`. Its `label!=` exclude does nothing, so it is visible to EVERY user on the
+    server for as long as it exists — that is how the rows an older version stranded in the wrong
+    library keep leaking, and removing them is the only reason this deletes anything. A well-typed
+    row is never touched: it still carries its label, so the excludes still hide it. It is stale,
+    not leaking.
+
+    Two things about the scope, both load-bearing:
+
+    It walks the SERVER, not tonight's user list. Whether a row can be hidden has nothing to do
+    with whether its owner is enabled, paused, or included in this run — so a leak belonging to a
+    user we are not processing (or a run where `paused_all` means we process nobody) must still be
+    cleaned up. Scoping this to `users` would make one click of "pause" turn a leak permanent.
+
+    It runs BEFORE anything that can fail. Recommendations depend on TMDB, Tautulli and the PMS,
+    any of which can raise — and a leaking row must not survive the night because a rate limit
+    stopped us from computing what to put in the row that replaces it.
+    """
+    prefix = f"{config.label_prefix}_".lower()
+    deleted = {} if deleted is None else deleted
+    for section in plex.sections():
+        for collection in section.collections():
+            label = next((t.tag for t in collection.labels if t.tag.lower().startswith(prefix)), None)
+            if label is None:  # not ours — Kometa and friends are none of our business (rule 4)
+                continue
+            if plex.matches_section(collection, section):
+                continue
+            slug = label[len(prefix) :].lower()
+            logger.warning(
+                "{}: removing their row in '{}' — it is the wrong type for that library, so no "
+                "share filter can hide it and every user can see it",
+                slug,
+                section.title,
+            )
+            # Delete THEN record, so the audit says what actually happened: recording first would
+            # report a deletion that a failing PMS call never made. (Read the title first — after
+            # the delete the object no longer refers to anything on the server.)
+            title = collection.title
+            if not dry_run:
+                plex.delete_owned_collection(collection, config.label_prefix)
+            deleted.setdefault(slug, []).append(title)
+    return deleted

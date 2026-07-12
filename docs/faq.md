@@ -2,9 +2,25 @@
 
 **How is this private? Plex doesn't have per-user collections.**
 Since PMS 1.43.2, label-based share restrictions are enforced on Home, Recommended and
-Related hubs. Rowarr gives each user's collection a unique label and excludes that label on
+Related hubs. Rowarr gives each user's collections a unique label and excludes that label on
 every _other_ user's share. The built-in Privacy Check proves this works on your server —
 with a canary account's own eyes — before anything real is written.
+
+**Why do I get two rows — one under Movies and one under TV Shows?**
+A Plex collection lives in exactly one library, and Plex applies share filters per library
+(`filterMovies`, `filterTelevision`). So a user who watches both gets one row in each library,
+both carrying the same label. This is not cosmetic: a collection holding the wrong type for
+its library is matched by neither filter, which means it could not be hidden from anyone.
+Your `row.size` is the budget across those rows: a library with at least one pick gets a row,
+and a library with none gets none.
+
+**Does Rowarr touch the share settings of users I haven't enabled?**
+Yes — it adds label excludes to the share filter of **every** account your server is shared with,
+not just the ones you gave a row to. It has to: a Plex collection is visible to anyone whose share
+filter does not exclude its label, so if Rowarr only touched the accounts it manages, everyone
+else would see those people's private rows. Nothing else in their filter is altered (the write is
+a read-modify-write merge), the original is snapshotted first, and `uninstall` restores every one
+of them byte-for-byte.
 
 **What can the server owner see?**
 Everything — Plex cannot restrict the owner. Your Home shows all users' rows. Use a

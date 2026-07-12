@@ -61,9 +61,9 @@ def _connect_plex(page: Page, pms_url: str) -> None:
     expect(page.get_by_text("Plex version:")).to_be_visible(timeout=LOAD)
     expect(page.get_by_text("Plex Media Server 1.43.3.10793 supports private rows")).to_be_visible()
     expect(page.get_by_text("Plex Pass active")).to_be_visible()
-    expect(page.get_by_text("1 librarie(s) found")).to_be_visible()
-    expect(page.get_by_text("1 libraries")).to_be_visible()
+    expect(page.get_by_text("2 librarie(s) found")).to_be_visible()
     expect(page.get_by_text("Movies (30 movies)")).to_be_visible()
+    expect(page.get_by_text("TV Shows (30 shows)")).to_be_visible()
 
     page.get_by_role("button", name="Link this server").click()
     expect(page.get_by_text("Linked to FakePlex")).to_be_visible(timeout=LOAD)
@@ -192,23 +192,33 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: RowarrApp, fa
     assert settings["row.name_template"] == "Because you watched {top_seed}"
     assert settings["schedule.cron"] == "15 2 * * *"
 
-    rows = {
-        label.lower(): collection
-        for collection in state.collections.values()
-        for label in collection.labels
-        if label.lower().startswith("rowarr_")
-    }
-    assert set(rows) == {"rowarr_sarah", "rowarr_mike", "rowarr_canary"}
-    for label, collection in rows.items():
-        assert len(collection.item_keys) == 10, f"{label} should hold the chosen row size"
-        assert collection.promoted_shared_home, f"{label} was never promoted onto shared Home"
+    # A user gets one row per library they have picks in, so a label can map to several rows.
+    rows: dict[str, list] = {}
+    for collection in state.collections.values():
+        for label in collection.labels:
+            if label.lower().startswith("rowarr_"):
+                rows.setdefault(label.lower(), []).append(collection)
 
-    # The dynamic template renders per user, from that user's own top seed.
-    assert rows["rowarr_sarah"].title.startswith("Because you watched Movie")
-    assert rows["rowarr_mike"].title.startswith("Because you watched Movie")
+    assert set(rows) == {"rowarr_sarah", "rowarr_mike", "rowarr_canary"}
+    for label, collections in rows.items():
+        # row.size is the budget across a user's rows: sarah's 10 picks split into a movie row
+        # and a TV row, and each row is big enough for Plex to render it.
+        assert sum(len(c.item_keys) for c in collections) == 10, f"{label} should hold the chosen row size"
+        for collection in collections:
+            assert len(collection.item_keys) >= 2, f"{label} has a row too small for Plex to render"
+            assert collection.promoted_shared_home, f"{label} was never promoted onto shared Home"
+
+    # The dynamic template renders per row, from the top seed of that row's own picks — so a TV
+    # row says "Because you watched <a show>", not whatever movie happened to rank first.
+    assert len(rows["rowarr_sarah"]) == 2, "sarah watches movies and TV: one row in each library"
+    assert {c.section_id for c in rows["rowarr_sarah"]} == {state.section_id, state.show_section_id}
+    for collection in rows["rowarr_sarah"]:
+        kind = "Movie" if collection.section_id == state.section_id else "Show"
+        assert collection.title.startswith(f"Because you watched {kind}"), collection.title
+    assert rows["rowarr_mike"][0].title.startswith("Because you watched Show")  # mike only watches TV
     # A cold-start user has no seed to fill {top_seed} with, so the row falls back to the default
     # title rather than putting the dangling half-sentence "Because you watched" on their Home.
-    assert rows["rowarr_canary"].title == "✨ Picked for You"
+    assert rows["rowarr_canary"][0].title == "✨ Picked for You"
 
     # Every user's share now excludes the OTHER users' labels — the whole point of the product.
     assert state.users[201].filters["filterMovies"] == "label!=Rowarr_canary,Rowarr_mike"

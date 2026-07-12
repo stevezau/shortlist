@@ -21,12 +21,27 @@ from rowarr.engine.clients.tautulli import TautulliClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import make_curator
 from rowarr.engine.history import FallbackHistorySource, PlexHistorySource, TautulliSource
-from rowarr.engine.models import EngineConfig, FilterSnapshot, UserProfile, UserType
+from rowarr.engine.models import EngineConfig, FilterSnapshot, MediaType, UserProfile, UserType, slugify
 from rowarr.engine.pipeline import EngineContext
 from rowarr.engine.pipeline import run as engine_run
 from rowarr.server.db.models import CacheRow, Event, PickRow, RestrictionSnapshotRow, Run, RunUser, User
 from rowarr.server.services.sse import EventBus
 from rowarr.server.settings_store import SettingsStore
+
+
+def unique_slug(session: Session, username: str) -> str:
+    """A slug no other user already holds. Slugs are UNIQUE in the DB and are what row labels are
+    built from, so two Plex display names that slugify alike (a real possibility — Plex names are
+    free text) must not collide: the second user would fail to save, and their share filter would
+    then never be written.
+    """
+    base = slugify(username)
+    slug = base
+    n = 2
+    while session.query(User).filter_by(slug=slug).first() is not None:
+        slug = f"{base}_{n}"
+        n += 1
+    return slug
 
 
 class DbSnapshotStore:
@@ -57,7 +72,24 @@ class DbSnapshotStore:
 
     def save(self, snapshot: FilterSnapshot) -> None:
         with self._sessions() as session:
-            user = session.query(User).filter_by(plex_account_id=snapshot.plex_account_id).one()
+            user = session.query(User).filter_by(plex_account_id=snapshot.plex_account_id).one_or_none()
+            if user is None:
+                # An account that shares the server but that Rowarr has never seen — someone the
+                # owner invited to Plex since the last time the Users page was opened. We still
+                # have to write their share filter (a row is visible to anyone whose filter does
+                # not exclude it), and rule 2 says we cannot write it without a snapshot first.
+                # So record them: disabled (we build no row for them) but restorable, because
+                # uninstall reaches snapshots through this table.
+                user = User(
+                    plex_account_id=snapshot.plex_account_id,
+                    username=snapshot.username,
+                    slug=unique_slug(session, snapshot.username),
+                    user_type=UserType.SHARED.value,
+                    enabled=False,
+                )
+                session.add(user)
+                session.flush()
+                logger.info("{}: first seen during a run — recorded so their filters can be restored", user.username)
             session.add(
                 RestrictionSnapshotRow(
                     user_id=user.id,
@@ -141,6 +173,9 @@ class RunService:
                 dry_run=dry_run,
             )
             recent = self._recent_picks(session, config)
+            # Every user Rowarr knows, enabled or not: the engine answers "whose row is this?"
+            # by account id, because a name can change and two names can slugify alike.
+            known_slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
 
         def progress(slug: str, stage: str, counts: dict) -> None:
             if loop is not None:
@@ -157,21 +192,27 @@ class RunService:
             curator=curator,
             snapshots=DbSnapshotStore(self._sessions),
             recent_picks=recent,
+            known_slugs=known_slugs,
             progress=progress,
         )
 
-    def _recent_picks(self, session: Session, config: EngineConfig) -> dict[str, set[int]]:
-        recent: dict[str, set[int]] = {}
+    def _recent_picks(self, session: Session, config: EngineConfig) -> dict[str, set[tuple[int, MediaType]]]:
+        """Titles picked in the last N runs, keyed on (tmdb_id, media_type).
+
+        The pair, not the bare id: TMDB ids are unique only within a namespace, so keying on the
+        id alone lets a recently-picked film suppress the show that shares its number.
+        """
+        recent: dict[str, set[tuple[int, MediaType]]] = {}
         window = config.staleness_runs * config.row_size
         for user in session.query(User).filter_by(enabled=True).all():
             rows = (
-                session.query(PickRow.tmdb_id)
+                session.query(PickRow.tmdb_id, PickRow.media_type)
                 .filter_by(user_id=user.id)
                 .order_by(PickRow.id.desc())
                 .limit(window)
                 .all()
             )
-            recent[user.slug] = {r.tmdb_id for r in rows}
+            recent[user.slug] = {(r.tmdb_id, MediaType(r.media_type)) for r in rows}
         return recent
 
     def enabled_profiles(self, session: Session, user_ids: list[int] | None = None) -> list[UserProfile]:
@@ -302,6 +343,7 @@ class RunService:
                                 run_id=run_id,
                                 user_id=user.id,
                                 tmdb_id=pick.tmdb_id,
+                                media_type=pick.media_type.value,
                                 rating_key=pick.rating_key,
                                 rank=pick.rank,
                                 title=pick.title,
@@ -325,7 +367,58 @@ class RunService:
                         },
                     )
                 )
-            run.status = "ok" if errors == 0 else "error"
+            # Rows deleted because Plex could not hide them. This is a SERVER-wide sweep, so it
+            # can touch users who were not in this run at all (paused, disabled) — those have no
+            # RunUser row to carry the audit, and deleting someone's row is the most destructive
+            # thing a run does. It gets its own event (plex-safety rule 10).
+            if report.swept_rows:
+                session.add(
+                    Event(
+                        scope="run.sweep",
+                        level="warning",
+                        message={
+                            "run_id": run_id,
+                            "dry_run": report.dry_run,
+                            "reason": "row could not be hidden by any share filter (wrong type for its library)",
+                            "deleted": report.swept_rows,
+                        },
+                    )
+                )
+            # Share-filter writes. Most of these accounts are NOT in this run's user list — they
+            # are simply people the server is shared with — so they have no RunUser row to carry
+            # the audit. Changing someone's Plex share permissions is the most sensitive thing
+            # Rowarr does; "what changed on whose share at 03:31" has to be answerable for every
+            # one of them (plex-safety rule 10).
+            for account_id, write in report.filter_writes.items():
+                session.add(
+                    Event(
+                        scope="run.privacy_sync",
+                        level="info",
+                        message={
+                            "run_id": run_id,
+                            "dry_run": report.dry_run,
+                            "plex_account_id": account_id,
+                            "username": write["username"],
+                            "fields": {
+                                field: {"before": before, "after": after}
+                                for field, (before, after) in write["fields"].items()
+                            },
+                        },
+                    )
+                )
+            if report.error:
+                session.add(Event(scope="run", level="error", message={"run_id": run_id, "error": report.error}))
+
+            # `report.ok` — not `errors == 0`. A run-level failure (the sweep could not run, so we
+            # refused to write) has no per-user error to count, and must never report success.
+            run.status = "ok" if report.ok else "error"
             run.finished_at = datetime.now(UTC)
-            run.stats = {"users_ok": ok, "users_error": errors, "dry_run": report.dry_run}
+            run.stats = {
+                "users_ok": ok,
+                "users_error": errors,
+                "dry_run": report.dry_run,
+                "rows_swept": sum(len(titles) for titles in report.swept_rows.values()),
+                "shares_updated": len(report.filter_writes),
+                "error": report.error,
+            }
             session.commit()

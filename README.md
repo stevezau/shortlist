@@ -19,9 +19,9 @@ Home/Recommended (v1.43.1) and Related hubs (v1.43.2). Rowarr is built on that f
 
 ## Features
 
-- 🔒 **Private by design** — each user's row is a labeled collection excluded on every other
-  user's share. Verified by probe before first write, re-verified weekly, snapshotted and
-  reversible.
+- 🔒 **Private by design** — each user's row is a labeled collection excluded on the share of
+  every other account on your server (one row per library, since Plex filters per library).
+  Verified by probe before first write, re-verified weekly, snapshotted and reversible.
 - 🧠 **AI that can't hallucinate** — the LLM (Claude / GPT / Gemini / local Ollama) only
   re-ranks titles verified to exist in your library. **Works with zero AI** too (heuristic
   mode) — no keys required.

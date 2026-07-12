@@ -15,6 +15,8 @@ from rowarr.engine.models import (
     CollectionDiff,
     EngineConfig,
     FilterSnapshot,
+    MediaType,
+    OwnedRow,
     Pick,
     RunReport,
     StageCounts,
@@ -54,31 +56,32 @@ class TestFileCache:
 
 
 class TestSelectUsers:
-    def _ctx(self, users):
+    def _ctx(self, users, tmp_path: Path):
         plextv = MagicMock()
         plextv.list_users.return_value = users
-        return SimpleNamespace(plextv=plextv)
+        # The slug map is the identity: select_users must use it, not re-derive names.
+        return SimpleNamespace(plextv=plextv, known_slugs=cli_mod.roster_slugs(users, tmp_path / "slugs.json"))
 
-    def test_all_users(self):
-        ctx = self._ctx([plextv_user(100, "sarah"), plextv_user(200, "mike")])
+    def test_all_users(self, tmp_path: Path):
+        ctx = self._ctx([plextv_user(100, "sarah"), plextv_user(200, "mike")], tmp_path)
         assert len(select_users(ctx, {"users": "all"}, None)) == 2
 
-    def test_enabled_list_and_overrides(self):
-        ctx = self._ctx([plextv_user(100, "sarah"), plextv_user(200, "mike")])
+    def test_enabled_list_and_overrides(self, tmp_path: Path):
+        ctx = self._ctx([plextv_user(100, "sarah"), plextv_user(200, "mike")], tmp_path)
         raw = {"users": ["sarah"], "user_overrides": {"sarah": {"row_size": 10, "excluded_genres": ["Horror"]}}}
         users = select_users(ctx, raw, None)
         assert [u.username for u in users] == ["sarah"]
         assert users[0].row_size == 10
         assert users[0].excluded_genres == {"Horror"}
 
-    def test_only_filter_unknown_user_errors(self):
-        ctx = self._ctx([plextv_user(100, "sarah")])
+    def test_only_filter_unknown_user_errors(self, tmp_path: Path):
+        ctx = self._ctx([plextv_user(100, "sarah")], tmp_path)
         with pytest.raises(Exception, match="not found"):
             select_users(ctx, {"users": "all"}, "ghost")
 
 
 def fake_report(status: str = "ok") -> RunReport:
-    picks = [Pick(tmdb_id=1, rating_key=10, title="Movie", rank=1, reason="r")]
+    picks = [Pick(tmdb_id=1, rating_key=10, title="Movie", rank=1, reason="r", media_type=MediaType.MOVIE)]
     return RunReport(
         started_at=datetime.now(UTC),
         finished_at=datetime.now(UTC),
@@ -100,6 +103,7 @@ def fake_ctx(config_dir: Path) -> SimpleNamespace:
     return SimpleNamespace(
         config=EngineConfig(),
         recent_picks={},
+        known_slugs={100: "sarah"},  # account id -> slug: how "whose row is this?" is answered
         plextv=MagicMock(),
         plex=MagicMock(),
         snapshots=FileSnapshotStore(config_dir / "snapshots"),
@@ -125,8 +129,8 @@ class TestPrivacyGate:
     """plex-safety rule 1: no real writes without a recorded passing Privacy Check."""
 
     def _invoke_run(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (fake_ctx(tmp_path), {"users": "all"}))
-        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only: [MagicMock(slug="sarah")])
+        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (fake_ctx(tmp_path), {"users": "all"}, []))
+        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only, remote=None: [MagicMock(slug="sarah")])
         monkeypatch.setattr(cli_mod, "engine_run", lambda ctx, users: fake_report())
         return CliRunner().invoke(cli_mod.main, ["--config-dir", str(tmp_path), "run"])
 
@@ -154,8 +158,8 @@ class TestPrivacyGate:
         assert "upgrade Plex" in result.output
 
     def test_dry_run_needs_no_gate(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (fake_ctx(tmp_path), {"users": "all"}))
-        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only: [MagicMock(slug="sarah")])
+        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (fake_ctx(tmp_path), {"users": "all"}, []))
+        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only, remote=None: [MagicMock(slug="sarah")])
         monkeypatch.setattr(cli_mod, "engine_run", lambda ctx, users: fake_report())
         result = CliRunner().invoke(cli_mod.main, ["--config-dir", str(tmp_path), "run", "--dry-run"])
         assert result.exit_code == 0, result.output
@@ -164,20 +168,20 @@ class TestPrivacyGate:
 class TestRunCommand:
     def test_run_writes_state_and_exits_zero(self, tmp_path: Path, monkeypatch):
         write_gate(tmp_path)
-        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (fake_ctx(tmp_path), {"users": "all"}))
-        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only: [MagicMock(slug="sarah")])
+        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (fake_ctx(tmp_path), {"users": "all"}, []))
+        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only, remote=None: [MagicMock(slug="sarah")])
         monkeypatch.setattr(cli_mod, "engine_run", lambda ctx, users: fake_report())
 
         result = CliRunner().invoke(cli_mod.main, ["--config-dir", str(tmp_path), "run"])
 
         assert result.exit_code == 0, result.output
         assert "sarah" in result.output
-        assert json.loads((tmp_path / "recent_picks.json").read_text()) == {"sarah": [1]}
+        assert json.loads((tmp_path / "recent_picks.json").read_text()) == {"sarah": [[1, "movie"]]}
         assert (tmp_path / "picks_history.jsonl").exists()
 
     def test_dry_run_persists_nothing_and_failures_exit_nonzero(self, tmp_path: Path, monkeypatch):
-        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (fake_ctx(tmp_path), {"users": "all"}))
-        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only: [MagicMock(slug="sarah")])
+        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (fake_ctx(tmp_path), {"users": "all"}, []))
+        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only, remote=None: [MagicMock(slug="sarah")])
         monkeypatch.setattr(cli_mod, "engine_run", lambda ctx, users: fake_report(status="error"))
 
         result = CliRunner().invoke(cli_mod.main, ["--config-dir", str(tmp_path), "run", "--dry-run"])
@@ -191,10 +195,10 @@ class TestVerifyCommand:
         from rowarr.engine.models import PrivacyCheckResult
 
         ctx = fake_ctx(tmp_path)
-        ctx.plex.owned_collections.return_value = {"sarah": ("Rowarr_sarah", 1)}
+        ctx.plex.owned_collections.return_value = {"sarah": OwnedRow("Rowarr_sarah", [1])}
         ctx.plex.version = "1.43.3.10793-cd55560bb"
-        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (ctx, {"users": "all"}))
-        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only: [])
+        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (ctx, {"users": "all"}, []))
+        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only, remote=None: [])
         monkeypatch.setattr(cli_mod, "check_t1", lambda *a, **k: PrivacyCheckResult(tier="T1", passed=True))
 
         result = CliRunner().invoke(cli_mod.main, ["--config-dir", str(tmp_path), "verify"])
@@ -210,8 +214,8 @@ class TestVerifyCommand:
         ctx = fake_ctx(tmp_path)
         ctx.plex.owned_collections.return_value = {}
         ctx.plex.version = "1.43.3.10793"
-        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (ctx, {"users": "all"}))
-        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only: [])
+        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (ctx, {"users": "all"}, []))
+        monkeypatch.setattr(cli_mod, "select_users", lambda ctx, raw, only, remote=None: [])
         monkeypatch.setattr(
             cli_mod, "check_t1", lambda *a, **k: PrivacyCheckResult(tier="T1", passed=False, detail={"u": "drift"})
         )
@@ -231,7 +235,7 @@ class TestUninstallCommand:
         section.collections.return_value = [owned]
         ctx.plex.sections.return_value = [section]
         restore = MagicMock()
-        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (ctx, {"users": "all"}))
+        monkeypatch.setattr(cli_mod, "load_context", lambda *a, **k: (ctx, {"users": "all"}, []))
         monkeypatch.setattr(cli_mod, "restore_user_restrictions", restore)
 
         result = CliRunner().invoke(cli_mod.main, ["--config-dir", str(tmp_path), "uninstall", "--dry-run"])
@@ -240,3 +244,84 @@ class TestUninstallCommand:
         assert "1 rowarr collection(s)" in result.output
         assert "no changes made" in result.output
         ctx.plex.delete_owned_collection.assert_not_called()
+
+
+class TestRosterSlugs:
+    """The slug IS the identity: a user's row label is `rowarr_<slug>`.
+
+    So it has to belong to the ACCOUNT, permanently. Plex display names are free text (two can
+    slugify to the same string) and mutable (people rename themselves), and plex account ids come
+    from account creation, not from when you invited them — so a slug recomputed from the live
+    roster each run is a slug that can MOVE between accounts, taking a row full of one person's
+    private picks with it.
+    """
+
+    def test_two_names_that_slugify_alike_get_different_slugs(self, tmp_path: Path):
+        users = [plextv_user(200, "bob-smith"), plextv_user(100, "Bob Smith")]
+
+        slugs = cli_mod.roster_slugs(users, tmp_path / "slugs.json")
+
+        assert slugs[100] != slugs[200]
+        assert len(set(slugs.values())) == 2
+
+    def test_slugs_do_not_depend_on_the_order_plex_lists_them(self, tmp_path: Path):
+        a, b = plextv_user(100, "Bob Smith"), plextv_user(200, "bob-smith")
+
+        first = cli_mod.roster_slugs([a, b], tmp_path / "one.json")
+        second = cli_mod.roster_slugs([b, a], tmp_path / "two.json")
+
+        assert first == second
+
+    def test_a_new_account_never_takes_an_existing_users_slug(self, tmp_path: Path):
+        """The trap: plex ids are assigned when the ACCOUNT was created, so someone you invite
+        today can easily have a lower id than an incumbent. If the base slug went to the lowest
+        id each run, the newcomer would inherit the incumbent's label — and therefore their row,
+        full of the incumbent's private picks."""
+        path = tmp_path / "slugs.json"
+        incumbent = plextv_user(500, "Bob Smith")
+        assert cli_mod.roster_slugs([incumbent], path) == {500: "bob_smith"}
+
+        newcomer = plextv_user(100, "bob-smith")  # older Plex account, lower id, same slug
+        slugs = cli_mod.roster_slugs([incumbent, newcomer], path)
+
+        assert slugs[500] == "bob_smith", "an incumbent's slug — and their row — was reassigned"
+        assert slugs[100] == "bob_smith_2"
+
+    def test_a_users_slug_survives_a_rename(self, tmp_path: Path):
+        path = tmp_path / "slugs.json"
+        assert cli_mod.roster_slugs([plextv_user(100, "mike")], path) == {100: "mike"}
+
+        slugs = cli_mod.roster_slugs([plextv_user(100, "mike_the_second")], path)
+
+        assert slugs[100] == "mike", "a rename moved the label their row was built with"
+
+    def test_a_departure_does_not_shift_the_survivors_slug(self, tmp_path: Path):
+        """`merge_label_excludes` only ever ADDS. If a survivor's slug reverted from `bob_smith_2`
+        to `bob_smith`, the old label would stay excluded on their own filter forever and they
+        would permanently lose sight of their own row."""
+        path = tmp_path / "slugs.json"
+        first, second = plextv_user(100, "Bob Smith"), plextv_user(500, "bob-smith")
+        slugs = cli_mod.roster_slugs([first, second], path)
+        assert slugs[500] == "bob_smith_2"
+
+        slugs = cli_mod.roster_slugs([second], path)  # account 100 leaves
+
+        assert slugs[500] == "bob_smith_2"
+
+    def test_a_lost_map_is_not_silently_rebuilt_when_rows_already_exist(self, tmp_path: Path):
+        """The map cannot be reconstructed from the server: a `rowarr_bob_smith` label does not
+        say WHICH account owns it. Re-deriving it from names would reassign the base slug by
+        ascending account id — which is exactly how a newcomer takes an incumbent's row. If the
+        file is gone and rows exist, stop and say so rather than guess."""
+        path = tmp_path / "slugs.json"
+
+        with pytest.raises(Exception, match="cannot be reconstructed"):
+            cli_mod.roster_slugs([plextv_user(100, "sarah")], path, existing_rows=True)
+
+        # An empty server has nothing to reassign, so a first run seeds freely.
+        assert cli_mod.roster_slugs([plextv_user(100, "sarah")], path, existing_rows=False) == {100: "sarah"}
+
+    def test_reseed_is_an_explicit_choice(self, tmp_path: Path):
+        path = tmp_path / "slugs.json"
+        slugs = cli_mod.roster_slugs([plextv_user(100, "sarah")], path, existing_rows=True, reseed=True)
+        assert slugs == {100: "sarah"}

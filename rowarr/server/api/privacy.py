@@ -45,7 +45,7 @@ async def run_check(request: Request, body: CheckRequest | None = None) -> dict:
         with state.sessions() as session:
             profiles = service.enabled_profiles(session)
         collections = ctx.plex.owned_collections(ctx.config.label_prefix)
-        stored = {slug: label for slug, (label, _) in collections.items()}
+        stored = {slug: row.label for slug, row in collections.items()}
         canary = next(
             (
                 p
@@ -66,7 +66,7 @@ async def run_check(request: Request, body: CheckRequest | None = None) -> dict:
             # ctx.snapshots is the DB-backed store: the canary's pre-probe filters are
             # persisted BEFORE the probe touches their share (plex-safety rule 2).
             return [run_privacy_probe(ctx.plex, ctx.plextv, canary, ctx.snapshots, on_step=on_step)]
-        results = [check_t1(ctx.plextv, profiles, stored)]
+        results = [check_t1(ctx.plextv, ctx.known_slugs, stored)]
         if canary is not None:
             try:
                 results.append(check_t2(ctx.plex, ctx.plextv, canary, collections))
@@ -85,7 +85,13 @@ async def run_check(request: Request, body: CheckRequest | None = None) -> dict:
             session.add(PrivacyCheck(tier=result.tier, passed=result.passed, detail=result.detail))
         session.commit()
     state.bus.publish("privacy.status", {"passed": all(r.passed for r in results)})
-    return {"passed": all(r.passed for r in results), "tiers": {r.tier: r.passed for r in results}}
+    return {
+        "passed": all(r.passed for r in results),
+        "tiers": {r.tier: r.passed for r in results},
+        # A failing privacy check is the one result an owner must be able to act on: which row
+        # is visible to whom. Returning a bare `false` makes them go digging in the database.
+        "detail": {r.tier: r.detail for r in results if not r.passed},
+    }
 
 
 @router.get("/snapshots")

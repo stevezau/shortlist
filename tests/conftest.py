@@ -28,14 +28,20 @@ def make_watched(title: str, days_ago: int = 1, media_type: MediaType = MediaTyp
 
 
 def make_candidate(
-    tmdb_id: int, title: str, *, rating: float = 7.0, seeds: list[Seed] | None = None, **kw
+    tmdb_id: int,
+    title: str,
+    *,
+    rating: float = 7.0,
+    seeds: list[Seed] | None = None,
+    media_type: MediaType = MediaType.MOVIE,
+    **kw,
 ) -> Candidate:
     return Candidate(
         tmdb_id=tmdb_id,
         title=title,
-        media_type=MediaType.MOVIE,
+        media_type=media_type,
         rating=rating,
-        seeds=seeds or [Seed(tmdb_id=1, title="Seed Movie", media_type=MediaType.MOVIE, weight=1.0)],
+        seeds=seeds or [Seed(tmdb_id=1, title="Seed Movie", media_type=media_type, weight=1.0)],
         **kw,
     )
 

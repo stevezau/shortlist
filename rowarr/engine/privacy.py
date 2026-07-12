@@ -19,7 +19,7 @@ from loguru import logger
 from rowarr.engine.models import FilterSnapshot, UserProfile, UserType
 
 if TYPE_CHECKING:
-    from rowarr.engine.clients.plex import PlexTvClient
+    from rowarr.engine.clients.plex import PlexTvClient, PlexTvUser
 
 FILTER_FIELDS = ("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos")
 RESTRICTED_FILTER_FIELDS = ("filterMovies", "filterTelevision")
@@ -120,44 +120,63 @@ class SnapshotStore(Protocol):
     def save(self, snapshot: FilterSnapshot) -> None: ...
 
 
-def desired_excludes(user: UserProfile, enabled_users: list[UserProfile], stored_labels: dict[str, str]) -> set[str]:
-    """Labels user U must NOT see: every other enabled user's EXISTING collection label.
+def desired_excludes(own_label: str | None, stored_labels: dict[str, str]) -> set[str]:
+    """Labels an account must NOT see: every EXISTING Rowarr row's label except their own.
 
-    Only labels that exist on real collections are excluded (`stored_labels` is built from
-    the PMS, so casing matches what Plex stored — Phase 0 finding). A user without a
-    collection yet has nothing to leak, and guessing their label's casing would poison
-    filters with case-variants.
+    Derived from the rows that exist on the server — NOT from the list of users Rowarr manages.
+    A row is visible to everyone whose share filter doesn't exclude it, and Plex does not care
+    whether we consider its owner "enabled", "paused", or in tonight's run. Keying this off the
+    user list is how 45 of a live server's 48 accounts ended up able to see three other people's
+    private rows: only the three managed users ever had excludes written (SFLIX, 2026-07-12).
+
+    `own_label` is resolved by the caller from the account's ID — never from its NAME. Two Plex
+    accounts can have display names that slugify identically, and anyone can rename themselves at
+    any time; deciding "this row is mine" from a name would hand one of them somebody else's row
+    and hide the other's own row from them. `None` means the account owns no row — the right
+    answer for every account Rowarr has never built one for, and they are excluded from all of it.
+
+    Only labels that exist on real collections are excluded (`stored_labels` is built from the
+    PMS, so casing matches what Plex stored — Phase 0 finding). A user without a collection yet
+    has nothing to leak, and guessing their label's casing would poison filters with case-variants.
     """
-    return {
-        stored_labels[other.slug]
-        for other in enabled_users
-        if other.plex_account_id != user.plex_account_id and other.slug in stored_labels
-    }
+    return {label for label in stored_labels.values() if label != own_label}
 
 
 def sync_user_restrictions(
     plextv: PlexTvClient,
     user: UserProfile,
-    enabled_users: list[UserProfile],
+    remote: PlexTvUser | None,
     stored_labels: dict[str, str],
     snapshots: SnapshotStore,
     *,
+    own_label: str | None = None,
     label_prefix: str = "rowarr",
     dry_run: bool = False,
-) -> bool:
+) -> dict[str, tuple[str, str]] | None:
     """Merge the desired rowarr excludes into one user's share filters.
 
-    Steady state (already correct) makes one plex.tv read and ZERO writes.
-    Returns True if a write happened (or would have, in dry-run).
+    `remote` is this user's CURRENT plex.tv record, passed in rather than fetched: the caller
+    already holds the whole roster, and re-fetching it per user would mean a full `GET /api/users`
+    for every account on the server (~96 of them on a 48-user server) every night.
+
+    Steady state (already correct) makes ZERO writes. Returns the {field: (before, after)} diff of
+    what was written — or would be, in dry-run — and None when nothing needed changing. The diff
+    is the audit record: changing someone's Plex share permissions is the most sensitive write
+    Rowarr makes (rule 10).
 
     The owner is never restricted (Plex limitation — skipped, not an error).
     """
     if user.user_type is UserType.OWNER:
         logger.debug("{}: owner is never restricted — skipping", user.username)
-        return False
+        return None
+    if remote is None:
+        # Rowarr knows this user but Plex no longer shares the server with them: there is no
+        # share, so there is no filter to write. Skipping is right — erroring here would let one
+        # stale user row stop every other user's rows from being promoted, every night.
+        logger.info("{}: no longer shares this server — nothing to restrict", user.username)
+        return None
 
-    remote = plextv.get_user(user.plex_account_id)
-    wanted = desired_excludes(user, enabled_users, stored_labels)
+    wanted = desired_excludes(own_label, stored_labels)
     desired_fields = {}
     for fieldname in RESTRICTED_FILTER_FIELDS:
         current = remote.filters[fieldname]
@@ -166,7 +185,7 @@ def sync_user_restrictions(
             desired_fields[fieldname] = merged
 
     if not desired_fields:
-        return False
+        return None
 
     if snapshots.get(user.plex_account_id) is None:
         snapshot = FilterSnapshot(
@@ -184,7 +203,7 @@ def sync_user_restrictions(
     diff = {k: (remote.filters[k], v) for k, v in desired_fields.items()}
     if dry_run:
         logger.info("[dry-run] {}: would merge filters {}", user.username, diff)
-        return True
+        return diff
 
     plextv.update_user_filters(user.plex_account_id, desired_fields)
     readback = plextv.get_user(user.plex_account_id)
@@ -196,7 +215,7 @@ def sync_user_restrictions(
         if got != expected:
             logger.warning("{}: {} persisted but normalized: {!r} -> {!r}", user.username, fieldname, expected, got)
     logger.info("{}: filters merged {}", user.username, diff)
-    return True
+    return diff
 
 
 def restore_user_restrictions(

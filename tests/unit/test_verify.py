@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from rowarr.engine.models import OwnedRow
 from rowarr.engine.verify import check_t1, check_t2, collection_id_from_hub
 from tests.conftest import make_profile, plextv_user
 
@@ -14,8 +15,12 @@ FIXTURES = Path(__file__).parent.parent / "fixtures"
 HUBS = json.loads((FIXTURES / "pms_hubs_home.json").read_text())["MediaContainer"]["Hub"]
 
 STORED = {"sarah": "Rowarr_sarah", "mike": "Rowarr_mike"}
+KNOWN = {100: "sarah", 200: "mike"}  # plex account id -> the slug Rowarr gave it
 # Matches the fixture: sarah's collection is 571285, mike's is 571299.
-COLLECTIONS = {"sarah": ("Rowarr_sarah", 571285), "mike": ("Rowarr_mike", 571299)}
+COLLECTIONS = {
+    "sarah": OwnedRow("Rowarr_sarah", [571285]),
+    "mike": OwnedRow("Rowarr_mike", [571299]),
+}
 
 
 class TestCollectionIdFromHub:
@@ -26,7 +31,6 @@ class TestCollectionIdFromHub:
 
 class TestCheckT1:
     def test_pass_when_all_excludes_present(self, mock_plextv):
-        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [
             plextv_user(
                 100, "sarah", filters={"filterMovies": "label!=Rowarr_mike", "filterTelevision": "label!=Rowarr_mike"}
@@ -35,38 +39,55 @@ class TestCheckT1:
                 200, "mike", filters={"filterMovies": "label!=Rowarr_sarah", "filterTelevision": "label!=Rowarr_sarah"}
             ),
         ]
-        result = check_t1(mock_plextv, [sarah, mike], STORED)
+        result = check_t1(mock_plextv, KNOWN, STORED)
         assert result.passed
         assert result.detail == {}
 
     def test_fail_names_user_and_missing_excludes(self, mock_plextv):
-        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [
             plextv_user(100, "sarah"),  # drifted: no excludes at all
             plextv_user(
                 200, "mike", filters={"filterMovies": "label!=Rowarr_sarah", "filterTelevision": "label!=Rowarr_sarah"}
             ),
         ]
-        result = check_t1(mock_plextv, [sarah, mike], STORED)
+        result = check_t1(mock_plextv, KNOWN, STORED)
         assert not result.passed
         assert "Rowarr_mike" in result.detail["sarah"]
 
-    def test_user_missing_from_plextv_fails(self, mock_plextv):
-        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
+    def test_a_user_who_no_longer_shares_the_server_is_not_a_privacy_failure(self, mock_plextv):
+        """Someone whose share was revoked cannot see anything, so there is nothing to check for
+        them — but their row still exists, and everyone who CAN see the server must still exclude
+        it. T1 asks plex.tv who the audience is rather than trusting Rowarr's own user list."""
         mock_plextv.users = [
             plextv_user(
                 200, "mike", filters={"filterMovies": "label!=Rowarr_sarah", "filterTelevision": "label!=Rowarr_sarah"}
             )
         ]
-        result = check_t1(mock_plextv, [sarah, mike], STORED)
+        result = check_t1(mock_plextv, KNOWN, STORED)
+        assert result.passed
+
+    def test_an_account_rowarr_does_not_manage_must_still_exclude_every_row(self, mock_plextv):
+        """The check that would have caught the live leak: 45 of 48 accounts on a real server had
+        no excludes at all, because only the three users Rowarr managed were ever looked at."""
+        mock_plextv.users = [
+            plextv_user(
+                100, "sarah", filters={"filterMovies": "label!=Rowarr_mike", "filterTelevision": "label!=Rowarr_mike"}
+            ),
+            plextv_user(
+                200, "mike", filters={"filterMovies": "label!=Rowarr_sarah", "filterTelevision": "label!=Rowarr_sarah"}
+            ),
+            plextv_user(300, "stranger"),  # shares the server; Rowarr has never heard of them
+        ]
+
+        result = check_t1(mock_plextv, KNOWN, STORED)
+
         assert not result.passed
-        assert result.detail["sarah"] == "not found on plex.tv"
+        assert "stranger" in result.detail
 
     def test_users_without_collections_expect_no_excludes(self, mock_plextv):
-        sarah, newbie = make_profile("sarah", account_id=100), make_profile("newbie", account_id=300)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(300, "newbie")]
         # Only sarah has a collection; nobody needs excludes for newbie, and newbie needs sarah's.
-        result = check_t1(mock_plextv, [sarah, newbie], {"sarah": "Rowarr_sarah"})
+        result = check_t1(mock_plextv, {100: "sarah", 300: "newbie"}, {"sarah": "Rowarr_sarah"})
         assert not result.passed
         assert "newbie" in result.detail
         assert "sarah" not in result.detail
@@ -107,3 +128,34 @@ class TestCheckT2:
         assert not result.passed
         assert result.detail["leaked"][0]["collection_id"] == 571285
         assert result.detail["leaked"][0]["slug"] == "sarah"
+
+    def test_a_leak_in_a_users_second_library_is_still_a_leak(self, mock_plextv):
+        """A user owns one row per library. Checking only one of them is how a live leak hid:
+        mike's TV row was visible to everyone while T2 reported PASS on his movie row."""
+        sarah = make_profile("sarah", account_id=100)
+        collections = {
+            "sarah": OwnedRow("Rowarr_sarah", [571285]),
+            "mike": OwnedRow("Rowarr_mike", [571299, 571300]),  # movie row + TV row
+        }
+        plex = self._plex_with_fixture_hubs(mock_plextv)
+        plex.user_hubs.return_value = [
+            {"key": "/library/collections/571285/children", "title": "✨ Picked for You"},
+            {"key": "/library/collections/571300/children", "title": "✨ Picked for You"},  # mike's TV row
+        ]
+
+        result = check_t2(plex, mock_plextv, sarah, collections)
+
+        assert not result.passed
+        assert result.detail["leaked"] == [{"title": "✨ Picked for You", "collection_id": 571300, "slug": "mike"}]
+        assert result.detail["foreign_collections_checked"] == 2
+
+    def test_own_row_in_any_library_counts_as_visible(self, mock_plextv):
+        sarah = make_profile("sarah", account_id=100)
+        collections = {"sarah": OwnedRow("Rowarr_sarah", [571285, 571286])}
+        plex = self._plex_with_fixture_hubs(mock_plextv)
+        plex.user_hubs.return_value = [{"key": "/library/collections/571286/children", "title": "Row"}]
+
+        result = check_t2(plex, mock_plextv, sarah, collections)
+
+        assert result.passed
+        assert result.detail["own_row_visible"] is True

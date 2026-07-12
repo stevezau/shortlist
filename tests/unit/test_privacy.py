@@ -83,11 +83,32 @@ class TestMergeLabelExcludes:
         assert merge_label_excludes(raw, {"rowarr_sarah"}) is raw
 
     def test_desired_excludes_only_covers_users_with_real_collections(self):
-        sarah = make_profile("sarah", account_id=100)
-        mike = make_profile("mike", account_id=200)
-        newbie = make_profile("newbie", account_id=300)
         stored = {"mike": "Rowarr_mike"}  # newbie has no collection yet — nothing to leak
-        assert privacy.desired_excludes(sarah, [sarah, mike, newbie], stored) == {"Rowarr_mike"}
+        assert privacy.desired_excludes("Rowarr_sarah", stored) == {"Rowarr_mike"}
+
+    def test_desired_excludes_covers_rows_whose_owner_rowarr_does_not_manage(self):
+        """A row is visible to anyone whose filter doesn't exclude it. Plex does not care that
+        Rowarr considers its owner disabled, paused, or a stranger — so the excludes come from
+        the rows that EXIST, never from the roster of users we happen to be processing."""
+        stored = {"sarah": "Rowarr_sarah", "mike": "Rowarr_mike"}
+
+        # An account that owns no row (own_label=None) is excluded from every one of them.
+        assert privacy.desired_excludes(None, stored) == {"Rowarr_sarah", "Rowarr_mike"}
+
+    def test_a_user_is_never_excluded_from_their_own_row(self):
+        assert privacy.desired_excludes("Rowarr_sarah", {"sarah": "Rowarr_sarah"}) == set()
+
+    def test_identity_is_the_label_not_the_name(self):
+        """Two Plex display names can slugify to the same string, and anyone can rename
+        themselves. If "is this row mine?" were answered from a name, one account would be let
+        off an exclude it needs (they see someone else's row) and another would be excluded from
+        their own. The caller resolves the label from the ACCOUNT ID and passes it here."""
+        stored = {"bob_smith": "Rowarr_bob_smith", "mike": "Rowarr_mike"}
+
+        # A different account whose name happens to slugify to "bob_smith" owns no row...
+        assert privacy.desired_excludes(None, stored) == {"Rowarr_bob_smith", "Rowarr_mike"}
+        # ...while the account that really owns it is not excluded from itself.
+        assert privacy.desired_excludes("Rowarr_bob_smith", stored) == {"Rowarr_mike"}
 
     @given(filter_string, st.sets(st.sampled_from(["Rowarr_a", "Rowarr_b", "Rowarr_c"]), min_size=1, max_size=3))
     def test_merge_never_drops_existing_conditions(self, raw: str, labels: set[str]):
@@ -126,21 +147,28 @@ class TestSyncUserRestrictions:
         # this pins the contract that only filterMovies/filterTelevision are ever PUT
         # (a managed user's restriction PROFILE is parental controls; rule 5).
         managed = make_profile("kid", user_type=UserType.MANAGED, account_id=400)
-        other = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(400, "kid")]
         mock_plextv.update_user_filters.side_effect = lambda _id, fields: mock_plextv.users[0].filters.update(fields)
-        sync_user_restrictions(mock_plextv, managed, [managed, other], {"sarah": "Rowarr_sarah"}, snapshot_store)
+        sync_user_restrictions(
+            mock_plextv,
+            managed,
+            mock_plextv.get_user(managed.plex_account_id),
+            {"sarah": "Rowarr_sarah"},
+            snapshot_store,
+        )
         call = mock_plextv.update_user_filters.call_args
         assert sorted(call.args[1]) == ["filterMovies", "filterTelevision"]
 
     def test_owner_is_never_restricted(self, mock_plextv, snapshot_store):
-        sarah, mike, owner = self._users()
-        wrote = sync_user_restrictions(mock_plextv, owner, [sarah, mike, owner], {}, snapshot_store)
-        assert wrote is False
+        _sarah, _mike, owner = self._users()
+        # The owner is not even on plex.tv's user list, so `remote` is None: they are skipped
+        # before it is ever read (Plex cannot restrict the owner — rule 5).
+        wrote = sync_user_restrictions(mock_plextv, owner, None, {}, snapshot_store)
+        assert wrote is None
         mock_plextv.update_user_filters.assert_not_called()
 
     def test_first_sync_snapshots_then_merges_with_stored_labels(self, mock_plextv, snapshot_store):
-        sarah, mike, owner = self._users()
+        sarah = self._users()[0]
         mock_plextv.users = [plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R"})]
 
         def put(account_id, fields):
@@ -150,9 +178,15 @@ class TestSyncUserRestrictions:
         mock_plextv.update_user_filters.side_effect = put
         stored = {"mike": "Rowarr_mike", "steve": "Rowarr_steve"}
 
-        wrote = sync_user_restrictions(mock_plextv, sarah, [sarah, mike, owner], stored, snapshot_store)
+        wrote = sync_user_restrictions(
+            mock_plextv, sarah, mock_plextv.get_user(sarah.plex_account_id), stored, snapshot_store
+        )
 
-        assert wrote is True
+        # The return value IS the audit record: what changed, on which field, from what to what.
+        assert wrote == {
+            "filterMovies": ("contentRating!=R", "contentRating!=R|label!=Rowarr_mike,Rowarr_steve"),
+            "filterTelevision": ("", "label!=Rowarr_mike,Rowarr_steve"),
+        }
         assert snapshot_store.saved[100].filters["filterMovies"] == "contentRating!=R"
         call = mock_plextv.update_user_filters.call_args
         assert call.args[0] == 100
@@ -161,7 +195,7 @@ class TestSyncUserRestrictions:
         assert call.args[1]["filterTelevision"] == "label!=Rowarr_mike,Rowarr_steve"
 
     def test_steady_state_makes_zero_writes(self, mock_plextv, snapshot_store):
-        sarah, mike, owner = self._users()
+        sarah = self._users()[0]
         mock_plextv.users = [
             plextv_user(
                 100,
@@ -173,31 +207,38 @@ class TestSyncUserRestrictions:
             )
         ]
         stored = {"mike": "Rowarr_mike", "steve": "Rowarr_steve"}
-        wrote = sync_user_restrictions(mock_plextv, sarah, [sarah, mike, owner], stored, snapshot_store)
-        assert wrote is False
+        wrote = sync_user_restrictions(
+            mock_plextv, sarah, mock_plextv.get_user(sarah.plex_account_id), stored, snapshot_store
+        )
+        assert wrote is None
         mock_plextv.update_user_filters.assert_not_called()
 
     def test_dry_run_writes_nothing_but_reports_pending_change(self, mock_plextv, snapshot_store):
-        sarah, mike, owner = self._users()
+        sarah = self._users()[0]
         mock_plextv.users = [plextv_user(100, "sarah")]
         wrote = sync_user_restrictions(
             mock_plextv,
             sarah,
-            [sarah, mike, owner],
+            mock_plextv.get_user(sarah.plex_account_id),
             {"mike": "Rowarr_mike"},
             snapshot_store,
             dry_run=True,
         )
-        assert wrote is True
+        assert wrote == {
+            "filterMovies": ("", "label!=Rowarr_mike"),
+            "filterTelevision": ("", "label!=Rowarr_mike"),
+        }
         mock_plextv.update_user_filters.assert_not_called()
         assert snapshot_store.saved == {}
 
     def test_readback_missing_exclude_raises(self, mock_plextv, snapshot_store):
-        sarah, mike, owner = self._users()
+        sarah = self._users()[0]
         mock_plextv.users = [plextv_user(100, "sarah")]
         mock_plextv.update_user_filters.side_effect = lambda *a: None  # write silently doesn't stick
         with pytest.raises(RuntimeError, match="read-back missing"):
-            sync_user_restrictions(mock_plextv, sarah, [sarah, mike, owner], {"mike": "Rowarr_mike"}, snapshot_store)
+            sync_user_restrictions(
+                mock_plextv, sarah, mock_plextv.get_user(sarah.plex_account_id), {"mike": "Rowarr_mike"}, snapshot_store
+            )
 
 
 class TestRestore:

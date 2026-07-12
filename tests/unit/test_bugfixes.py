@@ -9,7 +9,7 @@ import pytest
 
 import rowarr.server.services.run_service as run_service_mod
 from rowarr.engine.delivery import DEFAULT_ROW_NAME, render_row_name
-from rowarr.engine.models import Pick
+from rowarr.engine.models import MediaType, Pick
 from rowarr.server.db.models import User
 from rowarr.server.db.session import make_engine, make_session_factory, run_migrations
 from rowarr.server.services.run_service import RunService
@@ -20,7 +20,9 @@ from tests.conftest import make_profile
 
 
 def pick(seed_title: str | None) -> Pick:
-    return Pick(tmdb_id=1, rating_key=1, title="Movie", rank=1, reason="r", seed_title=seed_title)
+    return Pick(
+        tmdb_id=1, rating_key=1, title="Movie", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title=seed_title
+    )
 
 
 class TestColdStartRowName:

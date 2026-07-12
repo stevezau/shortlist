@@ -104,6 +104,10 @@ class PickRow(Base):
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     tmdb_id: Mapped[int] = mapped_column(Integer)
+    # A TMDB id is unique only within its namespace, so the pair (tmdb_id, media_type) is what
+    # identifies a title — the staleness guard reads these back and would otherwise let a movie
+    # suppress the show that shares its number.
+    media_type: Mapped[str] = mapped_column(String(16))  # no default: a forgotten one is the bug
     rating_key: Mapped[int] = mapped_column(Integer)
     rank: Mapped[int] = mapped_column(Integer)
     title: Mapped[str] = mapped_column(String(512), default="")

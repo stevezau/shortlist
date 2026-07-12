@@ -14,10 +14,11 @@ from rowarr.engine import ranking
 from rowarr.engine.clients.plex import PlexClient, PlexTvClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import Curator, CuratorError, NullCurator
-from rowarr.engine.delivery import deliver_row
+from rowarr.engine.delivery import deliver_rows, sweep_unhidable_rows
 from rowarr.engine.history import HistorySource, derive_seeds
 from rowarr.engine.models import (
     Candidate,
+    CollectionDiff,
     EngineConfig,
     MediaType,
     Pick,
@@ -40,7 +41,14 @@ class EngineContext:
     history_source: HistorySource
     curator: Curator
     snapshots: SnapshotStore
-    recent_picks: dict[str, set[int]] = field(default_factory=dict)  # slug -> tmdb_ids (staleness guard)
+    # slug -> {(tmdb_id, media_type)}: the staleness guard. Keyed on the PAIR because TMDB ids
+    # are unique only within a namespace — movie 550 and TV 550 are different titles.
+    recent_picks: dict[str, set[tuple[int, MediaType]]] = field(default_factory=dict)
+    # plex account id -> the slug Rowarr assigned that account, for EVERY user it knows (not just
+    # tonight's). This is how "whose row is this?" is answered. It cannot be answered from a name:
+    # people rename themselves, and two display names can slugify to the same string — either
+    # would silently hand one account another's row.
+    known_slugs: dict[int, str] = field(default_factory=dict)
     progress: Callable[[str, str, dict], None] | None = None  # (user_slug, stage, counts) -> None
 
 
@@ -63,23 +71,67 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     report = RunReport(started_at=datetime.now(UTC), dry_run=ctx.config.dry_run)
 
     sections = ctx.plex.sections()
+    targets = ctx.plex.sections_by_type()
+    target_keys = {section.key for section in targets.values()}
+
+    # Two indexes, because they answer different questions.
+    #
+    # `seed_index` covers EVERY library: it turns what a user WATCHED into a TMDB id, and people
+    # watch films in "4K Movies" too. Narrowing it would silently give those users no seeds, no
+    # candidates, and an empty row — while the run still reported success.
+    #
+    # `library_index` covers only the libraries we deliver to: it decides what may be RECOMMENDED,
+    # and a pick from a library that never gets a collection could never be shown to anyone.
+    seed_index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
     library_index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
     for section in sections:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-        library_index[kind].update(ctx.plex.build_library_index(section))
-    movie_section = next((s for s in sections if s.type == "movie"), None)
+        index = ctx.plex.build_library_index(section)
+        seed_index[kind].update(index)
+        if section.key in target_keys:
+            library_index[kind].update(index)
+        else:
+            logger.info(
+                "library '{}': rows are built in '{}' instead, but watches here still count",
+                section.title,
+                targets[kind].title,
+            )
+
+    # BEFORE ANY USER WORK: delete every row on the server that Plex cannot hide.
+    #
+    # This is server-wide, not per-user, and it is deliberately not inside the loop below. A row's
+    # hideability has nothing to do with whether its owner is enabled tonight, so scoping the
+    # sweep to `users` would let one click of "pause" — or `paused_all`, which makes `users` empty
+    # — turn a live leak into a permanent one, silently, with every run reporting green.
+    #
+    # It also runs before anything that can fail. TMDB rate-limits, Tautulli disappears, the PMS
+    # times out; none of that may leave a row visible to everyone for another night.
+    try:
+        # The accumulator is the report's own dict, so rows deleted before any mid-walk failure
+        # are still audited — a destructive write must never go unrecorded (rule 10).
+        sweep_unhidable_rows(ctx.plex, ctx.config, dry_run=ctx.config.dry_run, deleted=report.swept_rows)
+    except Exception as e:
+        # Fail closed. We cannot prove the server has no unhidable rows, so we do not write more.
+        report.error = f"unhidable-row sweep failed: {type(e).__name__}: {e}"
+        report.finished_at = datetime.now(UTC)
+        logger.exception("could not sweep unhidable rows — refusing to write anything this run")
+        return report
 
     # Preload label casing + collection ids from the PMS — the source of truth survives
     # restarts and covers users whose delivery fails this run.
-    stored_labels = {slug: label for slug, (label, _) in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
+    stored_labels = {slug: row.label for slug, row in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
 
     to_promote: list[UserProfile] = []
     for user in users:
         user_report = UserRunReport(username=user.username, slug=user.slug)
+        # A row swept for this user is part of their story this run — but the swept dict is the
+        # run-level record, so a paused user's deletion is never lost just because they have no
+        # UserRunReport.
+        swept_titles = report.swept_rows.get(user.slug, [])
         report.users.append(user_report)
         started = time.monotonic()
         try:
-            delivered = _run_user(ctx, user, users, library_index, movie_section, stored_labels, user_report)
+            delivered = _run_user(ctx, user, seed_index, library_index, stored_labels, user_report)
             if delivered:
                 to_promote.append(user)
         except Exception as e:
@@ -87,27 +139,91 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
             user_report.error = f"{type(e).__name__}: {e}"
             logger.exception("{}: pipeline failed", user.username)
         finally:
+            if swept_titles:
+                if user_report.diff is None:
+                    user_report.diff = CollectionDiff(deleted=list(swept_titles))
+                else:
+                    user_report.diff.deleted = list(swept_titles) + user_report.diff.deleted
             user_report.duration_s = round(time.monotonic() - started, 2)
 
-    # Privacy sync runs for EVERY user — delivery failure doesn't exempt a user from
-    # excluding rows that already exist or were just created.
+    # The PMS is the source of truth for which rows exist, so ask it again before writing any
+    # share filter. Whatever happened above — a delivery that failed half-way, a crash, a row left
+    # by an older version — every row that EXISTS must be excluded on every other user's share.
+    # A row missing from this map is a row nobody's filter hides.
     sync_failed = False
-    for user in users:
-        user_report = next(r for r in report.users if r.slug == user.slug)
+    if not ctx.config.dry_run:
         try:
-            user_report.privacy_synced = sync_user_restrictions(
+            stored_labels.update(
+                {slug: row.label for slug, row in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
+            )
+        except Exception as e:
+            # We can no longer enumerate what exists, so we cannot promise the filters cover it.
+            # Sync with what we know, but promote nothing: an unpromoted row is not on anyone's
+            # Home screen, and the next run will put this right.
+            sync_failed = True
+            report.error = f"could not re-read collections before the privacy sync: {type(e).__name__}: {e}"
+            logger.exception("could not re-read collections before the privacy sync — nothing will be promoted")
+
+    # Sync EVERY account that shares this server — not the users we happened to process.
+    #
+    # A row is visible to anyone whose share filter doesn't exclude it. Plex does not care that we
+    # consider its owner "not enabled in Rowarr" or "not in tonight's run". Syncing only the
+    # processed users is how, on a live server, 45 of 48 accounts ended up able to see three other
+    # people's private rows: only the three Rowarr managed had excludes written at all. It is also
+    # why `rowarr run --user <slug>` — the documented rollout command — used to mint a row that
+    # nobody's filter hid.
+    #
+    # We ask plex.tv who can see the server rather than trusting our own user table, because the
+    # audience is Plex's fact, not ours.
+    try:
+        roster = {remote.id: remote for remote in ctx.plextv.list_users()}
+    except Exception as e:
+        # The sweep above has already DELETED rows. Returning the report (rather than letting this
+        # escape) is what keeps those deletions in the audit trail (rule 10).
+        report.error = f"could not read the plex.tv user list: {type(e).__name__}: {e}"
+        report.finished_at = datetime.now(UTC)
+        logger.exception("could not read the plex.tv user list — no filters written, nothing promoted")
+        return report
+
+    # Whose row is whose, by ACCOUNT ID. Never by name: people rename themselves, and two display
+    # names can slugify to the same string — either would quietly hand one account another's row.
+    # The profiles the adapter handed us are authoritative (their slug is the one in Rowarr's own
+    # records); `known_slugs` covers everyone else Rowarr knows but isn't processing tonight. An
+    # account in neither owns no row, and is therefore excluded from every one of them.
+    own_slugs = {**ctx.known_slugs, **{u.plex_account_id: u.slug for u in users}}
+
+    audience = _server_audience(users, roster, own_slugs)
+    reports = {r.slug: r for r in report.users}
+    for user in audience:
+        user_report = reports.get(user.slug)
+        try:
+            own_slug = own_slugs.get(user.plex_account_id)
+            written = sync_user_restrictions(
                 ctx.plextv,
                 user,
-                users,
+                roster.get(user.plex_account_id),  # .get: a user Rowarr knows may be off the share
                 stored_labels,
                 ctx.snapshots,
+                own_label=stored_labels.get(own_slug) if own_slug else None,
                 label_prefix=ctx.config.label_prefix,
                 dry_run=ctx.config.dry_run,
             )
+            if written:
+                # Every share we touch, audited by account id — most of these accounts have no
+                # UserRunReport to record it on (rule 10).
+                report.filter_writes[user.plex_account_id] = {"username": user.username, "fields": written}
+            if user_report is not None:
+                user_report.privacy_synced = bool(written)
         except Exception as e:
+            # One user's filter not being written means the rows are not private. Nothing gets
+            # promoted this run — including for users whose own sync succeeded.
             sync_failed = True
-            user_report.status = "error"
-            user_report.error = (user_report.error or "") + f" | privacy sync: {type(e).__name__}: {e}"
+            message = f"privacy sync for {user.username}: {type(e).__name__}: {e}"
+            if user_report is not None:
+                user_report.status = "error"
+                user_report.error = f"{user_report.error} | {message}" if user_report.error else message
+            else:
+                report.error = f"{report.error} | {message}" if report.error else message
             logger.exception("{}: privacy sync failed", user.username)
 
     filters_ok = not sync_failed
@@ -120,9 +236,12 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
             logger.warning("{}: promotion skipped — a privacy sync failed this run", user.username)
             continue
         try:
-            collection = ctx.plex.find_owned_collection(movie_section, ctx.config.label_prefix, user.slug)
-            if collection is not None:
-                ctx.plex.promote(collection, shared=True)
+            # Every library the user has a row in — promoting only the movie one would leave
+            # their TV row unpromoted, i.e. invisible to the one person meant to see it.
+            for section in targets.values():
+                collection = ctx.plex.find_owned_collection(section, ctx.config.label_prefix, user.slug)
+                if collection is not None:
+                    ctx.plex.promote(collection, shared=True)
         except Exception as e:
             user_report.status = "error"
             user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
@@ -134,12 +253,47 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     return report
 
 
+def _server_audience(processed: list[UserProfile], roster: dict, known_slugs: dict[int, str]) -> list[UserProfile]:
+    """Everyone who can see this server — the audience the rows must be hidden from.
+
+    Rowarr's own user list is not the answer: it holds the people we build rows FOR, while the
+    people rows must be hidden FROM is every account the server is shared with. A user Rowarr has
+    never heard of still sees every row whose label their filter doesn't exclude.
+
+    Accounts are matched by plex ACCOUNT ID, never by name. `known_slugs` is the adapter's durable
+    account -> slug map (the server's users table; the CLI's slugs.json), so a user who renames
+    themselves keeps the slug their row's label was built from. Rebuilding the profile from their
+    current username instead would hand them a different slug, and `desired_excludes` would then
+    decide their own row belonged to someone else and hide it from them.
+
+    The owner is included here and skipped by `sync_user_restrictions` (Plex cannot restrict the
+    owner — rule 5).
+    """
+    known = {u.plex_account_id: u for u in processed}
+    audience = list(processed)
+    for account_id, remote in roster.items():
+        if account_id in known:
+            continue
+        audience.append(
+            UserProfile(
+                username=remote.username,
+                plex_account_id=account_id,
+                user_type=remote.user_type,
+                # The slug Rowarr already gave this account — NOT one derived from their current
+                # name. Empty for an account Rowarr has never seen, in which case UserProfile
+                # derives one; that is safe precisely because such an account owns no row for the
+                # derived slug to be wrong about.
+                slug=known_slugs.get(account_id, ""),
+            )
+        )
+    return audience
+
+
 def _run_user(
     ctx: EngineContext,
     user: UserProfile,
-    all_users: list[UserProfile],
+    seed_index: dict[MediaType, dict[int, int]],
     library_index: dict[MediaType, dict[int, int]],
-    movie_section,
     stored_labels: dict[str, str],
     user_report: UserRunReport,
 ) -> bool:
@@ -150,18 +304,15 @@ def _run_user(
     user_report.counts.history = len(user.history)
 
     if len(user.history) < cfg.min_history:
-        picks = _cold_start_picks(ctx, user, library_index, cfg)
+        picks = _cold_start_picks(ctx, user, cfg)
         user_report.status = "cold_start"
     else:
+        # Watches resolve against EVERY library (seed_index) — what a user watched in a second
+        # movie library is still what they watched.
+        by_rating_key = {key: tmdb_id for idx in seed_index.values() for tmdb_id, key in idx.items()}
 
         def resolve(item):
-            # Resolve a watched title to its TMDB id via the library's own metadata.
-            if item.rating_key and any(item.rating_key in idx.values() for idx in library_index.values()):
-                for idx in library_index.values():
-                    for tmdb_id, key in idx.items():
-                        if key == item.rating_key:
-                            return tmdb_id
-            return None
+            return by_rating_key.get(item.rating_key) if item.rating_key else None
 
         seeds = derive_seeds(user.history, resolve, max_seeds=cfg.max_seeds)
         user_report.counts.seeds = len(seeds)
@@ -169,17 +320,40 @@ def _run_user(
         pool = candidates_mod.gather_candidates(ctx.tmdb, seeds)
         user_report.counts.candidates = len(pool)
 
-        watched_ids = {s.tmdb_id for s in seeds}
+        watched_ids = {(s.tmdb_id, s.media_type) for s in seeds}
+        recent = ctx.recent_picks.get(user.slug, set())
         in_library = candidates_mod.filter_candidates(
             pool,
             library_index,
             watched_tmdb_ids=watched_ids,
             excluded_genres=user.excluded_genres,
-            recent_pick_ids=ctx.recent_picks.get(user.slug, set()),
+            recent_pick_ids=recent,
         )
         user_report.counts.in_library = len(in_library)
         ranked = ranking.pre_rank(in_library, cfg.candidates_pre_rank)
         user_report.counts.pre_ranked = len(ranked)
+
+        # Titles the staleness guard held back. They are still valid recommendations — they were
+        # simply on the row recently — so they backfill a row that fresh candidates can't fill.
+        # Without this a thin candidate pool SHRINKS the row rather than repeating a title.
+        # (It tops the row up overall; it does not promise every library a share of it.)
+        # TMDB ids are only unique WITHIN a namespace — movie 1399 and TV 1399 are different
+        # titles — so identity here is (id, type), never the id alone.
+        fresh_ids = {(c.tmdb_id, c.media_type) for c in in_library}
+        held_back = ranking.pre_rank(
+            [
+                c
+                for c in candidates_mod.filter_candidates(
+                    pool,
+                    library_index,
+                    watched_tmdb_ids=watched_ids,
+                    excluded_genres=user.excluded_genres,
+                    recent_pick_ids=set(),
+                )
+                if (c.tmdb_id, c.media_type) not in fresh_ids
+            ],
+            cfg.candidates_pre_rank,
+        )
 
         k = user.row_size or cfg.row_size
         _emit(ctx, user.slug, "curating", {"candidates": len(pool), "in_library": len(in_library)})
@@ -190,31 +364,42 @@ def _run_user(
             logger.warning("{}: curator failed ({}); degrading to heuristic mode", user.username, e)
             picks = NullCurator().curate(user, ranked, k)
         if len(picks) < k:
-            picks = _pad_picks(picks, ranked, k)
+            picks = _pad_picks(picks, ranked + held_back, k)
         user_report.status = "ok"
 
     user_report.picks = picks
     user_report.counts.picks = len(picks)
     if not picks:
-        logger.warning("{}: no picks produced — leaving any existing row untouched", user.username)
-        return False
+        logger.warning("{}: no picks produced — existing rows are left as they are", user.username)
 
-    if movie_section is None:
-        raise RuntimeError("no movie section found for delivery")
+    if not ctx.plex.sections_by_type():
+        raise RuntimeError("no movie or show library found for delivery")
     _emit(ctx, user.slug, "delivering", {"picks": len(picks)})
-    diff, stored = deliver_row(ctx.plex, movie_section, user, picks, cfg, dry_run=cfg.dry_run)
-    user_report.diff = diff
-    if not cfg.dry_run:
-        stored_labels[user.slug] = stored
-    return True
+    # The diff and the label map are handed to delivery rather than returned from it: a user has a
+    # row per library, so delivery can half-succeed, and a row that was created and labelled must
+    # end up in `stored_labels` even if the NEXT library's write blows up. Otherwise nobody's share
+    # filter excludes it and the row is visible to everyone — the very leak we are here to fix.
+    # Only a label the PMS actually stored is recorded: excludes are compared case-insensitively,
+    # so a wrongly-cased one would look "already present" forever and never heal.
+    user_report.diff = CollectionDiff()
+    deliver_rows(
+        ctx.plex,
+        user,
+        picks,
+        cfg,
+        dry_run=cfg.dry_run,
+        stored_labels=stored_labels,
+        diff=user_report.diff,
+    )
+    return bool(picks)  # nothing delivered -> nothing to promote
 
 
 def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]:
     """Top up short curator output from the heuristic order (never invents titles)."""
-    have = {p.tmdb_id for p in picks}
+    have = {(p.tmdb_id, p.media_type) for p in picks}  # movie 1399 and TV 1399 are different titles
     fillers = NullCurator().curate(
         UserProfile(username="", plex_account_id=0, user_type=UserType.SHARED),
-        [c for c in ranked if c.tmdb_id not in have],
+        [c for c in ranked if (c.tmdb_id, c.media_type) not in have],
         k - len(picks),
     )
     out = list(picks)
@@ -223,34 +408,42 @@ def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]
     return out
 
 
-def _cold_start_picks(
-    ctx: EngineContext,
-    user: UserProfile,
-    library_index: dict[MediaType, dict[int, int]],
-    cfg: EngineConfig,
-) -> list[Pick]:
-    """ "Popular on <server>" fallback for users with thin history: top-rated unwatched movies."""
-    section = next((s for s in ctx.plex.sections() if s.type == "movie"), None)
-    if section is None:
+def _cold_start_picks(ctx: EngineContext, user: UserProfile, cfg: EngineConfig) -> list[Pick]:
+    """ "Popular on <server>" fallback for a user with thin history: top-rated titles.
+
+    Every library gets a share, not just movies — a movies-only cold start would hand delivery a
+    pick list with no shows in it, and a thin-history night (a Tautulli outage is enough) would
+    then leave a TV watcher with a row of films they never asked for.
+    """
+    sections = ctx.plex.sections_by_type()
+    if not sections:
         return []
-    top = section.search(sort="audienceRating:desc", limit=cfg.row_size * 2)
-    picks = []
-    for item in top:
-        tmdb_id = next(
-            (int(g.id.removeprefix("tmdb://")) for g in getattr(item, "guids", []) if g.id.startswith("tmdb://")),
-            None,
-        )
-        if tmdb_id is None:
-            continue
-        picks.append(
-            Pick(
-                tmdb_id=tmdb_id,
-                rating_key=item.ratingKey,
-                title=item.title,
-                rank=len(picks) + 1,
-                reason="Popular on this server",
-            )
-        )
-        if len(picks) == (user.row_size or cfg.row_size):
+    k = user.row_size or cfg.row_size
+    share = max(1, k // len(sections))
+
+    picks: list[Pick] = []
+    for index, (kind, section) in enumerate(sections.items()):
+        # The last library takes the remainder, so `row_size` titles are delivered, not k - k % n.
+        wanted = k - len(picks) if index == len(sections) - 1 else min(share, k - len(picks))
+        if wanted <= 0:
             break
+        for item in section.search(sort="audienceRating:desc", limit=wanted * 2):
+            tmdb_id = next(
+                (int(g.id.removeprefix("tmdb://")) for g in getattr(item, "guids", []) if g.id.startswith("tmdb://")),
+                None,
+            )
+            if tmdb_id is None:
+                continue
+            picks.append(
+                Pick(
+                    tmdb_id=tmdb_id,
+                    rating_key=item.ratingKey,
+                    title=item.title,
+                    rank=len(picks) + 1,
+                    reason="Popular on this server",
+                    media_type=kind,
+                )
+            )
+            if len([p for p in picks if p.media_type is kind]) == wanted:
+                break
     return picks

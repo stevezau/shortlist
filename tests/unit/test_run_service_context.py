@@ -10,6 +10,7 @@ import pytest
 
 import rowarr.server.services.run_service as run_service_mod
 from rowarr.engine.history import FallbackHistorySource, PlexHistorySource
+from rowarr.engine.models import MediaType
 from rowarr.server.db.models import PickRow, PrivacyCheck, Server, User
 from rowarr.server.db.session import make_engine, make_session_factory, run_migrations
 from rowarr.server.services.run_service import RunService
@@ -81,10 +82,27 @@ class TestBuildContext:
             session.commit()
             user_id = session.query(User).one().id
             for i in range(10):
-                session.add(PickRow(run_id=run.id, user_id=user_id, tmdb_id=100 + i, rating_key=i, rank=1))
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=user_id,
+                        tmdb_id=100 + i,
+                        media_type="show" if i % 2 else "movie",
+                        rating_key=i,
+                        rank=1,
+                    )
+                )
             session.commit()
         ctx = service.build_context(dry_run=True)
-        assert ctx.recent_picks["sarah"] == {104, 105, 106, 107, 108, 109}  # newest 6 only
+        # Keyed on (id, type): a recently-picked movie must not suppress the show sharing its id.
+        assert ctx.recent_picks["sarah"] == {
+            (104, MediaType.MOVIE),
+            (105, MediaType.SHOW),
+            (106, MediaType.MOVIE),
+            (107, MediaType.SHOW),
+            (108, MediaType.MOVIE),
+            (109, MediaType.SHOW),
+        }  # newest 6 only
 
 
 class TestServerPrivacyGate:

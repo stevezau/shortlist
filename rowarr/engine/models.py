@@ -74,13 +74,21 @@ class Candidate:
 
 @dataclass(frozen=True)
 class Pick:
-    """A final ranked recommendation delivered to the user's row."""
+    """A final ranked recommendation delivered to the user's row.
+
+    `media_type` decides which library the pick's collection lives in. Plex collections belong
+    to exactly one library section, and a collection holding items of the wrong type is matched
+    by neither `filterMovies` nor `filterTelevision` — so it can never be hidden from other
+    users. Delivering a show into a movie collection is therefore a privacy bug, not a cosmetic
+    one (SFLIX, 2026-07-12).
+    """
 
     tmdb_id: int
     rating_key: int
     title: str
     rank: int
     reason: str
+    media_type: MediaType  # required on purpose: a forgotten default is exactly the bug above
     seed_tmdb_id: int | None = None
     seed_title: str | None = None
 
@@ -137,13 +145,27 @@ class StageCounts:
 
 @dataclass
 class CollectionDiff:
-    """What delivery changed (or would change, in dry-run) on the user's collection."""
+    """What delivery changed (or would change, in dry-run) on the user's collections."""
 
     added: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     kept: list[str] = field(default_factory=list)
+    deleted: list[str] = field(default_factory=list)  # rows the sweep removed (Plex could not hide them)
     collection_title: str = ""
     created: bool = False
+
+
+@dataclass
+class OwnedRow:
+    """Every Rowarr collection belonging to one user, across libraries.
+
+    A user gets at most one collection per library section (movies, shows), all carrying the
+    same `rowarr_<slug>` label — which is what the share-filter excludes key off. The privacy
+    check must know about ALL of them: a leak in any library is a leak.
+    """
+
+    label: str  # as stored by Plex, which title-cases labels
+    rating_keys: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -170,10 +192,20 @@ class RunReport:
     finished_at: datetime | None = None
     dry_run: bool = False
     users: list[UserRunReport] = field(default_factory=list)
+    # Rows deleted because Plex could not hide them, keyed by the slug that owned them. Kept at
+    # run level because the sweep covers the whole SERVER: a leaking row belonging to a paused or
+    # disabled user is still a leaking row, and nobody would ever see it in a per-user report.
+    swept_rows: dict[str, list[str]] = field(default_factory=dict)
+    # Share filters we changed, keyed by plex account id. Editing someone's Plex share permissions
+    # is the most sensitive write Rowarr makes, and most of the accounts we write to are not in
+    # any run's user list — so without this, "what changed on whose share at 03:31" would have no
+    # answer for them at all (plex-safety rule 10).
+    filter_writes: dict[int, dict] = field(default_factory=dict)
+    error: str | None = None  # a run-level failure (e.g. the sweep itself could not run)
 
     @property
     def ok(self) -> bool:
-        return all(u.status != "error" for u in self.users)
+        return self.error is None and all(u.status != "error" for u in self.users)
 
 
 @dataclass(frozen=True)

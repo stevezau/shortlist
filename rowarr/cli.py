@@ -34,12 +34,12 @@ import click
 import yaml
 from loguru import logger
 
-from rowarr.engine.clients.plex import MIN_PMS_VERSION, PlexClient, PlexTvClient, parse_pms_version
+from rowarr.engine.clients.plex import MIN_PMS_VERSION, PlexClient, PlexTvClient, PlexTvUser, parse_pms_version
 from rowarr.engine.clients.tautulli import TautulliClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import make_curator
 from rowarr.engine.history import FallbackHistorySource, PlexHistorySource, TautulliSource
-from rowarr.engine.models import EngineConfig, FilterSnapshot, UserProfile
+from rowarr.engine.models import EngineConfig, FilterSnapshot, MediaType, UserProfile, slugify
 from rowarr.engine.pipeline import EngineContext
 from rowarr.engine.pipeline import run as engine_run
 from rowarr.engine.privacy import restore_user_restrictions
@@ -95,7 +95,77 @@ class FileCache:
         self._path.write_text(json.dumps(self._data))
 
 
-def load_context(config_dir: Path, dry_run: bool) -> tuple[EngineContext, dict]:
+def _load_recent_picks(path: Path) -> dict[str, set[tuple[int, MediaType]]]:
+    """Staleness guard state, keyed on (tmdb_id, media_type).
+
+    Files written before TV rows existed hold bare ints. Everything in them was a movie — that is
+    why the leak happened — so reading them as movies is accurate, not a guess.
+    """
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text())
+    recent: dict[str, set[tuple[int, MediaType]]] = {}
+    for slug, entries in raw.items():
+        recent[slug] = {
+            (entry, MediaType.MOVIE) if isinstance(entry, int) else (entry[0], MediaType(entry[1])) for entry in entries
+        }
+    return recent
+
+
+def roster_slugs(
+    remote_users: list[PlexTvUser], path: Path, *, existing_rows: bool = False, reseed: bool = False
+) -> dict[int, str]:
+    """plex account id -> the slug Rowarr gave it. Assigned ONCE, never reassigned.
+
+    The slug is what a user's row label is built from, so it has to belong to the ACCOUNT for as
+    long as the account exists — the server keeps it in its users table, and this is the CLI's
+    equivalent. Recomputing it from the live roster each run would let it move:
+
+    * Plex display names are free text, so two of them can slugify to the same string. Whoever
+      resolves the collision second gets `name_2` — and if that were decided fresh every run, a
+      newly invited account with a LOWER plex id (ids come from account creation, not from when
+      you invited them) would take the base slug, i.e. the incumbent's row and their private
+      picks along with it.
+    * When a colliding account leaves, the survivor would revert from `name_2` to `name` — and
+      since `merge_label_excludes` only ever adds, their old label stays excluded on their own
+      filter forever, so they permanently lose sight of their own row.
+
+    A rename never moves the slug either, for the same reason.
+
+    The map cannot be rebuilt from the server: a `rowarr_bob_smith` label does not say WHICH
+    account owns it. So if it is missing while rows already exist, seeding from scratch would be a
+    guess — and a wrong guess hands one person's row, and their private picks, to someone else. We
+    stop instead, and say so.
+    """
+    if not path.exists() and existing_rows and not reseed:
+        raise click.ClickException(
+            f"{path} is missing but this server already has Rowarr rows. That file records which "
+            "Plex account owns which row, and it cannot be reconstructed from the labels alone — "
+            "re-deriving it could hand one user's row to another. Restore it from your /config "
+            "backup, or pass --reseed to accept that rows may be reassigned."
+        )
+    stored = {int(k): v for k, v in json.loads(path.read_text()).items()} if path.exists() else {}
+    taken = set(stored.values())
+    for remote in sorted(remote_users, key=lambda u: u.id):  # stable regardless of response order
+        if remote.id in stored:
+            continue
+        base = slugify(remote.username)
+        slug, n = base, 2
+        while slug in taken:
+            slug = f"{base}_{n}"
+            n += 1
+        taken.add(slug)
+        stored[remote.id] = slug
+    # Atomically: a half-written map is a map that could reassign somebody's row.
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({str(k): v for k, v in sorted(stored.items())}, indent=2))
+    tmp.replace(path)
+    return stored
+
+
+def load_context(
+    config_dir: Path, dry_run: bool, *, reseed: bool = False
+) -> tuple[EngineContext, dict, list[PlexTvUser]]:
     config_path = config_dir / "config.yml"
     if not config_path.exists():
         raise click.ClickException(f"no config at {config_path} — create it first (see docs)")
@@ -124,7 +194,8 @@ def load_context(config_dir: Path, dry_run: bool) -> tuple[EngineContext, dict]:
         dry_run=dry_run,
     )
     recent_path = config_dir / "recent_picks.json"
-    recent = {k: set(v) for k, v in (json.loads(recent_path.read_text()) if recent_path.exists() else {}).items()}
+    recent = _load_recent_picks(recent_path)
+    remote_users = plextv.list_users()
     ctx = EngineContext(
         config=config,
         plex=plex,
@@ -134,17 +205,29 @@ def load_context(config_dir: Path, dry_run: bool) -> tuple[EngineContext, dict]:
         curator=curator,
         snapshots=FileSnapshotStore(config_dir / "snapshots"),
         recent_picks=recent,
+        known_slugs=roster_slugs(
+            remote_users,
+            config_dir / "slugs.json",
+            existing_rows=bool(plex.owned_collections()),
+            reseed=reseed,
+        ),
     )
-    return ctx, raw
+    return ctx, raw, remote_users
 
 
-def select_users(ctx: EngineContext, raw: dict, only: str | None) -> list[UserProfile]:
-    remote = ctx.plextv.list_users()
+def select_users(
+    ctx: EngineContext, raw: dict, only: str | None, remote: list[PlexTvUser] | None = None
+) -> list[UserProfile]:
+    remote = remote if remote is not None else ctx.plextv.list_users()
     wanted = raw.get("users", "all")
     profiles = []
     overrides = raw.get("user_overrides") or {}
     for r in remote:
-        profile = UserProfile(username=r.username, plex_account_id=r.id, user_type=r.user_type)
+        # The slug comes from the context's map, never re-derived: it is what the row's label was
+        # built from, and two of these usernames may slugify identically.
+        profile = UserProfile(
+            username=r.username, plex_account_id=r.id, user_type=r.user_type, slug=ctx.known_slugs.get(r.id, "")
+        )
         if wanted != "all" and r.username not in wanted and profile.slug not in wanted:
             continue
         for key, value in (overrides.get(r.username) or overrides.get(profile.slug) or {}).items():
@@ -204,13 +287,19 @@ def main(ctx: click.Context, config_dir: Path, log_level: str) -> None:
 @main.command("run")
 @click.option("--user", "only", default=None, help="Run for a single user (slug or username).")
 @click.option("--dry-run", is_flag=True, help="Log every would-be write instead of writing.")
+@click.option(
+    "--reseed",
+    is_flag=True,
+    help="Rebuild slugs.json from scratch. Only when it is lost AND you accept that rows may be "
+    "reassigned between users — the labels alone cannot say which account owns which row.",
+)
 @click.pass_obj
-def run_cmd(config_dir: Path, only: str | None, dry_run: bool) -> None:
+def run_cmd(config_dir: Path, only: str | None, dry_run: bool, reseed: bool) -> None:
     """Run the nightly pipeline for all enabled users (or one user)."""
     if not dry_run:
         require_privacy_gate(config_dir)
-    ctx, raw = load_context(config_dir, dry_run)
-    users = select_users(ctx, raw, only)
+    ctx, raw, remote_users = load_context(config_dir, dry_run, reseed=reseed)
+    users = select_users(ctx, raw, only, remote_users)
     logger.info("running for {} user(s): {}", len(users), [u.slug for u in users])
     report = engine_run(ctx, users)
 
@@ -220,9 +309,10 @@ def run_cmd(config_dir: Path, only: str | None, dry_run: bool) -> None:
         history_path = config_dir / "picks_history.jsonl"
         with history_path.open("a") as fh:
             for user_report in report.users:
-                ids = [p.tmdb_id for p in user_report.picks]
-                merged = (list(ctx.recent_picks.get(user_report.slug, set())) + ids)[-staleness * ctx.config.row_size :]
-                ctx.recent_picks[user_report.slug] = set(merged)
+                ids = [[p.tmdb_id, p.media_type.value] for p in user_report.picks]
+                previous = [[i, t.value] for i, t in ctx.recent_picks.get(user_report.slug, set())]
+                merged = (previous + ids)[-staleness * ctx.config.row_size :]
+                ctx.recent_picks[user_report.slug] = {(i, MediaType(t)) for i, t in merged}
                 fh.write(
                     json.dumps(
                         {
@@ -230,14 +320,28 @@ def run_cmd(config_dir: Path, only: str | None, dry_run: bool) -> None:
                             "user": user_report.slug,
                             "status": user_report.status,
                             "picks": [
-                                {"tmdb_id": p.tmdb_id, "title": p.title, "reason": p.reason} for p in user_report.picks
+                                {
+                                    "tmdb_id": p.tmdb_id,
+                                    "media_type": p.media_type.value,
+                                    "title": p.title,
+                                    "reason": p.reason,
+                                }
+                                for p in user_report.picks
                             ],
                         }
                     )
                     + "\n"
                 )
-        recent_path.write_text(json.dumps({k: sorted(v) for k, v in ctx.recent_picks.items()}))
+        recent_path.write_text(
+            json.dumps({slug: sorted([i, t.value] for i, t in picks) for slug, picks in ctx.recent_picks.items()})
+        )
 
+    if report.error:
+        click.echo(f"RUN FAILED: {report.error}", err=True)
+    for slug, titles in report.swept_rows.items():
+        # Loud on purpose: this is us deleting someone's row, and the reason is a privacy fault.
+        verb = "would remove" if dry_run else "removed"
+        click.echo(f"{slug:24} {verb} {len(titles)} row(s) Plex could not hide: {', '.join(titles)}")
     for user_report in report.users:
         click.echo(
             f"{user_report.slug:24} {user_report.status:10} picks={user_report.counts.picks:3} "
@@ -255,8 +359,8 @@ def verify_cmd(config_dir: Path, probe: bool) -> None:
     Records the result to privacy_check.json — `rowarr run` refuses real writes without a
     recent passing record.
     """
-    ctx, raw = load_context(config_dir, dry_run=True)
-    users = select_users(ctx, raw, None)
+    ctx, raw, remote_users = load_context(config_dir, dry_run=True)
+    users = select_users(ctx, raw, None, remote_users)
     if probe:
         canary_name = raw.get("canary")
         canary = next((u for u in users if u.username == canary_name or u.slug == canary_name), None)
@@ -285,8 +389,8 @@ def verify_cmd(config_dir: Path, probe: bool) -> None:
         )
         sys.exit(0 if result.passed else 1)
     collections = ctx.plex.owned_collections("rowarr")
-    stored = {slug: label for slug, (label, _) in collections.items()}  # real casing from the PMS
-    t1 = check_t1(ctx.plextv, users, stored)
+    stored = {slug: row.label for slug, row in collections.items()}  # real casing from the PMS
+    t1 = check_t1(ctx.plextv, ctx.known_slugs, stored)
     click.echo(f"T1 filter read-back: {'PASS' if t1.passed else 'FAIL ' + json.dumps(t1.detail)}")
     ok = t1.passed
     t2 = None
@@ -318,7 +422,7 @@ def verify_cmd(config_dir: Path, probe: bool) -> None:
 @click.pass_obj
 def uninstall_cmd(config_dir: Path, yes: bool, dry_run: bool) -> None:
     """Restore every snapshot and delete every Rowarr collection — server as we found it."""
-    ctx, _raw = load_context(config_dir, dry_run)
+    ctx, _raw, _remote = load_context(config_dir, dry_run)
     snapshots = ctx.snapshots.all()
     click.echo(f"{len(snapshots)} filter snapshot(s) to restore; scanning for rowarr collections…")
     owned = []

@@ -9,9 +9,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func
 
 from rowarr.engine.clients.plex import PlexTvClient
-from rowarr.engine.models import slugify
 from rowarr.server.auth import require_owner
 from rowarr.server.db.models import PickRow, RunUser, Server, User, iso_utc
+from rowarr.server.services.run_service import unique_slug
 from rowarr.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
@@ -114,7 +114,7 @@ async def sync_users(request: Request) -> dict:
                     User(
                         plex_account_id=r.id,
                         username=r.username,
-                        slug=slugify(r.username),
+                        slug=unique_slug(session, r.username),
                         avatar_url=r.avatar_url,
                         user_type=r.user_type.value,
                     )
