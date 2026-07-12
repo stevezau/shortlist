@@ -27,7 +27,7 @@ from fastapi import FastAPI
 
 pytest.importorskip("playwright.sync_api", reason="playwright is not installed")
 
-from playwright.sync_api import Browser, Page, Route, sync_playwright
+from playwright.sync_api import Browser, Page, sync_playwright
 
 from rowarr.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from rowarr.server.db.models import Server, User
@@ -248,6 +248,7 @@ def app(fake_plex, fake_tmdb, reset_fake_plex, tmp_path: Path, monkeypatch) -> I
     """The real Rowarr app pointed at the fakes, with setup already completed."""
     pms_url, plextv_url, state = fake_plex
     monkeypatch.setattr("rowarr.engine.clients.plex.PLEXTV", plextv_url)  # engine uses absolute plex.tv URLs
+    monkeypatch.setattr("rowarr.server.auth.PLEXTV", plextv_url)  # the PIN flow has its own constant
     monkeypatch.setattr("rowarr.engine.clients.tmdb.API", fake_tmdb)
 
     fastapi_app, server = _boot_app(tmp_path)
@@ -300,6 +301,10 @@ def fresh_app(fake_plex, fake_tmdb, reset_fake_plex, tmp_path: Path, monkeypatch
     """
     _, plextv_url, _ = fake_plex
     monkeypatch.setattr("rowarr.engine.clients.plex.PLEXTV", plextv_url)
+    # The auth module has its OWN plex.tv constant (the PIN flow) — without this the real sign-in
+    # would reach for the internet, and the e2e would have to forge the session cookie instead of
+    # letting the product mint it.
+    monkeypatch.setattr("rowarr.server.auth.PLEXTV", plextv_url)
     monkeypatch.setattr("rowarr.engine.clients.tmdb.API", fake_tmdb)
 
     fastapi_app, server = _boot_app(tmp_path)
@@ -345,10 +350,16 @@ def page(browser: Browser, app: RowarrApp) -> Iterator[Page]:
 
 @pytest.fixture
 def fresh_page(browser: Browser, fresh_app: RowarrApp) -> Iterator[Page]:
-    """An owner session against a never-configured app — lands on the wizard."""
-    page = _owner_page(browser, fresh_app)
+    """A brand-new install, opened by someone with NO session — the real first-boot experience.
+
+    Injecting an owner session here would skip the only part of the wizard a new owner cannot
+    avoid: connecting their Plex account. That connection is not a gate in front of setup, it is
+    step 1 OF setup, and it is what claims the instance — so the wizard test has to walk it.
+    """
+    context = browser.new_context(base_url=fresh_app.url)
+    page = context.new_page()
     yield page
-    page.context.close()
+    context.close()
 
 
 def build_real_rows(app: RowarrApp) -> dict:
@@ -365,23 +376,18 @@ def build_real_rows(app: RowarrApp) -> dict:
     return run
 
 
-def stub_plex_pin(page: Page, *, token: str = "owner-token", username: str = "owner") -> None:
-    """Fake the two PIN endpoints in the browser: create -> already-linked with a token.
+def stub_plex_pin(page: Page, app: RowarrApp | None = None, *, username: str = "owner") -> None:
+    """Block only the plex.tv POPUP — the human's trip to plex.tv/link.
 
-    Only the plex.tv round-trip is faked. Everything the wizard does with the token afterwards
-    (/api/setup/probe, /api/setup/link) hits the real backend against the fake Plex.
+    Rowarr's own PIN endpoints are NOT stubbed: they run for real against the fake plex.tv, which
+    serves `/api/v2/pins` and `/api/v2/user`. That matters because those endpoints are what mint
+    the session cookie. An earlier version of this fixture forged the cookie itself, which meant
+    every e2e would still pass if `poll_pin` stopped setting one — the sign-in being tested was
+    the fixture's, not the product's.
+
+    `app` is accepted (and ignored) so callers need not care which mechanism is in play.
     """
-
-    def create(route: Route) -> None:
-        route.fulfill(json={"id": 1234, "code": "ABCD", "client_id": "rowarr-e2e"})
-
-    def poll(route: Route) -> None:
-        # The real endpoint also stashes the Plex token server-side; the app fixture does that
-        # for us (see _seed_pending_token), because the token never travels to the browser.
-        route.fulfill(json={"linked": True, "account_id": OWNER_ACCOUNT_ID, "username": username})
-
-    # Routed on the CONTEXT, not the page: the wizard opens a plex.tv popup, which is a
-    # separate page — a page-scoped route would let it hit the real network.
-    page.context.route("**/api/auth/pin", create)
-    page.context.route("**/api/auth/pin/*", poll)
+    del app, username  # nothing left to fake on our side
+    # Routed on the CONTEXT, not the page: the wizard opens a plex.tv popup, which is a separate
+    # page — a page-scoped route would let it hit the real network.
     page.context.route("https://app.plex.tv/**", lambda route: route.fulfill(body="ok", content_type="text/html"))

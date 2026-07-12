@@ -39,7 +39,7 @@ mkdir rowarr && cd rowarr
 curl -fsSLO https://raw.githubusercontent.com/stevezau/rowarr/master/docker-compose.example.yml
 mv docker-compose.example.yml docker-compose.yml
 docker compose up -d
-# open http://your-host:5959 → Login with Plex → wizard (~10 min to first rows)
+# open http://your-host:5959 → the wizard (connect Plex is step 1) → ~10 min to first rows
 ```
 
 Requirements: PMS ≥ 1.43.2.10687 · Plex Pass on the admin account · a free TMDB key.

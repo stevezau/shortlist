@@ -30,22 +30,26 @@ LOAD = 20_000
 
 
 def _connect_plex(page: Page, pms_url: str) -> None:
-    """Steps 0-1: welcome -> pick the server from the picker -> probe it -> link it.
+    """Steps 0-1: welcome -> connect the Plex account -> pick the server -> probe it -> link it.
 
-    You are already signed in by the time you get here (that happened at the door), so this
-    step must NOT ask for a second Plex login — it opens straight onto your servers, with every
-    address Plex advertises for them already tried from where Rowarr actually runs.
+    Nobody signed in to reach this wizard — on a fresh install there is nothing to sign in TO.
+    Connecting your Plex account is step 1, and it is what claims the instance. Once connected,
+    the picker opens straight onto your servers, with every address Plex advertises for them
+    already tried from where Rowarr actually runs.
     """
     expect(page.get_by_role("heading", name="Welcome")).to_be_visible(timeout=LOAD)
     page.get_by_role("button", name="Connect Plex").click()
     expect(page.get_by_role("heading", name="Connect Plex")).to_be_visible()
 
-    # No second sign-in. The token lives on the server; the browser never sees it.
-    expect(page.get_by_role("button", name="Login with Plex")).to_have_count(0)
+    # THE sign-in — exactly one, and it happens here, inside the step that needs it.
+    page.get_by_role("button", name="Login with Plex").click()
+    expect(page.get_by_role("button", name="Login with Plex")).to_have_count(0, timeout=LOAD)
 
     # The picker lists the server and marks the address that answered. The unreachable one it
     # also advertises must be offered but disabled — a guess would have picked the wrong one.
-    expect(page.get_by_text("FakePlex", exact=True).first).to_be_visible(timeout=LOAD)
+    # SLOW, not LOAD: proving an address is unreachable means waiting for it to time out, which is
+    # the entire point of testing rather than guessing.
+    expect(page.get_by_text("FakePlex", exact=True).first).to_be_visible(timeout=SLOW)
     working = page.locator("button", has_text=pms_url).first
     expect(working).to_be_enabled(timeout=LOAD)
     unreachable = page.locator("button", has_text="10.255.255.1").first
@@ -124,7 +128,7 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: RowarrApp, fa
     """The whole wizard, start to finish, exactly as an owner would walk it."""
     page, app = fresh_page, fresh_app
     pms_url, _, state = fake_plex
-    stub_plex_pin(page)
+    stub_plex_pin(page, app)
 
     page.goto("/")
     expect(page).to_have_url(re.compile(r"/setup$"), timeout=LOAD)
@@ -251,7 +255,7 @@ def test_choosing_ollama_as_the_curator_saves_its_url(fresh_page: Page, fresh_ap
     whole payload 422'd — taking curator.provider down with it and blocking setup entirely."""
     page, app = fresh_page, fresh_app
     pms_url, _, _ = fake_plex
-    stub_plex_pin(page)
+    stub_plex_pin(page, app)
 
     page.goto("/")
     _connect_plex(page, pms_url)
@@ -273,9 +277,9 @@ def test_choosing_ollama_as_the_curator_saves_its_url(fresh_page: Page, fresh_ap
 
 def test_wizard_resumes_on_the_same_step_after_a_reload(fresh_page: Page, fresh_app: RowarrApp, fake_plex):
     """A refresh mid-wizard must not restart it: progress is persisted server-side per step."""
-    page = fresh_page
+    page, app = fresh_page, fresh_app
     pms_url, _, _ = fake_plex
-    stub_plex_pin(page)
+    stub_plex_pin(page, app)
 
     page.goto("/")
     _connect_plex(page, pms_url)
@@ -310,7 +314,7 @@ def test_skipping_the_privacy_check_forces_a_dry_run(
     """
     page, app, state = fresh_page, fresh_app, reset_fake_plex
     pms_url, _, _ = fake_plex
-    stub_plex_pin(page)
+    stub_plex_pin(page, app)
 
     page.goto("/")
     _connect_plex(page, pms_url)

@@ -132,6 +132,7 @@ export function SetupPage() {
   const area = resolveArea(
     session.data.authenticated,
     setup.data?.completed ?? false,
+    session.data.login_required,
   );
   if (area === "login") return <Navigate to="/login" replace />;
   if (area === "app") return <Navigate to="/" replace />;

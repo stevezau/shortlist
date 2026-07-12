@@ -5,12 +5,24 @@ import type { PinStatus } from "./types";
 
 export type AppArea = "login" | "setup" | "app";
 
-/** Where a visitor belongs, given auth + setup state. Pure — unit-tested. */
+/**
+ * Where a visitor belongs, given auth + setup state. Pure — unit-tested.
+ *
+ * An install with nothing worth protecting opens straight into the wizard: no Plex server linked,
+ * no token, no users. Being asked to sign in before you can configure anything is a door with no
+ * house behind it. Signing in with Plex is not a gate in front of setup; it IS a step of setup
+ * ("connect your Plex server"), and it's the step that claims the instance.
+ *
+ * `loginRequired` is the SERVER's judgement of that, not ours — it is true the moment there is a
+ * linked server OR a Plex token seeded from the environment, because an instance can hold a token
+ * worth stealing while nobody has claimed it.
+ */
 export function resolveArea(
   authenticated: boolean,
   setupCompleted: boolean,
+  loginRequired: boolean,
 ): AppArea {
-  if (!authenticated) return "login";
+  if (!authenticated) return loginRequired ? "login" : "setup";
   if (!setupCompleted) return "setup";
   return "app";
 }

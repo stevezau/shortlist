@@ -5,8 +5,10 @@ server-side (``app.state.pending_plex_tokens``) until a server is linked, after 
 encrypted in the settings table. Every endpoint here takes the token from one of those two
 places — the SPA never sends or sees it.
 
-Before a server is linked there is no owner yet, so these endpoints accept any authenticated
-Plex account; the account that links the server becomes the owner. Afterwards, owner-only.
+Before a server is linked there is no owner yet. `GET /state` is open on a truly empty instance
+so the wizard renders before you sign in; every endpoint that touches a Plex token (`/servers`,
+`/probe`, `/link`) and `PUT /state` require a signed-in account. The account that links the
+server becomes the owner; afterwards, owner-only.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from pydantic import BaseModel
 
 from rowarr.engine.clients import plex as plex_client_module
 from rowarr.engine.clients.plex import MIN_PMS_VERSION, parse_pms_version
-from rowarr.server.auth import CSRF_HEADER, read_session
+from rowarr.server.auth import require_setup_access
 from rowarr.server.db.models import Server
 from rowarr.server.settings_store import SettingsStore
 
@@ -28,22 +30,35 @@ router = APIRouter(prefix="/setup", tags=["setup"])
 
 
 def _require_session_owner_if_linked(request: Request) -> dict:
-    session = read_session(request)
-    if session is None:
-        raise HTTPException(status_code=401, detail="sign in with Plex first")
-    owner_id = request.app.state.owner_account_id()
-    if owner_id is not None and session["account_id"] != owner_id:
-        raise HTTPException(status_code=403, detail="only the server owner can run setup")
-    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
-        raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
-    return session
+    """Setup-wizard access. A thin alias for the shared rule — a duplicated auth check is one that
+    drifts, and an earlier copy of this did exactly that (it 401'd the wizard on a fresh install
+    long after the rest of the app stopped)."""
+    return require_setup_access(request)
 
 
 def _plex_token(request: Request, session: dict) -> str:
-    """The token for this setup session: the pending one from PIN login, or the linked one."""
-    pending = request.app.state.pending_plex_tokens.get(session["account_id"])
+    """The token for this setup session: the one THIS caller minted at PIN login, or — only for the
+    confirmed owner — the one already stored.
+
+    This is the line that decides who can borrow a Plex token, and it is the exfiltration primitive
+    if it is wrong. `/setup/probe` sends the token to a URL the caller supplies, so a token handed
+    to the wrong person is a token mailed to an attacker's host. The rules:
+
+    * A caller's OWN pending token (from their PIN sign-in this run) is always theirs to use.
+    * The STORED token is the owner's. It is returned only when the caller IS the owner — never to
+      a signed-in stranger on an unclaimed, secret-seeded instance, and never (as before) to an
+      anonymous one. `pending_plex_tokens` is a per-process dict, so a stranger's pending entry is
+      routinely absent (a restart, or another worker) — falling back to the stored token for them
+      would be the whole hole.
+    """
+    account_id = session.get("account_id")
+    if account_id is None:
+        raise HTTPException(status_code=401, detail="not signed in — use Login with Plex")
+    pending = request.app.state.pending_plex_tokens.get(account_id)
     if pending:
         return pending
+    if request.app.state.owner_account_id() != account_id:
+        raise HTTPException(status_code=409, detail="sign in with Plex again — the setup session expired")
     with request.app.state.sessions() as db:
         token = SettingsStore(db, request.app.state.secrets).get("plex.token")
     if not token:
@@ -190,6 +205,10 @@ class LinkRequest(BaseModel):
 async def link_server(body: LinkRequest, request: Request) -> dict:
     """Persist the chosen server; the authenticated account must be its owner."""
     session_data = _require_session_owner_if_linked(request)
+    if "account_id" not in session_data:
+        # Claiming an instance is the one thing that MUST be attributable to a Plex account: it is
+        # what decides who owns it forever.
+        raise HTTPException(status_code=401, detail="sign in with Plex to claim this instance")
     if session_data["account_id"] != body.owner_account_id:
         raise HTTPException(status_code=403, detail="you can only link a server your account owns")
     state = request.app.state
@@ -242,7 +261,12 @@ async def get_state(request: Request) -> dict:
 
 @router.put("/state")
 async def put_state(body: WizardState, request: Request) -> dict:
-    _require_session_owner_if_linked(request)
+    session = _require_session_owner_if_linked(request)
+    if "account_id" not in session:
+        # Nothing worth saving happens before you connect Plex (that's step 1), and this keeps an
+        # anonymous caller from scribbling wizard progress — or flipping setup.completed — on an
+        # empty instance. GET /state stays open so the wizard still renders pre-sign-in.
+        raise HTTPException(status_code=401, detail="sign in with Plex first")
     with request.app.state.sessions() as db:
         store = SettingsStore(db, request.app.state.secrets)
         store.set("setup.step", body.step)

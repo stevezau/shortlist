@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, X } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 
@@ -8,6 +8,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, ApiError } from "@/lib/api";
+import { PlexPinButton } from "@/components/plex-pin-button";
+import { queryKeys, useSession } from "@/lib/queries";
 import type { PlexServer, ProbeCheck, ProbeResult } from "@/lib/types";
 
 import type { StepProps } from "./step-props";
@@ -40,21 +42,26 @@ function connectionLabel(connection: PlexServer["connections"][number]) {
 }
 
 /**
- * Step 1 — pick the server, check it, link it.
+ * Step 1 — connect your Plex account, pick the server, check it, link it.
  *
- * You are already signed in (that happened at the door), and your Plex token never leaves the
- * backend — so this step opens straight onto the servers your account can see, with every
- * address Plex advertises for them already tried. Only your network knows which one works from
- * where Rowarr runs, so we test rather than guess. The URL stays editable regardless.
+ * Signing in with Plex is not a gate in front of the wizard; it IS this step. There is nothing to
+ * sign in TO until a server is linked, so a fresh install starts here and this is where you
+ * connect the account. Your token never reaches the browser — the backend holds it — and once
+ * you're connected this opens straight onto the servers your account can see, with every address
+ * Plex advertises for them already tried. Only your network knows which one works from where
+ * Rowarr runs, so we test rather than guess. The URL stays editable regardless.
  */
 export function StepConnect({ data, update }: StepProps) {
   const [plexUrl, setPlexUrl] = useState(data.plex_url ?? "");
   const urlId = useId();
+  const session = useSession();
+  const queryClient = useQueryClient();
+  const connected = session.data?.authenticated ?? false;
 
   const servers = useQuery({
     queryKey: ["setup", "servers"],
     queryFn: api.getServers,
-    enabled: !data.linked,
+    enabled: connected && !data.linked,
     staleTime: 30_000,
   });
 
@@ -113,6 +120,26 @@ export function StepConnect({ data, update }: StepProps) {
     probe.data.checks.pms_version.ok &&
     probe.data.checks.plex_pass.ok &&
     probe.data.checks.libraries.ok;
+
+  // Nothing here is possible until Rowarr can ask Plex what servers you have — so connecting the
+  // account IS the first thing this step does. No password ever reaches Rowarr, and the token it
+  // gets back stays on the server.
+  if (!connected) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Connect the Plex account that owns your server. Rowarr asks Plex which
+          servers you have — it never sees your password, and your Plex token
+          stays on the server, never in this browser.
+        </p>
+        <PlexPinButton
+          onLinked={() => {
+            void queryClient.invalidateQueries({ queryKey: queryKeys.session });
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

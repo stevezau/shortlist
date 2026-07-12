@@ -18,7 +18,14 @@ mv docker-compose.example.yml docker-compose.yml
 docker compose up -d
 ```
 
-Open `http://your-host:5959`, click **Login with Plex**, and follow the wizard:
+Open `http://your-host:5959`. A fresh install goes straight into the wizard — there is
+nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's
+what claims the instance for you); from then on Rowarr only opens for that account.
+
+> Don't expose an unconfigured Rowarr to the internet: until you link a server, whoever
+> reaches it first can claim it. Once claimed, it's yours.
+
+The wizard then walks:
 
 1. **Connect Plex** — PIN login, pick your server. The capability probe checks your PMS
    version, Plex Pass, and libraries with plain-English results.

@@ -24,7 +24,7 @@ from rowarr.server.scheduler import build_scheduler
 from rowarr.server.services.run_service import RunService
 from rowarr.server.services.secrets import SecretBox
 from rowarr.server.services.sse import EventBus
-from rowarr.server.settings_store import SettingsStore
+from rowarr.server.settings_store import SECRET_KEYS, SettingsStore
 
 WEB_DIST = Path(__file__).parent.parent.parent / "web" / "dist"
 
@@ -65,7 +65,26 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 server = session.query(Server).first()
                 return server.owner_account_id if server else None
 
+        def holds_secrets() -> bool:
+            """Is there anything on this instance worth protecting yet?
+
+            A linked server is the obvious case. The subtle one — and the kind that made an earlier
+            version of the open-wizard gate a secret-exfiltration hole — is a credential the
+            environment seeds with no server row: `PLEX_TOKEN` or `TAUTULLI_APIKEY` (docker-compose
+            ships these commented out). Either is a real, working secret an attacker would want.
+            "Nobody has claimed it" and "there is nothing to steal" are NOT the same question, and
+            only the second one may open the door — so this counts EVERY secret Rowarr stores, not
+            just the token (a curator key has no env-seed today, but SECRET_KEYS is the right list
+            to guard against, not a hand-picked subset that drifts).
+            """
+            with sessions() as session:
+                if session.query(Server).first() is not None:
+                    return True
+                store = SettingsStore(session, secret_box)
+                return any(store.get(key) for key in SECRET_KEYS)
+
         app.state.owner_account_id = owner_account_id
+        app.state.holds_secrets = holds_secrets
 
         with sessions() as session:
             SettingsStore(session, secret_box).seed_from_env(dict(os.environ))

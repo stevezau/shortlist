@@ -44,21 +44,61 @@ def read_session(request: Request) -> dict | None:
         return None
 
 
-def require_owner(request: Request) -> dict:
-    """Dependency: a valid session belonging to the SERVER OWNER; mutations need the CSRF header.
+def _check_csrf(request: Request) -> None:
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
+        raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
 
-    Owner-ness is re-checked on every request (not just at login): a session issued during
-    the pre-link setup window loses all access the moment a different account links a server.
+
+def require_owner(request: Request) -> dict:
+    """The owner, and nobody else. The default gate for everything except the setup wizard.
+
+    An unclaimed instance has no owner, so this refuses everyone until a server is linked — which
+    is correct for settings, runs, privacy, users and system: none of them make sense, or should
+    be reachable, before setup is done. Only the wizard itself may run before there is an owner,
+    and it uses `require_setup_access` for that.
+
+    Owner-ness is re-checked on every request, not just at login: a session issued during the
+    pre-link window loses all access the moment a different account links a server.
     """
+    _check_csrf(request)
     session = read_session(request)
     if session is None:
         raise HTTPException(status_code=401, detail="not signed in — use Login with Plex")
     owner_id = request.app.state.owner_account_id()
-    if owner_id is not None and session.get("account_id") != owner_id:
+    if owner_id is None or session.get("account_id") != owner_id:
         raise HTTPException(status_code=403, detail="only the server owner can use Rowarr")
-    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
-        raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
     return session
+
+
+def require_setup_access(request: Request) -> dict:
+    """Who may drive the setup wizard. Three states, and conflating the first two is how an earlier
+    version of this became a way to steal the owner's Plex token:
+
+    * **Empty** — no server linked AND no secret stored. Nothing to protect and nobody to protect
+      it for, so it is open: a fresh install lands in the wizard instead of a login screen.
+      Connecting Plex IS step 1, and it is what claims the instance.
+    * **Holds secrets but unclaimed** — the environment can seed a real Plex/Tautulli/curator
+      credential with no server row. "Nobody has claimed it" is NOT "there is nothing to steal": an
+      anonymous caller here could point `/setup/probe` at a host they control and have Rowarr send
+      them the seeded secret. So this requires a sign-in — any Plex account, because we do not yet
+      know whose instance it is; whoever links the server becomes the owner.
+    * **Claimed** — it belongs to the account that linked the server, and to nobody else.
+
+    CSRF is required for mutations in every state — otherwise any page you visited could drive a
+    stranger's wizard.
+    """
+    _check_csrf(request)
+    session = read_session(request)
+    owner_id = request.app.state.owner_account_id()
+    if owner_id is not None:
+        if session is None or session.get("account_id") != owner_id:
+            raise HTTPException(status_code=403, detail="only the server owner can run setup")
+        return session
+    if request.app.state.holds_secrets():
+        if session is None:
+            raise HTTPException(status_code=401, detail="not signed in — use Login with Plex")
+        return session  # any Plex account: the one that links the server becomes the owner
+    return session or {"unclaimed": True}
 
 
 @router.post("/pin")
@@ -119,10 +159,14 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
 
 @router.get("/session")
 async def get_session(request: Request) -> dict:
+    # `login_required` is what tells the SPA whether to open the wizard or the login screen. It is
+    # NOT "has someone claimed it" — an instance with a secret seeded from the environment has no
+    # owner and still holds something worth stealing, so it demands a sign-in too.
+    login_required = request.app.state.owner_account_id() is not None or request.app.state.holds_secrets()
     session = read_session(request)
     if session is None:
-        return {"authenticated": False}
-    return {"authenticated": True, **session}
+        return {"authenticated": False, "login_required": login_required}
+    return {"authenticated": True, "login_required": login_required, **session}
 
 
 @router.post("/logout")

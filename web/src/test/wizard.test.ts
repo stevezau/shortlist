@@ -65,17 +65,24 @@ describe("canLeaveStep", () => {
 });
 
 describe("resolveArea (route guards)", () => {
-  it("sends unauthenticated visitors to login regardless of setup", () => {
-    expect(resolveArea(false, false)).toBe("login");
-    expect(resolveArea(false, true)).toBe("login");
+  it("opens the wizard on a fresh install that nobody has claimed", () => {
+    // No Plex server linked yet means no token, no users, no history — nothing to protect and
+    // nobody to protect it for. Signing in with Plex is not a gate in front of setup; it IS a
+    // step of setup, and it is the step that claims the instance.
+    expect(resolveArea(false, false, false)).toBe("setup");
+  });
+
+  it("sends unauthenticated visitors to login once the instance is claimed", () => {
+    expect(resolveArea(false, false, true)).toBe("login");
+    expect(resolveArea(false, true, true)).toBe("login");
   });
 
   it("sends authenticated owners with unfinished setup to the wizard", () => {
-    expect(resolveArea(true, false)).toBe("setup");
+    expect(resolveArea(true, false, true)).toBe("setup");
   });
 
   it("sends fully set-up owners to the app", () => {
-    expect(resolveArea(true, true)).toBe("app");
+    expect(resolveArea(true, true, true)).toBe("app");
   });
 });
 

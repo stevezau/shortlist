@@ -160,6 +160,12 @@ export interface PinStatus {
 /** GET /api/auth/session. */
 export interface Session {
   authenticated: boolean;
+  /**
+   * Does this instance have anything worth protecting yet — a linked server, OR a Plex token
+   * seeded from the environment? If not, the wizard opens without a login; connecting Plex is
+   * step 1, and it is what claims the instance.
+   */
+  login_required: boolean;
   account_id?: number;
   username?: string;
 }

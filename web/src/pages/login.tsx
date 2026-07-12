@@ -24,7 +24,9 @@ export function LoginPage() {
   const authenticated = session.data?.authenticated ?? false;
   // Setup state is owner-only. Asking for it before sign-in 401s, and the visitor would sit
   // behind this very skeleton instead of seeing the button they came here to press.
-  const setup = useSetupState({ enabled: authenticated });
+  const setup = useSetupState({
+    enabled: authenticated || !(session.data?.login_required ?? true),
+  });
   const queryClient = useQueryClient();
 
   if (session.isPending || (authenticated && setup.isPending)) {
@@ -47,7 +49,11 @@ export function LoginPage() {
   }
 
   const completed = setup.data?.completed ?? false;
-  const area = resolveArea(authenticated, completed);
+  const area = resolveArea(
+    authenticated,
+    completed,
+    session.data?.login_required ?? true,
+  );
   if (area !== "login") {
     return <Navigate to={area === "setup" ? "/setup" : "/"} replace />;
   }

@@ -660,6 +660,17 @@ def make_fake_plextv(state: FakePlexState) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"unknown home user {uuid}")
         return JSONResponse({"authToken": f"switch-{user.id}"})
 
+    @app.post("/api/v2/pins")
+    def create_pin() -> JSONResponse:
+        """Mint a PIN. The e2e sign-in must run the REAL endpoint: a browser stub that forged the
+        session cookie would keep passing even if `poll_pin` stopped setting one."""
+        return JSONResponse({"id": 1234, "code": "ABCD"})
+
+    @app.get("/api/v2/pins/{pin_id}")
+    def poll_pin(pin_id: int) -> JSONResponse:
+        """Already linked — a human typed the code at plex.tv while we weren't looking."""
+        return JSONResponse({"id": pin_id, "code": "ABCD", "authToken": state.owner_token})
+
     @app.get("/api/v2/user")
     def whoami(request: Request) -> JSONResponse:
         """Who this token belongs to, and whether they have Plex Pass (the setup probe asks)."""

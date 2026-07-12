@@ -31,6 +31,7 @@ def anonymous_page(browser: Browser, app: RowarrApp) -> Page:
 
 
 def test_an_unauthenticated_visitor_lands_on_the_login_screen(anonymous_page: Page, app: RowarrApp):
+    """Once the instance is CLAIMED (the `app` fixture has a linked server), it is the owner's."""
     page = anonymous_page
     page.goto("/")
 
@@ -38,6 +39,24 @@ def test_an_unauthenticated_visitor_lands_on_the_login_screen(anonymous_page: Pa
     expect(page.get_by_role("button", name="Login with Plex")).to_be_visible(timeout=LOAD)
     # The skeleton must not still be sitting there behind the login card.
     expect(page.get_by_role("button", name="Login with Plex")).to_be_enabled()
+
+
+def test_a_fresh_install_opens_the_wizard_without_asking_anyone_to_sign_in(browser: Browser, fresh_app: RowarrApp):
+    """Nobody has linked a Plex server yet: there is no token, no user list, no history — nothing
+    to protect and nobody to protect it for. Demanding a sign-in first is a door with no house
+    behind it. Signing in with Plex is not a gate in front of setup; it IS a step of setup, and it
+    is the step that claims the instance."""
+    context = browser.new_context(base_url=fresh_app.url)  # no session cookie at all
+    page = context.new_page()
+    try:
+        page.goto("/")
+
+        expect(page).to_have_url(f"{fresh_app.url}/setup", timeout=LOAD)
+        expect(page.get_by_role("heading", name="Welcome")).to_be_visible(timeout=LOAD)
+        # And no login wall in front of it.
+        expect(page.get_by_role("button", name="Login with Plex")).to_have_count(0)
+    finally:
+        context.close()
 
 
 def test_a_protected_route_redirects_a_stranger_to_login(anonymous_page: Page, app: RowarrApp):

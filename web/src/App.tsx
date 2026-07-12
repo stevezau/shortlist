@@ -30,15 +30,20 @@ const queryClient = new QueryClient({
 });
 
 /**
- * Main-app gate: unauthenticated visitors go to /login, authenticated owners
- * with an unfinished wizard go to /setup, everyone else gets the app shell.
+ * Main-app gate.
+ *
+ * A fresh install nobody has claimed goes straight to the wizard — signing in with Plex is not a
+ * gate in front of setup, it IS a step of setup, and it's the one that claims the instance. Once
+ * claimed, an unauthenticated visitor goes to /login, an owner with an unfinished wizard goes to
+ * /setup, and everyone else gets the app.
  */
 function RequireApp() {
   const session = useSession();
-  // Setup state is owner-only: asking for it before we know who this is just 401s, and the
-  // visitor would sit behind a skeleton instead of being shown the login screen.
   const authenticated = session.data?.authenticated ?? false;
-  const setup = useSetupState({ enabled: authenticated });
+  const loginRequired = session.data?.login_required ?? true;
+  // Setup state is owner-only once the instance is claimed: asking for it before we know who this
+  // is just 401s, and the visitor would sit behind a skeleton instead of the login screen.
+  const setup = useSetupState({ enabled: authenticated || !loginRequired });
 
   if (session.isPending) {
     return (
@@ -57,7 +62,7 @@ function RequireApp() {
       </div>
     );
   }
-  if (!authenticated) return <Navigate to="/login" replace />;
+  if (!authenticated && loginRequired) return <Navigate to="/login" replace />;
   if (setup.isPending) {
     return (
       <div className="mx-auto mt-16 w-full max-w-4xl px-4">
@@ -66,7 +71,11 @@ function RequireApp() {
     );
   }
 
-  const area = resolveArea(authenticated, setup.data?.completed ?? false);
+  const area = resolveArea(
+    authenticated,
+    setup.data?.completed ?? false,
+    loginRequired,
+  );
   if (area === "login") return <Navigate to="/login" replace />;
   if (area === "setup") return <Navigate to="/setup" replace />;
   return <AppShell />;
