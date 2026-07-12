@@ -1,0 +1,55 @@
+{
+  "_provenance": "PMS 1.43.3 GET /hubs (Accept: application/json), reconstructed 2026-07-12 from live Phase 0 observations of promoted rowarr collection hubs; names/ids sanitized. Collection hubs carry the collection id only in key/hubKey — never a label.",
+  "MediaContainer": {
+    "size": 4,
+    "Hub": [
+      {
+        "hubKey": "/library/metadata/1001,1002,1003",
+        "key": "/hubs/home/continueWatching",
+        "title": "Continue Watching",
+        "type": "mixed",
+        "hubIdentifier": "home.continue",
+        "context": "hub.home.continue",
+        "size": 3,
+        "more": false,
+        "style": "shelf",
+        "promoted": true
+      },
+      {
+        "key": "/library/collections/571285/children",
+        "hubKey": "/library/collections/571285/children",
+        "title": "✨ Picked for You",
+        "type": "movie",
+        "hubIdentifier": "custom.collection.571285",
+        "context": "hub.custom.collection~68",
+        "size": 15,
+        "more": false,
+        "style": "shelf",
+        "promoted": true
+      },
+      {
+        "key": "/library/collections/571299/children",
+        "hubKey": "/library/collections/571299/children",
+        "title": "✨ Picked for You",
+        "type": "movie",
+        "hubIdentifier": "custom.collection.571299",
+        "context": "hub.custom.collection~69",
+        "size": 12,
+        "more": false,
+        "style": "shelf",
+        "promoted": true
+      },
+      {
+        "key": "/hubs/sections/1/recentlyAdded",
+        "title": "Recently Added Movies",
+        "type": "movie",
+        "hubIdentifier": "movie.recentlyadded.1",
+        "context": "hub.movie.recentlyadded",
+        "size": 20,
+        "more": true,
+        "style": "shelf",
+        "promoted": false
+      }
+    ]
+  }
+}

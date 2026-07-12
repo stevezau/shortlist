@@ -6,7 +6,18 @@ Rowarr watches what each of your users watches, finds similar titles you already
 curate and explain the picks, and puts them on each user's Plex Home screen as their own private
 row — visible only to them. Netflix's killer feature, self-hosted.
 
-**Status: pre-alpha — in design/build.** Nothing to install yet.
+**Status: pre-alpha.** The engine + CLI (Phase 1) work today; the web app is in progress.
+
+## CLI (Phase 1 — early adopters)
+
+```bash
+pip install git+https://github.com/stevezau/rowarr
+mkdir -p /path/to/config && $EDITOR /path/to/config/config.yml   # see rowarr/cli.py docstring
+rowarr --config-dir /path/to/config run --dry-run    # logs every would-be change, writes nothing
+rowarr --config-dir /path/to/config run              # nightly cron target
+rowarr --config-dir /path/to/config verify           # privacy check: T1 filter read-back (+T2 canary)
+rowarr --config-dir /path/to/config uninstall        # restore snapshots, delete rowarr collections
+```
 
 ## How it will work
 

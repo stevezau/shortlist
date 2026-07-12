@@ -31,3 +31,7 @@ web/.vite/
 # OS / editor
 .DS_Store
 .idea/
+
+# Browser/session artifacts
+.playwright-mcp/
+*.jpeg

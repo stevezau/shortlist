@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- plex.tv GET /api/users — shape field-verified live in Phase 0 (2026-07-12).
+     Share filters are attributes of <User>; values here are sanitized. -->
+<MediaContainer friendlyName="myPlex" identifier="com.plexapp.plugins.myplex" size="2">
+  <User id="555000100" title="sarah" username="sarah" email="sarah@example.com"
+        thumb="https://plex.tv/users/abc/avatar" home="0" restricted="0" protected="0"
+        filterAll="" filterMovies="label!=Rowarr_mike" filterTelevision="" filterMusic="" filterPhotos="">
+    <Server id="1" serverId="1" machineIdentifier="fixture-machine-1" name="FixtureServer"
+            lastSeenAt="1752300000" numLibraries="3" allLibraries="1" owned="0" pending="0"/>
+  </User>
+  <User id="555000200" title="kid" username="" email="" thumb="" home="1" restricted="1" protected="0"
+        filterAll="" filterMovies="" filterTelevision="" filterMusic="" filterPhotos="">
+    <Server id="2" serverId="1" machineIdentifier="fixture-machine-1" name="FixtureServer"
+            lastSeenAt="1752300000" numLibraries="3" allLibraries="1" owned="0" pending="0"/>
+  </User>
+</MediaContainer>
