@@ -2,43 +2,61 @@
 
 > A private, AI-curated **"Picked for You"** row for every user on your Plex server.
 
-Rowarr watches what each of your users watches, finds similar titles you already own, has an LLM
-curate and explain the picks, and puts them on each user's Plex Home screen as their own private
-row — visible only to them. Netflix's killer feature, self-hosted.
+[![CI](https://github.com/stevezau/rowarr/actions/workflows/ci.yml/badge.svg)](https://github.com/stevezau/rowarr/actions/workflows/ci.yml)
+[![Docker](https://github.com/stevezau/rowarr/actions/workflows/docker.yml/badge.svg)](https://github.com/stevezau/rowarr/actions/workflows/docker.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![AI-Assisted](https://img.shields.io/badge/AI-assisted%20development-8A2BE2)
 
-**Status: pre-alpha.** The engine + CLI (Phase 1) work today; the web app is in progress.
+Rowarr watches what each of your users watches, asks an LLM to curate what they should watch
+next **from what you already own**, and puts it on their Home screen — privately,
+automatically, every night. Netflix's killer feature, on Plex, without Plex's involvement.
 
-## CLI (Phase 1 — early adopters)
+## Why this couldn't exist before 2026
+
+Per-user private collections were impossible until Plex fixed label restrictions on
+Home/Recommended (v1.43.1) and Related hubs (v1.43.2). Rowarr is built on that fix — and
+**proves it works on your server** with a built-in Privacy Check before writing anything real.
+
+## Features
+
+- 🔒 **Private by design** — each user's row is a labeled collection excluded on every other
+  user's share. Verified by probe before first write, re-verified weekly, snapshotted and
+  reversible.
+- 🧠 **AI that can't hallucinate** — the LLM (Claude / GPT / Gemini / local Ollama) only
+  re-ranks titles verified to exist in your library. **Works with zero AI** too (heuristic
+  mode) — no keys required.
+- 💬 **Explainable** — every pick carries "Because you watched X"; every Plex write lands in
+  an audit feed you can read.
+- 🧹 **Kometa-friendly** — Rowarr never touches collections it didn't create.
+- ↩️ **Provable uninstall** — one flow restores your server exactly as Rowarr found it.
+- 📦 **Homelab-native** — one container, `/config` volume, dark UI, GHCR multi-arch,
+  healthcheck, Unraid template.
+
+## Quick start
 
 ```bash
-pip install git+https://github.com/stevezau/rowarr
-mkdir -p /path/to/config && $EDITOR /path/to/config/config.yml   # see rowarr/cli.py docstring
-rowarr --config-dir /path/to/config run --dry-run    # logs every would-be change, writes nothing
-rowarr --config-dir /path/to/config run              # nightly cron target
-rowarr --config-dir /path/to/config verify           # privacy check: T1 filter read-back (+T2 canary)
-rowarr --config-dir /path/to/config uninstall        # restore snapshots, delete rowarr collections
+mkdir rowarr && cd rowarr
+curl -fsSLO https://raw.githubusercontent.com/stevezau/rowarr/master/docker-compose.example.yml
+mv docker-compose.example.yml docker-compose.yml
+docker compose up -d
+# open http://your-host:5959 → Login with Plex → wizard (~10 min to first rows)
 ```
 
-## How it will work
+Requirements: PMS ≥ 1.43.2.10687 · Plex Pass on the admin account · a free TMDB key.
+Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-started.md).
 
-1. `docker compose up -d` — one container, one `/config` volume
-2. **Login with Plex** → pick your server → pick your users
-3. Choose a curator: Claude / GPT / Gemini / Ollama (local) / None (no AI needed)
-4. The built-in **Privacy Check** proves rows stay private on _your_ server before anything real is written
-5. Every night, each user's row refreshes from their own watch history — with
-   "because you watched …" reasons
+## Documentation
 
-Key properties:
+|                                            |                                          |
+| ------------------------------------------ | ---------------------------------------- |
+| [Getting started](docs/getting-started.md) | Install, wizard, first run               |
+| [Guides](docs/guides.md)                   | UI tour, schedules, CLI, troubleshooting |
+| [Reference](docs/reference.md)             | Settings, API, env vars                  |
+| [FAQ](docs/faq.md)                         | Privacy model, Kometa, uninstall         |
 
-- **Can't hallucinate** — the AI only ranks titles verified to exist in your library
-- **Private by design** — per-user label restrictions (Plex Pass, PMS ≥ 1.43.2), verified weekly
-- **Reversible** — every change is snapshotted; uninstall provably restores your server
-- **Works without AI** — heuristic mode needs zero API keys
+## CLI (headless / cron mode)
 
-## Design documents
-
-- [Product & UX design](.claude/docs/rowarr-design.md)
-- [Architecture & execution plan](.claude/docs/rowarr-architecture.md)
+The same engine without the web app — see [Guides → CLI](docs/guides.md#the-cli).
 
 ## License
 

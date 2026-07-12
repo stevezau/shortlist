@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -40,6 +41,15 @@ class EngineContext:
     curator: Curator
     snapshots: SnapshotStore
     recent_picks: dict[str, set[int]] = field(default_factory=dict)  # slug -> tmdb_ids (staleness guard)
+    progress: Callable[[str, str, dict], None] | None = None  # (user_slug, stage, counts) -> None
+
+
+def _emit(ctx: EngineContext, slug: str, stage: str, counts: dict) -> None:
+    if ctx.progress is not None:
+        try:
+            ctx.progress(slug, stage, counts)
+        except Exception:  # a broken progress listener must never fail a run
+            logger.exception("progress callback failed")
 
 
 def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
@@ -135,6 +145,7 @@ def _run_user(
 ) -> bool:
     """Run stages for one user; returns True when a row was delivered (candidate for promotion)."""
     cfg = ctx.config
+    _emit(ctx, user.slug, "history", {})
     user.history = ctx.history_source.fetch(user, min_completion=cfg.min_completion)
     user_report.counts.history = len(user.history)
 
@@ -154,6 +165,7 @@ def _run_user(
 
         seeds = derive_seeds(user.history, resolve, max_seeds=cfg.max_seeds)
         user_report.counts.seeds = len(seeds)
+        _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": len(seeds)})
         pool = candidates_mod.gather_candidates(ctx.tmdb, seeds)
         user_report.counts.candidates = len(pool)
 
@@ -170,6 +182,7 @@ def _run_user(
         user_report.counts.pre_ranked = len(ranked)
 
         k = user.row_size or cfg.row_size
+        _emit(ctx, user.slug, "curating", {"candidates": len(pool), "in_library": len(in_library)})
         try:
             picks = ctx.curator.curate(user, ranked, k)
             user_report.llm_tokens = getattr(ctx.curator, "last_tokens", 0)
@@ -188,6 +201,7 @@ def _run_user(
 
     if movie_section is None:
         raise RuntimeError("no movie section found for delivery")
+    _emit(ctx, user.slug, "delivering", {"picks": len(picks)})
     diff, stored = deliver_row(ctx.plex, movie_section, user, picks, cfg, dry_run=cfg.dry_run)
     user_report.diff = diff
     if not cfg.dry_run:

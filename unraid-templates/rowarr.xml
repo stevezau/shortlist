@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>rowarr</Name>
+  <Repository>ghcr.io/stevezau/rowarr:latest</Repository>
+  <Registry>https://ghcr.io/stevezau/rowarr</Registry>
+  <Network>bridge</Network>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/stevezau/rowarr/issues</Support>
+  <Project>https://github.com/stevezau/rowarr</Project>
+  <Overview>A private, AI-curated "Picked for You" row for every user on your Plex server. Each user gets a personal collection row built nightly from their own watch history — visible only to them (Plex Pass + PMS 1.43.2+). Built-in Privacy Check proves rows stay private before anything is written; fully reversible uninstall; works with or without an LLM key.</Overview>
+  <Category>MediaServer:Other Tools:</Category>
+  <WebUI>http://[IP]:[PORT:5959]</WebUI>
+  <Icon>https://raw.githubusercontent.com/stevezau/rowarr/master/web/public/favicon.svg</Icon>
+  <Config Name="WebUI Port" Target="5959" Default="5959" Mode="tcp" Description="Web UI port" Type="Port" Display="always" Required="true" Mask="false">5959</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/rowarr" Mode="rw" Description="Rowarr config, database and logs" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/rowarr</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Description="User ID" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Description="Group ID" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="TZ" Target="TZ" Default="Etc/UTC" Description="Timezone" Type="Variable" Display="advanced" Required="false" Mask="false">Etc/UTC</Config>
+</Container>

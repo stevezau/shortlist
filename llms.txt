@@ -1,0 +1,27 @@
+# Rowarr
+
+> Self-hosted tool that gives every user on a Plex server a private, nightly-refreshed
+> "Picked for You" collection row built from their own watch history, using per-user label
+> restrictions (PMS >= 1.43.2) for privacy and an optional LLM for curation.
+
+## Layout
+- rowarr/engine/: pure pipeline library (history -> TMDB candidates -> rank -> curate ->
+  deliver -> privacy sync). Never imports rowarr/server.
+- rowarr/server/: FastAPI + SQLAlchemy/Alembic + APScheduler + SSE adapter over the engine.
+- rowarr/cli.py: second adapter over the same engine (cron-friendly).
+- web/: React 18 + Vite + TypeScript + Tailwind + shadcn/ui SPA.
+- tests/: pytest (unit/integration, no network), tests/fakes/fake_plex.py stub server,
+  recorded fixtures in tests/fixtures/.
+
+## Key invariants
+- Share-filter writes are read-modify-write merges; conditions Rowarr didn't add are
+  byte-preserved. Snapshots precede first mutation; uninstall restores them.
+- Only collections labeled rowarr_* are ever modified or deleted (Kometa coexistence).
+- The owner is never restricted; managed-user restriction profiles are never modified.
+- Real writes are gated on a recorded passing Privacy Check and PMS >= 1.43.2.10687.
+- Plex title-cases labels; filters must use the stored form.
+- LLM output is validated against the owned-candidate set (no hallucinated titles).
+
+## Docs
+- docs/getting-started.md, docs/guides.md, docs/reference.md, docs/faq.md
+- Design/architecture: .claude/docs/rowarr-design.md, .claude/docs/rowarr-architecture.md

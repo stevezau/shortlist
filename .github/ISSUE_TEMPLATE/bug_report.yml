@@ -1,0 +1,36 @@
+name: Bug report
+description: Something broke
+labels: [bug]
+body:
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy impact
+      options:
+        - label: "⚠️ A user could see another user's row or data (privacy bugs are fixed first, always)"
+  - type: input
+    id: version
+    attributes:
+      label: Rowarr version
+      placeholder: e.g. 1.0.0 (Settings → About, or image tag)
+    validations:
+      required: true
+  - type: input
+    id: pms
+    attributes:
+      label: Plex Media Server version
+      placeholder: e.g. 1.43.3.10793
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Runs → the failing run → copy button, or /config/logs/. Tokens are auto-redacted, but double-check.
+      render: text

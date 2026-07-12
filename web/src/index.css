@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Dark is Rowarr's default and only theme for now (design doc §4).
+     Accent is a Plex-adjacent amber/gold. */
+  :root,
+  .dark {
+    --background: 240 6% 7%;
+    --foreground: 40 8% 92%;
+    --card: 240 5% 10%;
+    --card-foreground: 40 8% 92%;
+    --popover: 240 5% 9%;
+    --popover-foreground: 40 8% 92%;
+    --primary: 43 89% 52%;
+    --primary-foreground: 30 90% 8%;
+    --secondary: 240 4% 16%;
+    --secondary-foreground: 40 8% 92%;
+    --muted: 240 4% 14%;
+    --muted-foreground: 40 4% 62%;
+    --accent: 43 60% 16%;
+    --accent-foreground: 43 89% 70%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --success: 142 60% 42%;
+    --success-foreground: 140 80% 96%;
+    --border: 240 4% 18%;
+    --input: 240 4% 20%;
+    --ring: 43 89% 52%;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+
+  /* Accessibility: always-visible keyboard focus */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+/* Accessibility: honor reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

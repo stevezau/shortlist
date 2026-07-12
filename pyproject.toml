@@ -24,6 +24,13 @@ dependencies = [
     "pydantic>=2.7",
     "click>=8.1",
     "pyyaml>=6.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "apscheduler>=3.10,<4",
+    "itsdangerous>=2.1",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +45,7 @@ dev = [
     "hypothesis>=6.100",
     "ruff>=0.5",
     "respx>=0.21",
+    "playwright>=1.45",
 ]
 
 [project.scripts]
@@ -65,7 +73,8 @@ known-first-party = ["rowarr"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-n auto --cov=rowarr --cov-report=term-missing"
+# e2e needs a built SPA + a browser; it runs in its own CI job via `pytest -m e2e`.
+addopts = "-n auto -m 'not e2e' --cov=rowarr --cov-report=term-missing"
 markers = [
     "integration: crosses module boundaries",
     "plex: requires a real Plex server (skipped in CI)",

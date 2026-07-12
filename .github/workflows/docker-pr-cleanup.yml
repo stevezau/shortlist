@@ -1,0 +1,30 @@
+name: Docker PR cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - name: Delete pr-${{ github.event.number }} image tag
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = `pr-${context.payload.pull_request.number}`;
+            const versions = await github.paginate(
+              github.rest.packages.getAllPackageVersionsForPackageOwnedByUser,
+              { package_type: 'container', package_name: 'rowarr', username: context.repo.owner, per_page: 100 }
+            );
+            for (const v of versions) {
+              if (v.metadata?.container?.tags?.includes(tag)) {
+                await github.rest.packages.deletePackageVersionForUser({
+                  package_type: 'container', package_name: 'rowarr',
+                  username: context.repo.owner, package_version_id: v.id,
+                });
+              }
+            }

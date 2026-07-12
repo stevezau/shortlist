@@ -247,8 +247,9 @@ def run_cmd(config_dir: Path, only: str | None, dry_run: bool) -> None:
 
 
 @main.command("verify")
+@click.option("--probe", is_flag=True, help="Full probe: throwaway collection + canary view check (~90s).")
 @click.pass_obj
-def verify_cmd(config_dir: Path) -> None:
+def verify_cmd(config_dir: Path, probe: bool) -> None:
     """Privacy verification: T1 filter read-back for all users, T2 canary view if configured.
 
     Records the result to privacy_check.json — `rowarr run` refuses real writes without a
@@ -256,6 +257,33 @@ def verify_cmd(config_dir: Path) -> None:
     """
     ctx, raw = load_context(config_dir, dry_run=True)
     users = select_users(ctx, raw, None)
+    if probe:
+        canary_name = raw.get("canary")
+        canary = next((u for u in users if u.username == canary_name or u.slug == canary_name), None)
+        if canary is None:
+            raise click.ClickException("--probe needs a `canary:` Home user in config.yml")
+        from rowarr.engine.probe import run_privacy_probe
+
+        result = run_privacy_probe(
+            ctx.plex, ctx.plextv, canary, ctx.snapshots, on_step=lambda m: click.echo(f"  … {m}")
+        )
+        if result.passed:
+            outcome = "PASS — " + str(result.detail.get("message", ""))
+        else:
+            outcome = "FAIL " + json.dumps(result.detail)
+        click.echo(f"PROBE: {outcome}")
+        (config_dir / "privacy_check.json").write_text(
+            json.dumps(
+                {
+                    "ran_at": datetime.now(UTC).isoformat(),
+                    "passed": result.passed,
+                    "pms_version": list(parse_pms_version(ctx.plex.version)),
+                    "tiers": {"PROBE": result.passed},
+                },
+                indent=2,
+            )
+        )
+        sys.exit(0 if result.passed else 1)
     collections = ctx.plex.owned_collections("rowarr")
     stored = {slug: label for slug, (label, _) in collections.items()}  # real casing from the PMS
     t1 = check_t1(ctx.plextv, users, stored)

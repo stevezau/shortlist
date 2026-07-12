@@ -1,0 +1,19 @@
+services:
+  rowarr:
+    image: ghcr.io/stevezau/rowarr:latest
+    container_name: rowarr
+    ports:
+      - "5959:5959"
+    volumes:
+      - ./config:/config
+    environment:
+      - TZ=Etc/UTC
+      - PUID=1000
+      - PGID=1000
+      # Optional one-time seeds (migrated into settings on first boot, then ignored):
+      # - PLEX_URL=http://plex:32400
+      # - PLEX_TOKEN=...
+      # - TAUTULLI_URL=http://tautulli:8181
+      # - TAUTULLI_APIKEY=...
+      # - TMDB_APIKEY=...
+    restart: unless-stopped

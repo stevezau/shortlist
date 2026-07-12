@@ -1,0 +1,160 @@
+"""API contract tests — full app via TestClient (real lifespan, tmp SQLite, forged owner session)."""
+
+from __future__ import annotations
+
+import time
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from rowarr.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
+from rowarr.server.db.models import Server, User
+from rowarr.server.main import create_app
+
+pytestmark = pytest.mark.integration
+
+OWNER_ID = 555000001
+
+
+@pytest.fixture
+def client(tmp_path: Path):
+    app = create_app(config_dir=tmp_path)
+    with TestClient(app) as test_client:
+        # Link a server so owner checks are active, and add users.
+        with app.state.sessions() as session:
+            session.add(
+                Server(
+                    machine_id="m1",
+                    url="http://pms:32400",
+                    token_enc="x",
+                    owner_account_id=OWNER_ID,
+                    plex_pass=True,
+                    capabilities={},
+                )
+            )
+            session.add(User(plex_account_id=555000100, username="sarah", slug="sarah", enabled=True))
+            session.add(User(plex_account_id=555000200, username="mike", slug="mike"))
+            session.commit()
+        cookie = session_serializer(app.state.session_secret).dumps({"account_id": OWNER_ID, "username": "owner"})
+        test_client.cookies.set(SESSION_COOKIE, cookie)
+        test_client.headers[CSRF_HEADER] = "1"
+        yield test_client
+
+
+class TestAuthBoundary:
+    def test_health_needs_no_auth(self, client: TestClient):
+        fresh = TestClient(client.app)
+        with fresh:
+            r = fresh.get("/api/system/health")
+            assert r.status_code == 200
+            assert r.json()["status"] == "ok"
+
+    def test_users_requires_session(self, client: TestClient):
+        client.cookies.delete(SESSION_COOKIE)
+        assert client.get("/api/users").status_code == 401
+
+    def test_non_owner_session_rejected_everywhere(self, client: TestClient):
+        """A session issued during the pre-link window must lose access once an owner exists."""
+        cookie = session_serializer(client.app.state.session_secret).dumps({"account_id": 999, "username": "intruder"})
+        client.cookies.set(SESSION_COOKIE, cookie)
+        assert client.get("/api/users").status_code == 403
+        assert client.get("/api/runs").status_code == 403
+        assert client.get("/api/settings").status_code == 403
+        assert client.post("/api/system/uninstall", json={"confirm": "UNINSTALL"}).status_code == 403
+        assert client.get("/api/setup/state").status_code == 403
+
+    def test_mutations_require_csrf_header(self, client: TestClient):
+        del client.headers[CSRF_HEADER]
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+        r = client.patch(f"/api/users/{user_id}", json={"enabled": True})
+        assert r.status_code == 403
+        assert CSRF_HEADER in r.json()["detail"]
+
+
+class TestUsersApi:
+    def test_list_and_patch(self, client: TestClient):
+        users = client.get("/api/users").json()
+        assert [u["username"] for u in users] == ["mike", "sarah"]
+        target = next(u for u in users if u["username"] == "mike")
+        r = client.patch(f"/api/users/{target['id']}", json={"enabled": True, "prefs": {"row_size": 10}})
+        assert r.status_code == 200
+        assert r.json()["enabled"] is True
+        assert r.json()["prefs"]["row_size"] == 10
+
+    def test_patch_unknown_user_404(self, client: TestClient):
+        assert client.patch("/api/users/9999", json={"enabled": True}).status_code == 404
+
+
+class TestRunsApi:
+    def test_empty_list_then_trigger(self, client: TestClient):
+        assert client.get("/api/runs").json() == []
+        r = client.post("/api/runs", json={"dry_run": True})
+        assert r.status_code == 202
+        run_id = r.json()["run_id"]
+        # The run fails fast (Plex unconfigured) but must exist with a terminal/queued status.
+        for _ in range(50):
+            runs = client.get("/api/runs").json()
+            if runs and runs[0]["status"] in ("error", "ok"):
+                break
+            time.sleep(0.05)
+        assert runs[0]["id"] == run_id
+        assert runs[0]["status"] == "error"  # no plex configured in this app instance
+        detail = client.get(f"/api/runs/{run_id}")
+        assert detail.status_code == 200
+
+    def test_unknown_run_404(self, client: TestClient):
+        assert client.get("/api/runs/424242").status_code == 404
+
+
+class TestSettingsApi:
+    def test_get_put_round_trip_and_unknown_key_rejected(self, client: TestClient):
+        settings = client.get("/api/settings").json()
+        assert settings["row.size"] == 15
+        r = client.put("/api/settings", json={"values": {"row.size": 20}})
+        assert r.status_code == 200
+        assert r.json()["row.size"] == 20
+        assert client.put("/api/settings", json={"values": {"evil.key": 1}}).status_code == 422
+
+    def test_secret_set_then_redacted_and_placeholder_roundtrip_keeps_value(self, client: TestClient):
+        client.put("/api/settings", json={"values": {"tmdb.apikey": "abc123"}})
+        # tmdb.apikey isn't a SECRET_KEY; use the plex token which is.
+        client.put("/api/settings", json={"values": {"plex.token": "real-token"}})
+        settings = client.get("/api/settings").json()
+        assert settings["plex.token"] == "•••••"
+        client.put("/api/settings", json={"values": {"plex.token": "•••••"}})  # UI round-trip
+        with client.app.state.sessions() as session:
+            from rowarr.server.settings_store import SettingsStore
+
+            assert SettingsStore(session, client.app.state.secrets).get("plex.token") == "real-token"
+
+
+class TestPrivacyApi:
+    def test_status_empty(self, client: TestClient):
+        r = client.get("/api/privacy/status").json()
+        assert r == {"last_check": None, "passed": None, "tiers": {}}
+
+    def test_snapshots_empty(self, client: TestClient):
+        assert client.get("/api/privacy/snapshots").json() == []
+
+
+class TestEventsApi:
+    def test_audit_log_empty(self, client: TestClient):
+        assert client.get("/api/events/log").json() == []
+
+
+class TestSetupApi:
+    def test_wizard_state_round_trip(self, client: TestClient):
+        r = client.get("/api/setup/state").json()
+        assert r["completed"] is False
+        client.put("/api/setup/state", json={"step": 3, "state": {"picked": [1, 2]}, "completed": False})
+        r = client.get("/api/setup/state").json()
+        assert r["step"] == 3
+        assert r["state"] == {"picked": [1, 2]}
+
+
+class TestUninstall:
+    def test_wrong_confirmation_rejected(self, client: TestClient):
+        r = client.post("/api/system/uninstall", json={"confirm": "yes"})
+        assert r.status_code == 422

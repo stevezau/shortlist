@@ -4,7 +4,9 @@ A private, AI-curated "Picked for You" row for every user on a Plex server. One 
 FastAPI backend + React SPA + SQLite, with a pure-Python engine (Tautulli/Plex history → TMDB
 similar-titles → LLM curate/explain → per-user Plex collection + label-restriction privacy).
 
-**Status: pre-alpha.** Design is decided and detailed — read these before any feature work:
+**Status: beta.** Engine + CLI are in production on the maintainer's server (nightly cron);
+FastAPI server, React SPA, automated Privacy Probe and Docker packaging are built. Read these
+before any feature work:
 
 - [.claude/docs/rowarr-design.md](docs/rowarr-design.md) — product/UX design (wizard, screens, engine, privacy system)
 - [.claude/docs/rowarr-architecture.md](docs/rowarr-architecture.md) — repo layout, DB schema, API surface, testing, CI, phases
@@ -27,12 +29,24 @@ pnpm -C web dev              # Vite dev server (proxies /api to :5959)
 pnpm -C web test             # vitest
 pnpm -C web build
 
-# Run (dev)
-uvicorn rowarr.server.main:app --reload --port 5959
+# Run (dev) — module-level `app` only exists when ROWARR_CONFIG is set
+ROWARR_CONFIG=./devconfig uvicorn --factory rowarr.server.main:create_app --reload --port 5959
 
 # CLI (same engine the server uses)
-rowarr run [--user <slug>] [--dry-run] · rowarr verify · rowarr uninstall
+rowarr run [--user <slug>] [--dry-run] · rowarr verify [--probe] · rowarr uninstall
+
+# Docker
+docker build -t rowarr:dev .   # multi-stage: node web build → python runtime
 ```
+
+## The write gate (both adapters)
+
+Real (non-dry-run) writes are refused unless a passing Privacy Check is on record (≤7 days)
+and the PMS is ≥ 1.43.2.10687. CLI: `privacy_check.json` written by `rowarr verify`.
+Server: `privacy_checks` rows + `RunService._privacy_gate_error()`, sharing its
+latest-per-tier definition with the dashboard badge (`server/services/privacy_state.py`).
+Rows are delivered UNPROMOTED, all filters merged, and only then promoted — a new row is
+never visible before the exclusions that hide it exist.
 
 ## Architecture (the one contract that matters)
 
