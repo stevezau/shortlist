@@ -1,0 +1,33 @@
+# Personal / local-only — never commit
+CLAUDE.local.md
+.claude/settings.local.json
+.env
+.env.*
+
+# App runtime
+/config/
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node / frontend
+node_modules/
+web/dist/
+web/.vite/
+
+# OS / editor
+.DS_Store
+.idea/
