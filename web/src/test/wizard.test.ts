@@ -51,9 +51,16 @@ describe("canLeaveStep", () => {
   });
 
   it("leaves the ungated steps open", () => {
-    for (const step of [0, 2, 4, 6, 7]) {
+    for (const step of [0, 4, 6, 7]) {
       expect(canLeaveStep(step, {})).toBe(true);
     }
+  });
+
+  it("will not leave the history step without a TMDB key", () => {
+    // Without one there is nothing to recommend FROM: every run dies at the first user.
+    expect(canLeaveStep(2, {})).toBe(false);
+    expect(canLeaveStep(2, { history_source: "plex" })).toBe(false);
+    expect(canLeaveStep(2, { tmdb_set: true })).toBe(true);
   });
 });
 
