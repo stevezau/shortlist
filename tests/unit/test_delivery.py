@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from rowarr.engine.clients.plex import PlexClient
-from rowarr.engine.delivery import deliver_rows, render_row_name, sweep_unhidable_rows
+from rowarr.engine.delivery import deliver_rows, render_row_name, row_marker, sweep_broken_rows
 from rowarr.engine.models import EngineConfig, MediaType, Pick
 from tests.conftest import make_profile
 
@@ -84,7 +84,12 @@ class TestDeliverRows:
         plex.fetch_items.assert_called_once_with([1001, 1002])
         create = plex.create_collection.call_args
         assert create.args[0] is movies
-        assert create.args[1] == "✨ Picked for You"
+        # The title Plex is given carries an INVISIBLE per-account marker. Without it every user's
+        # row is the same collection tag in that library, holding everyone's picks.
+        assert create.args[1] == "✨ Picked for You" + row_marker(make_profile().plex_account_id)
+        assert create.args[1].startswith("✨ Picked for You"), "what a human reads must not change"
+        # The report shows the human title — the marker is Plex's business, not the owner's.
+        assert diff.collection_title == "✨ Picked for You"
         assert plex.stored_label.call_args.args[1] == "rowarr_sarah"
         # Promotion is the pipeline's job, AFTER filters are merged — never delivery's.
         plex.promote.assert_not_called()
@@ -141,18 +146,22 @@ class TestDeliverRows:
 
     def test_updates_existing_collection_found_by_label_not_title(self, engine_config: EngineConfig, movies, shows):
         plex = self._plex(movies, shows)
+        profile = make_profile()
         existing = MagicMock()
-        existing.title = "Old Name"
+        # A row already in the current format: a dynamic template renamed it, but it still carries
+        # this account's marker, so its membership is its own and it can be updated in place.
+        existing.title = "Old Name" + row_marker(profile.plex_account_id)
         existing.items.return_value = [MagicMock(title="Movie 1"), MagicMock(title="Stale Movie")]
         plex.find_owned_collection.side_effect = lambda section, prefix, slug: existing if section is movies else None
 
-        diff, _ = deliver_rows(plex, make_profile(), picks(), engine_config)
+        diff, _ = deliver_rows(plex, profile, picks(), engine_config)
 
         assert diff.created is False
         assert diff.added == ["Movie 2"]
         assert diff.removed == ["Stale Movie"]
         assert diff.kept == ["Movie 1"]
-        existing.editTitle.assert_called_once_with("✨ Picked for You")
+        plex.delete_owned_collection.assert_not_called()  # its tag is not shared: no rebuild needed
+        existing.editTitle.assert_called_once_with("✨ Picked for You" + row_marker(profile.plex_account_id))
         # The items actually pushed, not just "set_items happened": feeding one library's picks
         # into the other library's collection would otherwise pass this test.
         plex.fetch_items.assert_called_once_with([1001, 1002])
@@ -234,7 +243,7 @@ class TestDeliverRows:
 
         deliver_rows(plex, profile, picks(), engine_config)
 
-        assert plex.create_collection.call_args.args[1] == "Sarah's Picks"
+        assert plex.create_collection.call_args.args[1] == "Sarah's Picks" + row_marker(profile.plex_account_id)
 
 
 class TestServerWithTwoLibrariesOfTheSameType:
@@ -274,7 +283,7 @@ class TestServerWithTwoLibrariesOfTheSameType:
         plex.delete_owned_collection.assert_not_called()
 
 
-class TestSweepUnhidableRows:
+class TestSweepBrokenRows:
     """The sweep is the one thing standing between a stranded row and every user on the server.
 
     It runs server-wide, before any per-user work, on every run. Its whole branch matrix is here
@@ -302,7 +311,7 @@ class TestSweepUnhidableRows:
         plex = self._plex(movies, shows, stranded)
         plex.matches_section.return_value = False
 
-        deleted = sweep_unhidable_rows(plex, engine_config)
+        deleted = sweep_broken_rows(plex, engine_config)
 
         assert deleted == {"mike": ["✨ Picked for You"]}
         plex.delete_owned_collection.assert_called_once_with(stranded, "rowarr")
@@ -312,7 +321,7 @@ class TestSweepUnhidableRows:
         plex = self._plex(movies, shows, healthy)
         plex.matches_section.return_value = True
 
-        assert sweep_unhidable_rows(plex, engine_config) == {}
+        assert sweep_broken_rows(plex, engine_config) == {}
         plex.delete_owned_collection.assert_not_called()
 
     def test_never_touches_a_collection_it_does_not_own(self, engine_config: EngineConfig, movies, shows):
@@ -322,7 +331,7 @@ class TestSweepUnhidableRows:
         plex = self._plex(movies, shows, kometa)
         plex.matches_section.return_value = False  # even so
 
-        assert sweep_unhidable_rows(plex, engine_config) == {}
+        assert sweep_broken_rows(plex, engine_config) == {}
         plex.delete_owned_collection.assert_not_called()
 
     def test_dry_run_reports_the_deletion_without_making_it(self, engine_config: EngineConfig, movies, shows):
@@ -332,7 +341,7 @@ class TestSweepUnhidableRows:
         plex = self._plex(movies, shows, stranded)
         plex.matches_section.return_value = False
 
-        deleted = sweep_unhidable_rows(plex, engine_config, dry_run=True)
+        deleted = sweep_broken_rows(plex, engine_config, dry_run=True)
 
         assert deleted == {"mike": ["✨ Picked for You"]}
         plex.delete_owned_collection.assert_not_called()
@@ -344,14 +353,14 @@ class TestSweepUnhidableRows:
         plex = self._plex(movies, shows, stranded_movie, stranded_show)
         plex.matches_section.return_value = False
 
-        deleted = sweep_unhidable_rows(plex, engine_config)
+        deleted = sweep_broken_rows(plex, engine_config)
 
         assert deleted == {"mike": ["✨ Picked for You"], "sarah": ["Because you watched Fargo"]}
         assert plex.delete_owned_collection.call_count == 2
 
     def test_an_empty_server_is_not_an_error(self, engine_config: EngineConfig, movies, shows):
         plex = self._plex(movies, shows)
-        assert sweep_unhidable_rows(plex, engine_config) == {}
+        assert sweep_broken_rows(plex, engine_config) == {}
 
 
 class TestAnUnlabelledRowIsNeverLeftBehind:
@@ -395,3 +404,118 @@ class TestAnUnlabelledRowIsNeverLeftBehind:
 
         with pytest.raises(RuntimeError, match="label write failed"):
             deliver_rows(plex, make_profile(), picks(), engine_config)
+
+
+class TestARowSharingItsTagWithOthers:
+    """A row created before the invisible marker existed shares its collection TAG — and therefore
+    its contents — with every other user's row in that library. It holds their picks as well as its
+    owner's. Renaming cannot undo that (the items keep the old tag): it has to be rebuilt.
+
+    The SWEEP removes it (server-wide, before any user work, so it also reaches the rows of paused
+    users and of users who get no picks tonight). Delivery then simply finds nothing and builds a
+    fresh one — it must not delete or report the row a second time, or a dry run would tell the
+    owner twice as many of their rows would be destroyed as actually would be.
+    """
+
+    def _plex(self, movies: MagicMock, shows: MagicMock) -> MagicMock:
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies, shows]
+        plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+        plex.matches_section.return_value = True
+        plex.stored_label.return_value = "Rowarr_sarah"
+        return plex
+
+    def test_a_row_without_the_marker_is_rebuilt_not_renamed(self, engine_config: EngineConfig, movies, shows):
+        legacy = MagicMock()
+        legacy.title = "✨ Picked for You"  # no marker: shared with everyone else's row
+        plex = self._plex(movies, shows)
+        plex.find_owned_collection.side_effect = lambda section, prefix, slug: legacy if section is movies else None
+
+        diff, _ = deliver_rows(plex, make_profile(), picks(), engine_config)
+
+        legacy.editTitle.assert_not_called()
+        plex.set_items.assert_not_called()
+        plex.create_collection.assert_called_once()
+        assert diff.created is True
+        # The sweep already deleted it and recorded that. Delivery must not double-count.
+        plex.delete_owned_collection.assert_not_called()
+        assert diff.deleted == []
+
+
+class TestRowMarker:
+    def test_distinct_accounts_get_distinct_markers(self):
+        """The marker IS the row's identity within a library. Two accounts sharing one would share
+        a collection tag — and with it, each other's picks."""
+        assert row_marker(1) != row_marker(2)
+        assert row_marker(555000001) != row_marker(555000002)
+
+    def test_the_encoding_is_not_truncated(self):
+        """Encoding only the low N bits makes any two ids congruent modulo 2**N collide — a
+        silent return of the bug, in a cell no test could reach."""
+        assert row_marker(1) != row_marker(1 + 2**32)
+        assert row_marker(7) != row_marker(7 + 2**48)
+
+    def test_it_renders_as_nothing(self):
+        marker = row_marker(555000001)
+        assert marker.strip("\u200b\u200c") == ""
+        assert len(marker) == 64
+
+
+class TestTheSweepRemovesSharedTagRows:
+    """A row whose title lacks its owner's marker shares a collection TAG with every other row in
+    that library — so it shows its owner other people's recommendations.
+
+    The sweep is where this is fixed, not delivery, because delivery only ever visits users who
+    are being processed AND have picks for that library. A paused user's row, or the stale movie
+    row of someone who only watches TV, would otherwise sit there forever showing them everyone
+    else's picks.
+    """
+
+    def _plex(self, movies: MagicMock, shows: MagicMock, *collections: MagicMock) -> MagicMock:
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies, shows]
+        plex.matches_section.return_value = True  # correctly typed: only the TAG is wrong
+        movies.collections.return_value = [c for c in collections if c.section is movies]
+        shows.collections.return_value = [c for c in collections if c.section is shows]
+        return plex
+
+    def _row(self, section: MagicMock, slug: str, title: str) -> MagicMock:
+        collection = MagicMock()
+        collection.title = title
+        collection.section = section
+        collection.labels = [SimpleNamespace(tag=f"Rowarr_{slug}")]
+        return collection
+
+    def test_a_row_without_its_owners_marker_is_removed(self, engine_config: EngineConfig, movies, shows):
+        legacy = self._row(movies, "mike", "✨ Picked for You")
+        plex = self._plex(movies, shows, legacy)
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
+
+        assert deleted == {"mike": ["✨ Picked for You"]}
+        plex.delete_owned_collection.assert_called_once_with(legacy, "rowarr")
+
+    def test_a_row_with_its_owners_marker_is_left_alone(self, engine_config: EngineConfig, movies, shows):
+        healthy = self._row(movies, "mike", "✨ Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, healthy)
+
+        assert sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)}) == {}
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_a_row_whose_owner_rowarr_cannot_identify_is_left_alone(self, engine_config: EngineConfig, movies, shows):
+        """Without the account id there is no marker to check and no way to rebuild the row —
+        destroying something we cannot replace would be worse than leaving it."""
+        unknown = self._row(movies, "stranger", "✨ Picked for You")
+        plex = self._plex(movies, shows, unknown)
+
+        assert sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)}) == {}
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_dry_run_reports_without_removing(self, engine_config: EngineConfig, movies, shows):
+        legacy = self._row(movies, "mike", "✨ Picked for You")
+        plex = self._plex(movies, shows, legacy)
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)}, dry_run=True)
+
+        assert deleted == {"mike": ["✨ Picked for You"]}
+        plex.delete_owned_collection.assert_not_called()

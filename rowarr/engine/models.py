@@ -150,7 +150,7 @@ class CollectionDiff:
     added: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     kept: list[str] = field(default_factory=list)
-    deleted: list[str] = field(default_factory=list)  # rows the sweep removed (Plex could not hide them)
+    deleted: list[str] = field(default_factory=list)  # rows destroyed this run (swept, or rebuilt)
     collection_title: str = ""
     created: bool = False
 

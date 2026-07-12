@@ -113,6 +113,27 @@ class FakePlexState:
     def items_in(self, section_id: int) -> dict[int, FakeMovie]:
         return self.movies if section_id == self.section_id else self.shows
 
+    def members(self, collection: FakeCollection) -> list[int]:
+        """The items a collection actually contains, per Plex's real model.
+
+        A Plex collection is a TAG on items, keyed by TITLE within a library — not an independent
+        bag with its own membership. So two collections with the same title in the same library
+        are ONE membership: each returns the union of both. Verified on a live server (SFLIX,
+        2026-07-13): a film picked for one user alone appeared in another user's row, carrying a
+        single collection tag.
+
+        This is why every user's row must have a title no other row in that library uses. Modelling
+        collections as independent objects is exactly what let the bug ship.
+        """
+        keys: list[int] = []
+        for other in self.collections.values():
+            if other.section_id != collection.section_id or other.title != collection.title:
+                continue
+            for key in other.item_keys:
+                if key not in keys:
+                    keys.append(key)
+        return keys
+
     def filterable(self, collection: FakeCollection) -> bool:
         """Whether a real PMS could hide this collection with a `label!=` share filter.
 
@@ -418,8 +439,9 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
     @app.get("/library/metadata/{rating_key}/children")
     def collection_children(rating_key: int) -> Response:
         collection = _collection(rating_key)
-        root = _container(size=len(collection.item_keys), totalSize=len(collection.item_keys))
-        for key in collection.item_keys:
+        members = state.members(collection)  # shared with any same-titled collection in this library
+        root = _container(size=len(members), totalSize=len(members))
+        for key in members:
             if (item := state.item(key)) is not None:
                 _movie_xml(root, state, item)
         return _xml(root)
@@ -459,7 +481,19 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
 
     @app.delete("/library/metadata/{rating_key}")
     def delete_collection(rating_key: int) -> Response:
-        _collection(rating_key)
+        collection = _collection(rating_key)
+        # A collection is a TAG keyed by title. We have verified on a real PMS that same-titled
+        # collections in one library SHARE their membership; we have NOT verified what deleting one
+        # does to the others. So the fake assumes the worse of the two possibilities — the tag goes,
+        # and every same-titled sibling empties — because code that is correct under that is correct
+        # either way, and code that is only correct under the kinder assumption would fail live.
+        for other in state.collections.values():
+            if (
+                other is not collection
+                and other.section_id == collection.section_id
+                and other.title == collection.title
+            ):
+                other.item_keys = [k for k in other.item_keys if k not in collection.item_keys]
         del state.collections[rating_key]
         return Response(status_code=200)
 

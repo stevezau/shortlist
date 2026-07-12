@@ -9,9 +9,33 @@ from rowarr.engine.models import CollectionDiff, EngineConfig, MediaType, Pick, 
 
 DEFAULT_ROW_NAME = "✨ Picked for You"
 
+# Zero-width space / zero-width non-joiner. Both render as nothing.
+_INVISIBLE = ("​", "‌")
+
+
+def row_marker(plex_account_id: int) -> str:
+    """An invisible per-account suffix that makes a row's title unique within its library.
+
+    A Plex collection is a TAG on items, keyed by TITLE within a library — not an independent bag
+    with its own membership. Two rows sharing a title in one library are therefore ONE membership,
+    and every user's row shows the union of everyone's picks: on a live server a film picked for a
+    single user turned up in another user's row, carrying one collection tag (SFLIX, 2026-07-13).
+    "Picked for You" has to mean picked for YOU, so the titles must differ.
+
+    They must also LOOK identical — nobody wants their own name stapled to their row — so the
+    difference is invisible: the account id, written in zero-width characters. Verified against a
+    real PMS: the suffix survives the round trip, and two titles differing only by it have separate
+    memberships.
+
+    The encoding is injective over the full 64-bit id, so distinct accounts always get distinct
+    markers. Truncating it would quietly reintroduce the bug for any two ids congruent modulo the
+    cutoff — a collision no test could see.
+    """
+    return "".join(_INVISIBLE[(plex_account_id >> bit) & 1] for bit in range(64))
+
 
 def render_row_name(template: str, profile: UserProfile, picks: list[Pick]) -> str:
-    """Render the row title, falling back when a placeholder has nothing to fill it with.
+    """Render the row title as a HUMAN reads it — no marker. Used for reports and the UI.
 
     A cold-start user has no seed, so a `{top_seed}` template would otherwise render the
     dangling half-sentence "Because you watched" onto a real Plex Home screen.
@@ -57,8 +81,9 @@ def deliver_rows(
     stale, and deleting it would destroy an established row every time an upstream hiccup (a TMDB
     404, a lopsided candidate pool) left a library with no picks for one night.
 
-    Rows Plex cannot hide are NOT this function's problem: `sweep_unhidable_rows` has already
-    removed them, server-wide, before any of this ran.
+    Broken rows are NOT this function's problem: `sweep_broken_rows` has already removed them,
+    server-wide, before any of this ran — both the kind Plex cannot hide and the kind that shares
+    a collection tag with other users' rows.
     """
     targets = plex.sections_by_type()
     by_type: dict[MediaType, list[Pick]] = {}
@@ -81,6 +106,7 @@ def deliver_rows(
         combined.added += one.added
         combined.removed += one.removed
         combined.kept += one.kept
+        combined.deleted += one.deleted
         combined.created = combined.created or one.created
         # Recorded the instant the PMS confirms the label — if the NEXT library blows up, this
         # row still gets excluded on every other user's share this run.
@@ -105,7 +131,11 @@ def _deliver_one(
     orphan it, and foreign (e.g. Kometa) collections are never touched.
     """
     template = profile.row_name_template or config.row_name_template
-    title = render_row_name(template, profile, picks)
+    display = render_row_name(template, profile, picks)
+    # What Plex is told to call it: the same thing, plus an invisible marker that makes it unique
+    # in this library. Without it, every user's row is the same collection tag and holds everyone's
+    # picks. Users see `display`; only the PMS ever sees the marker.
+    title = display + row_marker(profile.plex_account_id)
     label = f"{config.label_prefix}_{profile.slug}"
     collection = plex.find_owned_collection(section, config.label_prefix, profile.slug)
 
@@ -118,15 +148,26 @@ def _deliver_one(
             "{}: rebuilding their row in '{}' — the old one was the wrong type", profile.username, section.title
         )
         collection = None
+    elif collection is not None and not collection.title.endswith(row_marker(profile.plex_account_id)):
+        # A row from before the marker existed: its title — and therefore its collection tag, and
+        # therefore its contents — is shared with every other user's row in this library. The sweep
+        # has already removed it (or, in a dry run, already reported that it would), so treat it as
+        # gone and build a fresh one. Renaming could not have fixed it: the items keep the old tag.
+        logger.info(
+            "{}: rebuilding their row in '{}' — the old one shared a collection tag",
+            profile.username,
+            section.title,
+        )
+        collection = None
 
     wanted_titles = [p.title for p in picks]
     if collection is None:
-        diff = CollectionDiff(added=wanted_titles, collection_title=title, created=True)
+        diff = CollectionDiff(added=wanted_titles, collection_title=display, created=True)
         if dry_run:
             logger.info(
                 "[dry-run] {}: would create '{}' in '{}' with {} items",
                 profile.username,
-                title,
+                display,
                 section.title,
                 len(picks),
             )
@@ -149,9 +190,10 @@ def _deliver_one(
                 logger.critical(
                     "{}: ORPHANED COLLECTION — '{}' (ratingKey {}) in '{}' exists with NO rowarr "
                     "label. Rowarr cannot find or remove it and no share filter can hide it. "
-                    "Delete it in Plex.",
+                    "Delete it in Plex (find it by ratingKey — the title carries invisible "
+                    "characters and will not match a search).",
                     profile.username,
-                    title,
+                    display,
                     getattr(collection, "ratingKey", "?"),
                     section.title,
                 )
@@ -159,7 +201,7 @@ def _deliver_one(
         logger.info(
             "{}: delivered '{}' to '{}' ({} items, label {})",
             profile.username,
-            title,
+            display,
             section.title,
             len(picks),
             stored,
@@ -171,13 +213,13 @@ def _deliver_one(
         added=[t for t in wanted_titles if t not in current_titles],
         removed=[t for t in current_titles if t not in wanted_titles],
         kept=[t for t in wanted_titles if t in current_titles],
-        collection_title=title,
+        collection_title=display,  # the human title: the marker is Plex's business, not the owner's
     )
     if dry_run:
         logger.info(
             "[dry-run] {}: would update '{}' in '{}' (+{} -{} ={})",
             profile.username,
-            title,
+            display,
             section.title,
             len(diff.added),
             len(diff.removed),
@@ -192,19 +234,34 @@ def _deliver_one(
     # Promotion is deliberately NOT done here: the pipeline promotes only after every user's
     # share filters have been merged, so a new row is never visible before its exclusions exist.
     logger.info(
-        "{}: delivered '{}' to '{}' ({} items, label {})", profile.username, title, section.title, len(picks), stored
+        "{}: delivered '{}' to '{}' ({} items, label {})", profile.username, display, section.title, len(picks), stored
     )
     return diff, stored
 
 
-def sweep_unhidable_rows(
+def sweep_broken_rows(
     plex: PlexClient,
     config: EngineConfig,
     *,
+    markers: dict[str, str] | None = None,
     dry_run: bool = False,
     deleted: dict[str, list[str]] | None = None,
 ) -> dict[str, list[str]]:
-    """Delete every Rowarr row on the SERVER that Plex cannot hide. Returns slug -> titles.
+    """Delete every Rowarr row on the SERVER that is broken beyond repair-in-place.
+
+    Two kinds, and both are only fixable by rebuilding:
+
+    * **Unhidable** — its type doesn't match its library, so neither `filterMovies` nor
+      `filterTelevision` can match it and EVERY account can see it.
+    * **Shared-tag** — its title lacks its owner's marker, so it shares a collection tag with the
+      other rows in that library and holds their picks as well as its owner's. Its owner opens
+      "Picked for You" and reads other people's recommendations.
+
+    `markers` maps slug -> the invisible marker that row's title must end with. A slug that isn't
+    in it belongs to an account Rowarr can't identify — it could not rebuild that row, so it leaves
+    it alone rather than destroy something it cannot replace.
+
+    Returns slug -> titles.
 
     `deleted` lets the caller own the accumulator, so that what was ALREADY deleted survives an
     exception part-way through the walk. Deleting rows and then losing the record of it because
@@ -230,20 +287,26 @@ def sweep_unhidable_rows(
     stopped us from computing what to put in the row that replaces it.
     """
     prefix = f"{config.label_prefix}_".lower()
+    markers = markers or {}
     deleted = {} if deleted is None else deleted
     for section in plex.sections():
         for collection in section.collections():
             label = next((t.tag for t in collection.labels if t.tag.lower().startswith(prefix)), None)
             if label is None:  # not ours — Kometa and friends are none of our business (rule 4)
                 continue
-            if plex.matches_section(collection, section):
-                continue
             slug = label[len(prefix) :].lower()
+            marker = markers.get(slug)
+            unhidable = not plex.matches_section(collection, section)
+            shares_tag = marker is not None and not collection.title.endswith(marker)
+            if not unhidable and not shares_tag:
+                continue
+            reason = (
+                "it is the wrong type for that library, so no share filter can hide it and every user can see it"
+                if unhidable
+                else "it shares a collection tag with other users' rows, so it holds their picks too"
+            )
             logger.warning(
-                "{}: removing their row in '{}' — it is the wrong type for that library, so no "
-                "share filter can hide it and every user can see it",
-                slug,
-                section.title,
+                "{}{}: removing their row in '{}' — {}", "[dry-run] " if dry_run else "", slug, section.title, reason
             )
             # Delete THEN record, so the audit says what actually happened: recording first would
             # report a deletion that a failing PMS call never made. (Read the title first — after

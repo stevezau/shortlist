@@ -838,3 +838,119 @@ def test_a_user_who_renamed_themselves_is_not_hidden_from_their_own_row(fakes, t
     assert "Rowarr_mike" not in state.users[202].filters["filterMovies"]
     visible = {collection_id_from_hub(h) for h in plex.user_hubs("server-202")}
     assert set(mike_rows) <= visible, "a rename hid a user from their own row"
+
+
+def test_each_users_row_contains_only_their_own_picks(fakes, tmp_path):
+    """ "Picked for You" has to mean picked for YOU.
+
+    A Plex collection is a TAG on items, keyed by TITLE within a library — not an independent bag.
+    So two rows with the same title in one library are ONE membership, and every user's row shows
+    the union of everyone's picks. On a live server this made every row identical: a film picked
+    for one user alone turned up in another user's row, carrying a single collection tag (SFLIX,
+    2026-07-13). The privacy still held — each collection object is hidden by its own label — but
+    the recommendations were not personal at all.
+
+    Every user's row must therefore carry a title no other row in that library uses.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=PlexHistorySource(plex),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        known_slugs={201: "sarah", 202: "mike", 203: "canary"},
+    )
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+    report = engine_run(ctx, users)
+    assert report.ok, [(u.username, u.error) for u in report.users]
+
+    owned = plex.owned_collections()
+    for user_report in report.users:
+        expected = {p.title for p in user_report.picks}
+        got: set[str] = set()
+        for rating_key in owned[user_report.slug].rating_keys:
+            collection = state.collections[rating_key]
+            got |= {state.item(k).title for k in state.members(collection) if state.item(k)}
+
+        assert got == expected, (
+            f"{user_report.slug}'s row does not hold their picks. Extra (somebody else's): {sorted(got - expected)}"
+        )
+
+
+def test_migration_night_rebuilds_every_shared_row_in_one_run(fakes, tmp_path):
+    """Upgrade night on a server whose rows were all created before the marker existed.
+
+    Every one of them shares a collection tag with every other row in its library, so each holds
+    the union of everyone's picks. All of them have to be rebuilt — and the rebuilds happen one
+    user at a time, so a rebuild for one user must not leave another user's row broken. (The fake
+    assumes the destructive reading of Plex's tag model: deleting one same-titled collection strips
+    those items from its siblings. If the code is right under that, it is right either way.)
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=PlexHistorySource(plex),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        known_slugs={201: "sarah", 202: "mike", 203: "canary"},
+    )
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+    # The legacy state: every user's row titled the same, in the same library, sharing one tag.
+    legacy = {}
+    for rating_key, (slug, items) in enumerate(
+        {"sarah": [101, 102], "mike": [103, 104], "canary": [105]}.items(), start=98000
+    ):
+        collection = FakeCollection(
+            rating_key=rating_key,
+            title="✨ Picked for You",  # identical for everyone: ONE tag
+            section_id=state.section_id,
+            subtype="movie",
+            labels=[f"Rowarr_{slug}"],
+            item_keys=items,
+            mode=0,
+            promoted_own_home=True,
+            promoted_shared_home=True,
+        )
+        state.collections[rating_key] = collection
+        legacy[slug] = collection
+
+    # Today they all show the same thing — the union.
+    assert len(state.members(legacy["sarah"])) == 5
+
+    report = engine_run(ctx, users)
+    assert report.ok, [(u.username, u.error) for u in report.users]
+
+    # Every legacy row is gone, and its destruction is on the record (rule 10).
+    for slug, collection in legacy.items():
+        assert collection.rating_key not in state.collections, f"{slug}'s shared row survived"
+    by_slug = {u.slug: u for u in report.users}
+    for slug in ("sarah", "mike", "canary"):
+        assert "✨ Picked for You" in (by_slug[slug].diff.deleted or []), f"{slug}'s destroyed row was not recorded"
+
+    # And every rebuilt row holds only its owner's picks.
+    owned = plex.owned_collections()
+    for user_report in report.users:
+        expected = {p.title for p in user_report.picks}
+        got: set[str] = set()
+        for rating_key in owned[user_report.slug].rating_keys:
+            collection = state.collections[rating_key]
+            got |= {state.item(k).title for k in state.members(collection) if state.item(k)}
+        assert got == expected, f"{user_report.slug}: {sorted(got - expected)} belong to someone else"

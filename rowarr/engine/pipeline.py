@@ -14,7 +14,7 @@ from rowarr.engine import ranking
 from rowarr.engine.clients.plex import PlexClient, PlexTvClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import Curator, CuratorError, NullCurator
-from rowarr.engine.delivery import deliver_rows, sweep_unhidable_rows
+from rowarr.engine.delivery import deliver_rows, row_marker, sweep_broken_rows
 from rowarr.engine.history import HistorySource, derive_seeds
 from rowarr.engine.models import (
     Candidate,
@@ -113,7 +113,15 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     try:
         # The accumulator is the report's own dict, so rows deleted before any mid-walk failure
         # are still audited — a destructive write must never go unrecorded (rule 10).
-        sweep_unhidable_rows(ctx.plex, ctx.config, dry_run=ctx.config.dry_run, deleted=report.swept_rows)
+        sweep_broken_rows(
+            ctx.plex,
+            ctx.config,
+            # slug -> the marker its row's title must carry. Without this a shared-tag row would
+            # survive for any user who gets no picks tonight, still showing them other people's.
+            markers={slug: row_marker(account_id) for account_id, slug in ctx.known_slugs.items()},
+            dry_run=ctx.config.dry_run,
+            deleted=report.swept_rows,
+        )
     except Exception as e:
         # Fail closed. We cannot prove the server has no unhidable rows, so we do not write more.
         report.error = f"unhidable-row sweep failed: {type(e).__name__}: {e}"

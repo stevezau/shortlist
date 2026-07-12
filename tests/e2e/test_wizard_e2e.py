@@ -16,6 +16,7 @@ import re
 import pytest
 from playwright.sync_api import Page, expect
 
+from rowarr.engine.delivery import row_marker
 from tests.e2e.conftest import RowarrApp, stub_plex_pin
 from tests.fakes.fake_plex import FakePlexState
 
@@ -218,7 +219,21 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: RowarrApp, fa
     assert rows["rowarr_mike"][0].title.startswith("Because you watched Show")  # mike only watches TV
     # A cold-start user has no seed to fill {top_seed} with, so the row falls back to the default
     # title rather than putting the dangling half-sentence "Because you watched" on their Home.
-    assert rows["rowarr_canary"][0].title == "✨ Picked for You"
+    assert rows["rowarr_canary"][0].title.startswith("✨ Picked for You")
+
+    # Every row carries its owner's INVISIBLE marker, so no two rows in a library share a title —
+    # and a Plex collection is a tag keyed by title, so identically-titled rows would be ONE tag
+    # holding everyone's picks. Users still read exactly the title they were promised.
+    accounts = {user.username.lower(): user.id for user in state.users.values()}
+    for label, collections in rows.items():
+        account_id = accounts[label.removeprefix("rowarr_")]
+        for collection in collections:
+            assert collection.title.endswith(row_marker(account_id)), (
+                f"{label}'s row has no marker — it shares a collection tag with everyone else's"
+            )
+    for library in (state.section_id, state.show_section_id):
+        titles = [c.title for c in state.collections.values() if c.section_id == library]
+        assert len(titles) == len(set(titles)), f"two rows share a collection tag in library {library}"
 
     # Every user's share now excludes the OTHER users' labels — the whole point of the product.
     assert state.users[201].filters["filterMovies"] == "label!=Rowarr_canary,Rowarr_mike"
