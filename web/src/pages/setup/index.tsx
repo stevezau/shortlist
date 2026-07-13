@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight } from "lucide-react";
+import type { ReactNode } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 
 import { ErrorState } from "@/components/query-boundary";
@@ -19,7 +20,7 @@ import { StepUsers } from "./step-users";
 import { StepWelcome } from "./step-welcome";
 import type { StepProps } from "./step-props";
 
-const STEP_COMPONENTS: readonly ((props: StepProps) => JSX.Element)[] = [
+const STEP_COMPONENTS: readonly ((props: StepProps) => ReactNode)[] = [
   StepWelcome,
   StepConnect,
   StepHistory,

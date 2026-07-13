@@ -2,6 +2,7 @@ import { Play, Sparkles } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { UserAvatar } from "@/components/user-avatar";
+import { UserBadges } from "@/components/user-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,14 +51,7 @@ export function UserCard({
           </Link>
         </CardTitle>
         <div className="flex items-center gap-2">
-          {user.cold_start && (
-            <Badge
-              variant="warning"
-              title="Not enough watch history yet — starting from popular titles"
-            >
-              cold start
-            </Badge>
-          )}
+          <UserBadges user={user} />
           {user.hit_rate !== null && (
             <Badge
               variant="secondary"

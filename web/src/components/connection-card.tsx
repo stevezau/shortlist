@@ -1,8 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
-import { CheckCircle2, PlugZap, XCircle } from "lucide-react";
+import { PlugZap } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 
 import { Segmented } from "@/components/segmented";
+import { TestResult } from "@/components/test-result";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -13,7 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api, ApiError } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 import { settingString } from "@/lib/format";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings, TestableService } from "@/lib/types";
@@ -215,9 +216,10 @@ export function ConnectionCard({
             })}
             {save.isError && (
               <p role="alert" className="text-sm text-destructive">
-                {save.error instanceof ApiError
-                  ? save.error.message
-                  : "Saving failed. Check the server log and try again."}
+                {apiErrorMessage(
+                  save.error,
+                  "Saving failed. Check the server log and try again.",
+                )}
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -245,26 +247,9 @@ export function ConnectionCard({
             </div>
           </div>
         ) : test.isSuccess ? (
-          <p
-            className={cn(
-              "flex items-center gap-1.5 text-sm",
-              test.data.ok ? "text-success" : "text-destructive",
-            )}
-          >
-            {test.data.ok ? (
-              <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-            ) : (
-              <XCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-            )}
-            {test.data.message}
-          </p>
+          <TestResult result={test.data} />
         ) : test.isError ? (
-          <p className="flex items-center gap-1.5 text-sm text-destructive">
-            <XCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-            {test.error instanceof ApiError
-              ? test.error.message
-              : "The test could not be completed."}
-          </p>
+          <TestResult error={test.error} />
         ) : (
           <p className="text-sm text-muted-foreground">
             {summary || "Not set up yet — choose Set up to connect."}

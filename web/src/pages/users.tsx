@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { UserAvatar } from "@/components/user-avatar";
-import { Badge } from "@/components/ui/badge";
+import { UserBadges } from "@/components/user-badges";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -82,30 +82,14 @@ export function UsersPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {user.user_type === "managed" && (
-                          <Badge variant="secondary">managed</Badge>
-                        )}
-                        {user.user_type === "owner" && (
-                          <Badge
-                            variant="outline"
-                            title="Plex cannot hide rows from the server owner"
-                          >
-                            owner
-                          </Badge>
-                        )}
-                        {user.cold_start && (
-                          <Badge
-                            variant="warning"
-                            title="Not enough watch history yet — starting from popular titles"
-                          >
-                            cold start
-                          </Badge>
-                        )}
-                        {user.user_type === "shared" && !user.cold_start && (
-                          <span className="text-sm text-muted-foreground">
-                            —
-                          </span>
-                        )}
+                        <UserBadges
+                          user={user}
+                          emptyFallback={
+                            <span className="text-sm text-muted-foreground">
+                              —
+                            </span>
+                          }
+                        />
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground tabular-nums">

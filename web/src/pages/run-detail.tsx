@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
+import { PickList } from "@/components/pick-list";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
@@ -12,24 +13,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDate, formatDuration, runStatusVariant } from "@/lib/format";
+import { githubIssueSnippet } from "@/lib/github";
 import { queryKeys, useRun, useUsers } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
 import type { RunDetail, RunUserResult } from "@/lib/types";
-
-function githubIssueSnippet(run: RunDetail, result: RunUserResult): string {
-  return [
-    "### Rowarr run error",
-    "",
-    `- Run: #${run.id} (${run.trigger}${run.dry_run ? ", dry-run" : ""})`,
-    `- Started: ${run.started_at}`,
-    `- User: ${result.slug}`,
-    `- Status: ${result.status}`,
-    "",
-    "```",
-    result.error ?? "(no error message)",
-    "```",
-  ].join("\n");
-}
 
 function CopyForGitHubButton({
   run,
@@ -186,26 +173,7 @@ function UserResultCard({
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Picks ({result.picks.length})
                 </p>
-                <ol className="mt-1 space-y-1">
-                  {result.picks
-                    .slice()
-                    .sort((a, b) => a.rank - b.rank)
-                    .map((pick) => (
-                      <li key={pick.rank} className="text-sm">
-                        <span className="font-semibold text-primary">
-                          #{pick.rank}
-                        </span>{" "}
-                        <span className="font-medium">{pick.title}</span>
-                        <span className="text-muted-foreground">
-                          {" "}
-                          — {pick.reason}
-                          {pick.seed_title
-                            ? ` · inspired by ${pick.seed_title}`
-                            : ""}
-                        </span>
-                      </li>
-                    ))}
-                </ol>
+                <PickList picks={result.picks} className="mt-1" />
               </div>
             )}
           </>

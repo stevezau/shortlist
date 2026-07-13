@@ -1,12 +1,13 @@
 import { useMutation } from "@tanstack/react-query";
-import { Check, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useId, useState } from "react";
 
+import { TestResult } from "@/components/test-result";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api, ApiError } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 
 import type { StepProps } from "./step-props";
 
@@ -75,9 +76,7 @@ export function StepHistory({ data, update, next }: StepProps) {
           )}
           Save TMDB key
         </Button>
-        {data.tmdb_set && (
-          <Badge variant="success">TMDB key works</Badge>
-        )}
+        {data.tmdb_set && <Badge variant="success">TMDB key works</Badge>}
       </div>
 
       {saveTmdb.isSuccess && !saveTmdb.data.ok && (
@@ -87,9 +86,7 @@ export function StepHistory({ data, update, next }: StepProps) {
       )}
       {saveTmdb.isError && (
         <p role="alert" className="text-sm text-destructive">
-          {saveTmdb.error instanceof ApiError
-            ? saveTmdb.error.message
-            : "Could not save that TMDB key."}
+          {apiErrorMessage(saveTmdb.error, "Could not save that TMDB key.")}
         </p>
       )}
 
@@ -145,23 +142,12 @@ export function StepHistory({ data, update, next }: StepProps) {
         </Button>
       </div>
 
-      {saveAndTest.isSuccess &&
-        (saveAndTest.data.ok ? (
-          <p className="inline-flex items-center gap-2 text-sm text-success">
-            <Check className="h-4 w-4" aria-hidden="true" />
-            {saveAndTest.data.message}
-          </p>
-        ) : (
-          <p role="alert" className="text-sm text-destructive">
-            {saveAndTest.data.message}
-          </p>
-        ))}
+      {saveAndTest.isSuccess && <TestResult result={saveAndTest.data} />}
       {saveAndTest.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          {saveAndTest.error instanceof ApiError
-            ? saveAndTest.error.message
-            : "Could not reach Tautulli. Check the URL and key."}
-        </p>
+        <TestResult
+          error={saveAndTest.error}
+          errorFallback="Could not reach Tautulli. Check the URL and key."
+        />
       )}
 
       {data.history_source === "tautulli" && (

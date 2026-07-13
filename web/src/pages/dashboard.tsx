@@ -21,13 +21,9 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserCard } from "@/components/user-card";
-import { ApiError } from "@/lib/api";
-import {
-  formatHitRate,
-  settingString,
-  timeAgo,
-  timeFromCron,
-} from "@/lib/format";
+import { apiErrorMessage } from "@/lib/api";
+import { dashboardStats } from "@/lib/dashboard-stats";
+import { settingString, timeFromCron } from "@/lib/format";
 import {
   queryKeys,
   usePatchUser,
@@ -39,7 +35,7 @@ import {
   useUsers,
 } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
-import type { PrivacyStatus, Run, User } from "@/lib/types";
+import type { PrivacyStatus, User } from "@/lib/types";
 
 function PrivacyBadge({ status }: { status: PrivacyStatus | undefined }) {
   if (!status || status.passed === null) {
@@ -67,25 +63,6 @@ function PrivacyBadge({ status }: { status: PrivacyStatus | undefined }) {
       Check failed
     </Badge>
   );
-}
-
-function dashboardStats(users: User[], runs: Run[]) {
-  const enabled = users.filter((user) => user.enabled).length;
-  const lastRun = runs[0];
-  const rates = users
-    .map((user) => user.hit_rate)
-    .filter((rate): rate is number => rate !== null);
-  const hitRate =
-    rates.length > 0
-      ? formatHitRate(rates.reduce((a, b) => a + b, 0) / rates.length)
-      : "—";
-  return {
-    enabled,
-    total: users.length,
-    lastRunAgo: lastRun ? timeAgo(lastRun.started_at) : "never",
-    errors: lastRun ? lastRun.stats.users_error : null,
-    hitRate,
-  };
 }
 
 function DashboardSkeleton() {
@@ -203,9 +180,10 @@ export function DashboardPage() {
 
       {privacyCheck.isError && (
         <p role="alert" className="mb-4 text-sm text-destructive">
-          {privacyCheck.error instanceof ApiError
-            ? privacyCheck.error.message
-            : "The Privacy Check could not run. Try again from Settings."}
+          {apiErrorMessage(
+            privacyCheck.error,
+            "The Privacy Check could not run. Try again from Settings.",
+          )}
         </p>
       )}
 

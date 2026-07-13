@@ -1,0 +1,122 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  cronFromTime,
+  formatHitRate,
+  renderRowName,
+  settingBool,
+  settingNumber,
+  settingString,
+  timeAgo,
+  timeFromCron,
+} from "@/lib/format";
+
+describe("cronFromTime / timeFromCron", () => {
+  it("round-trips a nightly time through cron and back", () => {
+    const cron = cronFromTime("03:30", false);
+    expect(cron).toBe("30 3 * * *");
+    expect(timeFromCron(cron)).toEqual({ time: "03:30", weekly: false });
+  });
+
+  it("round-trips a weekly time, marking the weekly flag", () => {
+    const cron = cronFromTime("22:05", true);
+    expect(cron).toBe("5 22 * * 0");
+    expect(timeFromCron(cron)).toEqual({ time: "22:05", weekly: true });
+  });
+
+  it("clamps an out-of-range or malformed time to the 03:30 default", () => {
+    // Bad hours/minutes fall back per-field to 3 / 30.
+    expect(cronFromTime("99:99")).toBe("30 3 * * *");
+    expect(cronFromTime("not-a-time")).toBe("30 3 * * *");
+  });
+
+  it("treats an empty string's hour as 0 (Number('') === 0), minute as the default", () => {
+    // A JS gotcha worth pinning: "" splits to [""] so the hour parses to 0 (valid), while the
+    // absent minute is NaN and falls back to 30.
+    expect(cronFromTime("")).toBe("30 0 * * *");
+  });
+
+  it("keeps a valid hour when only the minute is malformed", () => {
+    expect(cronFromTime("07:zz")).toBe("30 7 * * *");
+  });
+
+  it("falls back to 03:30 nightly for a cron it cannot parse", () => {
+    expect(timeFromCron("garbage")).toEqual({ time: "03:30", weekly: false });
+    expect(timeFromCron("60 25 * * *")).toEqual({
+      time: "03:30",
+      weekly: false,
+    });
+    expect(timeFromCron("30 3 * *")).toEqual({ time: "03:30", weekly: false });
+  });
+});
+
+describe("timeAgo", () => {
+  afterEach(() => vi.useRealTimers());
+
+  function atNow(now: string) {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+  }
+
+  it("returns 'never' for null and 'unknown' for an unparseable value", () => {
+    expect(timeAgo(null)).toBe("never");
+    expect(timeAgo("not-a-date")).toBe("unknown");
+  });
+
+  it("buckets recent times into just now / minutes / hours / days", () => {
+    atNow("2026-07-14T12:00:00Z");
+    expect(timeAgo("2026-07-14T11:59:30Z")).toBe("just now");
+    expect(timeAgo("2026-07-14T11:30:00Z")).toBe("30m ago");
+    expect(timeAgo("2026-07-14T06:00:00Z")).toBe("6h ago");
+    expect(timeAgo("2026-07-12T12:00:00Z")).toBe("2d ago");
+  });
+
+  it("floors a future timestamp to 'just now' rather than a negative delta", () => {
+    atNow("2026-07-14T12:00:00Z");
+    expect(timeAgo("2026-07-14T12:05:00Z")).toBe("just now");
+  });
+});
+
+describe("setting narrowers", () => {
+  const settings = {
+    str: "hello",
+    num: 15,
+    bool: true,
+    notFinite: Number.NaN,
+    wrong: ["array"],
+  };
+
+  it("settingString returns strings and falls back otherwise", () => {
+    expect(settingString(settings, "str")).toBe("hello");
+    expect(settingString(settings, "num")).toBe("");
+    expect(settingString(settings, "missing", "fallback")).toBe("fallback");
+  });
+
+  it("settingNumber returns finite numbers and falls back otherwise", () => {
+    expect(settingNumber(settings, "num", 0)).toBe(15);
+    expect(settingNumber(settings, "notFinite", 7)).toBe(7);
+    expect(settingNumber(settings, "str", 7)).toBe(7);
+    expect(settingNumber(settings, "missing", 3)).toBe(3);
+  });
+
+  it("settingBool returns booleans and falls back otherwise", () => {
+    expect(settingBool(settings, "bool")).toBe(true);
+    expect(settingBool(settings, "str")).toBe(false);
+    expect(settingBool(settings, "missing", true)).toBe(true);
+  });
+});
+
+describe("small formatters", () => {
+  it("formatHitRate renders a percent or an em dash before first measurement", () => {
+    expect(formatHitRate(null)).toBe("—");
+    expect(formatHitRate(0.314)).toBe("31%");
+    expect(formatHitRate(1)).toBe("100%");
+  });
+
+  it("renderRowName substitutes every {top_seed}", () => {
+    expect(renderRowName("Because you watched {top_seed}", "Fargo")).toBe(
+      "Because you watched Fargo",
+    );
+    expect(renderRowName("✨ Picked for You")).toBe("✨ Picked for You");
+  });
+});

@@ -3,11 +3,13 @@ import { Check, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
 
 import { FakePlexRow } from "@/components/fake-plex-row";
+import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api, ApiError } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
+import { ROW_SIZES } from "@/lib/constants";
 import { cronFromTime, renderRowName } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -16,7 +18,6 @@ import type { StepProps } from "./step-props";
 const STATIC_TPL = "✨ Picked for You";
 const DYNAMIC_TPL = "Because you watched {top_seed}";
 const EMOJI_CHOICES = ["✨", "🍿", "🎬", "⭐", "🔥", "❤️"];
-const ROW_SIZES = [10, 15, 20];
 
 type TemplateChoice = "static" | "dynamic" | "custom";
 
@@ -138,23 +139,15 @@ export function StepCustomize({ update, next }: StepProps) {
         />
       </div>
 
-      <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Row size</legend>
-        <div className="flex gap-2">
-          {ROW_SIZES.map((size) => (
-            <Button
-              key={size}
-              type="button"
-              size="sm"
-              variant={rowSize === size ? "default" : "outline"}
-              aria-pressed={rowSize === size}
-              onClick={() => setRowSize(size)}
-            >
-              {size}
-            </Button>
-          ))}
-        </div>
-      </fieldset>
+      <Segmented
+        legend="Row size"
+        value={String(rowSize)}
+        options={ROW_SIZES.map((size) => ({
+          value: String(size),
+          label: String(size),
+        }))}
+        onChange={(size) => setRowSize(Number(size))}
+      />
 
       <div className="space-y-2">
         <Label htmlFor={timeId}>Refresh rows nightly at</Label>
@@ -179,9 +172,7 @@ export function StepCustomize({ update, next }: StepProps) {
       </Button>
       {save.isError && (
         <p role="alert" className="text-sm text-destructive">
-          {save.error instanceof ApiError
-            ? save.error.message
-            : "Saving failed. Try again."}
+          {apiErrorMessage(save.error, "Saving failed. Try again.")}
         </p>
       )}
     </div>

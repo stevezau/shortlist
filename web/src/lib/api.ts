@@ -45,6 +45,15 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The plain-English message for a caught error: an {@link ApiError}'s own normalized message, or
+ * the caller's fallback for anything else. Replaces the `error instanceof ApiError ? … : …` ternary
+ * that was repeated at every mutation/query error site.
+ */
+export function apiErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiError ? error.message : fallback;
+}
+
 function trimTrailingSlash(value: string): string {
   return value.endsWith("/") ? value.slice(0, -1) : value;
 }

@@ -1,14 +1,16 @@
 import { useMutation } from "@tanstack/react-query";
-import { CheckCircle2, Film, PlugZap, Tv, XCircle } from "lucide-react";
+import { Film, PlugZap, Tv } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 
+import { SavedIndicator } from "@/components/saved-indicator";
 import { Segmented } from "@/components/segmented";
+import { TestResult } from "@/components/test-result";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { api, ApiError } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
 import { useArrOptions, useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -23,6 +25,20 @@ type ArrForm = {
   rootFolder: string;
 };
 
+/** Every editable requests setting in one object, so the panel updates it with a single patcher. */
+interface RequestsForm {
+  enabled: boolean;
+  radarr: ArrForm;
+  sonarr: ArrForm;
+  ratingSource: "tmdb" | "imdb";
+  omdbKey: string;
+  minRating: number;
+  minVotes: number;
+  minDemand: number;
+  minYear: number;
+  maxPerRun: number;
+}
+
 function readArr(settings: Settings, prefix: string): ArrForm {
   return {
     url: settingString(settings, `${prefix}.url`),
@@ -34,6 +50,24 @@ function readArr(settings: Settings, prefix: string): ArrForm {
       0,
     ),
     rootFolder: settingString(settings, `${prefix}.root_folder`),
+  };
+}
+
+function readForm(settings: Settings): RequestsForm {
+  return {
+    enabled: settingBool(settings, "requests.enabled"),
+    radarr: readArr(settings, "requests.radarr"),
+    sonarr: readArr(settings, "requests.sonarr"),
+    ratingSource:
+      settingString(settings, "requests.rating_source", "tmdb") === "imdb"
+        ? "imdb"
+        : "tmdb",
+    omdbKey: settingString(settings, "requests.omdb.apikey"),
+    minRating: settingNumber(settings, "requests.min_rating", 7),
+    minVotes: settingNumber(settings, "requests.min_votes", 100),
+    minDemand: settingNumber(settings, "requests.min_demand", 1),
+    minYear: settingNumber(settings, "requests.min_year", 0),
+    maxPerRun: settingNumber(settings, "requests.max_per_run", 5),
   };
 }
 
@@ -114,26 +148,8 @@ function ArrCard({
             {!test.isPending && <PlugZap aria-hidden="true" />}
             Test connection
           </Button>
-          {test.isSuccess &&
-            (test.data.ok ? (
-              <p className="flex items-center gap-1.5 text-sm text-success">
-                <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-                {test.data.message}
-              </p>
-            ) : (
-              <p className="flex items-center gap-1.5 text-sm text-destructive">
-                <XCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-                {test.data.message}
-              </p>
-            ))}
-          {test.isError && (
-            <p className="flex items-center gap-1.5 text-sm text-destructive">
-              <XCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-              {test.error instanceof ApiError
-                ? test.error.message
-                : "The test could not be completed."}
-            </p>
-          )}
+          {test.isSuccess && <TestResult result={test.data} />}
+          {test.isError && <TestResult error={test.error} />}
         </div>
 
         {/* Profiles and folders come from the app itself once it's connected — no hunting for ids. */}
@@ -203,39 +219,10 @@ function ArrCard({
 
 export function RequestsSettings({ settings }: { settings: Settings }) {
   const saveSettings = useSaveSettings();
-  const [enabled, setEnabled] = useState(
-    settingBool(settings, "requests.enabled"),
-  );
-  const [radarr, setRadarr] = useState<ArrForm>(() =>
-    readArr(settings, "requests.radarr"),
-  );
-  const [sonarr, setSonarr] = useState<ArrForm>(() =>
-    readArr(settings, "requests.sonarr"),
-  );
-  const [ratingSource, setRatingSource] = useState<"tmdb" | "imdb">(
-    settingString(settings, "requests.rating_source", "tmdb") === "imdb"
-      ? "imdb"
-      : "tmdb",
-  );
-  const [omdbKey, setOmdbKey] = useState(
-    settingString(settings, "requests.omdb.apikey"),
-  );
-  const [minRating, setMinRating] = useState(
-    settingNumber(settings, "requests.min_rating", 7),
-  );
-  const [minVotes, setMinVotes] = useState(
-    settingNumber(settings, "requests.min_votes", 100),
-  );
-  const [minDemand, setMinDemand] = useState(
-    settingNumber(settings, "requests.min_demand", 1),
-  );
-  const [minYear, setMinYear] = useState(
-    settingNumber(settings, "requests.min_year", 0),
-  );
-  const [maxPerRun, setMaxPerRun] = useState(
-    settingNumber(settings, "requests.max_per_run", 5),
-  );
+  const [form, setForm] = useState<RequestsForm>(() => readForm(settings));
   const [saved, setSaved] = useState(false);
+  const set = (patch: Partial<RequestsForm>) =>
+    setForm((prev) => ({ ...prev, ...patch }));
 
   const omdbTest = useMutation({
     mutationFn: () => api.testConnection("omdb"),
@@ -246,7 +233,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const demandId = useId();
   const yearId = useId();
   const omdbId = useId();
-  const ratingLabel = ratingSource === "imdb" ? "IMDb" : "TMDB";
+  const ratingLabel = form.ratingSource === "imdb" ? "IMDb" : "TMDB";
 
   // "Connected" for the dropdown fetch means the SAVED settings already have a URL and key on file
   // (the key comes back redacted). A just-typed-but-unsaved value doesn't count — the server reads
@@ -262,22 +249,22 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
     setSaved(false);
     saveSettings.mutate(
       {
-        "requests.enabled": enabled,
-        "requests.radarr.url": radarr.url,
-        "requests.radarr.apikey": radarr.apikey,
-        "requests.radarr.quality_profile_id": radarr.qualityProfileId,
-        "requests.radarr.root_folder": radarr.rootFolder,
-        "requests.sonarr.url": sonarr.url,
-        "requests.sonarr.apikey": sonarr.apikey,
-        "requests.sonarr.quality_profile_id": sonarr.qualityProfileId,
-        "requests.sonarr.root_folder": sonarr.rootFolder,
-        "requests.rating_source": ratingSource,
-        "requests.omdb.apikey": omdbKey,
-        "requests.min_rating": minRating,
-        "requests.min_votes": minVotes,
-        "requests.min_demand": minDemand,
-        "requests.min_year": minYear,
-        "requests.max_per_run": maxPerRun,
+        "requests.enabled": form.enabled,
+        "requests.radarr.url": form.radarr.url,
+        "requests.radarr.apikey": form.radarr.apikey,
+        "requests.radarr.quality_profile_id": form.radarr.qualityProfileId,
+        "requests.radarr.root_folder": form.radarr.rootFolder,
+        "requests.sonarr.url": form.sonarr.url,
+        "requests.sonarr.apikey": form.sonarr.apikey,
+        "requests.sonarr.quality_profile_id": form.sonarr.qualityProfileId,
+        "requests.sonarr.root_folder": form.sonarr.rootFolder,
+        "requests.rating_source": form.ratingSource,
+        "requests.omdb.apikey": form.omdbKey,
+        "requests.min_rating": form.minRating,
+        "requests.min_votes": form.minVotes,
+        "requests.min_demand": form.minDemand,
+        "requests.min_year": form.minYear,
+        "requests.max_per_run": form.maxPerRun,
       },
       { onSuccess: () => setSaved(true) },
     );
@@ -297,29 +284,29 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
             </p>
           </div>
           <Switch
-            checked={enabled}
-            onCheckedChange={setEnabled}
+            checked={form.enabled}
+            onCheckedChange={(enabled) => set({ enabled })}
             aria-label="Turn automatic requests on or off"
           />
         </div>
 
-        {enabled && (
+        {form.enabled && (
           <div className="space-y-5 border-t pt-5">
             <div className="grid gap-4 lg:grid-cols-2">
               <ArrCard
                 service="radarr"
                 title="Radarr"
                 icon={<Film aria-hidden="true" />}
-                form={radarr}
-                onChange={setRadarr}
+                form={form.radarr}
+                onChange={(radarr) => set({ radarr })}
                 connected={radarrConnected}
               />
               <ArrCard
                 service="sonarr"
                 title="Sonarr"
                 icon={<Tv aria-hidden="true" />}
-                form={sonarr}
-                onChange={setSonarr}
+                form={form.sonarr}
+                onChange={(sonarr) => set({ sonarr })}
                 connected={sonarrConnected}
               />
             </div>
@@ -330,19 +317,19 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
               <div className="space-y-2">
                 <Segmented
                   legend="Judge titles by"
-                  value={ratingSource}
+                  value={form.ratingSource}
                   options={[
                     { value: "tmdb", label: "TMDB rating" },
                     { value: "imdb", label: "IMDb rating" },
                   ]}
-                  onChange={(v) => setRatingSource(v as "tmdb" | "imdb")}
+                  onChange={(ratingSource) => set({ ratingSource })}
                 />
                 <p className="text-sm text-muted-foreground">
-                  {ratingSource === "imdb"
+                  {form.ratingSource === "imdb"
                     ? "Uses IMDb scores — needs a free OMDb API key below."
                     : "Uses TMDB scores. No extra setup needed."}
                 </p>
-                {ratingSource === "imdb" && (
+                {form.ratingSource === "imdb" && (
                   <div className="space-y-2 pt-1">
                     <Label htmlFor={omdbId}>OMDb API key</Label>
                     <div className="flex flex-wrap items-center gap-2">
@@ -350,8 +337,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                         id={omdbId}
                         type="password"
                         placeholder="Free key from omdbapi.com"
-                        value={omdbKey}
-                        onChange={(e) => setOmdbKey(e.target.value)}
+                        value={form.omdbKey}
+                        onChange={(e) => set({ omdbKey: e.target.value })}
                         className="max-w-xs"
                       />
                       <Button
@@ -363,24 +350,12 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                         {!omdbTest.isPending && <PlugZap aria-hidden="true" />}
                         Test
                       </Button>
-                      {omdbTest.isSuccess &&
-                        (omdbTest.data.ok ? (
-                          <span className="flex items-center gap-1.5 text-sm text-success">
-                            <CheckCircle2
-                              className="h-4 w-4 shrink-0"
-                              aria-hidden="true"
-                            />
-                            {omdbTest.data.message}
-                          </span>
-                        ) : (
-                          <span className="flex items-center gap-1.5 text-sm text-destructive">
-                            <XCircle
-                              className="h-4 w-4 shrink-0"
-                              aria-hidden="true"
-                            />
-                            {omdbTest.data.message}
-                          </span>
-                        ))}
+                      {omdbTest.isSuccess && (
+                        <TestResult result={omdbTest.data} as="span" />
+                      )}
+                      {omdbTest.isError && (
+                        <TestResult error={omdbTest.error} as="span" />
+                      )}
                     </div>
                   </div>
                 )}
@@ -395,8 +370,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     min={0}
                     max={10}
                     step={0.1}
-                    value={minRating}
-                    onChange={(e) => setMinRating(Number(e.target.value))}
+                    value={form.minRating}
+                    onChange={(e) => set({ minRating: Number(e.target.value) })}
                     className="w-28"
                   />
                   <p className="text-sm text-muted-foreground">
@@ -410,8 +385,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     type="number"
                     min={0}
                     step={10}
-                    value={minVotes}
-                    onChange={(e) => setMinVotes(Number(e.target.value))}
+                    value={form.minVotes}
+                    onChange={(e) => set({ minVotes: Number(e.target.value) })}
                     className="w-28"
                   />
                   <p className="text-sm text-muted-foreground">
@@ -426,9 +401,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     type="number"
                     min={1}
                     step={1}
-                    value={minDemand}
+                    value={form.minDemand}
                     onChange={(e) =>
-                      setMinDemand(Math.max(1, Number(e.target.value)))
+                      set({ minDemand: Math.max(1, Number(e.target.value)) })
                     }
                     className="w-28"
                   />
@@ -445,8 +420,10 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     min={0}
                     step={1}
                     placeholder="Any year"
-                    value={minYear || ""}
-                    onChange={(e) => setMinYear(Number(e.target.value) || 0)}
+                    value={form.minYear || ""}
+                    onChange={(e) =>
+                      set({ minYear: Number(e.target.value) || 0 })
+                    }
                     className="w-28"
                   />
                   <p className="text-sm text-muted-foreground">
@@ -458,12 +435,12 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
               <div className="space-y-2">
                 <Segmented
                   legend="Most to request per night"
-                  value={String(maxPerRun)}
+                  value={String(form.maxPerRun)}
                   options={MAX_PER_RUN.map((n) => ({
                     value: String(n),
                     label: String(n),
                   }))}
-                  onChange={(v) => setMaxPerRun(Number(v))}
+                  onChange={(v) => set({ maxPerRun: Number(v) })}
                 />
                 <p className="text-sm text-muted-foreground">
                   A hard cap across both apps, so a night can never flood your
@@ -478,20 +455,13 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
           <Button onClick={save} loading={saveSettings.isPending}>
             Save requests
           </Button>
-          {saved && !saveSettings.isPending && (
-            <p
-              role="status"
-              className="flex items-center gap-1.5 text-sm text-success"
-            >
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-              Saved
-            </p>
-          )}
+          <SavedIndicator show={saved && !saveSettings.isPending} />
           {saveSettings.isError && (
             <p role="alert" className="text-sm text-destructive">
-              {saveSettings.error instanceof ApiError
-                ? saveSettings.error.message
-                : "Saving failed. Check the server log and try again."}
+              {apiErrorMessage(
+                saveSettings.error,
+                "Saving failed. Check the server log and try again.",
+              )}
             </p>
           )}
         </div>

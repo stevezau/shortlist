@@ -78,6 +78,7 @@ export function CurationStyleFields({
           type="button"
           variant="ghost"
           size="sm"
+          aria-expanded={showAdvanced}
           onClick={() => setShowAdvanced((open) => !open)}
         >
           {showAdvanced
