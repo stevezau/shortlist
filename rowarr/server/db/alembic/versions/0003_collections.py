@@ -19,44 +19,53 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "collections",
-        sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("slug", sa.String(255), nullable=False),
-        sa.Column("name", sa.String(255), nullable=False),
-        sa.Column("build", sa.String(16), nullable=False, server_default="per_person"),
-        sa.Column("audience", sa.String(16), nullable=False, server_default="everyone"),
-        sa.Column("enabled", sa.Boolean, nullable=False, server_default=sa.true()),
-        sa.Column("size", sa.Integer, nullable=False, server_default="15"),
-        sa.Column("media", sa.String(16), nullable=False, server_default="both"),
-        sa.Column("sort_order", sa.Integer, nullable=False, server_default="0"),
-        sa.Column("name_template", sa.String(255), nullable=False, server_default=""),
-        sa.Column("source", sa.String(16), nullable=False, server_default="all_users"),
-        sa.Column("min_watchers", sa.Integer, nullable=False, server_default="2"),
-        sa.Column("prompt", sa.JSON, nullable=False, server_default="{}"),
-        sa.Column("created_at", sa.DateTime(timezone=True)),
-        sa.Column("updated_at", sa.DateTime(timezone=True)),
-    )
-    op.create_index("ix_collections_slug", "collections", ["slug"], unique=True)
-    op.create_table(
-        "collection_audience",
-        sa.Column(
-            "collection_id",
-            sa.Integer,
-            sa.ForeignKey("collections.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-        sa.Column(
-            "user_id",
-            sa.Integer,
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            primary_key=True,
-        ),
-    )
-
-    # Seed the default per-person row from the current global settings (JSON-encoded in `settings`),
-    # falling back to the standard defaults on a fresh install where nothing is persisted yet.
+    # Idempotent: SQLite auto-commits DDL, so a run interrupted mid-migration (e.g. two deployers
+    # racing) can leave the tables present but the version unbumped. Creating with checkfirst and
+    # seeding only when empty lets a re-run finish the job instead of failing on "already exists".
     bind = op.get_bind()
+    existing = set(sa.inspect(bind).get_table_names())
+
+    if "collections" not in existing:
+        op.create_table(
+            "collections",
+            sa.Column("id", sa.Integer, primary_key=True),
+            sa.Column("slug", sa.String(255), nullable=False),
+            sa.Column("name", sa.String(255), nullable=False),
+            sa.Column("build", sa.String(16), nullable=False, server_default="per_person"),
+            sa.Column("audience", sa.String(16), nullable=False, server_default="everyone"),
+            sa.Column("enabled", sa.Boolean, nullable=False, server_default=sa.true()),
+            sa.Column("size", sa.Integer, nullable=False, server_default="15"),
+            sa.Column("media", sa.String(16), nullable=False, server_default="both"),
+            sa.Column("sort_order", sa.Integer, nullable=False, server_default="0"),
+            sa.Column("name_template", sa.String(255), nullable=False, server_default=""),
+            sa.Column("source", sa.String(16), nullable=False, server_default="all_users"),
+            sa.Column("min_watchers", sa.Integer, nullable=False, server_default="2"),
+            sa.Column("prompt", sa.JSON, nullable=False, server_default="{}"),
+            sa.Column("created_at", sa.DateTime(timezone=True)),
+            sa.Column("updated_at", sa.DateTime(timezone=True)),
+        )
+        op.create_index("ix_collections_slug", "collections", ["slug"], unique=True)
+    if "collection_audience" not in existing:
+        op.create_table(
+            "collection_audience",
+            sa.Column(
+                "collection_id",
+                sa.Integer,
+                sa.ForeignKey("collections.id", ondelete="CASCADE"),
+                primary_key=True,
+            ),
+            sa.Column(
+                "user_id",
+                sa.Integer,
+                sa.ForeignKey("users.id", ondelete="CASCADE"),
+                primary_key=True,
+            ),
+        )
+
+    # Seed the default per-person row (only if not already present) from the current global settings
+    # (JSON-encoded in `settings`), falling back to the standard defaults on a fresh install.
+    if bind.execute(sa.text("SELECT count(*) FROM collections")).scalar():
+        return
     stored = {row[0]: row[1] for row in bind.execute(sa.text("SELECT key, value FROM settings")).fetchall()}
 
     def _setting(key: str, default):
