@@ -101,18 +101,29 @@ export function StepFirstRun({ data, complete }: StepProps) {
               ? "You skipped the Privacy Check, so Shortlist will not write to Plex — it never does until a check passes. This is a dry run: you'll see exactly what it would build for each user. Run the Privacy Check from Settings whenever you're ready, then build the rows for real."
               : "This builds a real row for every enabled user — history → candidates → curating → collection → privacy sync — and you get to watch every stage live."}
           </p>
-          <Button
-            size="lg"
-            onClick={() => run.mutate()}
-            disabled={run.isPending}
-          >
-            {run.isPending ? (
-              <Loader2 className="animate-spin" aria-hidden="true" />
-            ) : (
-              <Play aria-hidden="true" />
-            )}
-            {dryRunOnly ? "Preview my rows (dry run)" : "Build my rows"}
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              size="lg"
+              onClick={() => run.mutate()}
+              disabled={run.isPending}
+            >
+              {run.isPending ? (
+                <Loader2 className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Play aria-hidden="true" />
+              )}
+              {dryRunOnly ? "Preview my rows (dry run)" : "Build my rows"}
+            </Button>
+            {/* Finishing without a run is fine — nothing needs the first run to have happened.
+                The nightly schedule builds rows anyway, and "Build my rows" waits on the Runs page. */}
+            <Button
+              variant="ghost"
+              onClick={() => void complete()}
+              disabled={run.isPending}
+            >
+              Skip for now — I&rsquo;ll run it later
+            </Button>
+          </div>
           {run.isError && (
             <p role="alert" className="text-sm text-destructive">
               {run.error instanceof ApiError
