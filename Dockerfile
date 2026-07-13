@@ -20,7 +20,10 @@ RUN apt-get update \
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY shortlist/ ./shortlist/
-RUN pip install --no-cache-dir .
+# Bundle every LLM provider SDK — the container is the whole product, so the curator must work
+# for whichever provider the owner picks in setup without them shelling in to pip install extras.
+# (ollama/none need no SDK; posters/pillow isn't wired into the engine yet.)
+RUN pip install --no-cache-dir ".[anthropic,openai,google]"
 
 COPY --from=web /build/dist ./web/dist
 COPY docker/entrypoint.sh /entrypoint.sh

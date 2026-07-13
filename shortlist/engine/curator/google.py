@@ -17,7 +17,7 @@ class GoogleCurator:
         try:
             from google import genai
         except ImportError as e:
-            raise ImportError("Google provider needs `pip install rowarr[google]`") from e
+            raise ImportError("Google provider needs `pip install shortlist[google]`") from e
         self._client = genai.Client(api_key=api_key)
         self._model = model
         self.last_tokens = 0

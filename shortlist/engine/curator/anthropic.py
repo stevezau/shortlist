@@ -20,7 +20,7 @@ class AnthropicCurator:
         try:
             import anthropic
         except ImportError as e:
-            raise ImportError("Anthropic provider needs `pip install rowarr[anthropic]`") from e
+            raise ImportError("Anthropic provider needs `pip install shortlist[anthropic]`") from e
         self._client = anthropic.Anthropic(api_key=api_key, timeout=timeout, max_retries=2)
         self._model = model
         self.last_tokens = 0

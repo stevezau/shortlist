@@ -17,7 +17,7 @@ class OpenAICurator:
         try:
             import openai
         except ImportError as e:
-            raise ImportError("OpenAI provider needs `pip install rowarr[openai]`") from e
+            raise ImportError("OpenAI provider needs `pip install shortlist[openai]`") from e
         self._client = openai.OpenAI(api_key=api_key, timeout=timeout, max_retries=2)
         self._model = model
         self.last_tokens = 0

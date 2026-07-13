@@ -92,6 +92,18 @@ export function StepHistory({ data, update, next }: StepProps) {
 
       <hr className="border-border" />
 
+      <div className="space-y-1">
+        <h3 className="text-sm font-medium">
+          Tautulli{" "}
+          <span className="font-normal text-muted-foreground">(optional)</span>
+        </h3>
+        <p className="text-sm text-muted-foreground">
+          Tautulli gives richer, more accurate watch history. Skip it and
+          Shortlist uses Plex&rsquo;s own history instead — that always works
+          with no setup, so you can move on without it.
+        </p>
+      </div>
+
       <div className="space-y-2">
         <Label htmlFor={urlId}>Tautulli URL</Label>
         <Input
