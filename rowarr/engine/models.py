@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -25,6 +26,21 @@ def slugify(name: str) -> str:
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
     text = re.sub(r"[^a-zA-Z0-9]+", "_", text).strip("_").lower()
     return text or "user"
+
+
+def dedupe_slug(base: str, is_taken: Callable[[str], bool]) -> str:
+    """Return ``base``, or ``base_2``, ``base_3``, … — the first that ``is_taken`` reports free.
+
+    Slugs are what row labels are built from and must be unique per owner: two Plex display names
+    can slugify alike (Plex names are free text), so the second claimant gets a numeric suffix
+    rather than colliding onto the first's label — and their private row.
+    """
+    slug = base
+    n = 2
+    while is_taken(slug):
+        slug = f"{base}_{n}"
+        n += 1
+    return slug
 
 
 @dataclass(frozen=True)
@@ -272,14 +288,18 @@ class EngineConfig:
     # no missing-title bookkeeping happens at all (the common case pays nothing for it).
     requests: RequestConfig | None = None
 
-    def per_person_rows(self) -> list[RowSpec]:
-        """Per-person specs to deliver; a single default row when none are configured.
+    def default_row_spec(self) -> RowSpec:
+        """The single default per-person row, synthesized when no rows are configured.
 
-        The default row's name_template is left empty so it falls through to the per-user override
-        (or config default) at delivery — preserving the legacy per-user row-name behaviour.
+        Its name_template is left empty so it falls through to the per-user override (or config
+        default) at delivery — preserving the legacy per-user row-name behaviour.
         """
+        return RowSpec(slug="picked", name_template="", size=self.row_size)
+
+    def per_person_rows(self) -> list[RowSpec]:
+        """Per-person specs to deliver; a single default row when none are configured."""
         if not self.rows:
-            return [RowSpec(slug="picked", name_template="", size=self.row_size)]
+            return [self.default_row_spec()]
         return [row for row in self.rows if not row.shared]
 
     def shared_rows(self) -> list[RowSpec]:

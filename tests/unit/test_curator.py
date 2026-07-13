@@ -15,6 +15,7 @@ from rowarr.engine.curator import make_curator
 from rowarr.engine.curator.base import (
     MAX_REASON_LEN,
     TONE_PRESETS,
+    CuratorError,
     build_prompts,
     picks_schema,
     validate_picks,
@@ -225,6 +226,32 @@ class TestOpenAICurator:
         call = client.chat.completions.create.call_args
         assert call.kwargs["response_format"]["json_schema"]["strict"] is True
 
+    def _client(self, monkeypatch):
+        mod = ModuleType("openai")
+        mod.OpenAIError = type("OpenAIError", (Exception,), {})
+        mod.OpenAI = MagicMock()
+        monkeypatch.setitem(sys.modules, "openai", mod)
+        from rowarr.engine.curator.openai import OpenAICurator
+
+        client = MagicMock()
+        mod.OpenAI.return_value = client
+        return OpenAICurator(api_key="k"), client, mod
+
+    def test_provider_error_becomes_curator_error(self, monkeypatch):
+        curator, client, mod = self._client(monkeypatch)
+        client.chat.completions.create.side_effect = mod.OpenAIError("upstream 500")
+        with pytest.raises(CuratorError, match="OpenAI"):
+            curator.curate(make_profile(history=[]), candidates(), k=1)
+
+    def test_unparseable_json_becomes_curator_error(self, monkeypatch):
+        curator, client, _mod = self._client(monkeypatch)
+        client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="not json{"))],
+            usage=SimpleNamespace(total_tokens=1),
+        )
+        with pytest.raises(CuratorError, match="unparseable"):
+            curator.curate(make_profile(history=[]), candidates(), k=1)
+
 
 class TestGoogleCurator:
     def test_sends_response_schema(self, monkeypatch):
@@ -247,6 +274,33 @@ class TestGoogleCurator:
         call = client.models.generate_content.call_args
         assert call.kwargs["config"]["response_json_schema"] == picks_schema()
 
+    def _client(self, monkeypatch):
+        google_pkg = ModuleType("google")
+        genai = ModuleType("google.genai")
+        genai.Client = MagicMock()
+        google_pkg.genai = genai
+        monkeypatch.setitem(sys.modules, "google", google_pkg)
+        monkeypatch.setitem(sys.modules, "google.genai", genai)
+        from rowarr.engine.curator.google import GoogleCurator
+
+        client = MagicMock()
+        genai.Client.return_value = client
+        return GoogleCurator(api_key="k"), client
+
+    def test_provider_error_becomes_curator_error(self, monkeypatch):
+        curator, client = self._client(monkeypatch)
+        client.models.generate_content.side_effect = RuntimeError("gemini exploded")
+        with pytest.raises(CuratorError, match="Google"):
+            curator.curate(make_profile(history=[]), candidates(), k=1)
+
+    def test_unparseable_json_becomes_curator_error(self, monkeypatch):
+        curator, client = self._client(monkeypatch)
+        client.models.generate_content.return_value = SimpleNamespace(
+            text="not json{", usage_metadata=SimpleNamespace(total_token_count=1)
+        )
+        with pytest.raises(CuratorError, match="unparseable"):
+            curator.curate(make_profile(history=[]), candidates(), k=1)
+
 
 class TestOllamaCurator:
     @respx.mock
@@ -268,3 +322,17 @@ class TestOllamaCurator:
         body = json.loads(route.calls.last.request.content)
         assert body["format"] == picks_schema()
         assert body["stream"] is False
+
+    @respx.mock
+    def test_provider_error_becomes_curator_error(self):
+        respx.post("http://ollama.test/api/chat").mock(return_value=httpx.Response(500))
+        with pytest.raises(CuratorError, match="Ollama"):
+            OllamaCurator(base_url="http://ollama.test").curate(make_profile(history=[]), candidates(), k=1)
+
+    @respx.mock
+    def test_unparseable_json_becomes_curator_error(self):
+        respx.post("http://ollama.test/api/chat").mock(
+            return_value=httpx.Response(200, json={"message": {"content": "not json{"}})
+        )
+        with pytest.raises(CuratorError, match="unparseable"):
+            OllamaCurator(base_url="http://ollama.test").curate(make_profile(history=[]), candidates(), k=1)

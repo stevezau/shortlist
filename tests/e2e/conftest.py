@@ -247,7 +247,7 @@ def _boot_app(config_dir: Path) -> tuple[FastAPI, _ThreadedServer]:
 def app(fake_plex, fake_tmdb, reset_fake_plex, tmp_path: Path, monkeypatch) -> Iterator[RowarrApp]:
     """The real Rowarr app pointed at the fakes, with setup already completed."""
     pms_url, plextv_url, state = fake_plex
-    monkeypatch.setattr("rowarr.engine.clients.plex.PLEXTV", plextv_url)  # engine uses absolute plex.tv URLs
+    monkeypatch.setattr("rowarr.engine.clients.plextv.PLEXTV", plextv_url)  # engine uses absolute plex.tv URLs
     monkeypatch.setattr("rowarr.server.auth.PLEXTV", plextv_url)  # the PIN flow has its own constant
     monkeypatch.setattr("rowarr.engine.clients.tmdb.API", fake_tmdb)
 
@@ -300,7 +300,7 @@ def fresh_app(fake_plex, fake_tmdb, reset_fake_plex, tmp_path: Path, monkeypatch
     only thing the owner can reach.
     """
     _, plextv_url, _ = fake_plex
-    monkeypatch.setattr("rowarr.engine.clients.plex.PLEXTV", plextv_url)
+    monkeypatch.setattr("rowarr.engine.clients.plextv.PLEXTV", plextv_url)
     # The auth module has its OWN plex.tv constant (the PIN flow) — without this the real sign-in
     # would reach for the internet, and the e2e would have to forge the session cookie instead of
     # letting the product mint it.

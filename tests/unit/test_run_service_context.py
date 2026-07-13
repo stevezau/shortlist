@@ -8,11 +8,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import rowarr.server.services.context_builder as context_builder_mod
 import rowarr.server.services.run_service as run_service_mod
 from rowarr.engine.history import FallbackHistorySource, PlexHistorySource
 from rowarr.engine.models import MediaType, RunReport
 from rowarr.server.db.models import PickRow, PrivacyCheck, Server, User
 from rowarr.server.db.session import make_engine, make_session_factory, run_migrations
+from rowarr.server.services.context_builder import ContextBuilder
 from rowarr.server.services.run_service import RunService
 from rowarr.server.services.secrets import SecretBox
 from rowarr.server.services.sse import EventBus
@@ -44,9 +46,9 @@ def configured(sessions, tmp_path, monkeypatch):
         store.set("tmdb.apikey", "k")
     plex_client = MagicMock()
     plex_client.machine_id = "m1"
-    monkeypatch.setattr(run_service_mod, "PlexClient", lambda url, token: plex_client)
-    monkeypatch.setattr(run_service_mod, "PlexTvClient", lambda *a, **k: MagicMock())
-    monkeypatch.setattr(run_service_mod, "TmdbClient", lambda *a, **k: MagicMock())
+    monkeypatch.setattr(context_builder_mod, "PlexClient", lambda url, token: plex_client)
+    monkeypatch.setattr(context_builder_mod, "PlexTvClient", lambda *a, **k: MagicMock())
+    monkeypatch.setattr(context_builder_mod, "TmdbClient", lambda *a, **k: MagicMock())
     return box
 
 
@@ -68,6 +70,16 @@ class TestBuildContext:
             store.set("tautulli.apikey", "tk")
         ctx = service.build_context(dry_run=False)
         assert isinstance(ctx.history_source, FallbackHistorySource)
+
+    def test_ollama_provider_is_built_with_its_url(self, service, sessions, configured):
+        """Ollama takes a base URL and no key; the key was previously unstorable, 422ing setup."""
+        with sessions() as session:
+            store = SettingsStore(session, configured)
+            store.set("curator.provider", "ollama")
+            store.set("curator.ollama_url", "http://ollama.local:11434")
+        ctx = service.build_context(dry_run=True)
+        assert ctx.curator.name == "ollama"
+        assert ctx.curator._base_url == "http://ollama.local:11434"
 
     def test_recent_picks_window_respects_staleness_config(self, service, sessions, configured):
         from rowarr.server.db.models import Run
@@ -242,7 +254,7 @@ class TestBuildRequests:
 
     def test_off_by_default_returns_none(self, sessions, tmp_path):
         store = self._store(sessions, tmp_path, {})
-        assert RunService._build_requests(store) is None
+        assert ContextBuilder._build_requests(store) is None
 
     def test_enabled_with_both_apps_builds_both_targets(self, sessions, tmp_path):
         store = self._store(
@@ -263,7 +275,7 @@ class TestBuildRequests:
                 "requests.max_per_run": 3,
             },
         )
-        cfg = RunService._build_requests(store)
+        cfg = ContextBuilder._build_requests(store)
         assert cfg is not None and cfg.enabled
         assert cfg.radarr.url == "http://radarr:7878" and cfg.radarr.api_key == "rk"
         assert cfg.radarr.quality_profile_id == 4 and cfg.radarr.root_folder == "/movies"
@@ -282,6 +294,6 @@ class TestBuildRequests:
                 "requests.sonarr.apikey": "sk",
             },
         )
-        cfg = RunService._build_requests(store)
+        cfg = ContextBuilder._build_requests(store)
         assert cfg.radarr is None  # no key -> not built, rather than erroring mid-run
         assert cfg.sonarr is not None

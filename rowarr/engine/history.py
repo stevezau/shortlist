@@ -7,7 +7,7 @@ from typing import Protocol
 
 from loguru import logger
 
-from rowarr.engine.clients.plex import PlexClient
+from rowarr.engine.clients.plex_pms import PlexClient
 from rowarr.engine.clients.tautulli import TautulliClient
 from rowarr.engine.models import MediaType, Seed, UserProfile, WatchedItem
 

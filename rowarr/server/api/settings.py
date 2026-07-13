@@ -31,38 +31,16 @@ class PromptPreviewRequest(BaseModel):
 async def prompt_preview(body: PromptPreviewRequest, request: Request) -> dict:
     """Assemble the system+user prompt from a recipe against fixed sample data, so the owner can see
     the effect of a tone/guidance/template before saving. Uses the configured row size for k."""
-    from datetime import UTC, datetime
-
     from rowarr.engine.curator.base import build_prompts
-    from rowarr.engine.models import (
-        Candidate,
-        MediaType,
-        PromptConfig,
-        Seed,
-        UserProfile,
-        UserType,
-        WatchedItem,
-    )
+    from rowarr.engine.curator.preview import sample_preview_inputs
+    from rowarr.engine.models import PromptConfig
 
     with request.app.state.sessions() as session:
         k = int(SettingsStore(session, request.app.state.secrets).get("row.size"))
 
-    watched_at = datetime(2026, 1, 1, tzinfo=UTC)
-    seed = Seed(tmdb_id=146233, title="Prisoners", media_type=MediaType.MOVIE, weight=2.0)
-    profile = UserProfile(
-        username="Sarah",
-        plex_account_id=0,
-        user_type=UserType.SHARED,
-        history=[
-            WatchedItem("Prisoners", MediaType.MOVIE, watched_at, 146233, 2013, 1, 1.0),
-            WatchedItem("Nightcrawler", MediaType.MOVIE, watched_at, 242582, 2014, 2, 1.0),
-        ],
-        prompt=PromptConfig(tone=body.tone, guidance=body.guidance, template=body.template, shared=body.shared),
+    profile, candidates = sample_preview_inputs(
+        PromptConfig(tone=body.tone, guidance=body.guidance, template=body.template, shared=body.shared)
     )
-    candidates = [
-        Candidate(273481, "Sicario", MediaType.MOVIE, 2015, ["Thriller", "Crime"], 7.6, 8600, [seed], 10),
-        Candidate(398978, "Wind River", MediaType.MOVIE, 2017, ["Thriller", "Mystery"], 7.4, 4200, [seed], 11),
-    ]
     system, user = build_prompts(profile, candidates, k)
     return {"system": system, "user": user}
 
@@ -106,10 +84,10 @@ async def test_connection(service: str, request: Request) -> dict:
 
     def probe() -> str:
         if service == "plex":
-            from rowarr.engine.clients.plex import PlexClient
+            from rowarr.engine.clients.plex_pms import PlexClient
 
             plex = PlexClient(config["plex.url"], config["plex.token"])
-            return f"Connected to {plex._server.friendlyName} (PMS {plex.version})"
+            return f"Connected to {plex.server_name} (PMS {plex.version})"
         if service == "tautulli":
             from rowarr.engine.clients.tautulli import TautulliClient
 

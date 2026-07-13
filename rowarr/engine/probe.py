@@ -14,7 +14,8 @@ from datetime import UTC, datetime
 
 from loguru import logger
 
-from rowarr.engine.clients.plex import PlexClient, PlexTvClient
+from rowarr.engine.clients.plex_pms import PlexClient
+from rowarr.engine.clients.plextv import PlexTvClient
 from rowarr.engine.models import FilterSnapshot, PrivacyCheckResult, UserProfile
 from rowarr.engine.privacy import SnapshotStore, merge_label_excludes, rowarr_labels_in
 from rowarr.engine.verify import collection_id_from_hub

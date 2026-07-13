@@ -232,12 +232,12 @@ class _FakeStore:
 
 
 class TestResolvePrompt:
-    """The global-vs-per-person recipe merge (RunService._resolve_prompt), cell by cell."""
+    """The global-vs-per-person recipe merge (ContextBuilder._resolve_prompt), cell by cell."""
 
     def _resolve(self, glob: dict, prefs: dict):
-        from rowarr.server.services.run_service import RunService
+        from rowarr.server.services.context_builder import ContextBuilder
 
-        return RunService._resolve_prompt(_FakeStore(glob), prefs)
+        return ContextBuilder._resolve_prompt(_FakeStore(glob), prefs)
 
     def test_defaults_when_nothing_is_set(self):
         cfg = self._resolve({}, {})
@@ -286,14 +286,14 @@ class TestCollectionsSeed:
     def test_default_row_size_and_name_follow_the_global_setting(self, client: TestClient, tmp_path):
         """The wizard/Settings set row.size and row.name_template; the default 'picked' row must
         deliver at those values, not a size frozen into the collection at migration time."""
-        from rowarr.server.services.run_service import RunService
+        from rowarr.server.services.context_builder import ContextBuilder
         from rowarr.server.services.sse import EventBus
         from rowarr.server.settings_store import SettingsStore
 
         client.put("/api/settings", json={"values": {"row.size": 10}})
-        svc = RunService(client.app.state.sessions, EventBus(), tmp_path, client.app.state.secrets)
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
         with client.app.state.sessions() as session:
-            specs = svc._build_rows(session, SettingsStore(session, client.app.state.secrets))
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
         picked = next(spec for spec in specs if spec.slug == "picked")
         assert picked.size == 10  # follows the setting, not the collection's seeded 15
         assert picked.name_template == ""  # falls through to the global row name

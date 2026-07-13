@@ -184,8 +184,9 @@ class TestRun:
         mock_plextv.users = [plextv_user(100, "sarah")]
         ctx.history_source.fetch.return_value = [make_watched("Only One")]
         ctx.history_source.fetch.side_effect = None
-        section = ctx.plex.sections.return_value[0]
-        section.search.return_value = [fake_media_item(1, "Top Rated", tmdb_id=50), fake_media_item(2, "No Guid")]
+        # The guid parse now lives in PlexClient.top_rated; cold start just consumes (tmdb_id, item)
+        # pairs. A movies-only server yields one movie pick.
+        ctx.plex.top_rated.return_value = [(50, fake_media_item(1, "Top Rated", tmdb_id=50))]
 
         report = pipeline_mod.run(ctx, [sarah])
 

@@ -326,3 +326,22 @@ class TestRestore:
         assert privacy.restore_user_restrictions(mock_plextv, snapshot) is True
         call = mock_plextv.update_user_filters.call_args
         assert call.args[1] == {"filterMovies": "contentRating!=R", "filterTelevision": ""}
+
+    def test_restore_raises_when_the_readback_does_not_match(self, mock_plextv):
+        """The write is verified: if Plex accepts it but the value doesn't actually change, the
+        restore must FAIL loudly rather than report a clean uninstall over stale filters."""
+        from datetime import UTC, datetime
+
+        from rowarr.engine.models import FilterSnapshot
+
+        snapshot = FilterSnapshot(
+            plex_account_id=100,
+            username="sarah",
+            taken_at=datetime.now(UTC),
+            filters={"filterMovies": "contentRating!=R"},
+        )
+        mock_plextv.users = [plextv_user(100, "sarah", filters={"filterMovies": "contentRating!=R|label!=Rowarr_mike"})]
+        # The write silently doesn't take — the read-back still shows the rowarr exclude.
+        mock_plextv.update_user_filters.side_effect = lambda account_id, fields: None
+        with pytest.raises(RuntimeError, match="restore mismatch"):
+            privacy.restore_user_restrictions(mock_plextv, snapshot)

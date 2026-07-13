@@ -19,7 +19,7 @@ from loguru import logger
 from rowarr.engine.models import FilterSnapshot, UserProfile, UserType
 
 if TYPE_CHECKING:
-    from rowarr.engine.clients.plex import PlexTvClient, PlexTvUser
+    from rowarr.engine.clients.plextv import PlexTvClient, PlexTvUser
 
 FILTER_FIELDS = ("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos")
 RESTRICTED_FILTER_FIELDS = ("filterMovies", "filterTelevision")

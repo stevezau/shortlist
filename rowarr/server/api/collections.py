@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 
-from rowarr.engine.models import slugify
+from rowarr.engine.models import dedupe_slug, slugify
 from rowarr.server.auth import require_owner
 from rowarr.server.db.models import Collection, CollectionAudience
 
@@ -88,11 +88,7 @@ def _reject_duplicate_name(session, name: str, *, exclude_id: int | None = None)
 
 def _unique_slug(session, base: str) -> str:
     base = base if base not in RESERVED_SLUGS else f"{base}_row"
-    slug, n = base, 2
-    while session.query(Collection).filter_by(slug=slug).first() is not None:
-        slug = f"{base}_{n}"
-        n += 1
-    return slug
+    return dedupe_slug(base, lambda slug: session.query(Collection).filter_by(slug=slug).first() is not None)
 
 
 def _set_audience(session, collection: Collection, body: CollectionIn) -> None:
@@ -135,26 +131,41 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
         return _serialize(session, collection)
 
 
+# Columns a PATCH may set directly, name (needs a dup check) and audience/prompt (need shaping)
+# handled separately.
+_PATCHABLE_COLUMNS = (
+    "build",
+    "audience",
+    "enabled",
+    "size",
+    "media",
+    "sort_order",
+    "name_template",
+    "source",
+    "min_watchers",
+)
+
+
 @router.patch("/{collection_id}")
 async def update_collection(collection_id: int, body: CollectionIn, request: Request) -> dict:
     _validate(body)
+    # Only touch fields the request actually sent, so a partial PATCH (e.g. an enable toggle) never
+    # resets the columns it omitted back to CollectionIn's defaults.
+    sent = body.model_fields_set
     with request.app.state.sessions() as session:
         collection = session.get(Collection, collection_id)
         if collection is None:
             raise HTTPException(404, "collection not found")
-        _reject_duplicate_name(session, body.name, exclude_id=collection_id)
-        collection.name = body.name
-        collection.build = body.build
-        collection.audience = body.audience
-        collection.enabled = body.enabled
-        collection.size = body.size
-        collection.media = body.media
-        collection.sort_order = body.sort_order
-        collection.name_template = body.name_template
-        collection.source = body.source
-        collection.min_watchers = body.min_watchers
-        collection.prompt = body.prompt.model_dump()
-        _set_audience(session, collection, body)
+        if "name" in sent:
+            _reject_duplicate_name(session, body.name, exclude_id=collection_id)
+            collection.name = body.name
+        for column in _PATCHABLE_COLUMNS:
+            if column in sent:
+                setattr(collection, column, getattr(body, column))
+        if "prompt" in sent:
+            collection.prompt = body.prompt.model_dump()
+        if sent & {"audience", "audience_user_ids"}:
+            _set_audience(session, collection, body)
         session.commit()
         return _serialize(session, collection)
 

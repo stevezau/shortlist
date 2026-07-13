@@ -34,12 +34,13 @@ import click
 import yaml
 from loguru import logger
 
-from rowarr.engine.clients.plex import MIN_PMS_VERSION, PlexClient, PlexTvClient, PlexTvUser, parse_pms_version
+from rowarr.engine.clients.plex_pms import MIN_PMS_VERSION, PlexClient, parse_pms_version
+from rowarr.engine.clients.plextv import PlexTvClient, PlexTvUser
 from rowarr.engine.clients.tautulli import TautulliClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import make_curator
 from rowarr.engine.history import FallbackHistorySource, PlexHistorySource, TautulliSource
-from rowarr.engine.models import EngineConfig, FilterSnapshot, MediaType, UserProfile, slugify
+from rowarr.engine.models import EngineConfig, FilterSnapshot, MediaType, UserProfile, dedupe_slug, slugify
 from rowarr.engine.pipeline import EngineContext
 from rowarr.engine.pipeline import run as engine_run
 from rowarr.engine.privacy import restore_user_restrictions
@@ -149,11 +150,7 @@ def roster_slugs(
     for remote in sorted(remote_users, key=lambda u: u.id):  # stable regardless of response order
         if remote.id in stored:
             continue
-        base = slugify(remote.username)
-        slug, n = base, 2
-        while slug in taken:
-            slug = f"{base}_{n}"
-            n += 1
+        slug = dedupe_slug(slugify(remote.username), taken.__contains__)
         taken.add(slug)
         stored[remote.id] = slug
     # Atomically: a half-written map is a map that could reassign somebody's row.

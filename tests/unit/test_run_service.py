@@ -13,11 +13,13 @@ import pytest
 
 import rowarr.server.services.run_service as run_service_mod
 from rowarr.engine.models import CollectionDiff, FilterSnapshot, MediaType, Pick, RunReport, StageCounts, UserRunReport
+from rowarr.server.db.adapters import DbCache, DbSnapshotStore
 from rowarr.server.db.models import Event, PickRow, Run, RunUser, User
 from rowarr.server.db.session import make_engine, make_session_factory, run_migrations
-from rowarr.server.services.run_service import DbCache, DbSnapshotStore, RunService
+from rowarr.server.services.run_service import RunService
 from rowarr.server.services.secrets import SecretBox
 from rowarr.server.services.sse import EventBus
+from rowarr.server.settings_store import SettingsStore
 
 
 @pytest.fixture
@@ -182,6 +184,21 @@ class TestRunExecution:
         assert profiles[0].excluded_genres == {"Horror"}
 
 
+class TestPauseAll:
+    """The Danger Zone switch was a no-op: the key wasn't storable and nothing read it."""
+
+    def test_paused_all_stops_every_run_without_disabling_users(self, sessions, tmp_path):
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            assert {p.slug for p in service.enabled_profiles(session)} == {"sarah", "mike"}
+            SettingsStore(session, service._secrets).set("paused_all", True)
+            assert service.enabled_profiles(session) == []
+            # The users are still enabled — unpausing restores them, no re-enabling needed.
+            assert session.query(User).filter_by(enabled=True).count() == 2
+            SettingsStore(session, service._secrets).set("paused_all", False)
+            assert {p.slug for p in service.enabled_profiles(session)} == {"sarah", "mike"}
+
+
 class TestSnapshotsForAccountsRowarrDoesNotKnow:
     """The server must be able to write share filters for accounts that aren't in its users table.
 
@@ -193,7 +210,7 @@ class TestSnapshotsForAccountsRowarrDoesNotKnow:
     """
 
     def test_snapshotting_a_stranger_records_them_so_uninstall_can_restore_them(self, sessions):
-        from rowarr.server.services.run_service import DbSnapshotStore
+        from rowarr.server.db.adapters import DbSnapshotStore
 
         store = DbSnapshotStore(sessions)
         snapshot = FilterSnapshot(
@@ -220,7 +237,7 @@ class TestSnapshotsForAccountsRowarrDoesNotKnow:
         slugified to the same string, the second one's snapshot would fail to save — and a
         snapshot that cannot be saved means a share filter that is never written, which means
         that account goes on seeing everyone else's rows."""
-        from rowarr.server.services.run_service import DbSnapshotStore
+        from rowarr.server.db.adapters import DbSnapshotStore
 
         store = DbSnapshotStore(sessions)
         for account_id, username in ((111, "Bob Smith"), (222, "bob-smith")):

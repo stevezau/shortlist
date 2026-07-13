@@ -10,8 +10,9 @@ import httpx
 import pytest
 import respx
 
-import rowarr.engine.clients.plex as plex_mod
-from rowarr.engine.clients.plex import MIN_PMS_VERSION, PlexClient, PlexTvClient, parse_pms_version
+import rowarr.engine.clients.plextv as plextv_mod
+from rowarr.engine.clients.plex_pms import MIN_PMS_VERSION, PlexClient, parse_pms_version
+from rowarr.engine.clients.plextv import PlexTvClient
 from rowarr.engine.clients.tautulli import TautulliClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.models import MediaType, OwnedRow, UserType
@@ -56,7 +57,7 @@ class TestPlexTvClient:
     @respx.mock
     def test_429_backs_off_then_succeeds(self, monkeypatch):
         sleeps = []
-        monkeypatch.setattr(plex_mod.time, "sleep", sleeps.append)
+        monkeypatch.setattr(plextv_mod.time, "sleep", sleeps.append)
         route = respx.put("https://plex.tv/api/users/100")
         route.side_effect = [httpx.Response(429), httpx.Response(200)]
         self._client().update_user_filters(100, {"filterMovies": "x=y"})
@@ -316,6 +317,49 @@ class TestPlexClient:
         mock_plex._server.library.sections.return_value = [movies, shows]
 
         assert mock_plex.owned_collections("rowarr") == {"sarah": OwnedRow("Rowarr_sarah", [571285, 571290])}
+
+    def test_server_name_returns_friendly_name(self, mock_plex: PlexClient):
+        mock_plex._server.friendlyName = "SFLIX"
+        assert mock_plex.server_name == "SFLIX"
+
+    def test_top_rated_returns_tmdb_pairs_skipping_items_without_guids(self, mock_plex: PlexClient):
+        """The cold-start guid parse lives here now; items with no tmdb guid are skipped, and the
+        search over-fetches (2x) so a sparse library still fills the request."""
+        section = MagicMock()
+        section.search.return_value = [
+            fake_media_item(1, "A", tmdb_id=50),
+            fake_media_item(2, "No Guid"),
+            fake_media_item(3, "B", tmdb_id=60),
+        ]
+        pairs = mock_plex.top_rated(section, 2)
+        assert [(tmdb_id, item.title) for tmdb_id, item in pairs] == [(50, "A"), (60, "B")]
+        assert section.search.call_args.kwargs == {"sort": "audienceRating:desc", "limit": 4}
+
+    def test_set_items_replaces_membership_and_reorders_via_move_chain(self, mock_plex: PlexClient):
+        """set_items must push the exact adds/removes AND lay out custom order with a moveItem
+        after= chain — feeding the wrong deltas or order is invisible to a call-count assertion."""
+
+        def item(rating_key: int) -> MagicMock:
+            it = MagicMock()
+            it.ratingKey = rating_key
+            return it
+
+        existing = [item(1), item(2), item(3)]  # 2 will be removed, 4 added
+        wanted = [item(4), item(1), item(3)]  # desired order 4, 1, 3
+        final = [item(4), item(1), item(3)]  # what the PMS returns after the writes + reload
+        collection = MagicMock()
+        collection.items.side_effect = [existing, existing, final]
+
+        mock_plex.set_items(collection, wanted)
+
+        assert [i.ratingKey for i in collection.addItems.call_args.args[0]] == [4]
+        assert [i.ratingKey for i in collection.removeItems.call_args.args[0]] == [2]
+        collection.sortUpdate.assert_called_once_with(sort="custom")
+        moves = collection.moveItem.call_args_list
+        assert [c.args[0].ratingKey for c in moves] == [4, 1, 3]
+        assert moves[0].kwargs["after"] is None
+        assert moves[1].kwargs["after"].ratingKey == 4
+        assert moves[2].kwargs["after"].ratingKey == 1
 
     def test_sections_by_type_maps_each_media_type_to_its_library(self, mock_plex: PlexClient):
         movies, shows = MagicMock(), MagicMock()

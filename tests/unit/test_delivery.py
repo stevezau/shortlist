@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rowarr.engine.clients.plex import PlexClient
-from rowarr.engine.delivery import deliver_rows, render_row_name, row_marker, sweep_broken_rows
+from rowarr.engine.clients.plex_pms import PlexClient
+from rowarr.engine.delivery import DEFAULT_ROW_NAME, deliver_rows, render_row_name, row_marker, sweep_broken_rows
 from rowarr.engine.models import EngineConfig, MediaType, Pick
 from tests.conftest import make_profile
 
@@ -46,15 +46,36 @@ def shows() -> MagicMock:
     return _section("TV Shows", "show", 2)
 
 
+def _named_pick(seed_title: str | None) -> Pick:
+    return Pick(
+        tmdb_id=1, rating_key=1, title="Movie", rank=1, reason="r", media_type=MediaType.MOVIE, seed_title=seed_title
+    )
+
+
 class TestRenderRowName:
     def test_top_seed_substitution(self):
         assert render_row_name("Because you watched {top_seed}", make_profile(), picks()) == "Because you watched Fargo"
 
     def test_unfillable_template_falls_back_to_the_default_row_name(self):
-        from rowarr.engine.delivery import DEFAULT_ROW_NAME
-
         cold = [Pick(1, 1, "X", 1, "r", MediaType.MOVIE)]
         assert render_row_name("{top_seed}", make_profile(), cold) == DEFAULT_ROW_NAME
+
+
+class TestColdStartRowName:
+    """A cold-start user has no seed — the row must not read 'Because you watched'."""
+
+    def test_seeded_user_gets_the_dynamic_title(self):
+        name = render_row_name("Because you watched {top_seed}", make_profile(), [_named_pick("Fargo")])
+        assert name == "Because you watched Fargo"
+
+    def test_cold_start_user_falls_back_instead_of_dangling(self):
+        assert (
+            render_row_name("Because you watched {top_seed}", make_profile(), [_named_pick(None)]) == DEFAULT_ROW_NAME
+        )
+        assert render_row_name("Because you watched {top_seed}", make_profile(), []) == DEFAULT_ROW_NAME
+
+    def test_static_template_is_untouched(self):
+        assert render_row_name("✨ Picked for You", make_profile(), [_named_pick(None)]) == "✨ Picked for You"
 
 
 class TestDeliverRows:

@@ -8,7 +8,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from rowarr.engine.clients.plex import PlexClient, PlexTvUser
+from rowarr.engine.clients.plex_pms import PlexClient
+from rowarr.engine.clients.plextv import PlexTvUser
 from rowarr.engine.models import (
     Candidate,
     EngineConfig,

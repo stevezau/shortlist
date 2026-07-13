@@ -36,7 +36,7 @@ def privacy_summary(session: Session) -> dict:
 
 def gate_error(session: Session, server_version: str | None, *, max_age_days: int = 7) -> str | None:
     """Why real writes must be refused right now, or None when the gate is open."""
-    from rowarr.engine.clients.plex import MIN_PMS_VERSION, parse_pms_version
+    from rowarr.engine.clients.plex_pms import MIN_PMS_VERSION, parse_pms_version
 
     latest = latest_by_tier(session)
     if not latest:

@@ -16,7 +16,8 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 
 from rowarr.cli import FileSnapshotStore
-from rowarr.engine.clients.plex import PlexClient, PlexTvClient
+from rowarr.engine.clients.plex_pms import PlexClient
+from rowarr.engine.clients.plextv import PlexTvClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import NullCurator
 from rowarr.engine.history import PlexHistorySource
@@ -125,7 +126,7 @@ def fakes(monkeypatch):
         _UvicornThread(tmdb_app).start(),
     ]
     pms, plextv, tmdb = servers
-    monkeypatch.setattr("rowarr.engine.clients.plex.PLEXTV", plextv.url)
+    monkeypatch.setattr("rowarr.engine.clients.plextv.PLEXTV", plextv.url)
     monkeypatch.setattr("rowarr.engine.clients.tmdb.API", tmdb.url)
     yield state, pms.url, tmdb_app
     for server in servers:

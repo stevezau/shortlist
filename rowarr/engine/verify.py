@@ -15,7 +15,8 @@ import re
 
 from loguru import logger
 
-from rowarr.engine.clients.plex import PlexClient, PlexTvClient
+from rowarr.engine.clients.plex_pms import PlexClient
+from rowarr.engine.clients.plextv import PlexTvClient
 from rowarr.engine.models import OwnedRow, PrivacyCheckResult, UserProfile, UserType
 from rowarr.engine.privacy import desired_excludes, rowarr_labels_in
 

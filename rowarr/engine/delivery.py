@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from loguru import logger
 
-from rowarr.engine.clients.plex import PlexClient
+from rowarr.engine.clients.plex_pms import PlexClient
 from rowarr.engine.models import (
     SHARED_SLUG_PREFIX,
     CollectionDiff,
@@ -106,7 +106,7 @@ def deliver_rows(
     a collection tag with other users' rows.
     """
     if spec is None:  # legacy/default caller: the one per-person row, name from profile/config
-        spec = RowSpec(slug="picked", name_template="", size=config.row_size)
+        spec = config.default_row_spec()
     # Per-person rows carry the user's shared label; shared rows carry their own. Shared rows use a
     # fixed marker (there's no single owner account) so they resolve to one stable membership.
     wanted_label = spec.label or f"{config.label_prefix}_{profile.slug}"
@@ -180,11 +180,64 @@ def remove_row(
             if collection.title != title:
                 continue
             if dry_run:
-                logger.info("[dry-run] {}: would remove muted row '{}' in '{}'", profile.username, display, section.title)
+                logger.info(
+                    "[dry-run] {}: would remove muted row '{}' in '{}'", profile.username, display, section.title
+                )
             else:
                 plex.delete_owned_collection(collection, config.label_prefix)
                 logger.info("{}: removed muted row '{}' in '{}'", profile.username, display, section.title)
             diff.deleted.append(display)
+
+
+def _create_labelled_collection(
+    plex: PlexClient,
+    section,
+    profile: UserProfile,
+    picks: list[Pick],
+    *,
+    title: str,
+    label: str,
+    display: str,
+) -> str:
+    """Create the collection, apply its label, and delete it if the label doesn't stick.
+
+    A collection with no rowarr_* label is invisible to every lookup we have — all of them key off
+    that prefix — so nothing would ever find it again, no filter could hide it, and it would be
+    visible to everyone forever. Create and label must therefore succeed together or not at all.
+    Returns the stored (Plex title-cased) label.
+    """
+    items = plex.fetch_items([p.rating_key for p in picks])
+    collection = plex.create_collection(section, title, items)
+    try:
+        stored = plex.stored_label(collection, label)
+    except Exception:
+        # An unlabelled row must not be allowed to outlive this call.
+        logger.error("{}: could not label the new row in '{}' — removing it", profile.username, section.title)
+        try:
+            collection.delete()
+        except Exception:
+            # Two PMS failures back to back. Name the orphan loudly: it is unlabelled, so no
+            # future run can find it, and only a human with this ratingKey can remove it.
+            logger.critical(
+                "{}: ORPHANED COLLECTION — '{}' (ratingKey {}) in '{}' exists with NO rowarr "
+                "label. Rowarr cannot find or remove it and no share filter can hide it. "
+                "Delete it in Plex (find it by ratingKey — the title carries invisible "
+                "characters and will not match a search).",
+                profile.username,
+                display,
+                getattr(collection, "ratingKey", "?"),
+                section.title,
+            )
+        raise
+    logger.info(
+        "{}: delivered '{}' to '{}' ({} items, label {})",
+        profile.username,
+        display,
+        section.title,
+        len(picks),
+        stored,
+    )
+    return stored
 
 
 def _deliver_one(
@@ -245,40 +298,7 @@ def _deliver_one(
                 len(picks),
             )
             return diff, label
-        items = plex.fetch_items([p.rating_key for p in picks])
-        collection = plex.create_collection(section, title, items)
-        try:
-            stored = plex.stored_label(collection, label)
-        except Exception:
-            # A collection with no rowarr_* label is invisible to every lookup we have — all of
-            # them key off that prefix — so nothing would ever find it again, no filter could
-            # hide it, and it would be visible to everyone forever. An unlabelled row must not be
-            # allowed to outlive this call.
-            logger.error("{}: could not label the new row in '{}' — removing it", profile.username, section.title)
-            try:
-                collection.delete()
-            except Exception:
-                # Two PMS failures back to back. Name the orphan loudly: it is unlabelled, so no
-                # future run can find it, and only a human with this ratingKey can remove it.
-                logger.critical(
-                    "{}: ORPHANED COLLECTION — '{}' (ratingKey {}) in '{}' exists with NO rowarr "
-                    "label. Rowarr cannot find or remove it and no share filter can hide it. "
-                    "Delete it in Plex (find it by ratingKey — the title carries invisible "
-                    "characters and will not match a search).",
-                    profile.username,
-                    display,
-                    getattr(collection, "ratingKey", "?"),
-                    section.title,
-                )
-            raise
-        logger.info(
-            "{}: delivered '{}' to '{}' ({} items, label {})",
-            profile.username,
-            display,
-            section.title,
-            len(picks),
-            stored,
-        )
+        stored = _create_labelled_collection(plex, section, profile, picks, title=title, label=label, display=display)
         return diff, stored
 
     current_titles = [i.title for i in collection.items()]

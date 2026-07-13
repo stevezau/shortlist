@@ -20,10 +20,10 @@ from fastapi import APIRouter, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel
 
-from rowarr.engine.clients import plex as plex_client_module
-from rowarr.engine.clients.plex import MIN_PMS_VERSION, parse_pms_version
+from rowarr.engine.clients.plextv import PLEXTV
 from rowarr.server.auth import require_setup_access
 from rowarr.server.db.models import Server
+from rowarr.server.services.setup_probe import run_capability_probe
 from rowarr.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/setup", tags=["setup"])
@@ -73,7 +73,7 @@ async def list_servers(request: Request) -> list[dict]:
 
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.get(
-            f"{plex_client_module.PLEXTV}/api/v2/resources?includeHttps=1&includeRelay=1",
+            f"{PLEXTV}/api/v2/resources?includeHttps=1&includeRelay=1",
             headers={"X-Plex-Token": token, "Accept": "application/json", "X-Plex-Client-Identifier": client_id},
         )
     if response.status_code != 200:
@@ -131,53 +131,13 @@ async def probe(body: ProbeRequest, request: Request) -> dict:
     client_id = request.app.state.client_id
 
     def run_probe() -> dict:
-        from rowarr.engine.clients.plex import PlexClient
-
-        result: dict = {"checks": {}}
-        plex = PlexClient(body.plex_url, token)
-        version = plex.version
-        version_ok = parse_pms_version(version) >= MIN_PMS_VERSION
-        result["checks"]["pms_version"] = {
-            "ok": version_ok,
-            "value": version,
-            "message": (
-                f"Plex Media Server {version} supports private rows"
-                if version_ok
-                else f"PMS {version} predates the privacy fix — upgrade to "
-                + ".".join(map(str, MIN_PMS_VERSION))
-                + " or newer"
-            ),
-        }
-        result["machine_id"] = plex.machine_id
-        result["server_name"] = plex._server.friendlyName
-        account = httpx.get(
-            f"{plex_client_module.PLEXTV}/api/v2/user",
-            headers={"X-Plex-Token": token, "Accept": "application/json", "X-Plex-Client-Identifier": client_id},
-            timeout=15,
+        return run_capability_probe(
+            body.plex_url,
+            token,
+            client_id,
+            tautulli_url=body.tautulli_url,
+            tautulli_apikey=body.tautulli_apikey,
         )
-        account.raise_for_status()
-        info = account.json()
-        result["owner_account_id"] = int(info["id"])
-        plex_pass = (info.get("subscription") or {}).get("active", False)
-        result["checks"]["plex_pass"] = {
-            "ok": bool(plex_pass),
-            "message": "Plex Pass active" if plex_pass else "Label restrictions need Plex Pass on the admin account",
-        }
-        sections = [{"key": s.key, "title": s.title, "type": s.type, "count": s.totalSize} for s in plex.sections()]
-        result["checks"]["libraries"] = {
-            "ok": bool(sections),
-            "message": f"{len(sections)} librarie(s) found" if sections else "No movie/show libraries found",
-        }
-        result["libraries"] = sections
-        if body.tautulli_url:
-            from rowarr.engine.clients.tautulli import TautulliClient
-
-            try:
-                TautulliClient(body.tautulli_url, body.tautulli_apikey or "").ping()
-                result["checks"]["tautulli"] = {"ok": True, "message": "Tautulli connected"}
-            except Exception as e:
-                result["checks"]["tautulli"] = {"ok": False, "message": f"Tautulli: {type(e).__name__}"}
-        return result
 
     try:
         return await asyncio.get_running_loop().run_in_executor(None, run_probe)
