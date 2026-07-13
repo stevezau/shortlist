@@ -16,7 +16,7 @@ from starlette.responses import FileResponse
 
 import rowarr
 from rowarr.server import auth
-from rowarr.server.api import events, privacy, runs, setup, system, users
+from rowarr.server.api import collections, events, privacy, runs, setup, system, users
 from rowarr.server.api import settings as settings_api
 from rowarr.server.db.models import Run, Server
 from rowarr.server.db.session import make_engine, make_session_factory, run_migrations
@@ -114,7 +114,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
     )
 
     app.include_router(auth.router, prefix="/api")
-    for module in (setup, users, runs, privacy, settings_api, system, events):
+    for module in (setup, users, runs, collections, privacy, settings_api, system, events):
         app.include_router(module.router, prefix="/api")
 
     if WEB_DIST.exists():

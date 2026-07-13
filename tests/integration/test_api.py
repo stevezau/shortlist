@@ -224,6 +224,66 @@ class TestCollectionsSeed:
             )
 
 
+class TestCollectionsApi:
+    def test_list_starts_with_the_seeded_default(self, client: TestClient):
+        cols = client.get("/api/collections").json()
+        assert [c["slug"] for c in cols] == ["picked"]
+
+    def test_create_update_delete_per_person(self, client: TestClient):
+        created = client.post(
+            "/api/collections",
+            json={"name": "Hidden Gems", "size": 10, "prompt": {"tone": "cinephile"}},
+        )
+        assert created.status_code == 201
+        cid = created.json()["id"]
+        assert created.json()["slug"] == "hidden_gems"
+        assert created.json()["build"] == "per_person"
+        assert created.json()["prompt"]["tone"] == "cinephile"
+
+        updated = client.patch(
+            f"/api/collections/{cid}",
+            json={"name": "Hidden Gems", "size": 20, "enabled": False, "prompt": {"tone": "warm"}},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["size"] == 20 and updated.json()["enabled"] is False
+
+        assert client.delete(f"/api/collections/{cid}").status_code == 204
+        assert [c["slug"] for c in client.get("/api/collections").json()] == ["picked"]
+
+    def test_shared_collection_with_subset_audience(self, client: TestClient):
+        users = client.get("/api/users").json()
+        ids = [u["id"] for u in users]
+        created = client.post(
+            "/api/collections",
+            json={
+                "name": "Staff Picks",
+                "build": "shared",
+                "audience": "subset",
+                "audience_user_ids": ids,
+                "min_watchers": 3,
+            },
+        )
+        assert created.status_code == 201
+        body = created.json()
+        assert body["build"] == "shared"
+        assert sorted(body["audience_user_ids"]) == sorted(ids)
+        assert body["min_watchers"] == 3
+
+    def test_default_picked_cannot_be_deleted(self, client: TestClient):
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        assert client.delete(f"/api/collections/{picked['id']}").status_code == 422
+
+    def test_validation_rejects_bad_enums(self, client: TestClient):
+        assert client.post("/api/collections", json={"name": "X", "build": "nonsense"}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "media": "vinyl"}).status_code == 422
+
+    def test_slug_collision_gets_suffixed(self, client: TestClient):
+        first = client.post("/api/collections", json={"name": "Date Night"}).json()
+        second = client.post("/api/collections", json={"name": "Date Night"}).json()
+        assert first["slug"] == "date_night"
+        assert second["slug"] == "date_night_2"
+
+
 class TestPrivacyApi:
     def test_status_empty(self, client: TestClient):
         r = client.get("/api/privacy/status").json()
