@@ -86,6 +86,18 @@ class TestUsersApi:
     def test_patch_unknown_user_404(self, client: TestClient):
         assert client.patch("/api/users/9999", json={"enabled": True}).status_code == 404
 
+    def test_patch_prompt_prefs_persist(self, client: TestClient):
+        users = client.get("/api/users").json()
+        target = next(u for u in users if u["username"] == "sarah")
+        r = client.patch(
+            f"/api/users/{target['id']}",
+            json={"prefs": {"prompt_tone": "cinephile", "prompt_guidance": "she loves slow burns"}},
+        )
+        assert r.status_code == 200
+        prefs = r.json()["prefs"]
+        assert prefs["prompt_tone"] == "cinephile"
+        assert prefs["prompt_guidance"] == "she loves slow burns"
+
 
 class TestRunsApi:
     def test_empty_list_then_trigger(self, client: TestClient):
@@ -128,6 +140,71 @@ class TestSettingsApi:
             from rowarr.server.settings_store import SettingsStore
 
             assert SettingsStore(session, client.app.state.secrets).get("plex.token") == "real-token"
+
+    def test_prompt_settings_round_trip(self, client: TestClient):
+        r = client.put(
+            "/api/settings",
+            json={"values": {"curator.prompt_tone": "warm", "curator.prompt_guidance": "house style"}},
+        )
+        assert r.status_code == 200
+        assert r.json()["curator.prompt_tone"] == "warm"
+        assert r.json()["curator.prompt_guidance"] == "house style"
+
+    def test_prompt_preview_reflects_the_recipe(self, client: TestClient):
+        r = client.post("/api/settings/prompt-preview", json={"tone": "cinephile", "guidance": "Prefer noir."})
+        assert r.status_code == 200
+        system = r.json()["system"]
+        assert "Prefer noir." in system
+        assert "film buff" in system  # cinephile tone clause
+        assert "Use only tmdb_id values from the candidate list" in system  # contract always present
+        shared = client.post("/api/settings/prompt-preview", json={"shared": True}).json()
+        assert "popular on this server" in shared["system"].lower()
+
+
+class _FakeStore:
+    """Minimal SettingsStore stand-in: .get(key) returns the value or None."""
+
+    def __init__(self, values: dict):
+        self._values = values
+
+    def get(self, key: str):
+        return self._values.get(key)
+
+
+class TestResolvePrompt:
+    """The global-vs-per-person recipe merge (RunService._resolve_prompt), cell by cell."""
+
+    def _resolve(self, glob: dict, prefs: dict):
+        from rowarr.server.services.run_service import RunService
+
+        return RunService._resolve_prompt(_FakeStore(glob), prefs)
+
+    def test_defaults_when_nothing_is_set(self):
+        cfg = self._resolve({}, {})
+        assert (cfg.tone, cfg.guidance, cfg.template) == ("balanced", "", "")
+
+    def test_user_tone_overrides_global(self):
+        cfg = self._resolve({"curator.prompt_tone": "warm"}, {"prompt_tone": "cinephile"})
+        assert cfg.tone == "cinephile"
+
+    def test_empty_user_tone_inherits_global(self):
+        cfg = self._resolve({"curator.prompt_tone": "warm"}, {"prompt_tone": ""})
+        assert cfg.tone == "warm"
+
+    def test_guidance_is_additive_global_then_user(self):
+        cfg = self._resolve(
+            {"curator.prompt_guidance": "house rule"},
+            {"prompt_guidance": "note for this person"},
+        )
+        assert cfg.guidance == "house rule\nnote for this person"
+
+    def test_guidance_skips_blank_parts(self):
+        assert self._resolve({"curator.prompt_guidance": "only global"}, {}).guidance == "only global"
+        assert self._resolve({}, {"prompt_guidance": "only user"}).guidance == "only user"
+
+    def test_template_user_wins_else_global(self):
+        assert self._resolve({"curator.prompt_template": "G"}, {}).template == "G"
+        assert self._resolve({"curator.prompt_template": "G"}, {"prompt_template": "U"}).template == "U"
 
 
 class TestPrivacyApi:

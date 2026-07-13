@@ -21,7 +21,16 @@ from rowarr.engine.clients.tautulli import TautulliClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import make_curator
 from rowarr.engine.history import FallbackHistorySource, PlexHistorySource, TautulliSource
-from rowarr.engine.models import EngineConfig, FilterSnapshot, MediaType, RunReport, UserProfile, UserType, slugify
+from rowarr.engine.models import (
+    EngineConfig,
+    FilterSnapshot,
+    MediaType,
+    PromptConfig,
+    RunReport,
+    UserProfile,
+    UserType,
+    slugify,
+)
 from rowarr.engine.pipeline import EngineContext
 from rowarr.engine.pipeline import run as engine_run
 from rowarr.server.db.models import CacheRow, Event, PickRow, RestrictionSnapshotRow, Run, RunUser, User
@@ -221,7 +230,8 @@ class RunService:
         The Danger Zone's "pause all" switch stops every run without disabling anyone, so the
         user list survives a pause/unpause round trip.
         """
-        if SettingsStore(session, self._secrets).get("paused_all"):
+        store = SettingsStore(session, self._secrets)
+        if store.get("paused_all"):
             logger.info("all runs are paused (Settings → Danger Zone) — no users will be processed")
             return []
         query = session.query(User).filter_by(enabled=True)
@@ -244,9 +254,30 @@ class RunService:
                     max_rating=prefs.get("max_rating"),
                     row_size=prefs.get("row_size"),
                     row_name_template=prefs.get("row_name_tpl"),
+                    prompt=self._resolve_prompt(store, prefs),
                 )
             )
         return profiles
+
+    @staticmethod
+    def _resolve_prompt(store: SettingsStore, prefs: dict) -> PromptConfig:
+        """Merge the global curation recipe with this user's per-person overrides.
+
+        tone/template: the user's value wins if set, else the global default. guidance is additive —
+        the house guidance plus the per-person note. Empty string means "inherit" everywhere.
+        """
+        global_tone = store.get("curator.prompt_tone") or "balanced"
+        global_guidance = (store.get("curator.prompt_guidance") or "").strip()
+        global_template = (store.get("curator.prompt_template") or "").strip()
+        user_tone = (prefs.get("prompt_tone") or "").strip()
+        user_guidance = (prefs.get("prompt_guidance") or "").strip()
+        user_template = (prefs.get("prompt_template") or "").strip()
+        guidance = "\n".join(part for part in (global_guidance, user_guidance) if part)
+        return PromptConfig(
+            tone=user_tone or global_tone,
+            guidance=guidance,
+            template=user_template or global_template,
+        )
 
     # -- execution -----------------------------------------------------------------------
 

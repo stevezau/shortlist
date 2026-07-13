@@ -15,6 +15,10 @@ import {
   TautulliGlyph,
   TmdbGlyph,
 } from "@/components/brand-glyphs";
+import {
+  CurationStyleFields,
+  type CurationStyleValue,
+} from "@/components/curation-style";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary } from "@/components/query-boundary";
 import { UninstallDialog } from "@/components/uninstall-dialog";
@@ -155,6 +159,11 @@ function SettingsForm({ settings }: { settings: Settings }) {
   const [rowSize, setRowSize] = useState(
     settingNumber(settings, "row.size", 15),
   );
+  const [curation, setCuration] = useState<CurationStyleValue>({
+    tone: settingString(settings, "curator.prompt_tone", "balanced"),
+    guidance: settingString(settings, "curator.prompt_guidance"),
+    template: settingString(settings, "curator.prompt_template"),
+  });
   const [uninstallOpen, setUninstallOpen] = useState(false);
 
   const timeId = useId();
@@ -176,11 +185,14 @@ function SettingsForm({ settings }: { settings: Settings }) {
   // "Save schedule" and "Save defaults" share one mutation, so track which section last saved to
   // show its "Saved" confirmation under the right button (and clear the other's).
   const [savedSection, setSavedSection] = useState<
-    "schedule" | "defaults" | null
+    "schedule" | "defaults" | "curation" | null
   >(null);
 
   // PUT sends only the keys being changed; the server merges into the rest.
-  const save = (section: "schedule" | "defaults", values: Settings) => {
+  const save = (
+    section: "schedule" | "defaults" | "curation",
+    values: Settings,
+  ) => {
     setSavedSection(null);
     saveSettings.mutate(values, { onSuccess: () => setSavedSection(section) });
   };
@@ -371,6 +383,45 @@ function SettingsForm({ settings }: { settings: Settings }) {
                   : "Saving failed. Check the server log and try again."}
               </p>
             )}
+          </CardContent>
+        </Card>
+      </section>
+
+      <section aria-labelledby="curation-heading" className="space-y-3">
+        <h2 id="curation-heading" className="text-lg font-semibold">
+          Curation style
+        </h2>
+        <Card>
+          <CardContent className="space-y-4 pt-6">
+            <p className="text-sm text-muted-foreground">
+              How the AI writes everyone&rsquo;s rows. Set a tone and a few
+              plain notes, or write the whole prompt yourself. You can override
+              this per person on their page.
+            </p>
+            <CurationStyleFields value={curation} onChange={setCuration} />
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={() =>
+                  save("curation", {
+                    "curator.prompt_tone": curation.tone,
+                    "curator.prompt_guidance": curation.guidance,
+                    "curator.prompt_template": curation.template,
+                  })
+                }
+                loading={saveSettings.isPending}
+              >
+                Save curation style
+              </Button>
+              {savedSection === "curation" && !saveSettings.isPending && (
+                <p
+                  role="status"
+                  className="flex items-center gap-1.5 text-sm text-success"
+                >
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  Saved
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       </section>

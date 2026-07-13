@@ -28,7 +28,34 @@ export interface UserPrefs {
   excluded_genres?: string[];
   max_rating?: string | null;
   paused?: boolean;
+  // Per-person curation-recipe overrides. Empty string = inherit the global default.
+  prompt_tone?: string;
+  prompt_guidance?: string;
+  prompt_template?: string;
 }
+
+/** POST /api/settings/prompt-preview request + response. */
+export interface PromptPreviewRequest {
+  tone?: string;
+  guidance?: string;
+  template?: string;
+  shared?: boolean;
+}
+
+export interface PromptPreview {
+  system: string;
+  user: string;
+}
+
+/** The tone presets the curation recipe offers. */
+export const PROMPT_TONES = [
+  "balanced",
+  "warm",
+  "concise",
+  "cinephile",
+  "playful",
+] as const;
+export type PromptTone = (typeof PROMPT_TONES)[number];
 
 export interface UserPatch {
   enabled?: boolean;

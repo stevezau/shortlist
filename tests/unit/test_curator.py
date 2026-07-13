@@ -12,10 +12,16 @@ import pytest
 import respx
 
 from rowarr.engine.curator import make_curator
-from rowarr.engine.curator.base import MAX_REASON_LEN, build_prompts, picks_schema, validate_picks
+from rowarr.engine.curator.base import (
+    MAX_REASON_LEN,
+    TONE_PRESETS,
+    build_prompts,
+    picks_schema,
+    validate_picks,
+)
 from rowarr.engine.curator.null import NullCurator
 from rowarr.engine.curator.ollama import OllamaCurator
-from rowarr.engine.models import MediaType, Seed
+from rowarr.engine.models import MediaType, PromptConfig, Seed
 from tests.conftest import make_candidate, make_profile
 
 
@@ -81,6 +87,56 @@ class TestBuildPrompts:
         schema = picks_schema()
         assert schema["additionalProperties"] is False
         assert schema["properties"]["picks"]["items"]["additionalProperties"] is False
+
+
+class TestPromptTuning:
+    """The tunable recipe: tone / guidance / custom template / shared framing, always safe."""
+
+    def _system(self, cfg: PromptConfig | None) -> str:
+        profile = make_profile()
+        profile.prompt = cfg
+        system, _user = build_prompts(profile, candidates(), k=3)
+        return system
+
+    def test_default_recipe_is_personal_and_carries_the_contract(self):
+        system = self._system(None)
+        assert "Because you watched X" in system
+        assert "Use only tmdb_id values from the candidate list" in system
+
+    def test_tone_preset_is_injected(self):
+        system = self._system(PromptConfig(tone="cinephile"))
+        assert TONE_PRESETS["cinephile"].strip() in system
+
+    def test_unknown_tone_is_ignored_not_crashed(self):
+        system = self._system(PromptConfig(tone="nonsense"))
+        assert "Because you watched X" in system  # still a valid personal prompt
+
+    def test_guidance_is_injected(self):
+        system = self._system(PromptConfig(guidance="Prefer hidden gems."))
+        assert "Prefer hidden gems." in system
+
+    def test_custom_template_replaces_skeleton_but_keeps_the_contract(self):
+        system = self._system(PromptConfig(template="Pick $k great films for $username."))
+        assert "Pick 3 great films for sarah" in system
+        assert "Use only tmdb_id values from the candidate list" in system
+
+    def test_unknown_template_variable_left_intact(self):
+        # string.Template.safe_substitute leaves unknown $vars as literal text — never raises.
+        system = self._system(PromptConfig(template="Hi $bogus there $username."))
+        assert "Hi $bogus there sarah." in system
+
+    def test_template_cannot_crash_or_introspect(self):
+        # The $ grammar has no attribute/subscript access, so these render harmlessly rather than
+        # raising (the old str.format path would crash on {username.foo} / {k[0]}).
+        for tpl in ("$username.__class__", "${weird", "{k[0]}", "$k[0]", "{username.foo}"):
+            system = self._system(PromptConfig(template=tpl))
+            assert "Use only tmdb_id values from the candidate list" in system  # contract intact
+            assert "object" not in system.lower()  # no class-repr leaked from introspection
+
+    def test_shared_scope_uses_aggregate_framing(self):
+        system = self._system(PromptConfig(shared=True))
+        assert "popular on this server" in system.lower()
+        assert "phrased like 'Because you watched X'" not in system  # personal-only clause absent
 
 
 def _fake_anthropic_module():

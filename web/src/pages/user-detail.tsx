@@ -3,6 +3,10 @@ import { useId, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
+import {
+  CurationStyleFields,
+  type CurationStyleValue,
+} from "@/components/curation-style";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
@@ -18,11 +22,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { formatHitRate, renderRowName, timeAgo } from "@/lib/format";
+import {
+  formatHitRate,
+  renderRowName,
+  settingString,
+  timeAgo,
+} from "@/lib/format";
 import {
   usePatchUser,
   useRun,
   useRuns,
+  useSettings,
   useStartRun,
   useUsers,
 } from "@/lib/queries";
@@ -97,9 +107,27 @@ function UserDetailBody({ user }: { user: User }) {
     user.prefs?.row_size ?? DEFAULT_ROW_SIZE,
   );
   const [paused, setPaused] = useState(user.prefs?.paused ?? false);
+  const [curation, setCuration] = useState<CurationStyleValue>({
+    tone: user.prefs?.prompt_tone ?? "",
+    guidance: user.prefs?.prompt_guidance ?? "",
+    template: user.prefs?.prompt_template ?? "",
+  });
   // The pause switch and the "Save overrides" button share one mutation but are separate actions;
   // track the form save alone so its "Saved" tick doesn't flash when the switch is toggled.
   const [savedOverrides, setSavedOverrides] = useState(false);
+
+  const settingsQuery = useSettings();
+  const globalDefaults: CurationStyleValue = {
+    tone: settingsQuery.data
+      ? settingString(settingsQuery.data, "curator.prompt_tone", "balanced")
+      : "balanced",
+    guidance: settingsQuery.data
+      ? settingString(settingsQuery.data, "curator.prompt_guidance")
+      : "",
+    template: settingsQuery.data
+      ? settingString(settingsQuery.data, "curator.prompt_template")
+      : "",
+  };
 
   const rowNameId = useId();
   const pausedId = useId();
@@ -113,6 +141,10 @@ function UserDetailBody({ user }: { user: User }) {
           prefs: {
             ...(rowNameTpl ? { row_name_tpl: rowNameTpl } : {}),
             row_size: rowSize,
+            // Empty string = inherit the global default, which the backend honours.
+            prompt_tone: curation.tone,
+            prompt_guidance: curation.guidance,
+            prompt_template: curation.template,
           },
         },
       },
@@ -216,7 +248,22 @@ function UserDetailBody({ user }: { user: User }) {
               ))}
             </div>
           </fieldset>
-          <div className="flex items-center gap-3">
+          <div className="space-y-3 border-t pt-4">
+            <div>
+              <p className="text-sm font-medium">Curation style</p>
+              <p className="text-sm text-muted-foreground">
+                Override how the AI writes {user.username}&rsquo;s row. Leave a
+                field on its default to inherit the global setting.
+              </p>
+            </div>
+            <CurationStyleFields
+              value={curation}
+              onChange={setCuration}
+              perPerson
+              globalDefaults={globalDefaults}
+            />
+          </div>
+          <div className="flex items-center gap-3 border-t pt-4">
             <Switch
               id={pausedId}
               checked={paused}

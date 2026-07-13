@@ -94,6 +94,21 @@ class Pick:
 
 
 @dataclass
+class PromptConfig:
+    """User-tunable curation instructions for the LLM.
+
+    The fixed output contract (JSON schema, "use only provided titles", the reason-length cap) is
+    enforced in code regardless of these values, so any tone/guidance/template here is safe: it can
+    steer taste and wording but can never produce an unavailable title or leak history.
+    """
+
+    tone: str = "balanced"  # a TONE_PRESETS key
+    guidance: str = ""  # free-text extra instructions injected into the system prompt
+    template: str = ""  # full custom system prompt; empty -> built-in skeleton
+    shared: bool = False  # True -> aggregate ("popular on this server") framing, no "because you watched"
+
+
+@dataclass
 class UserProfile:
     """Everything the pipeline needs to know about one enabled user."""
 
@@ -106,6 +121,7 @@ class UserProfile:
     max_rating: str | None = None
     row_size: int | None = None  # None -> engine default
     row_name_template: str | None = None
+    prompt: PromptConfig | None = None  # resolved effective recipe; None -> built-in defaults
 
     def __post_init__(self) -> None:
         if not self.slug:

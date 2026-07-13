@@ -21,6 +21,10 @@ DEFAULTS: dict[str, Any] = {
     "curator.provider": "none",
     "curator.model": "",
     "curator.ollama_url": "http://localhost:11434",  # Ollama needs a URL, not a key
+    # Global curation recipe (the LLM prompt), overridable per user via prefs.
+    "curator.prompt_tone": "balanced",
+    "curator.prompt_guidance": "",
+    "curator.prompt_template": "",
     "row.name_template": "✨ Picked for You",
     "row.size": 15,
     "schedule.cron": "30 3 * * *",

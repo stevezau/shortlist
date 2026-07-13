@@ -20,6 +20,53 @@ class SettingsUpdate(BaseModel):
     values: dict[str, object]
 
 
+class PromptPreviewRequest(BaseModel):
+    tone: str = "balanced"
+    guidance: str = ""
+    template: str = ""
+    shared: bool = False
+
+
+@router.post("/prompt-preview")
+async def prompt_preview(body: PromptPreviewRequest, request: Request) -> dict:
+    """Assemble the system+user prompt from a recipe against fixed sample data, so the owner can see
+    the effect of a tone/guidance/template before saving. Uses the configured row size for k."""
+    from datetime import UTC, datetime
+
+    from rowarr.engine.curator.base import build_prompts
+    from rowarr.engine.models import (
+        Candidate,
+        MediaType,
+        PromptConfig,
+        Seed,
+        UserProfile,
+        UserType,
+        WatchedItem,
+    )
+
+    with request.app.state.sessions() as session:
+        k = int(SettingsStore(session, request.app.state.secrets).get("row.size"))
+
+    watched_at = datetime(2026, 1, 1, tzinfo=UTC)
+    seed = Seed(tmdb_id=146233, title="Prisoners", media_type=MediaType.MOVIE, weight=2.0)
+    profile = UserProfile(
+        username="Sarah",
+        plex_account_id=0,
+        user_type=UserType.SHARED,
+        history=[
+            WatchedItem("Prisoners", MediaType.MOVIE, watched_at, 146233, 2013, 1, 1.0),
+            WatchedItem("Nightcrawler", MediaType.MOVIE, watched_at, 242582, 2014, 2, 1.0),
+        ],
+        prompt=PromptConfig(tone=body.tone, guidance=body.guidance, template=body.template, shared=body.shared),
+    )
+    candidates = [
+        Candidate(273481, "Sicario", MediaType.MOVIE, 2015, ["Thriller", "Crime"], 7.6, [seed], 10),
+        Candidate(398978, "Wind River", MediaType.MOVIE, 2017, ["Thriller", "Mystery"], 7.4, [seed], 11),
+    ]
+    system, user = build_prompts(profile, candidates, k)
+    return {"system": system, "user": user}
+
+
 @router.get("")
 async def get_settings(request: Request) -> dict:
     with request.app.state.sessions() as session:

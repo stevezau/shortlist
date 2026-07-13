@@ -23,6 +23,10 @@ class UserPrefs(BaseModel):
     excluded_genres: list[str] | None = None
     max_rating: str | None = None
     paused: bool | None = None
+    # Per-person curation-recipe overrides. Empty string = inherit the global default.
+    prompt_tone: str | None = None
+    prompt_guidance: str | None = None
+    prompt_template: str | None = None
 
 
 class UserPatch(BaseModel):

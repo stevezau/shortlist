@@ -5,6 +5,8 @@ import type {
   PinCreated,
   PinStatus,
   PlexServer,
+  PromptPreview,
+  PromptPreviewRequest,
   PrivacyCheckResult,
   PrivacyStatus,
   ProbeRequest,
@@ -188,6 +190,13 @@ export const api = {
 
   testConnection: (service: TestableService): Promise<ConnectionTestResult> =>
     request(`/api/settings/test/${service}`, { method: "POST" }),
+
+  /** Assemble the prompt from a recipe against sample data, to preview its effect before saving. */
+  previewPrompt: (body: PromptPreviewRequest): Promise<PromptPreview> =>
+    request("/api/settings/prompt-preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // --- System ---
   getHealth: (): Promise<Health> => request("/api/system/health"),
