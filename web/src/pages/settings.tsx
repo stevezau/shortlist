@@ -4,10 +4,17 @@ import {
   PlugZap,
   Settings as SettingsIcon,
   ShieldCheck,
+  Sparkles,
   XCircle,
 } from "lucide-react";
-import { useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 
+import {
+  PlexGlyph,
+  ProviderGlyph,
+  TautulliGlyph,
+  TmdbGlyph,
+} from "@/components/brand-glyphs";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary } from "@/components/query-boundary";
 import { UninstallDialog } from "@/components/uninstall-dialog";
@@ -42,19 +49,22 @@ function ConnectionCard({
   title,
   purpose,
   summary,
+  glyph,
 }: {
   service: TestableService;
   title: string;
   /** Plain-English, non-technical explanation of what this connection is for. */
   purpose: string;
   summary: string;
+  /** The service's brand mark, shown in the logo tile. */
+  glyph: ReactNode;
 }) {
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
   const configured = Boolean(summary);
 
-  // A colour dot by the title so a glance across the four cards tells you what's wired up, before
-  // you test anything: green = last test passed, red = last test failed, amber = configured but
-  // untested, grey = nothing set.
+  // A status dot on the corner of the logo tile so a glance across the four cards tells you what's
+  // wired up, before you test anything: green = last test passed, red = last test failed, amber =
+  // configured but untested, grey = nothing set.
   const dot = test.isSuccess
     ? test.data.ok
       ? "bg-success"
@@ -69,11 +79,19 @@ function ConnectionCard({
     <Card data-testid={`connection-${service}`}>
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className={cn("h-2 w-2 rounded-full", dot)}
-            />
+          <span className="flex items-center gap-2.5">
+            <span className="relative">
+              <span className="grid h-9 w-9 place-items-center rounded-lg border bg-elevated [&>svg]:h-5 [&>svg]:w-5">
+                {glyph}
+              </span>
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-card",
+                  dot,
+                )}
+              />
+            </span>
             {title}
           </span>
           <Button
@@ -179,12 +197,14 @@ function SettingsForm({ settings }: { settings: Settings }) {
             title="Plex"
             purpose="Your media server — where the personalized rows appear."
             summary={settingString(settings, "plex.url")}
+            glyph={<PlexGlyph />}
           />
           <ConnectionCard
             service="tautulli"
             title="Tautulli"
             purpose="Optional. A richer source of who-watched-what history."
             summary={settingString(settings, "tautulli.url")}
+            glyph={<TautulliGlyph />}
           />
           <ConnectionCard
             service="tmdb"
@@ -193,14 +213,26 @@ function SettingsForm({ settings }: { settings: Settings }) {
             summary={
               settingString(settings, "tmdb.apikey") ? "API key saved" : ""
             }
+            glyph={<TmdbGlyph />}
           />
           <ConnectionCard
             service="llm"
             title="AI curator"
             purpose="Writes each row and its “why we picked this”. Optional — a no-AI mode works too."
             summary={settingString(settings, "curator.provider")}
+            glyph={
+              <ProviderGlyph
+                provider={settingString(settings, "curator.provider")}
+                fallback={<Sparkles aria-hidden className="text-primary" />}
+              />
+            }
           />
         </div>
+        {/* Required by the TMDB API terms of use whenever their data is displayed. */}
+        <p className="text-xs text-muted-foreground">
+          This product uses the TMDB API but is not endorsed or certified by
+          TMDB.
+        </p>
       </section>
 
       <section aria-labelledby="schedule-heading" className="space-y-3">
