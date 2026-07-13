@@ -105,16 +105,16 @@ class TestPrivacyBadge:
         anything but the full probe (`{probe: true}` is hardcoded).
         """
         page.goto("/")
-        expect(page.get_by_text("Privacy: not checked yet")).to_be_visible(timeout=LOAD)
+        expect(page.get_by_text("Not checked yet")).to_be_visible(timeout=LOAD)
 
         result = app.api("POST", "/api/privacy/check", json={}).json()
         assert result["passed"] is True
         assert set(result["tiers"]) == {"T1", "T2"}, "both tiers must run when a Home canary exists"
 
-        badge = page.get_by_text(re.compile(r"^Privacy: verified"))
+        badge = page.get_by_text(re.compile(r"^Private"))
         expect(badge).to_be_visible(timeout=SLOW)
-        # "Verified" is worthless without a date — a check from six months ago is not a promise.
-        expect(badge).to_have_text(re.compile(r"Privacy: verified \d"))
+        # "Private" is worthless without a date — a check from six months ago is not a promise.
+        expect(badge).to_have_text(re.compile(r"Private · \d"))
 
         status = app.api("GET", "/api/privacy/status").json()
         assert status["passed"] is True
@@ -138,14 +138,14 @@ class TestPrivacyBadge:
         state.users[201].filters["filterTelevision"] = ""
 
         page.goto("/")
-        expect(page.get_by_text(re.compile(r"^Privacy: verified"))).to_be_visible(timeout=LOAD)
+        expect(page.get_by_text(re.compile(r"^Private"))).to_be_visible(timeout=LOAD)
 
         result = app.api("POST", "/api/privacy/check", json={}).json()
         assert result["passed"] is False
         assert result["tiers"]["T1"] is False, "T1 must catch a share filter that lost its excludes"
         assert result["tiers"]["T2"] is True, "the canary's own hubs are still clean — only T1 should fail"
 
-        expect(page.get_by_text("Privacy: check failed — rows may be visible to others")).to_be_visible(timeout=SLOW)
+        expect(page.get_by_text("Check failed")).to_be_visible(timeout=SLOW)
 
         # Fail closed: no more real writes until the owner fixes it.
         created = app.api("POST", "/api/runs", json={"dry_run": False}).json()
