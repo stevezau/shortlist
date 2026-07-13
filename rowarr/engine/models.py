@@ -155,6 +155,9 @@ class RowSpec:
     # Per-collection recipe. None on the default 'picked' row -> use the per-user prompt on the
     # profile (the Phase A global+per-user tuning), so that behaviour is preserved exactly.
     prompt: PromptConfig | None = None
+    # Shared rows only: a title must have been watched by at least this many distinct people to
+    # qualify, so no one person's solo viewing can reach a public row (aggregate-privacy floor).
+    min_watchers: int = 2
 
     @property
     def label(self) -> str | None:

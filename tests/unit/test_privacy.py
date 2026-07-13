@@ -110,6 +110,46 @@ class TestMergeLabelExcludes:
         # ...while the account that really owns it is not excluded from itself.
         assert privacy.desired_excludes("Rowarr_bob_smith", stored) == {"Rowarr_mike"}
 
+
+class TestSharedRowExcludes:
+    """A shared 'popular on this server' row follows its audience: public rows are hidden from
+    nobody; subset rows are hidden from everyone NOT in the audience — the same machinery as a
+    private row, generalized."""
+
+    def test_public_shared_row_is_excluded_from_nobody(self):
+        stored = {"sarah": "Rowarr_sarah", "shared_popular": "Rowarr_shared_popular"}
+        # No audience map -> the shared row is public -> only the per-person label is excluded.
+        assert privacy.desired_excludes(None, stored, account_id=202) == {"Rowarr_sarah"}
+
+    def test_subset_shared_row_is_hidden_from_accounts_outside_the_audience(self):
+        stored = {"shared_staff": "Rowarr_shared_staff"}
+        audiences = {"rowarr_shared_staff": {201, 202}}
+        # In the audience -> can see it -> not excluded.
+        assert privacy.desired_excludes(None, stored, account_id=201, shared_audiences=audiences) == set()
+        assert privacy.desired_excludes(None, stored, account_id=202, shared_audiences=audiences) == set()
+        # Outside the audience -> excluded, exactly like a private row.
+        assert privacy.desired_excludes(None, stored, account_id=203, shared_audiences=audiences) == {
+            "Rowarr_shared_staff"
+        }
+
+    def test_subset_shared_and_private_rows_compose(self):
+        stored = {"sarah": "Rowarr_sarah", "shared_staff": "Rowarr_shared_staff"}
+        audiences = {"rowarr_shared_staff": {202}}
+        # Mike (202) is in the staff audience but must still be hidden from sarah's private row.
+        assert privacy.desired_excludes(None, stored, account_id=202, shared_audiences=audiences) == {"Rowarr_sarah"}
+
+    @given(st.sets(st.integers(min_value=1, max_value=5), min_size=0, max_size=5), st.integers(1, 6))
+    def test_shared_label_is_excluded_from_exactly_the_non_audience(self, audience: set[int], account_id: int):
+        """Property: a subset shared row is excluded from an account iff that account is not in its
+        audience — for any audience and any account. Never leaks in, never over-hides."""
+        stored = {"shared_x": "Rowarr_shared_x"}
+        audiences = {"rowarr_shared_x": audience}
+        excludes = privacy.desired_excludes(None, stored, account_id=account_id, shared_audiences=audiences)
+        if account_id in audience:
+            assert "Rowarr_shared_x" not in excludes
+        else:
+            assert excludes == {"Rowarr_shared_x"}
+
     @given(filter_string, st.sets(st.sampled_from(["Rowarr_a", "Rowarr_b", "Rowarr_c"]), min_size=1, max_size=3))
     def test_merge_never_drops_existing_conditions(self, raw: str, labels: set[str]):
         merged_conditions = parse_filter(merge_label_excludes(raw, labels))

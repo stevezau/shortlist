@@ -307,6 +307,7 @@ class RunService:
                     shared=shared,
                     audience=audience,
                     prompt=prompt,
+                    min_watchers=collection.min_watchers,
                 )
             )
         return specs

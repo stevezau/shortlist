@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
-from rowarr.engine.models import FilterSnapshot, UserProfile, UserType
+from rowarr.engine.models import SHARED_SLUG_PREFIX, FilterSnapshot, UserProfile, UserType
 
 if TYPE_CHECKING:
     from rowarr.engine.clients.plex import PlexTvClient, PlexTvUser
@@ -120,7 +120,13 @@ class SnapshotStore(Protocol):
     def save(self, snapshot: FilterSnapshot) -> None: ...
 
 
-def desired_excludes(own_label: str | None, stored_labels: dict[str, str]) -> set[str]:
+def desired_excludes(
+    own_label: str | None,
+    stored_labels: dict[str, str],
+    *,
+    account_id: int | None = None,
+    shared_audiences: dict[str, set[int]] | None = None,
+) -> set[str]:
     """Labels an account must NOT see: every EXISTING Rowarr row's label except their own.
 
     Derived from the rows that exist on the server — NOT from the list of users Rowarr manages.
@@ -138,8 +144,29 @@ def desired_excludes(own_label: str | None, stored_labels: dict[str, str]) -> se
     Only labels that exist on real collections are excluded (`stored_labels` is built from the
     PMS, so casing matches what Plex stored — Phase 0 finding). A user without a collection yet
     has nothing to leak, and guessing their label's casing would poison filters with case-variants.
+
+    Shared "popular on this server" rows (`rowarr_shared_*`) follow their audience: a PUBLIC shared
+    row (audience = everyone) is excluded from NOBODY, and a shared row restricted to a subset is
+    excluded from every account NOT in that subset — the same hide-from-outsiders machinery the
+    per-person rows use, generalized. `shared_audiences` maps a shared label (lowercased) to the
+    account ids allowed to see it; a shared label absent from the map is public.
     """
-    return {label for label in stored_labels.values() if label != own_label}
+    shared_audiences = shared_audiences or {}
+    shared_prefix = f"rowarr_{SHARED_SLUG_PREFIX}_"
+    excludes: set[str] = set()
+    for label in stored_labels.values():
+        if label == own_label:
+            continue
+        low = label.lower()
+        if low.startswith(shared_prefix):
+            audience = shared_audiences.get(low)
+            if audience is None:  # public -> everyone may see it -> never excluded
+                continue
+            if account_id is not None and account_id in audience:  # in the audience -> may see it
+                continue
+            # restricted, and this account isn't in the audience -> hide it, like a private row
+        excludes.add(label)
+    return excludes
 
 
 def sync_user_restrictions(
@@ -151,6 +178,7 @@ def sync_user_restrictions(
     *,
     own_label: str | None = None,
     label_prefix: str = "rowarr",
+    shared_audiences: dict[str, set[int]] | None = None,
     dry_run: bool = False,
 ) -> dict[str, tuple[str, str]] | None:
     """Merge the desired rowarr excludes into one user's share filters.
@@ -176,7 +204,9 @@ def sync_user_restrictions(
         logger.info("{}: no longer shares this server — nothing to restrict", user.username)
         return None
 
-    wanted = desired_excludes(own_label, stored_labels)
+    wanted = desired_excludes(
+        own_label, stored_labels, account_id=user.plex_account_id, shared_audiences=shared_audiences
+    )
     desired_fields = {}
     for fieldname in RESTRICTED_FILTER_FIELDS:
         current = remote.filters[fieldname]

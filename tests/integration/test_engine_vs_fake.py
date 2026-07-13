@@ -305,6 +305,145 @@ def test_two_per_person_rows_share_one_label_and_are_both_hidden(fakes, tmp_path
     assert "Rowarr_mike" in remote[201].filters["filterMovies"]
 
 
+def test_shared_row_is_public_built_from_aggregate_and_never_excluded(fakes, tmp_path):
+    """A shared 'popular on this server' row: one public collection built from aggregate history,
+    promoted to everyone, excluded from NOBODY's share filter, and framed aggregately (never
+    'because you watched'). The per-person rows keep their private label and excludes as before."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[
+                RowSpec(slug="picked", name_template="", size=12),
+                RowSpec(
+                    slug="popular",
+                    name_template="Popular on this server",
+                    size=6,
+                    shared=True,
+                    min_watchers=1,  # union of all histories -> guaranteed content in the fixture
+                ),
+            ],
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=PlexHistorySource(plex),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+    report = engine_run(ctx, users)
+    assert report.ok, [(u.username, u.error) for u in report.users]
+
+    owned = plex.owned_collections()
+    assert "shared_popular" in owned, "the shared row was not delivered"
+    assert owned["shared_popular"].label == "Rowarr_shared_popular"
+    for rating_key in owned["shared_popular"].rating_keys:
+        collection = state.collections[rating_key]
+        assert collection.item_keys
+        assert collection.promoted_shared_home  # public on Home for everyone
+        assert state.filterable(collection)
+
+    # The shared label is excluded from NOBODY — it is public by design.
+    for account in plextv.list_users():
+        assert "shared" not in account.filters.get("filterMovies", "").lower()
+        assert "shared" not in account.filters.get("filterTelevision", "").lower()
+    # The per-person rows are still hidden from each other.
+    remote = {u.id: u for u in plextv.list_users()}
+    assert "Rowarr_sarah" in remote[202].filters["filterMovies"]
+
+    # Aggregate framing — never per-person.
+    shared_report = next(r for r in report.users if r.slug == "shared_popular")
+    assert shared_report.picks
+    assert all(pick.reason == "Popular on this server" for pick in shared_report.picks)
+
+
+def test_a_shared_row_below_the_watcher_threshold_is_skipped(fakes, tmp_path):
+    """No title watched by enough distinct people -> no public row is written at all."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[RowSpec(slug="popular", name_template="Popular", size=6, shared=True, min_watchers=99)],
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=PlexHistorySource(plex),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+    engine_run(ctx, users)
+
+    assert "shared_popular" not in plex.owned_collections()
+
+
+def test_shared_row_restricted_to_a_subset_is_hidden_from_the_rest(fakes, tmp_path):
+    """A shared row with a chosen audience is hidden from everyone else — the same hide-from-
+    outsiders machinery a private row uses, generalized to an arbitrary audience (Phase D)."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[
+                RowSpec(
+                    slug="staff",
+                    name_template="Staff Picks",
+                    size=6,
+                    shared=True,
+                    min_watchers=1,
+                    audience={201},  # sarah only
+                )
+            ],
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=PlexHistorySource(plex),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+    report = engine_run(ctx, users)
+    assert report.ok, [(u.username, u.error) for u in report.users]
+    assert "shared_staff" in plex.owned_collections()
+
+    remote = {u.id: u for u in plextv.list_users()}
+    # Sarah (201) is in the audience -> the shared label is NOT excluded from her.
+    assert "shared_staff" not in remote[201].filters.get("filterMovies", "").lower()
+    # Everyone else is outside it -> the shared label IS excluded, hiding the row from them.
+    assert "Rowarr_shared_staff" in remote[202].filters["filterMovies"]
+    assert "Rowarr_shared_staff" in remote[203].filters["filterMovies"]
+
+
 def test_a_run_heals_the_leaking_rows_a_previous_version_left_behind(fakes, tmp_path):
     """The upgrade path, reproduced from the live failure (SFLIX, 2026-07-12).
 

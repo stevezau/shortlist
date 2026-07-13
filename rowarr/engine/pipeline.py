@@ -17,15 +17,18 @@ from rowarr.engine.curator import Curator, CuratorError, NullCurator
 from rowarr.engine.delivery import deliver_rows, row_marker, sweep_broken_rows
 from rowarr.engine.history import HistorySource, derive_seeds
 from rowarr.engine.models import (
+    SHARED_SLUG_PREFIX,
     Candidate,
     CollectionDiff,
     EngineConfig,
     MediaType,
     Pick,
+    RowSpec,
     RunReport,
     UserProfile,
     UserRunReport,
     UserType,
+    WatchedItem,
 )
 from rowarr.engine.privacy import SnapshotStore, sync_user_restrictions
 
@@ -158,6 +161,27 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
                     user_report.diff.deleted = list(swept_titles) + user_report.diff.deleted
             user_report.duration_s = round(time.monotonic() - started, 2)
 
+    # Shared "popular on this server" rows: built once from aggregate history, delivered UNPROMOTED
+    # like the per-person rows so promotion still happens only after the filters are merged.
+    shared_to_promote: list[tuple[RowSpec, UserProfile]] = []
+    for spec in ctx.config.shared_rows() if users else []:
+        started = time.monotonic()
+        shared_report = None
+        try:
+            agg = _run_shared(ctx, spec, users, seed_index, library_index, stored_labels, report)
+            shared_report = report.users[-1]
+            if agg is not None:
+                shared_to_promote.append((spec, agg))
+        except Exception as e:
+            shared_report = report.users[-1] if report.users and report.users[-1].slug.startswith("shared_") else None
+            if shared_report is not None:
+                shared_report.status = "error"
+                shared_report.error = f"{type(e).__name__}: {e}"
+            logger.exception("shared row '{}': failed", spec.slug)
+        finally:
+            if shared_report is not None:
+                shared_report.duration_s = round(time.monotonic() - started, 2)
+
     # The PMS is the source of truth for which rows exist, so ask it again before writing any
     # share filter. Whatever happened above — a delivery that failed half-way, a crash, a row left
     # by an older version — every row that EXISTS must be excluded on every other user's share.
@@ -205,6 +229,14 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     own_slugs = {**ctx.known_slugs, **{u.plex_account_id: u.slug for u in users}}
 
     audience = _server_audience(users, roster, own_slugs)
+    # Restricted shared rows: label -> the account ids allowed to see it. Public shared rows are
+    # absent (never excluded). This makes the exclusion audience-aware: a shared-to-some row is
+    # hidden from everyone NOT in its audience, exactly like a private row.
+    shared_audiences = {
+        spec.label.lower(): spec.audience
+        for spec in ctx.config.shared_rows()
+        if spec.label and spec.audience is not None
+    }
     reports = {r.slug: r for r in report.users}
     for user in audience:
         user_report = reports.get(user.slug)
@@ -218,6 +250,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
                 ctx.snapshots,
                 own_label=stored_labels.get(own_slug) if own_slug else None,
                 label_prefix=ctx.config.label_prefix,
+                shared_audiences=shared_audiences,
                 dry_run=ctx.config.dry_run,
             )
             if written:
@@ -258,6 +291,19 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
             user_report.status = "error"
             user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
             logger.exception("{}: promote failed", user.username)
+
+    # Promote the shared rows too — public, so everyone with library access sees them.
+    for spec, agg in shared_to_promote if not ctx.config.dry_run and filters_ok else []:
+        shared_report = next((r for r in report.users if r.slug == agg.slug), None)
+        try:
+            for section in targets.values():
+                for collection in ctx.plex.find_owned_collections(section, spec.label):
+                    ctx.plex.promote(collection, shared=True)
+        except Exception as e:
+            if shared_report is not None:
+                shared_report.status = "error"
+                shared_report.error = (shared_report.error or "") + f" | promote: {type(e).__name__}: {e}"
+            logger.exception("shared row '{}': promote failed", spec.slug)
 
     report.finished_at = datetime.now(UTC)
     ok = sum(1 for u in report.users if u.status in ("ok", "cold_start"))
@@ -438,6 +484,103 @@ def _run_user(
     if not all_picks:
         logger.warning("{}: no picks produced — existing rows are left as they are", user.username)
     return delivered_any  # nothing delivered -> nothing to promote
+
+
+def _run_shared(
+    ctx: EngineContext,
+    spec: RowSpec,
+    users: list[UserProfile],
+    seed_index: dict[MediaType, dict[int, int]],
+    library_index: dict[MediaType, dict[int, int]],
+    stored_labels: dict[str, str],
+    report: RunReport,
+) -> UserProfile | None:
+    """Deliver one shared 'popular on this server' row from AGGREGATE history.
+
+    A title only qualifies once at least ``spec.min_watchers`` distinct people in the audience have
+    watched it, so no single person's viewing can reach a public row. Reasons are aggregate-framed —
+    never "because you watched X", since there is no single "you". Returns the synthetic profile when
+    a row was delivered (a promotion candidate), else None.
+    """
+    cfg = ctx.config
+    audience = [u for u in users if spec.audience is None or u.plex_account_id in spec.audience]
+    slug = f"{SHARED_SLUG_PREFIX}_{spec.slug}"
+    user_report = UserRunReport(username=f"Shared · {spec.slug}", slug=slug)
+    report.users.append(user_report)
+    if not audience:
+        user_report.status = "skipped"
+        return None
+
+    by_rating_key = {key: tmdb_id for idx in seed_index.values() for tmdb_id, key in idx.items()}
+
+    def resolve(item) -> int | None:
+        return item.tmdb_id or (by_rating_key.get(item.rating_key) if item.rating_key else None)
+
+    # Count DISTINCT watchers per title across the audience; keep only titles enough people watched.
+    watchers: dict[tuple[int, MediaType], set[int]] = {}
+    example: dict[tuple[int, MediaType], WatchedItem] = {}
+    for user in audience:
+        for item in ctx.history_source.fetch(user, min_completion=cfg.min_completion):
+            tmdb_id = resolve(item)
+            if tmdb_id is None:
+                continue
+            key = (tmdb_id, item.media_type)
+            watchers.setdefault(key, set()).add(user.plex_account_id)
+            example.setdefault(key, item)
+    agg_history = [example[key] for key, who in watchers.items() if len(who) >= spec.min_watchers]
+    user_report.counts.history = len(agg_history)
+
+    agg = UserProfile(
+        username="Everyone",
+        plex_account_id=0,
+        user_type=UserType.SHARED,
+        slug=slug,
+        history=agg_history,
+        prompt=spec.prompt,
+    )
+    if not agg_history:
+        user_report.status = "skipped"
+        logger.info("shared row '{}': no title watched by >= {} people yet", spec.slug, spec.min_watchers)
+        return None
+
+    seeds = derive_seeds(agg_history, resolve, max_seeds=cfg.max_seeds)
+    pool = candidates_mod.gather_candidates(ctx.tmdb, seeds)
+    watched_ids = {(s.tmdb_id, s.media_type) for s in seeds}
+    in_library = candidates_mod.filter_candidates(
+        pool,
+        library_index,
+        watched_tmdb_ids=watched_ids,
+        excluded_genres=set(),
+        recent_pick_ids=ctx.recent_picks.get(slug, set()),
+    )
+    ranked = _media_filter(ranking.pre_rank(in_library, cfg.candidates_pre_rank), spec.media)
+    k = spec.size
+    try:
+        picks = ctx.curator.curate(agg, ranked, k)
+    except CuratorError:
+        picks = NullCurator().curate(agg, ranked, k)
+    if len(picks) < k:
+        picks = _pad_picks(picks, ranked, k)
+    # Force aggregate framing regardless of curator: a shared row is nobody's "because you watched".
+    picks = [Pick(**{**pick.__dict__, "reason": "Popular on this server"}) for pick in picks]
+
+    user_report.picks = picks
+    user_report.counts.picks = len(picks)
+    user_report.status = "ok"
+    user_report.diff = CollectionDiff()
+    _emit(ctx, slug, "delivering", {"picks": len(picks)})
+    deliver_rows(
+        ctx.plex,
+        agg,
+        picks,
+        cfg,
+        spec,
+        sole_row=True,  # one shared row per label
+        dry_run=cfg.dry_run,
+        stored_labels=stored_labels,
+        diff=user_report.diff,
+    )
+    return agg if picks else None
 
 
 def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]:
