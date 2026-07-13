@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./api";
-import type { RunRequest, Settings, UserPatch } from "./types";
+import type { CollectionInput, RunRequest, Settings, UserPatch } from "./types";
 
 export const queryKeys = {
   users: ["users"] as const,
@@ -9,6 +9,7 @@ export const queryKeys = {
   run: (id: number) => ["runs", id] as const,
   privacy: ["privacy"] as const,
   settings: ["settings"] as const,
+  collections: ["collections"] as const,
   health: ["health"] as const,
   session: ["auth", "session"] as const,
   setupState: ["setup", "state"] as const,
@@ -98,5 +99,31 @@ export function useRunPrivacyCheck() {
     mutationFn: (opts?: { probe?: boolean }) => api.runPrivacyCheck(opts ?? {}),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.privacy }),
+  });
+}
+
+export function useCollections() {
+  return useQuery({
+    queryKey: queryKeys.collections,
+    queryFn: api.listCollections,
+  });
+}
+
+export function useSaveCollection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number | null; body: CollectionInput }) =>
+      id === null ? api.createCollection(body) : api.updateCollection(id, body),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
+  });
+}
+
+export function useDeleteCollection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.deleteCollection(id),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
   });
 }

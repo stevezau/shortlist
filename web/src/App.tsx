@@ -9,6 +9,7 @@ import { resolveArea } from "@/lib/auth";
 import { useSession, useSetupState } from "@/lib/queries";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
+import { RowsPage } from "@/pages/rows";
 import { RunDetailPage } from "@/pages/run-detail";
 import { RunsPage } from "@/pages/runs";
 import { SettingsPage } from "@/pages/settings";
@@ -23,8 +24,10 @@ const queryClient = new QueryClient({
       // Retrying a 401/403 just delays the login screen behind a spinner — the answer
       // will not change until the visitor signs in.
       retry: (failureCount, error) =>
-        !(error instanceof ApiError && (error.status === 401 || error.status === 403)) &&
-        failureCount < 1,
+        !(
+          error instanceof ApiError &&
+          (error.status === 401 || error.status === 403)
+        ) && failureCount < 1,
     },
   },
 });
@@ -92,6 +95,7 @@ export default function App() {
           <Route path="setup" element={<SetupPage />} />
           <Route element={<RequireApp />}>
             <Route index element={<DashboardPage />} />
+            <Route path="rows" element={<RowsPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="users/:id" element={<UserDetailPage />} />
             <Route path="runs" element={<RunsPage />} />

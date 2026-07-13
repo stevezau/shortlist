@@ -41,6 +41,7 @@ Interactive docs at `/api/docs` (OpenAPI at `/api/openapi.json`). Highlights:
 POST /api/auth/pin · GET /api/auth/pin/{id} · GET /api/auth/session · POST /api/auth/logout
 POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 GET  /api/users · PATCH /api/users/{id} · POST /api/users/sync
+GET/POST /api/collections · PATCH/DELETE /api/collections/{id}
 GET  /api/runs · GET /api/runs/{id} · POST /api/runs {user_ids?, dry_run?}
 GET  /api/events (SSE) · GET /api/events/log (audit feed)
 GET  /api/privacy/status · POST /api/privacy/check {probe?} · GET /api/privacy/snapshots

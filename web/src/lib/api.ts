@@ -3,6 +3,8 @@ import type {
   Health,
   LinkRequest,
   PinCreated,
+  Collection,
+  CollectionInput,
   PinStatus,
   PlexServer,
   PromptPreview,
@@ -190,6 +192,21 @@ export const api = {
 
   testConnection: (service: TestableService): Promise<ConnectionTestResult> =>
     request(`/api/settings/test/${service}`, { method: "POST" }),
+
+  // --- Collections (rows) ---
+  listCollections: (): Promise<Collection[]> => request("/api/collections"),
+
+  createCollection: (body: CollectionInput): Promise<Collection> =>
+    request("/api/collections", { method: "POST", body: JSON.stringify(body) }),
+
+  updateCollection: (id: number, body: CollectionInput): Promise<Collection> =>
+    request(`/api/collections/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteCollection: (id: number): Promise<void> =>
+    request(`/api/collections/${id}`, { method: "DELETE" }),
 
   /** Assemble the prompt from a recipe against sample data, to preview its effect before saving. */
   previewPrompt: (body: PromptPreviewRequest): Promise<PromptPreview> =>

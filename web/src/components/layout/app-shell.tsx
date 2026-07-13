@@ -1,6 +1,7 @@
 import {
   Gauge,
   ListChecks,
+  Rows3,
   Settings as SettingsIcon,
   Users as UsersIcon,
 } from "lucide-react";
@@ -11,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: Gauge, end: true },
+  { to: "/rows", label: "Rows", icon: Rows3, end: false },
   { to: "/users", label: "Users", icon: UsersIcon, end: false },
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },

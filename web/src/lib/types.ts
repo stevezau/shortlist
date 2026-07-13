@@ -21,6 +21,39 @@ export interface User {
   prefs?: UserPrefs;
 }
 
+/** A curated-row definition (GET/POST/PATCH /api/collections). */
+export interface Collection {
+  id: number;
+  slug: string;
+  name: string;
+  build: "per_person" | "shared";
+  audience: "everyone" | "subset";
+  audience_user_ids: number[];
+  enabled: boolean;
+  size: number;
+  media: "movie" | "show" | "both";
+  sort_order: number;
+  name_template: string;
+  source: string;
+  min_watchers: number;
+  prompt: { tone?: string; guidance?: string; template?: string };
+}
+
+/** Body for POST / PATCH /api/collections. */
+export interface CollectionInput {
+  name: string;
+  build: "per_person" | "shared";
+  audience: "everyone" | "subset";
+  audience_user_ids: number[];
+  enabled: boolean;
+  size: number;
+  media: "movie" | "show" | "both";
+  sort_order: number;
+  name_template: string;
+  min_watchers: number;
+  prompt: { tone: string; guidance: string; template: string };
+}
+
 /** PATCH /api/users/{id} — per-user overrides. */
 export interface UserPrefs {
   row_name_tpl?: string;
