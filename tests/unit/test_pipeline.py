@@ -9,7 +9,7 @@ import pytest
 
 import rowarr.engine.pipeline as pipeline_mod
 from rowarr.engine.curator.base import CuratorError
-from rowarr.engine.models import EngineConfig, MediaType, OwnedRow
+from rowarr.engine.models import EngineConfig, MediaType, OwnedRow, RowOverride
 from rowarr.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -245,3 +245,131 @@ class TestRun:
         assert report.users[0].counts.picks == 0
         ctx.plex.create_collection.assert_not_called()
         ctx.plex.promote.assert_not_called()
+
+
+class TestPerRowOverrides:
+    """A per-user override can mute, resize, or restyle one row without touching it for others."""
+
+    def test_picks_are_tagged_with_their_row_slug(self, ctx: EngineContext, mock_plextv):
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        picks = report.users[0].picks
+        assert picks and all(p.collection_slug == "picked" for p in picks)  # the default row's slug
+
+    def test_muting_the_only_row_delivers_nothing(self, ctx: EngineContext, mock_plextv):
+        sarah = make_profile("sarah", account_id=100, row_overrides={"picked": RowOverride(muted=True)})
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert report.users[0].picks == []
+        ctx.plex.create_collection.assert_not_called()
+        ctx.plex.promote.assert_not_called()
+
+    def test_per_row_size_override_wins(self, ctx: EngineContext, mock_plextv):
+        # The fixture pool has 2 candidates; an override of size 1 must cap this user's row at 1.
+        sarah = make_profile("sarah", account_id=100, row_overrides={"picked": RowOverride(size=1)})
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert len(report.users[0].picks) == 1
+
+    def test_per_row_prompt_override_reaches_the_curator(self, ctx: EngineContext, mock_plextv):
+        from rowarr.engine.models import PromptConfig
+
+        sarah = make_profile(
+            "sarah",
+            account_id=100,
+            prompt=PromptConfig(tone="balanced"),
+            row_overrides={"picked": RowOverride(prompt=PromptConfig(tone="playful", guidance="be spooky"))},
+        )
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        seen: dict[str, str] = {}
+
+        def capture(profile, ranked, k):
+            seen["tone"] = profile.prompt.tone
+            seen["guidance"] = profile.prompt.guidance
+            return curated_picks(profile, ranked, k)
+
+        ctx.curator.curate.side_effect = capture
+        pipeline_mod.run(ctx, [sarah])
+
+        assert seen == {"tone": "playful", "guidance": "be spooky"}  # the row override, not the base
+
+    def test_muting_removes_an_already_delivered_row(self, ctx: EngineContext, mock_plextv):
+        from rowarr.engine.delivery import row_marker
+
+        sarah = make_profile("sarah", account_id=100, row_overrides={"picked": RowOverride(muted=True)})
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        # A collection already on the server for this row (title = display + the account's marker).
+        existing = MagicMock()
+        existing.title = ctx.config.row_name_template + row_marker(100)
+        ctx.plex.find_owned_collections.return_value = [existing]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.config.row_name_template in report.users[0].diff.deleted
+        ctx.plex.create_collection.assert_not_called()  # muted -> nothing rebuilt
+
+
+class TestRequestsWiring:
+    """The request pass only runs when enabled, and it sees the titles the library lacks."""
+
+    def _suggest_a_missing_title(self, ctx: EngineContext) -> None:
+        # Candidate 30 is NOT in the library index (which holds only 10 and 20), so it's requestable.
+        ctx.tmdb.suggestions.return_value = [
+            {"id": 10, "title": "In Library", "genre_ids": [], "vote_average": 8.0, "vote_count": 900},
+            {"id": 30, "title": "Missing Title", "genre_ids": [], "vote_average": 8.4, "vote_count": 800},
+        ]
+
+    def test_disabled_by_default_never_calls_the_request_pass(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+        self._suggest_a_missing_title(ctx)
+        called = []
+        monkeypatch.setattr(pipeline_mod.requests_mod, "request_missing", lambda *a, **k: called.append(a))
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert called == []  # requests is None on the config -> no bookkeeping, no pass
+        assert report.requests is None
+
+    def test_enabled_run_feeds_missing_titles_to_the_request_pass(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        from rowarr.engine.models import ArrTarget, RequestConfig, RequestReport
+        from rowarr.engine.models import MediaType as MT
+
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+        self._suggest_a_missing_title(ctx)
+        ctx.config.requests = RequestConfig(
+            enabled=True,
+            radarr=ArrTarget(url="http://radarr.test", api_key="k", quality_profile_id=1, root_folder="/m"),
+        )
+
+        captured = {}
+        sentinel = RequestReport(considered=1)
+
+        def spy(cfg, tmdb, demand, *, dry_run):
+            captured["demand"] = demand
+            captured["dry_run"] = dry_run
+            return sentinel
+
+        monkeypatch.setattr(pipeline_mod.requests_mod, "request_missing", spy)
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        # The missing title reached the request pass; the in-library one did not.
+        assert (30, MT.MOVIE) in captured["demand"]
+        assert (10, MT.MOVIE) not in captured["demand"]
+        assert captured["demand"][(30, MT.MOVIE)].demand == 1
+        assert report.requests is sentinel

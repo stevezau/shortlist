@@ -103,6 +103,23 @@ class CollectionAudience(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
 
+class CollectionUserOverride(Base):
+    """One person's tweaks to one row: mute it for them, resize it, or restyle its curation.
+
+    Absence of a row means "use the collection's own settings". A row a person is not in the
+    audience of has no override and is simply never built for them.
+    """
+
+    __tablename__ = "collection_user_overrides"
+
+    collection_id: Mapped[int] = mapped_column(ForeignKey("collections.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    muted: Mapped[bool] = mapped_column(Boolean, default=False)  # this person doesn't get this row
+    row_size: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None -> the row's own size
+    prompt: Mapped[dict] = mapped_column(JSON, default=dict)  # PromptConfig override; {} -> the row's own
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class Run(Base):
     __tablename__ = "runs"
 
@@ -145,6 +162,9 @@ class PickRow(Base):
     media_type: Mapped[str] = mapped_column(String(16))  # no default: a forgotten one is the bug
     rating_key: Mapped[int] = mapped_column(Integer)
     rank: Mapped[int] = mapped_column(Integer)
+    # Which row this pick belongs to (Collection.slug). Blank on pre-0004 rows and legacy single-row
+    # runs; the user page groups a person's picks by this so each row shows its own titles.
+    collection_slug: Mapped[str] = mapped_column(String(255), default="", index=True)
     title: Mapped[str] = mapped_column(String(512), default="")
     reason: Mapped[str] = mapped_column(String(255), default="")
     seed_tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

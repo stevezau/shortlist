@@ -111,6 +111,7 @@ class TestRunExecution:
             "dry_run": False,
             "rows_swept": 0,
             "shares_updated": 0,
+            "titles_requested": 0,
             "error": None,
         }
         with sessions() as session:

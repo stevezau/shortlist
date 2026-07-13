@@ -21,7 +21,7 @@ def test_0003_recovers_a_half_applied_migration(tmp_path: Path):
     db_session.run_migrations(tmp_path)
     engine = db_session.make_engine(tmp_path)
     with engine.connect() as conn:
-        assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() == "0003"
+        # Head has moved past 0003, but the seeded default row it created must still be the only one.
         assert conn.execute(sa.text("SELECT count(*) FROM collections")).scalar() == 1
 
     # Reproduce the live partial state: tables exist, version rolled back, collections emptied — AND
@@ -34,8 +34,8 @@ def test_0003_recovers_a_half_applied_migration(tmp_path: Path):
             {"t": "2026-01-01"},
         )
 
-    # A re-run must not raise and must recover: re-seed the default row and reach head.
+    # A re-run must not raise and must recover: re-seed the default row and reach head (0004+).
     db_session.run_migrations(tmp_path)
     with engine.connect() as conn:
-        assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() == "0003"
+        assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() >= "0004"
         assert [r[0] for r in conn.execute(sa.text("SELECT slug FROM collections")).fetchall()] == ["picked"]

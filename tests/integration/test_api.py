@@ -99,6 +99,66 @@ class TestUsersApi:
         assert prefs["prompt_guidance"] == "she loves slow burns"
 
 
+class TestUserRowsApi:
+    def _sarah_id(self, client: TestClient) -> int:
+        return next(u["id"] for u in client.get("/api/users").json() if u["slug"] == "sarah")
+
+    def test_rows_lists_the_default_row_with_no_picks_yet(self, client: TestClient):
+        uid = self._sarah_id(client)
+        rows = client.get(f"/api/users/{uid}/rows").json()
+        assert [r["slug"] for r in rows] == ["picked"]
+        assert rows[0]["is_default"] is True
+        assert rows[0]["muted"] is False
+        assert rows[0]["picks"] == []
+
+    def test_override_mute_and_resize_round_trip(self, client: TestClient):
+        uid = self._sarah_id(client)
+        cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
+        r = client.put(f"/api/users/{uid}/rows/{cid}", json={"muted": True, "row_size": 20})
+        assert r.status_code == 200
+        row = client.get(f"/api/users/{uid}/rows").json()[0]
+        assert row["muted"] is True
+        assert row["override"]["row_size"] == 20
+
+    def test_size_override_can_be_reset_to_default(self, client: TestClient):
+        uid = self._sarah_id(client)
+        cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"row_size": 20})
+        assert client.get(f"/api/users/{uid}/rows").json()[0]["override"]["row_size"] == 20
+        # Sending an explicit null (the "Default" choice) must clear it, not be ignored.
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"row_size": None})
+        assert client.get(f"/api/users/{uid}/rows").json()[0]["override"]["row_size"] is None
+
+    def test_mute_toggle_preserves_a_saved_size(self, client: TestClient):
+        uid = self._sarah_id(client)
+        cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"row_size": 20})
+        # A mute toggle sends only {muted}; the saved size must survive it.
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"muted": True})
+        row = client.get(f"/api/users/{uid}/rows").json()[0]
+        assert row["muted"] is True
+        assert row["override"]["row_size"] == 20
+
+    def test_override_curation_recipe_persists_and_clears(self, client: TestClient):
+        uid = self._sarah_id(client)
+        cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"prompt_tone": "playful"})
+        assert client.get(f"/api/users/{uid}/rows").json()[0]["override"]["prompt_tone"] == "playful"
+        # An all-blank recipe clears it back to inheriting the row's own.
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"prompt_tone": "", "prompt_guidance": ""})
+        assert client.get(f"/api/users/{uid}/rows").json()[0]["override"]["prompt_tone"] == ""
+
+    def test_override_on_unknown_user_or_row_404(self, client: TestClient):
+        assert client.put("/api/users/9999/rows/1", json={"muted": True}).status_code == 404
+        uid = self._sarah_id(client)
+        assert client.put(f"/api/users/{uid}/rows/9999", json={"muted": True}).status_code == 404
+
+    def test_runs_empty_then_unknown_user_404(self, client: TestClient):
+        uid = self._sarah_id(client)
+        assert client.get(f"/api/users/{uid}/runs").json() == []
+        assert client.get("/api/users/9999/runs").status_code == 404
+
+
 class TestRunsApi:
     def test_empty_list_then_trigger(self, client: TestClient):
         assert client.get("/api/runs").json() == []

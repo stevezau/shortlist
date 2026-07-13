@@ -7,18 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { formatHitRate, timeAgo } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import type { User } from "@/lib/types";
-
-// Subtle per-tile tones so the preview reads as a strip of posters, not one flat block.
-const TILE_TONES = [
-  "from-muted-foreground/30 to-muted-foreground/10",
-  "from-muted-foreground/20 to-muted-foreground/5",
-  "from-primary/20 to-muted-foreground/5",
-  "from-muted-foreground/25 to-muted-foreground/10",
-  "from-muted-foreground/15 to-muted-foreground/5",
-  "from-primary/15 to-muted-foreground/10",
-];
 
 export interface UserCardProps {
   user: User;
@@ -80,24 +69,26 @@ export function UserCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* A stylised preview of the user's "Picked for You" row — deliberately abstract, not
-            unloaded posters. It dims with the card when the user is turned off. */}
-        <div
-          aria-hidden="true"
-          className="relative overflow-hidden rounded-lg border bg-gradient-to-br from-accent/40 to-elevated p-2.5"
-        >
-          <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-primary">
-            <Sparkles className="h-3 w-3" />
-            Picked for You
+        {/* A real preview of what's in their row right now — their most recent pick titles. Falls
+            back to a neutral placeholder before the first run. Dims with the card when turned off. */}
+        <div className="rounded-lg border bg-gradient-to-br from-accent/40 to-elevated p-2.5">
+          <div className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-primary">
+            <Sparkles className="h-3 w-3" aria-hidden="true" />
+            Recent picks
           </div>
-          <div className="flex gap-1.5">
-            {TILE_TONES.map((tone, i) => (
-              <div
-                key={i}
-                className={cn("h-12 flex-1 rounded bg-gradient-to-b", tone)}
-              />
-            ))}
-          </div>
+          {user.preview_titles && user.preview_titles.length > 0 ? (
+            <ul className="space-y-0.5">
+              {user.preview_titles.map((title, i) => (
+                <li key={i} className="truncate text-sm text-foreground/90">
+                  {title}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No picks yet — they’ll appear here after the first run.
+            </p>
+          )}
         </div>
         <p className="min-h-5 text-sm text-muted-foreground">
           {statusLine(user, activeStage)}

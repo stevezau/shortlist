@@ -168,10 +168,12 @@ export function DashboardPage() {
     return [...matched].sort((a, b) => a.username.localeCompare(b.username));
   }, [usersQuery.data, search]);
 
-  const stats =
-    usersQuery.data && runsQuery.data
-      ? dashboardStats(usersQuery.data, runsQuery.data)
-      : null;
+  // Compute as soon as USERS load; runs are best-effort. If the runs query is still loading or has
+  // errored, dashboardStats simply reports "never"/"—" for the last-run fields rather than leaving
+  // the whole stat strip shimmering forever (which a runs-query failure used to do).
+  const stats = usersQuery.data
+    ? dashboardStats(usersQuery.data, runsQuery.data ?? [])
+    : null;
 
   return (
     <div>

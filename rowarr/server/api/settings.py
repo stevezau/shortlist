@@ -60,8 +60,8 @@ async def prompt_preview(body: PromptPreviewRequest, request: Request) -> dict:
         prompt=PromptConfig(tone=body.tone, guidance=body.guidance, template=body.template, shared=body.shared),
     )
     candidates = [
-        Candidate(273481, "Sicario", MediaType.MOVIE, 2015, ["Thriller", "Crime"], 7.6, [seed], 10),
-        Candidate(398978, "Wind River", MediaType.MOVIE, 2017, ["Thriller", "Mystery"], 7.4, [seed], 11),
+        Candidate(273481, "Sicario", MediaType.MOVIE, 2015, ["Thriller", "Crime"], 7.6, 8600, [seed], 10),
+        Candidate(398978, "Wind River", MediaType.MOVIE, 2017, ["Thriller", "Mystery"], 7.4, 4200, [seed], 11),
     ]
     system, user = build_prompts(profile, candidates, k)
     return {"system": system, "user": user}
@@ -121,6 +121,25 @@ async def test_connection(service: str, request: Request) -> dict:
             if not TmdbClient(config["tmdb.apikey"]).ping():
                 raise RuntimeError("TMDB rejected the key")
             return "TMDB key works"
+        if service in ("radarr", "sonarr"):
+            from rowarr.engine.clients.arr import RadarrClient, SonarrClient
+            from rowarr.engine.models import ArrTarget
+
+            prefix = f"requests.{service}"
+            url = (config[f"{prefix}.url"] or "").strip()
+            api_key = config[f"{prefix}.apikey"] or ""
+            if not url or not api_key:
+                raise RuntimeError(f"{service.title()} URL and API key are both required")
+            target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
+            client = (RadarrClient if service == "radarr" else SonarrClient)(target)
+            return client.ping()
+        if service == "omdb":
+            from rowarr.engine.clients.omdb import OmdbClient
+
+            api_key = config["requests.omdb.apikey"] or ""
+            if not api_key:
+                raise RuntimeError("An OMDb API key is required for IMDb ratings")
+            return OmdbClient(api_key).ping()
         if service == "llm":
             from rowarr.engine.curator import make_curator
 
@@ -145,3 +164,31 @@ async def test_connection(service: str, request: Request) -> dict:
         raise
     except Exception as e:
         return {"ok": False, "message": f"{type(e).__name__}: {e}"}
+
+
+@router.get("/arr/{service}/options")
+async def arr_options(service: str, request: Request) -> dict:
+    """Quality profiles + root folders for a connected Sonarr/Radarr, so the UI offers dropdowns
+    rather than asking a non-technical owner to hunt down numeric profile ids and server paths."""
+    if service not in ("radarr", "sonarr"):
+        raise HTTPException(status_code=404, detail=f"unknown service {service!r}")
+    state = request.app.state
+    with state.sessions() as session:
+        store = SettingsStore(session, state.secrets)
+        url = (store.get(f"requests.{service}.url") or "").strip()
+        api_key = store.get(f"requests.{service}.apikey") or ""
+    if not url or not api_key:
+        raise HTTPException(status_code=409, detail=f"{service.title()} isn't connected yet")
+
+    def fetch() -> dict:
+        from rowarr.engine.clients.arr import RadarrClient, SonarrClient
+        from rowarr.engine.models import ArrTarget
+
+        target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
+        client = (RadarrClient if service == "radarr" else SonarrClient)(target)
+        return {"quality_profiles": client.quality_profiles(), "root_folders": client.root_folders()}
+
+    try:
+        return await asyncio.get_running_loop().run_in_executor(None, fetch)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}") from e

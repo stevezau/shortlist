@@ -27,6 +27,22 @@ DEFAULTS: dict[str, Any] = {
     "curator.prompt_template": "",
     "row.name_template": "✨ Picked for You",
     "row.size": 15,
+    # Requests (Sonarr/Radarr): ask for picks the library doesn't have yet. Off by default and
+    # gated so it can never balloon a library — a title must clear BOTH thresholds, and only the
+    # top N per run are ever requested. API keys live in SECRET_KEYS below (encrypted at rest).
+    "requests.enabled": False,
+    "requests.radarr.url": "",
+    "requests.radarr.quality_profile_id": 0,
+    "requests.radarr.root_folder": "",
+    "requests.sonarr.url": "",
+    "requests.sonarr.quality_profile_id": 0,
+    "requests.sonarr.root_folder": "",
+    "requests.rating_source": "tmdb",  # "tmdb" (no setup) | "imdb" (needs an OMDb key)
+    "requests.min_rating": 7.0,  # rating floor on the chosen source
+    "requests.min_votes": 100,  # vote-count floor on the chosen source
+    "requests.min_demand": 1,  # a title must be wanted by at least this many distinct people
+    "requests.min_year": 0,  # 0 = any; else only titles released in >= this year
+    "requests.max_per_run": 5,  # hard cap on titles requested per run, total
     "schedule.cron": "30 3 * * *",
     "staleness_runs": 3,
     "plextv.throttle_s": 1.0,
@@ -37,7 +53,14 @@ DEFAULTS: dict[str, Any] = {
 }
 
 # Secrets are stored Fernet-encrypted under these keys (never in the clear, never logged).
-SECRET_KEYS = {"plex.token", "tautulli.apikey", "curator.api_key"}
+SECRET_KEYS = {
+    "plex.token",
+    "tautulli.apikey",
+    "curator.api_key",
+    "requests.radarr.apikey",
+    "requests.sonarr.apikey",
+    "requests.omdb.apikey",
+}
 
 ENV_SEEDS = {
     "PLEX_URL": "plex.url",

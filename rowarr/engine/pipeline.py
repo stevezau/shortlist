@@ -11,10 +11,11 @@ from loguru import logger
 
 from rowarr.engine import candidates as candidates_mod
 from rowarr.engine import ranking
+from rowarr.engine import requests as requests_mod
 from rowarr.engine.clients.plex import PlexClient, PlexTvClient
 from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import Curator, CuratorError, NullCurator
-from rowarr.engine.delivery import deliver_rows, row_marker, sweep_broken_rows
+from rowarr.engine.delivery import deliver_rows, remove_row, row_marker, sweep_broken_rows
 from rowarr.engine.history import HistorySource, derive_seeds
 from rowarr.engine.models import (
     SHARED_SLUG_PREFIX,
@@ -23,6 +24,8 @@ from rowarr.engine.models import (
     EngineConfig,
     MediaType,
     Pick,
+    RequestOutcome,
+    RequestReport,
     RowSpec,
     RunReport,
     UserProfile,
@@ -136,6 +139,11 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # restarts and covers users whose delivery fails this run.
     stored_labels = {slug: row.label for slug, row in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
 
+    # Missing-title demand, accumulated across users only when requests are on — the common case
+    # (feature off) pays nothing for it. None -> _run_user does no missing-title bookkeeping at all.
+    requests_on = bool(ctx.config.requests and ctx.config.requests.enabled)
+    demand: requests_mod.DemandMap = {}
+
     to_promote: list[UserProfile] = []
     for user in users:
         user_report = UserRunReport(username=user.username, slug=user.slug)
@@ -146,7 +154,9 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         report.users.append(user_report)
         started = time.monotonic()
         try:
-            delivered = _run_user(ctx, user, seed_index, library_index, stored_labels, user_report)
+            delivered = _run_user(
+                ctx, user, seed_index, library_index, stored_labels, user_report, demand if requests_on else None
+            )
             if delivered:
                 to_promote.append(user)
         except Exception as e:
@@ -302,6 +312,24 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
                 shared_report.error = (shared_report.error or "") + f" | promote: {type(e).__name__}: {e}"
             logger.exception("shared row '{}': promote failed", spec.slug)
 
+    # Sonarr/Radarr requests for picks the library lacks — dead LAST, after every Plex write is done.
+    # It touches no Plex object, and running it here (not before the privacy sync) keeps its "never
+    # affects visibility" guarantee literally true: a slow or hung download app cannot delay the
+    # share-filter merge that hides freshly-delivered rows. It runs only on real user runs — the
+    # gated remedy pass (no users) gathered no demand — and respects dry_run itself.
+    if requests_on and demand:
+        try:
+            report.requests = requests_mod.request_missing(
+                ctx.config.requests, ctx.tmdb, demand, dry_run=ctx.config.dry_run
+            )
+        except Exception as e:
+            # A wholesale request-pass failure (e.g. building a client) is a footnote, never a run
+            # failure — every Plex write already completed above.
+            logger.exception("request pass failed — rows are unaffected")
+            report.requests = RequestReport(
+                outcomes=[RequestOutcome(0, "request pass", MediaType.MOVIE, "error", f"{type(e).__name__}: {e}")]
+            )
+
     report.finished_at = datetime.now(UTC)
     ok = sum(1 for u in report.users if u.status in ("ok", "cold_start"))
     logger.info("run complete: {}/{} users ok (dry_run={})", ok, len(report.users), ctx.config.dry_run)
@@ -359,14 +387,35 @@ def _run_user(
     library_index: dict[MediaType, dict[int, int]],
     stored_labels: dict[str, str],
     user_report: UserRunReport,
+    demand: requests_mod.DemandMap | None = None,
 ) -> bool:
     """Deliver every per-person row this user is in the audience of. Candidates are computed once
     and reused across rows; each row curates and delivers with its own size/media/recipe. Returns
-    True when at least one row was delivered (a candidate for promotion)."""
+    True when at least one row was delivered (a candidate for promotion).
+
+    When ``demand`` is provided (requests are on), the candidates this user wanted but no delivery
+    library holds are folded into it, so the run-wide request pass can ask Sonarr/Radarr for them.
+    """
     cfg = ctx.config
-    specs = [spec for spec in cfg.per_person_rows() if spec.audience is None or user.plex_account_id in spec.audience]
+
+    def in_audience(spec: RowSpec) -> bool:
+        return spec.audience is None or user.plex_account_id in spec.audience
+
+    def is_muted(spec: RowSpec) -> bool:
+        override = user.row_overrides.get(spec.slug)
+        return bool(override and override.muted)
+
+    # A row muted AFTER it was delivered still exists on the server — remove it before anything else,
+    # so "muted" really means "gone", not merely "not refreshed". This only ever makes the server
+    # more private, so it runs regardless of whether the user has any other rows this time.
+    user_report.diff = CollectionDiff()
+    for spec in cfg.per_person_rows():
+        if in_audience(spec) and is_muted(spec):
+            remove_row(ctx.plex, user, cfg, spec, dry_run=cfg.dry_run, diff=user_report.diff)
+
+    specs = [spec for spec in cfg.per_person_rows() if in_audience(spec) and not is_muted(spec)]
     if not specs:
-        return False  # this user isn't in any per-person row's audience
+        return False  # this user is in no per-person row (none in audience, or all muted)
     # The adapter puts the Phase-A global+per-user recipe on the profile; a row with its own recipe
     # overrides it for that row only.
     base_prompt = user.prompt
@@ -395,6 +444,11 @@ def _run_user(
         _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": len(seeds)})
         pool = candidates_mod.gather_candidates(ctx.tmdb, seeds)
         user_report.counts.candidates = len(pool)
+
+        # Record what this user wanted that the server doesn't have, for the run-wide request pass.
+        # Done here, off the FULL pool, before pool is narrowed per-row below.
+        if demand is not None:
+            requests_mod.accumulate(demand, requests_mod.collect_missing(pool, library_index))
 
         watched_ids = {(s.tmdb_id, s.media_type) for s in seeds}
         recent = ctx.recent_picks.get(user.slug, set())
@@ -435,22 +489,26 @@ def _run_user(
     if not ctx.plex.sections_by_type():
         raise RuntimeError("no movie or show library found for delivery")
 
-    # One diff and label map for the whole user, accumulated across their rows. Handed to delivery
-    # rather than returned from it: a row can half-succeed across libraries, and a row that was
-    # created and labelled must reach `stored_labels` even if a later write blows up — otherwise
-    # nobody's share filter excludes it and it is visible to everyone (the leak we exist to fix).
-    user_report.diff = CollectionDiff()
+    # One diff and label map for the whole user, accumulated across their rows (already holding any
+    # muted-row deletions from above). Handed to delivery rather than returned from it: a row can
+    # half-succeed across libraries, and a row that was created and labelled must reach
+    # `stored_labels` even if a later write blows up — otherwise nobody's share filter excludes it
+    # and it is visible to everyone (the leak we exist to fix).
     all_picks: list[Pick] = []
     delivered_any = False
     for spec in specs:
-        k = user.row_size or spec.size
+        # A per-row override lets this one person resize or restyle this one row; each field falls
+        # through to the row's own setting, then the user-wide default, when unset.
+        override = user.row_overrides.get(spec.slug)
+        k = (override.size if override and override.size else None) or user.row_size or spec.size
         if cold:
             picks = [
                 Pick(**{**pick.__dict__, "rank": i + 1})
                 for i, pick in enumerate(_media_filter(base_cold, spec.media)[:k])
             ]
         else:
-            user.prompt = spec.prompt if spec.prompt is not None else base_prompt
+            row_prompt = (override.prompt if override and override.prompt else None) or spec.prompt
+            user.prompt = row_prompt if row_prompt is not None else base_prompt
             pool = _media_filter(ranked, spec.media)
             _emit(ctx, user.slug, "curating", {"candidates": len(pool)})
             try:
@@ -461,6 +519,8 @@ def _run_user(
                 picks = NullCurator().curate(user, pool, k)
             if len(picks) < k:
                 picks = _pad_picks(picks, pool + _media_filter(held_back, spec.media), k)
+        # Stamp each pick with the row it belongs to, so the user page can group picks per row.
+        picks = [Pick(**{**pick.__dict__, "collection_slug": spec.slug}) for pick in picks]
         all_picks.extend(picks)
         _emit(ctx, user.slug, "delivering", {"picks": len(picks)})
         deliver_rows(
@@ -564,7 +624,15 @@ def _run_shared(
     # Force aggregate framing regardless of curator: a shared row is nobody's "because you watched",
     # and the seed is dropped so a {top_seed} name template can never surface one person's title.
     picks = [
-        Pick(**{**pick.__dict__, "reason": "Popular on this server", "seed_title": None, "seed_tmdb_id": None})
+        Pick(
+            **{
+                **pick.__dict__,
+                "reason": "Popular on this server",
+                "seed_title": None,
+                "seed_tmdb_id": None,
+                "collection_slug": spec.slug,
+            }
+        )
         for pick in picks
     ]
 

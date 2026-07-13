@@ -7,6 +7,7 @@ import {
 } from "@/components/curation-style";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
+import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -74,34 +75,6 @@ function toInput(collection: Collection): CollectionInput {
       template: collection.prompt.template ?? "",
     },
   };
-}
-
-/** A small segmented control (used for "built how", "who gets it", libraries). */
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: { value: T; label: string }[];
-  onChange: (value: T) => void;
-}) {
-  return (
-    <div className="flex flex-wrap gap-2">
-      {options.map((option) => (
-        <Button
-          key={option.value}
-          type="button"
-          size="sm"
-          variant={value === option.value ? "default" : "outline"}
-          aria-pressed={value === option.value}
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </Button>
-      ))}
-    </div>
-  );
 }
 
 function audienceSummary(collection: Collection, users: User[]): string {
@@ -233,31 +206,21 @@ function RowEditor({
           </div>
 
           <div className="grid gap-5 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label>Row size</Label>
-              <div className="flex gap-2">
-                {ROW_SIZES.map((size) => (
-                  <Button
-                    key={size}
-                    type="button"
-                    size="sm"
-                    variant={input.size === size ? "default" : "outline"}
-                    aria-pressed={input.size === size}
-                    onClick={() => set({ size })}
-                  >
-                    {size}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Libraries</Label>
-              <Segmented
-                value={input.media}
-                onChange={(media) => set({ media })}
-                options={MEDIA}
-              />
-            </div>
+            <Segmented
+              legend="Row size"
+              value={String(input.size)}
+              onChange={(size) => set({ size: Number(size) })}
+              options={ROW_SIZES.map((size) => ({
+                value: String(size),
+                label: String(size),
+              }))}
+            />
+            <Segmented
+              legend="Libraries"
+              value={input.media}
+              onChange={(media) => set({ media })}
+              options={MEDIA}
+            />
           </div>
 
           {input.build === "shared" && (
@@ -344,6 +307,7 @@ function RowCard({
   const save = useSaveCollection();
   const remove = useDeleteCollection();
   const isDefault = collection.slug === "picked";
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   return (
     <Card className={cn(!collection.enabled && "opacity-60")}>
@@ -389,14 +353,49 @@ function RowCard({
               variant="ghost"
               size="sm"
               loading={remove.isPending}
-              onClick={() => remove.mutate(collection.id)}
+              onClick={() => setConfirmOpen(true)}
               aria-label={`Delete ${collection.name}`}
             >
               {!remove.isPending && <Trash2 aria-hidden="true" />}
             </Button>
           )}
         </div>
+        {remove.isError && (
+          <p role="alert" className="w-full text-sm text-destructive">
+            {remove.error instanceof ApiError
+              ? remove.error.message
+              : "Couldn’t delete this row. Try again."}
+          </p>
+        )}
       </CardContent>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete “{collection.name}”?</DialogTitle>
+            <DialogDescription>
+              This removes the row and its Plex collections on the next run. The
+              titles themselves stay in your library. This can’t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              loading={remove.isPending}
+              onClick={() =>
+                remove.mutate(collection.id, {
+                  onSuccess: () => setConfirmOpen(false),
+                })
+              }
+            >
+              Delete row
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -438,6 +437,11 @@ export function RowsPage() {
             icon={Rows3}
             title="No rows yet"
             hint="Add a row to start building recommendations. The default “Picked for You” usually seeds itself."
+            action={
+              <Button onClick={() => setEditing({ collection: null })}>
+                Add a row
+              </Button>
+            }
           />
         }
       >

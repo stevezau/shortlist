@@ -22,10 +22,13 @@ from rowarr.engine.clients.tmdb import TmdbClient
 from rowarr.engine.curator import make_curator
 from rowarr.engine.history import FallbackHistorySource, PlexHistorySource, TautulliSource
 from rowarr.engine.models import (
+    ArrTarget,
     EngineConfig,
     FilterSnapshot,
     MediaType,
     PromptConfig,
+    RequestConfig,
+    RowOverride,
     RowSpec,
     RunReport,
     UserProfile,
@@ -159,13 +162,7 @@ class RunService:
             plex = PlexClient(plex_url, plex_token)
             plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
-            if store.get("tautulli.url"):
-                history = FallbackHistorySource(
-                    TautulliSource(TautulliClient(store.get("tautulli.url"), store.get("tautulli.apikey"))),
-                    PlexHistorySource(plex),
-                )
-            else:
-                history = PlexHistorySource(plex)
+            history = self._history_source(store, plex)
             provider = store.get("curator.provider")
             curator_kwargs = {}
             if provider == "ollama":
@@ -182,6 +179,7 @@ class RunService:
                 staleness_runs=int(store.get("staleness_runs")),
                 dry_run=dry_run,
                 rows=self._build_rows(session, store),
+                requests=self._build_requests(store),
             )
             recent = self._recent_picks(session, config)
             # Every user Rowarr knows, enabled or not: the engine answers "whose row is this?"
@@ -206,6 +204,49 @@ class RunService:
             known_slugs=known_slugs,
             progress=progress,
         )
+
+    @staticmethod
+    def _history_source(store: SettingsStore, plex: PlexClient):
+        """The watch-history source: Tautulli-with-Plex-fallback when Tautulli is set, else Plex."""
+        if store.get("tautulli.url"):
+            return FallbackHistorySource(
+                TautulliSource(TautulliClient(store.get("tautulli.url"), store.get("tautulli.apikey"))),
+                PlexHistorySource(plex),
+            )
+        return PlexHistorySource(plex)
+
+    def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
+        """Recent watches for one user, newest first — the same source that feeds recommendations.
+
+        Returns None if the user doesn't exist. Raises RuntimeError if Plex isn't configured yet.
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            user = session.get(User, user_id)
+            if user is None:
+                return None
+            plex_url, plex_token = store.get("plex.url"), store.get("plex.token")
+            if not plex_url or not plex_token:
+                raise RuntimeError("Plex connection is not configured yet")
+            profile = UserProfile(
+                username=user.username,
+                plex_account_id=user.plex_account_id,
+                user_type=UserType(user.user_type),
+                slug=user.slug,
+            )
+            history = self._history_source(store, PlexClient(plex_url, plex_token))
+        # A lower completion bar than a run uses: this is "what they've been watching", not seeds.
+        items = history.fetch(profile, min_completion=0.5)
+        items.sort(key=lambda w: w.watched_at, reverse=True)
+        return [
+            {
+                "title": w.title,
+                "media_type": w.media_type.value,
+                "watched_at": w.watched_at.isoformat(),
+                "year": w.year,
+            }
+            for w in items[:limit]
+        ]
 
     def _recent_picks(self, session: Session, config: EngineConfig) -> dict[str, set[tuple[int, MediaType]]]:
         """Titles picked in the last N runs, keyed on (tmdb_id, media_type).
@@ -241,6 +282,7 @@ class RunService:
             if not user_ids:
                 return []
             query = query.filter(User.id.in_(user_ids))
+        overrides = self._row_overrides(session)
         profiles = []
         for user in query.all():
             prefs = user.prefs or {}
@@ -257,9 +299,32 @@ class RunService:
                     row_size=prefs.get("row_size"),
                     row_name_template=prefs.get("row_name_tpl"),
                     prompt=self._resolve_prompt(store, prefs),
+                    row_overrides=overrides.get(user.id, {}),
                 )
             )
         return profiles
+
+    @staticmethod
+    def _row_overrides(session: Session) -> dict[int, dict[str, RowOverride]]:
+        """user id -> {collection slug -> RowOverride}, from the collection_user_overrides table."""
+        from rowarr.server.db.models import Collection, CollectionUserOverride
+
+        slug_by_id = {c.id: c.slug for c in session.query(Collection).all()}
+        out: dict[int, dict[str, RowOverride]] = {}
+        for row in session.query(CollectionUserOverride).all():
+            slug = slug_by_id.get(row.collection_id)
+            if slug is None:
+                continue
+            recipe = row.prompt or {}
+            prompt = None
+            if recipe.get("tone") or recipe.get("guidance") or recipe.get("template"):
+                prompt = PromptConfig(
+                    tone=recipe.get("tone", "balanced"),
+                    guidance=recipe.get("guidance", ""),
+                    template=recipe.get("template", ""),
+                )
+            out.setdefault(row.user_id, {})[slug] = RowOverride(muted=row.muted, size=row.row_size, prompt=prompt)
+        return out
 
     def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
         """Build the engine's row specs from the enabled collections.
@@ -315,6 +380,42 @@ class RunService:
                 )
             )
         return specs
+
+    @staticmethod
+    def _build_requests(store: SettingsStore) -> RequestConfig | None:
+        """Build the Sonarr/Radarr request config, or None when the feature is off.
+
+        A target (Radarr for movies, Sonarr for shows) is only built when BOTH its URL and its API
+        key are set; a half-configured app is left as None so that media type is simply skipped
+        rather than erroring mid-run.
+        """
+        if not store.get("requests.enabled"):
+            return None
+
+        def target(prefix: str) -> ArrTarget | None:
+            url = (store.get(f"{prefix}.url") or "").strip()
+            api_key = store.get(f"{prefix}.apikey") or ""
+            if not url or not api_key:
+                return None
+            return ArrTarget(
+                url=url,
+                api_key=api_key,
+                quality_profile_id=int(store.get(f"{prefix}.quality_profile_id") or 0),
+                root_folder=(store.get(f"{prefix}.root_folder") or "").strip(),
+            )
+
+        return RequestConfig(
+            enabled=True,
+            radarr=target("requests.radarr"),
+            sonarr=target("requests.sonarr"),
+            rating_source=store.get("requests.rating_source") or "tmdb",
+            omdb_api_key=store.get("requests.omdb.apikey") or "",
+            min_rating=float(store.get("requests.min_rating")),
+            min_votes=int(store.get("requests.min_votes")),
+            min_demand=int(store.get("requests.min_demand")),
+            min_year=int(store.get("requests.min_year")),
+            max_per_run=int(store.get("requests.max_per_run")),
+        )
 
     @staticmethod
     def _resolve_prompt(store: SettingsStore, prefs: dict) -> PromptConfig:
@@ -481,6 +582,7 @@ class RunService:
                                 media_type=pick.media_type.value,
                                 rating_key=pick.rating_key,
                                 rank=pick.rank,
+                                collection_slug=pick.collection_slug,
                                 title=pick.title,
                                 reason=pick.reason,
                                 seed_tmdb_id=pick.seed_tmdb_id,
@@ -543,6 +645,31 @@ class RunService:
                         },
                     )
                 )
+            # Sonarr/Radarr requests. Adding a title to a download app is a real outward-facing
+            # write (it consumes disk and bandwidth), so every request — and every skip — is audited
+            # with the app's own outcome message, dry-run included (plex-safety rule 10 spirit).
+            if report.requests is not None and report.requests.outcomes:
+                session.add(
+                    Event(
+                        scope="run.requests",
+                        level="info",
+                        message={
+                            "run_id": run_id,
+                            "dry_run": report.dry_run,
+                            "considered": report.requests.considered,
+                            "outcomes": [
+                                {
+                                    "tmdb_id": o.tmdb_id,
+                                    "title": o.title,
+                                    "media_type": o.media_type.value,
+                                    "status": o.status,
+                                    "detail": o.detail,
+                                }
+                                for o in report.requests.outcomes
+                            ],
+                        },
+                    )
+                )
             if report.error:
                 session.add(Event(scope="run", level="error", message={"run_id": run_id, "error": report.error}))
 
@@ -556,6 +683,7 @@ class RunService:
                 "dry_run": report.dry_run,
                 "rows_swept": sum(len(titles) for titles in report.swept_rows.values()),
                 "shares_updated": len(report.filter_writes),
+                "titles_requested": report.requests.requested if report.requests else 0,
                 "error": error or report.error,
             }
             session.commit()

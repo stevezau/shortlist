@@ -152,6 +152,41 @@ def deliver_rows(
     return combined, stored
 
 
+def remove_row(
+    plex: PlexClient,
+    profile: UserProfile,
+    config: EngineConfig,
+    spec: RowSpec,
+    *,
+    dry_run: bool,
+    diff: CollectionDiff,
+) -> None:
+    """Delete a user's collection for a row they've muted, in every targeted library.
+
+    Muting means "you don't get this row" — but a row delivered BEFORE the mute still exists on the
+    server, so it must be removed, not merely skipped on the next run. Deleting only makes the server
+    strictly more private (the row's `rowarr_<slug>` label keeps it excluded on every other share
+    until it's gone), so this is always safe. A row whose title depends on its picks (a `{top_seed}`
+    template) can't be reconstructed without them, so it's left for a later sweep; static-titled rows
+    — the default row and most custom rows — match exactly and are removed here.
+    """
+    wanted_label = spec.label or f"{config.label_prefix}_{profile.slug}"
+    marker = row_marker(0) if spec.shared else row_marker(profile.plex_account_id)
+    template = spec.name_template or (profile.row_name_template or config.row_name_template)
+    display = render_row_name(template, profile, [])
+    title = display + marker
+    for section in plex.sections_by_type().values():
+        for collection in plex.find_owned_collections(section, wanted_label):
+            if collection.title != title:
+                continue
+            if dry_run:
+                logger.info("[dry-run] {}: would remove muted row '{}' in '{}'", profile.username, display, section.title)
+            else:
+                plex.delete_owned_collection(collection, config.label_prefix)
+                logger.info("{}: removed muted row '{}' in '{}'", profile.username, display, section.title)
+            diff.deleted.append(display)
+
+
 def _deliver_one(
     plex: PlexClient,
     section,

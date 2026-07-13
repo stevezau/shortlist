@@ -70,6 +70,16 @@ export function settingNumber(
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+/** Narrow an unknown settings value to a boolean, else fall back. */
+export function settingBool(
+  settings: Record<string, unknown>,
+  key: string,
+  fallback = false,
+): boolean {
+  const value = settings[key];
+  return typeof value === "boolean" ? value : fallback;
+}
+
 /** "03:30" (+ optional weekly day) → the `schedule.cron` string. */
 export function cronFromTime(time: string, weekly = false): string {
   const [hoursRaw, minutesRaw] = time.split(":");

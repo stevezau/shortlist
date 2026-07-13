@@ -126,6 +126,21 @@ class TestTmdbClient:
         assert sorted(x["id"] for x in pooled) == [10, 20, 30]
 
     @respx.mock
+    def test_tvdb_id_reads_external_ids_for_a_show(self):
+        respx.get("https://api.themoviedb.org/3/tv/95396/external_ids").mock(
+            return_value=httpx.Response(200, json={"tvdb_id": 371980, "imdb_id": "tt11280740"})
+        )
+        assert TmdbClient("k").tvdb_id(95396, MediaType.SHOW) == 371980
+
+    @respx.mock
+    def test_tvdb_id_is_none_when_tmdb_has_no_mapping(self):
+        # TMDB returns the key present but null for titles with no TheTVDB entry.
+        respx.get("https://api.themoviedb.org/3/tv/95396/external_ids").mock(
+            return_value=httpx.Response(200, json={"tvdb_id": None})
+        )
+        assert TmdbClient("k").tvdb_id(95396, MediaType.SHOW) is None
+
+    @respx.mock
     def test_cache_prevents_second_fetch(self):
         route = respx.get("https://api.themoviedb.org/3/movie/1/recommendations").mock(
             return_value=httpx.Response(200, json={"results": []})
@@ -162,6 +177,35 @@ class TestTmdbClient:
             TmdbClient("SUPERSECRETKEY").suggestions(1, MediaType.MOVIE)
         assert "SUPERSECRETKEY" not in str(excinfo.value)
         assert "500" in str(excinfo.value)
+
+
+class TestOmdbClient:
+    @respx.mock
+    def test_rating_parses_score_and_comma_separated_votes(self):
+        respx.get("https://www.omdbapi.com/").mock(
+            return_value=httpx.Response(200, json={"Response": "True", "imdbRating": "8.3", "imdbVotes": "2,754,113"})
+        )
+        from rowarr.engine.clients.omdb import OmdbClient
+
+        assert OmdbClient("k").rating("tt0111161") == (8.3, 2754113)
+
+    @respx.mock
+    def test_rating_is_none_when_omdb_has_no_data(self):
+        respx.get("https://www.omdbapi.com/").mock(
+            return_value=httpx.Response(200, json={"Response": "True", "imdbRating": "N/A", "imdbVotes": "N/A"})
+        )
+        from rowarr.engine.clients.omdb import OmdbClient
+
+        assert OmdbClient("k").rating("tt0111161") is None
+
+    @respx.mock
+    def test_rating_is_none_on_error_response(self):
+        respx.get("https://www.omdbapi.com/").mock(
+            return_value=httpx.Response(200, json={"Response": "False", "Error": "Incorrect IMDb ID."})
+        )
+        from rowarr.engine.clients.omdb import OmdbClient
+
+        assert OmdbClient("k").rating("ttbad") is None
 
 
 class TestTautulliClient:

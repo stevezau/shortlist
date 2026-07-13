@@ -225,3 +225,63 @@ class TestServerPrivacyGate:
 
         assert "privacy gate" in stats["error"], "the gate refusal is still what the owner must fix"
         assert "PMS timed out" in stats["remedy_error"]
+
+
+class TestBuildRequests:
+    """The adapter turns request.* settings into a RequestConfig — off, whole, and half-configured."""
+
+    def _store(self, sessions, tmp_path, values: dict):
+        box = SecretBox(tmp_path)
+        with sessions() as session:
+            store = SettingsStore(session, box)
+            for key, value in values.items():
+                store.set(key, value)
+        # A fresh store over a new session, so secret reads go through decrypt like production.
+        session = sessions()
+        return SettingsStore(session, box)
+
+    def test_off_by_default_returns_none(self, sessions, tmp_path):
+        store = self._store(sessions, tmp_path, {})
+        assert RunService._build_requests(store) is None
+
+    def test_enabled_with_both_apps_builds_both_targets(self, sessions, tmp_path):
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": True,
+                "requests.radarr.url": "http://radarr:7878",
+                "requests.radarr.apikey": "rk",
+                "requests.radarr.quality_profile_id": 4,
+                "requests.radarr.root_folder": "/movies",
+                "requests.sonarr.url": "http://sonarr:8989",
+                "requests.sonarr.apikey": "sk",
+                "requests.sonarr.quality_profile_id": 7,
+                "requests.sonarr.root_folder": "/tv",
+                "requests.min_rating": 7.5,
+                "requests.min_votes": 250,
+                "requests.max_per_run": 3,
+            },
+        )
+        cfg = RunService._build_requests(store)
+        assert cfg is not None and cfg.enabled
+        assert cfg.radarr.url == "http://radarr:7878" and cfg.radarr.api_key == "rk"
+        assert cfg.radarr.quality_profile_id == 4 and cfg.radarr.root_folder == "/movies"
+        assert cfg.sonarr.api_key == "sk" and cfg.sonarr.quality_profile_id == 7
+        assert (cfg.min_rating, cfg.min_votes, cfg.max_per_run) == (7.5, 250, 3)
+
+    def test_half_configured_app_is_left_as_none(self, sessions, tmp_path):
+        # Radarr has a URL but no key -> its target is None (movies skipped), Sonarr is whole.
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": True,
+                "requests.radarr.url": "http://radarr:7878",
+                "requests.sonarr.url": "http://sonarr:8989",
+                "requests.sonarr.apikey": "sk",
+            },
+        )
+        cfg = RunService._build_requests(store)
+        assert cfg.radarr is None  # no key -> not built, rather than erroring mid-run
+        assert cfg.sonarr is not None

@@ -27,6 +27,9 @@ Home/Recommended (v1.43.1) and Related hubs (v1.43.2). Rowarr is built on that f
   mode) — no keys required.
 - 💬 **Explainable** — every pick carries "Because you watched X"; every Plex write lands in
   an audit feed you can read.
+- 📥 **Fills its own gaps (optional)** — when a great pick isn't in your library yet, Rowarr can
+  ask **Radarr/Sonarr** to grab it. Off by default and deliberately cautious: only a few per
+  night, and only titles that are both highly rated and widely reviewed.
 - 🧹 **Kometa-friendly** — Rowarr never touches collections it didn't create.
 - ↩️ **Provable uninstall** — one flow restores your server exactly as Rowarr found it.
 - 📦 **Homelab-native** — one container, `/config` volume, dark UI, GHCR multi-arch,

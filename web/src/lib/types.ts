@@ -17,6 +17,8 @@ export interface User {
   last_run_at: string | null;
   /** 0..1 fraction of recommended items watched within 30 days, or null before first measurement. */
   hit_rate: number | null;
+  /** A few of their most recent pick titles, for the dashboard card's preview strip. */
+  preview_titles?: string[];
   /** Saved per-user overrides — the same shape PATCH accepts. */
   prefs?: UserPrefs;
 }
@@ -100,6 +102,8 @@ export type RunTrigger = "schedule" | "manual" | "wizard";
 export interface RunStats {
   users_ok: number;
   users_error: number;
+  /** Titles requested from Sonarr/Radarr this run (0 when requests are off). */
+  titles_requested?: number;
 }
 
 /** GET /api/runs — one row per pipeline run. */
@@ -119,6 +123,56 @@ export interface Pick {
   reason: string;
   /** Which watched title produced this pick, when the pipeline knows it. */
   seed_title?: string;
+  media_type?: string;
+  /** Which row this pick belongs to (Collection slug). */
+  collection_slug?: string;
+}
+
+/** GET /api/users/{id}/rows — one row this user gets, with their override and latest picks. */
+export interface UserRow {
+  collection_id: number;
+  slug: string;
+  name: string;
+  media: string;
+  size: number;
+  is_default: boolean;
+  muted: boolean;
+  override: {
+    row_size: number | null;
+    prompt_tone: string;
+    prompt_guidance: string;
+    prompt_template: string;
+  };
+  picks: Pick[];
+}
+
+/** PUT /api/users/{id}/rows/{collection_id} body. */
+export interface RowOverridePatch {
+  muted?: boolean;
+  row_size?: number | null;
+  prompt_tone?: string;
+  prompt_guidance?: string;
+  prompt_template?: string;
+}
+
+/** GET /api/users/{id}/runs — one of this user's recent run results. */
+export interface UserRunSummary {
+  run_id: number;
+  started_at: string | null;
+  finished_at: string | null;
+  status: string;
+  error: string | null;
+  dry_run: boolean;
+  diff: RunDiff;
+  picks: Pick[];
+}
+
+/** GET /api/users/{id}/history — one recent watch. */
+export interface WatchItem {
+  title: string;
+  media_type: string;
+  watched_at: string;
+  year: number | null;
 }
 
 /**
@@ -182,7 +236,14 @@ export interface ConnectionTestResult {
   message: string;
 }
 
-export type TestableService = "plex" | "tautulli" | "tmdb" | "llm";
+export type TestableService =
+  "plex" | "tautulli" | "tmdb" | "llm" | "radarr" | "sonarr" | "omdb";
+
+/** GET /api/settings/arr/{service}/options — dropdown data for a connected Sonarr/Radarr. */
+export interface ArrOptions {
+  quality_profiles: { id: number; name: string }[];
+  root_folders: { id: number; path: string }[];
+}
 
 /** GET /api/system/health. */
 export interface Health {

@@ -73,3 +73,23 @@ class TmdbClient:
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         data = self._get(f"/genre/{kind}/list")
         return {g["id"]: g["name"] for g in data.get("genres", [])}
+
+    def external_ids(self, tmdb_id: int, media_type: MediaType) -> dict:
+        """A title's ids in other databases (``tvdb_id``, ``imdb_id``, …); {} if TMDB has none."""
+        kind = "movie" if media_type is MediaType.MOVIE else "tv"
+        return self._get(f"/{kind}/{tmdb_id}/external_ids") or {}
+
+    def tvdb_id(self, tmdb_id: int, media_type: MediaType) -> int | None:
+        """The TheTVDB id for a title, or None if TMDB doesn't have one.
+
+        Sonarr keys every show on its TVDB id, but Rowarr only ever knows the TMDB id — so a show
+        request has to cross that namespace here first. Movies never need this (Radarr keys on
+        tmdbId directly), and a show with no TVDB mapping simply can't be requested from Sonarr.
+        """
+        raw = self.external_ids(tmdb_id, media_type).get("tvdb_id")
+        return int(raw) if raw else None
+
+    def imdb_id(self, tmdb_id: int, media_type: MediaType) -> str | None:
+        """The IMDb id (``tt…``) for a title, or None — used to look its IMDb rating up via OMDb."""
+        raw = self.external_ids(tmdb_id, media_type).get("imdb_id")
+        return raw or None

@@ -152,8 +152,10 @@ function UserResultCard({
           </Badge>
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          {formatDuration(result.duration_ms)} ·{" "}
-          {result.llm_tokens.toLocaleString()} LLM tokens
+          {formatDuration(result.duration_ms)}
+          {result.llm_tokens > 0
+            ? ` · ${result.llm_tokens.toLocaleString()} AI tokens`
+            : ""}
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -162,9 +164,7 @@ function UserResultCard({
             role="alert"
             className="space-y-3 rounded-md bg-destructive/10 p-3"
           >
-            <p className="font-mono text-sm text-destructive-foreground">
-              {result.error}
-            </p>
+            <p className="font-mono text-sm text-destructive">{result.error}</p>
             <CopyForGitHubButton run={run} result={result} />
           </div>
         ) : (
@@ -199,7 +199,9 @@ function UserResultCard({
                         <span className="text-muted-foreground">
                           {" "}
                           — {pick.reason}
-                          {pick.seed_title ? ` (seed: ${pick.seed_title})` : ""}
+                          {pick.seed_title
+                            ? ` · inspired by ${pick.seed_title}`
+                            : ""}
                         </span>
                       </li>
                     ))}
@@ -245,62 +247,79 @@ export function RunDetailPage() {
     <div className="space-y-6">
       <BackLink to="/runs" label="All runs" />
 
-      <QueryBoundary
-        query={runQuery}
-        skeleton={<Skeleton className="h-64 w-full" />}
-      >
-        {(run) => (
-          <div className="space-y-6">
-            <header className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-semibold tracking-tight">
-                  Run #{run.id}
-                </h1>
-                <Badge variant={runStatusVariant(run.status)}>
-                  {run.status}
-                </Badge>
-                {run.dry_run && (
-                  <Badge variant="outline">
-                    dry-run — nothing was written to Plex
+      {!Number.isFinite(runId) ? (
+        <EmptyState
+          title="That run doesn’t exist"
+          hint="The link may be wrong or the run was removed."
+          action={
+            <Button asChild variant="outline">
+              <Link to="/runs">Back to all runs</Link>
+            </Button>
+          }
+        />
+      ) : (
+        <QueryBoundary
+          query={runQuery}
+          skeleton={<Skeleton className="h-64 w-full" />}
+        >
+          {(run) => (
+            <div className="space-y-6">
+              <header className="space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-2xl font-semibold tracking-tight">
+                    Run #{run.id}
+                  </h1>
+                  <Badge variant={runStatusVariant(run.status)}>
+                    {run.status}
                   </Badge>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {run.trigger} · started {formatDate(run.started_at)}
-                {run.finished_at
-                  ? ` · finished ${formatDate(run.finished_at)}`
-                  : " · still running"}{" "}
-                · {run.stats.users_ok} ok, {run.stats.users_error} failed
-              </p>
-            </header>
+                  {run.dry_run && (
+                    <Badge variant="outline">
+                      dry-run — nothing was written to Plex
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {run.trigger} · started {formatDate(run.started_at)}
+                  {run.finished_at
+                    ? ` · finished ${formatDate(run.finished_at)}`
+                    : " · still running"}{" "}
+                  · {run.stats.users_ok} ok, {run.stats.users_error} failed
+                  {run.stats.titles_requested
+                    ? ` · ${run.stats.titles_requested} title${
+                        run.stats.titles_requested === 1 ? "" : "s"
+                      } requested`
+                    : ""}
+                </p>
+              </header>
 
-            {run.users.length === 0 ? (
-              <EmptyState
-                title="No per-user results yet"
-                hint="This run hasn't processed any users so far. Results appear here as each user finishes."
-              />
-            ) : (
-              <div className="space-y-4">
-                {/* Failures first — when a run partly fails, the thing you opened this page to see
+              {run.users.length === 0 ? (
+                <EmptyState
+                  title="No per-user results yet"
+                  hint="This run hasn't processed any users so far. Results appear here as each user finishes."
+                />
+              ) : (
+                <div className="space-y-4">
+                  {/* Failures first — when a run partly fails, the thing you opened this page to see
                     is the error, not the twelve users that succeeded above it. */}
-                {[...run.users]
-                  .sort(
-                    (a, b) =>
-                      Number(b.error !== null) - Number(a.error !== null),
-                  )
-                  .map((result) => (
-                    <UserResultCard
-                      key={result.slug}
-                      run={run}
-                      result={result}
-                      userId={idBySlug.get(result.slug) ?? null}
-                    />
-                  ))}
-              </div>
-            )}
-          </div>
-        )}
-      </QueryBoundary>
+                  {[...run.users]
+                    .sort(
+                      (a, b) =>
+                        Number(b.error !== null) - Number(a.error !== null),
+                    )
+                    .map((result) => (
+                      <UserResultCard
+                        key={result.slug}
+                        run={run}
+                        result={result}
+                        userId={idBySlug.get(result.slug) ?? null}
+                      />
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
+        </QueryBoundary>
+      )}
     </div>
   );
 }

@@ -27,6 +27,7 @@ def gather_candidates(tmdb: TmdbClient, seeds: list[Seed]) -> list[Candidate]:
                     year=int(date[:4]) if len(date) >= 4 and date[:4].isdigit() else None,
                     genres=[genres[g] for g in item.get("genre_ids", []) if g in genres],
                     rating=float(item.get("vote_average") or 0.0),
+                    vote_count=int(item.get("vote_count") or 0),
                 )
             pool[key].seeds.append(seed)
     logger.debug("candidate pool: {} unique titles from {} seeds", len(pool), len(seeds))

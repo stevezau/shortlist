@@ -1,4 +1,5 @@
 import type {
+  ArrOptions,
   ConnectionTestResult,
   Health,
   LinkRequest,
@@ -17,6 +18,7 @@ import type {
   RunCreated,
   RunDetail,
   RunRequest,
+  RowOverridePatch,
   Session,
   Settings,
   SetupState,
@@ -24,6 +26,9 @@ import type {
   UninstallResult,
   User,
   UserPatch,
+  UserRow,
+  UserRunSummary,
+  WatchItem,
 } from "./types";
 
 /**
@@ -155,6 +160,25 @@ export const api = {
   syncUsers: (): Promise<unknown> =>
     request("/api/users/sync", { method: "POST" }),
 
+  getUserRows: (id: number): Promise<UserRow[]> =>
+    request(`/api/users/${id}/rows`),
+
+  setUserRowOverride: (
+    id: number,
+    collectionId: number,
+    patch: RowOverridePatch,
+  ): Promise<unknown> =>
+    request(`/api/users/${id}/rows/${collectionId}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+
+  getUserRuns: (id: number): Promise<UserRunSummary[]> =>
+    request(`/api/users/${id}/runs`),
+
+  getUserHistory: (id: number): Promise<WatchItem[]> =>
+    request(`/api/users/${id}/history`),
+
   // --- Runs ---
   getRuns: (): Promise<Run[]> => request("/api/runs"),
 
@@ -192,6 +216,10 @@ export const api = {
 
   testConnection: (service: TestableService): Promise<ConnectionTestResult> =>
     request(`/api/settings/test/${service}`, { method: "POST" }),
+
+  /** Quality profiles + root folders for a connected Sonarr/Radarr (for the request-setup dropdowns). */
+  getArrOptions: (service: "radarr" | "sonarr"): Promise<ArrOptions> =>
+    request(`/api/settings/arr/${service}/options`),
 
   // --- Collections (rows) ---
   listCollections: (): Promise<Collection[]> => request("/api/collections"),

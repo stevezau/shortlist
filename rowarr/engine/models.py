@@ -60,6 +60,7 @@ class Candidate:
     year: int | None = None
     genres: list[str] = field(default_factory=list)
     rating: float = 0.0  # TMDB vote_average, 0..10
+    vote_count: int = 0  # TMDB vote_count — a 9.0 from 12 votes is noise; the request gate needs both
     seeds: list[Seed] = field(default_factory=list)  # every seed that suggested it
     rating_key: int | None = None  # set once matched to the library
 
@@ -91,6 +92,7 @@ class Pick:
     media_type: MediaType  # required on purpose: a forgotten default is exactly the bug above
     seed_tmdb_id: int | None = None
     seed_title: str | None = None
+    collection_slug: str = ""  # which row produced it, so a user's picks can be grouped per row
 
 
 @dataclass
@@ -109,6 +111,15 @@ class PromptConfig:
 
 
 @dataclass
+class RowOverride:
+    """One person's per-row tweaks. Any None/False field falls through to the row's own settings."""
+
+    muted: bool = False  # this person doesn't get this row at all
+    size: int | None = None  # override the row's size for this person
+    prompt: PromptConfig | None = None  # override the row's curation recipe for this person
+
+
+@dataclass
 class UserProfile:
     """Everything the pipeline needs to know about one enabled user."""
 
@@ -122,6 +133,8 @@ class UserProfile:
     row_size: int | None = None  # None -> engine default
     row_name_template: str | None = None
     prompt: PromptConfig | None = None  # resolved effective recipe; None -> built-in defaults
+    # Per-row overrides keyed by collection slug; a slug absent here uses the row's own settings.
+    row_overrides: dict[str, RowOverride] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.slug:
@@ -168,6 +181,77 @@ class RowSpec:
         return f"{SHARED_LABEL_PREFIX}{self.slug}" if self.shared else None
 
 
+@dataclass(frozen=True)
+class ArrTarget:
+    """Where and how a Sonarr/Radarr instance should file a newly-requested title."""
+
+    url: str
+    api_key: str
+    quality_profile_id: int
+    root_folder: str
+
+
+@dataclass
+class RequestConfig:
+    """Whether — and how conservatively — to ask Sonarr/Radarr for picks the library lacks.
+
+    Off by default and gated on several axes so an LLM's suggestions can never balloon a library.
+    A title must clear the rating/vote floors of the chosen ``rating_source`` (a high score from a
+    handful of votes is noise), be wanted by at least ``min_demand`` distinct people, be no older
+    than ``min_year``, and even then only the top ``max_per_run`` across the whole run are requested.
+    """
+
+    enabled: bool = False
+    radarr: ArrTarget | None = None  # None -> movie requests are skipped
+    sonarr: ArrTarget | None = None  # None -> show requests are skipped
+    # Which score gates a title: TMDB (always available, no setup) or IMDb (needs an OMDb key). The
+    # min_rating/min_votes floors read from whichever source is chosen.
+    rating_source: str = "tmdb"  # "tmdb" | "imdb"
+    omdb_api_key: str = ""  # required when rating_source == "imdb"; else IMDb gating falls back to TMDB
+    min_rating: float = 7.0  # rating floor, 0..10, on the chosen source
+    min_votes: int = 100  # vote-count floor on the chosen source
+    min_demand: int = 1  # a title must be wanted by at least this many distinct people
+    min_year: int = 0  # 0 -> any year; else request only titles released in >= this year
+    max_per_run: int = 5  # hard cap on how many titles a single run may request, total
+
+
+@dataclass
+class MissingTitle:
+    """A candidate the curator's pool surfaced that no delivery library actually holds yet."""
+
+    tmdb_id: int
+    title: str
+    media_type: MediaType
+    year: int | None
+    rating: float  # TMDB vote_average
+    vote_count: int
+    demand: int = 1  # distinct users whose candidate pool contained it (multi-person demand ranks higher)
+
+
+@dataclass
+class RequestOutcome:
+    """What happened when a single missing title was (or would be) requested."""
+
+    tmdb_id: int
+    title: str
+    media_type: MediaType
+    # requested | would_request | skipped_present | skipped_no_tvdb | skipped_no_target | error
+    status: str
+    detail: str = ""
+
+
+@dataclass
+class RequestReport:
+    """Outcome of the whole request pass for one run."""
+
+    considered: int = 0  # titles that cleared the rating/vote thresholds
+    outcomes: list[RequestOutcome] = field(default_factory=list)
+
+    @property
+    def requested(self) -> int:
+        return sum(1 for o in self.outcomes if o.status in ("requested", "would_request"))
+
+
 @dataclass
 class EngineConfig:
     """Static configuration for one engine run (adapters build this from settings)."""
@@ -184,6 +268,9 @@ class EngineConfig:
     # The curated rows to deliver. Empty -> a single default per-person row synthesized from
     # row_name_template/row_size, so the CLI and existing callers behave exactly as before.
     rows: list[RowSpec] = field(default_factory=list)
+    # Sonarr/Radarr requests for picks the library lacks. None -> the feature is entirely off, so
+    # no missing-title bookkeeping happens at all (the common case pays nothing for it).
+    requests: RequestConfig | None = None
 
     def per_person_rows(self) -> list[RowSpec]:
         """Per-person specs to deliver; a single default row when none are configured.
@@ -270,6 +357,9 @@ class RunReport:
     # any run's user list — so without this, "what changed on whose share at 03:31" would have no
     # answer for them at all (plex-safety rule 10).
     filter_writes: dict[int, dict] = field(default_factory=dict)
+    # Sonarr/Radarr requests made (or, in dry-run, that would be made) for picks the library lacks.
+    # None when the feature is off — distinct from an empty report (on, but nothing qualified).
+    requests: RequestReport | None = None
     error: str | None = None  # a run-level failure (e.g. the sweep itself could not run)
 
     @property

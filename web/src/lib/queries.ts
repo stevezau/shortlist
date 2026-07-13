@@ -1,7 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./api";
-import type { CollectionInput, RunRequest, Settings, UserPatch } from "./types";
+import type {
+  CollectionInput,
+  RowOverridePatch,
+  RunRequest,
+  Settings,
+  UserPatch,
+} from "./types";
 
 export const queryKeys = {
   users: ["users"] as const,
@@ -10,6 +16,11 @@ export const queryKeys = {
   privacy: ["privacy"] as const,
   settings: ["settings"] as const,
   collections: ["collections"] as const,
+  arrOptions: (service: "radarr" | "sonarr") =>
+    ["arr-options", service] as const,
+  userRows: (id: number) => ["users", id, "rows"] as const,
+  userRuns: (id: number) => ["users", id, "runs"] as const,
+  userHistory: (id: number) => ["users", id, "history"] as const,
   health: ["health"] as const,
   session: ["auth", "session"] as const,
   setupState: ["setup", "state"] as const,
@@ -125,5 +136,53 @@ export function useDeleteCollection() {
     mutationFn: (id: number) => api.deleteCollection(id),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
+  });
+}
+
+/** Quality profiles + root folders for a Sonarr/Radarr — only fetched once it's connected. */
+export function useArrOptions(service: "radarr" | "sonarr", enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.arrOptions(service),
+    queryFn: () => api.getArrOptions(service),
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+export function useUserRows(id: number) {
+  return useQuery({
+    queryKey: queryKeys.userRows(id),
+    queryFn: () => api.getUserRows(id),
+  });
+}
+
+export function useUserRuns(id: number) {
+  return useQuery({
+    queryKey: queryKeys.userRuns(id),
+    queryFn: () => api.getUserRuns(id),
+  });
+}
+
+export function useUserHistory(id: number) {
+  return useQuery({
+    queryKey: queryKeys.userHistory(id),
+    queryFn: () => api.getUserHistory(id),
+    retry: false, // a live Plex/Tautulli fetch; surface the error rather than hammering
+  });
+}
+
+export function useSetUserRowOverride(userId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      collectionId,
+      patch,
+    }: {
+      collectionId: number;
+      patch: RowOverridePatch;
+    }) => api.setUserRowOverride(userId, collectionId, patch),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.userRows(userId) }),
   });
 }

@@ -1,13 +1,11 @@
 import { useMutation } from "@tanstack/react-query";
 import {
   CheckCircle2,
-  PlugZap,
   Settings as SettingsIcon,
   ShieldCheck,
   Sparkles,
-  XCircle,
 } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { useId, useState } from "react";
 
 import {
   PlexGlyph,
@@ -15,21 +13,17 @@ import {
   TautulliGlyph,
   TmdbGlyph,
 } from "@/components/brand-glyphs";
+import { ConnectionCard } from "@/components/connection-card";
 import {
   CurationStyleFields,
   type CurationStyleValue,
 } from "@/components/curation-style";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary } from "@/components/query-boundary";
+import { RequestsSettings } from "@/components/requests-settings";
 import { UninstallDialog } from "@/components/uninstall-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,106 +36,18 @@ import {
   timeFromCron,
 } from "@/lib/format";
 import { useSaveSettings, useSettings } from "@/lib/queries";
-import type { Settings, TestableService } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type { Settings } from "@/lib/types";
 
 const CADENCES = ["nightly", "weekly"] as const;
 const ROW_SIZES = [10, 15, 20];
 
-function ConnectionCard({
-  service,
-  title,
-  purpose,
-  summary,
-  glyph,
-}: {
-  service: TestableService;
-  title: string;
-  /** Plain-English, non-technical explanation of what this connection is for. */
-  purpose: string;
-  summary: string;
-  /** The service's brand mark, shown in the logo tile. */
-  glyph: ReactNode;
-}) {
-  const test = useMutation({ mutationFn: () => api.testConnection(service) });
-  const configured = Boolean(summary);
-
-  // A status dot on the corner of the logo tile so a glance across the four cards tells you what's
-  // wired up, before you test anything: green = last test passed, red = last test failed, amber =
-  // configured but untested, grey = nothing set.
-  const dot = test.isSuccess
-    ? test.data.ok
-      ? "bg-success"
-      : "bg-destructive"
-    : test.isError
-      ? "bg-destructive"
-      : configured
-        ? "bg-warning"
-        : "bg-muted-foreground/40";
-
-  return (
-    <Card data-testid={`connection-${service}`}>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-2.5">
-            <span className="relative">
-              <span className="grid h-9 w-9 place-items-center rounded-lg border bg-elevated [&>svg]:h-5 [&>svg]:w-5">
-                {glyph}
-              </span>
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-card",
-                  dot,
-                )}
-              />
-            </span>
-            {title}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => test.mutate()}
-            loading={test.isPending}
-          >
-            {!test.isPending && <PlugZap aria-hidden="true" />}
-            Test
-          </Button>
-        </CardTitle>
-        <CardDescription>{purpose}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {/* Idle: show what's on file (URL / "API key saved") or that nothing is set — the plain
-            state, not a "please test" nudge. Once tested, that line becomes the pass/fail result. */}
-        {test.isIdle && (
-          <p className="text-sm text-muted-foreground">
-            {summary || "Not set up yet."}
-          </p>
-        )}
-        {test.isSuccess &&
-          (test.data.ok ? (
-            <p className="flex items-center gap-1.5 text-sm text-success">
-              <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-              {test.data.message}
-            </p>
-          ) : (
-            <p className="flex items-center gap-1.5 text-sm text-destructive">
-              <XCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-              {test.data.message}
-            </p>
-          ))}
-        {test.isError && (
-          <p className="flex items-center gap-1.5 text-sm text-destructive">
-            <XCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
-            {test.error instanceof ApiError
-              ? test.error.message
-              : "The test could not be completed."}
-          </p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
+const CURATOR_PROVIDERS = [
+  { value: "none", label: "No AI" },
+  { value: "anthropic", label: "Claude" },
+  { value: "openai", label: "OpenAI" },
+  { value: "google", label: "Gemini" },
+  { value: "ollama", label: "Ollama" },
+];
 
 function SettingsForm({ settings }: { settings: Settings }) {
   const saveSettings = useSaveSettings();
@@ -208,29 +114,54 @@ function SettingsForm({ settings }: { settings: Settings }) {
             service="plex"
             title="Plex"
             purpose="Your media server — where the personalized rows appear."
+            settings={settings}
             summary={settingString(settings, "plex.url")}
             glyph={<PlexGlyph />}
+            fields={[
+              {
+                key: "plex.url",
+                label: "Server address",
+                kind: "text",
+                placeholder: "http://your-host:32400",
+              },
+              { key: "plex.token", label: "Plex token", kind: "password" },
+            ]}
           />
           <ConnectionCard
             service="tautulli"
             title="Tautulli"
             purpose="Optional. A richer source of who-watched-what history."
+            settings={settings}
             summary={settingString(settings, "tautulli.url")}
             glyph={<TautulliGlyph />}
+            fields={[
+              {
+                key: "tautulli.url",
+                label: "Address",
+                kind: "text",
+                placeholder: "http://your-host:8181",
+              },
+              { key: "tautulli.apikey", label: "API key", kind: "password" },
+            ]}
           />
           <ConnectionCard
             service="tmdb"
             title="TMDB"
             purpose="Finds similar titles to suggest. Needs a free key."
+            settings={settings}
             summary={
               settingString(settings, "tmdb.apikey") ? "API key saved" : ""
             }
             glyph={<TmdbGlyph />}
+            fields={[
+              { key: "tmdb.apikey", label: "API key", kind: "password" },
+            ]}
           />
           <ConnectionCard
             service="llm"
             title="AI curator"
             purpose="Writes each row and its “why we picked this”. Optional — a no-AI mode works too."
+            settings={settings}
             summary={settingString(settings, "curator.provider")}
             glyph={
               <ProviderGlyph
@@ -238,6 +169,35 @@ function SettingsForm({ settings }: { settings: Settings }) {
                 fallback={<Sparkles aria-hidden className="text-primary" />}
               />
             }
+            fields={[
+              {
+                key: "curator.provider",
+                label: "Provider",
+                kind: "select",
+                options: CURATOR_PROVIDERS,
+              },
+              {
+                key: "curator.model",
+                label: "Model (blank = a sensible default)",
+                kind: "text",
+                placeholder: "e.g. claude-sonnet-4-5",
+                showIf: (v) => v["curator.provider"] !== "none",
+              },
+              {
+                key: "curator.api_key",
+                label: "API key",
+                kind: "password",
+                showIf: (v) =>
+                  !["none", "ollama"].includes(v["curator.provider"] ?? ""),
+              },
+              {
+                key: "curator.ollama_url",
+                label: "Ollama URL",
+                kind: "text",
+                placeholder: "http://localhost:11434",
+                showIf: (v) => v["curator.provider"] === "ollama",
+              },
+            ]}
           />
         </div>
         {/* Required by the TMDB API terms of use whenever their data is displayed. */}
@@ -426,6 +386,13 @@ function SettingsForm({ settings }: { settings: Settings }) {
         </Card>
       </section>
 
+      <section aria-labelledby="requests-heading" className="space-y-3">
+        <h2 id="requests-heading" className="text-lg font-semibold">
+          Requests
+        </h2>
+        <RequestsSettings settings={settings} />
+      </section>
+
       <section aria-labelledby="privacy-heading" className="space-y-3">
         <h2 id="privacy-heading" className="text-lg font-semibold">
           Privacy
@@ -567,7 +534,7 @@ export function SettingsPage() {
       <PageHeader
         icon={SettingsIcon}
         title="Settings"
-        subtitle="Connections, schedule, row defaults, privacy, and uninstall."
+        subtitle="Connections, schedule, row defaults, requests, privacy, and uninstall."
       />
 
       <QueryBoundary

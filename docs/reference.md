@@ -12,21 +12,33 @@
 
 ## Settings keys (DB-backed; Settings UI or `PUT /api/settings`)
 
-| Key                                 | Default             | Notes                                                     |
-| ----------------------------------- | ------------------- | --------------------------------------------------------- |
-| `plex.url` / `plex.token`           | —                   | token stored Fernet-encrypted, redacted in API            |
-| `tautulli.url` / `tautulli.apikey`  | —                   | optional                                                  |
-| `tmdb.apikey`                       | —                   | required for personal mode                                |
-| `curator.provider`                  | `none`              | `anthropic` \| `openai` \| `google` \| `ollama` \| `none` |
-| `curator.api_key` / `curator.model` | —                   | BYO key; sensible default model per provider              |
-| `curator.prompt_tone`               | `balanced`          | `balanced`\|`warm`\|`concise`\|`cinephile`\|`playful`     |
-| `curator.prompt_guidance`           | —                   | free-text notes injected into the curation prompt         |
-| `curator.prompt_template`           | —                   | full custom system prompt; blank = built-in skeleton      |
-| `row.name_template`                 | `✨ Picked for You` | `{top_seed}` and `{user}` placeholders                    |
-| `row.size`                          | `15`                | 10/15/20 in the UI; budget across a user's rows           |
-| `schedule.cron`                     | `30 3 * * *`        | full cron, applied live                                   |
-| `staleness_runs`                    | `3`                 | prefer titles not picked in the last N runs               |
-| `plextv.throttle_s`                 | `1.0`               | plex.tv write spacing (rule: ≤1 write/s)                  |
+| Key                                                   | Default             | Notes                                                     |
+| ----------------------------------------------------- | ------------------- | --------------------------------------------------------- |
+| `plex.url` / `plex.token`                             | —                   | token stored Fernet-encrypted, redacted in API            |
+| `tautulli.url` / `tautulli.apikey`                    | —                   | optional                                                  |
+| `tmdb.apikey`                                         | —                   | required for personal mode                                |
+| `curator.provider`                                    | `none`              | `anthropic` \| `openai` \| `google` \| `ollama` \| `none` |
+| `curator.api_key` / `curator.model`                   | —                   | BYO key; sensible default model per provider              |
+| `curator.prompt_tone`                                 | `balanced`          | `balanced`\|`warm`\|`concise`\|`cinephile`\|`playful`     |
+| `curator.prompt_guidance`                             | —                   | free-text notes injected into the curation prompt         |
+| `curator.prompt_template`                             | —                   | full custom system prompt; blank = built-in skeleton      |
+| `row.name_template`                                   | `✨ Picked for You` | `{top_seed}` and `{user}` placeholders                    |
+| `row.size`                                            | `15`                | 10/15/20 in the UI; budget across a user's rows           |
+| `schedule.cron`                                       | `30 3 * * *`        | full cron, applied live                                   |
+| `staleness_runs`                                      | `3`                 | prefer titles not picked in the last N runs               |
+| `plextv.throttle_s`                                   | `1.0`               | plex.tv write spacing (rule: ≤1 write/s)                  |
+| `requests.enabled`                                    | `false`             | ask Radarr/Sonarr for picks the library lacks             |
+| `requests.radarr.url` / `.apikey`                     | —                   | Radarr (movies); key stored Fernet-encrypted, redacted    |
+| `requests.radarr.quality_profile_id` / `.root_folder` | `0` / —             | picked from dropdowns in the UI (fetched from Radarr)     |
+| `requests.sonarr.url` / `.apikey`                     | —                   | Sonarr (shows); key stored Fernet-encrypted, redacted     |
+| `requests.sonarr.quality_profile_id` / `.root_folder` | `0` / —             | picked from dropdowns in the UI (fetched from Sonarr)     |
+| `requests.rating_source`                              | `tmdb`              | `tmdb` (no setup) \| `imdb` (needs an OMDb key)           |
+| `requests.omdb.apikey`                                | —                   | free OMDb key; required for the `imdb` source; encrypted  |
+| `requests.min_rating`                                 | `7.0`               | score floor (0–10) on the chosen source                   |
+| `requests.min_votes`                                  | `100`               | vote-count floor on the chosen source                     |
+| `requests.min_demand`                                 | `1`                 | request only titles wanted by ≥ N distinct people         |
+| `requests.min_year`                                   | `0`                 | `0` = any; else request only titles released ≥ this year  |
+| `requests.max_per_run`                                | `5`                 | hard cap on titles requested per run, across both apps    |
 
 ## CLI config file (`<config-dir>/config.yml`)
 
@@ -41,11 +53,14 @@ Interactive docs at `/api/docs` (OpenAPI at `/api/openapi.json`). Highlights:
 POST /api/auth/pin · GET /api/auth/pin/{id} · GET /api/auth/session · POST /api/auth/logout
 POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 GET  /api/users · PATCH /api/users/{id} · POST /api/users/sync
+GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, prompt_*?}
+GET  /api/users/{id}/runs · GET /api/users/{id}/history
 GET/POST /api/collections · PATCH/DELETE /api/collections/{id}
 GET  /api/runs · GET /api/runs/{id} · POST /api/runs {user_ids?, dry_run?}
 GET  /api/events (SSE) · GET /api/events/log (audit feed)
 GET  /api/privacy/status · POST /api/privacy/check {probe?} · GET /api/privacy/snapshots
-GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm}
+GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm|radarr|sonarr|omdb}
+GET  /api/settings/arr/{radarr|sonarr}/options -> {quality_profiles, root_folders}
 POST /api/settings/prompt-preview {tone?, guidance?, template?, shared?} -> {system, user}
 GET  /api/system/health · POST /api/system/uninstall {confirm: "UNINSTALL"}
 ```
