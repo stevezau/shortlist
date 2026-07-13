@@ -24,10 +24,15 @@ def test_0003_recovers_a_half_applied_migration(tmp_path: Path):
         assert conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() == "0003"
         assert conn.execute(sa.text("SELECT count(*) FROM collections")).scalar() == 1
 
-    # Reproduce the live partial state: tables exist, version rolled back, collections emptied.
+    # Reproduce the live partial state: tables exist, version rolled back, collections emptied — AND
+    # real settings present (the seed must not depend on parsing them; that's what broke on SFLIX).
     with engine.begin() as conn:
         conn.execute(sa.text("DELETE FROM collections"))
         conn.execute(sa.text("UPDATE alembic_version SET version_num='0002'"))
+        conn.execute(
+            sa.text("INSERT INTO settings (key, value, updated_at) VALUES ('row.size', '10', :t)"),
+            {"t": "2026-01-01"},
+        )
 
     # A re-run must not raise and must recover: re-seed the default row and reach head.
     db_session.run_migrations(tmp_path)

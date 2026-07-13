@@ -6,7 +6,6 @@ name, prompt). The single default ``picked`` collection seeded here reproduces t
 "Picked for You" row exactly, so an upgrade is behaviour-neutral until the owner adds more.
 """
 
-import json
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
@@ -62,33 +61,22 @@ def upgrade() -> None:
             ),
         )
 
-    # Seed the default per-person row (only if not already present) from the current global settings
-    # (JSON-encoded in `settings`), falling back to the standard defaults on a fresh install.
+    # Seed the default per-person row (only if not already present) with fixed defaults. Its actual
+    # name and size follow the live Settings > Defaults values at RUN time (the adapter's _build_rows
+    # keeps the 'picked' row in sync), so nothing here needs to read those settings — which also
+    # avoids parsing the JSON `settings` column from a migration, whose stored form is unreliable.
     if bind.execute(sa.text("SELECT count(*) FROM collections")).scalar():
         return
-    stored = {row[0]: row[1] for row in bind.execute(sa.text("SELECT key, value FROM settings")).fetchall()}
-
-    def _setting(key: str, default):
-        raw = stored.get(key)
-        if raw is None:
-            return default
-        try:
-            return json.loads(raw)
-        except (TypeError, json.JSONDecodeError):
-            return raw
-
-    name = _setting("row.name_template", "✨ Picked for You")
-    size = int(_setting("row.size", 15))
     now = datetime.now(UTC).isoformat()
     bind.execute(
         sa.text(
             "INSERT INTO collections "
             "(slug, name, build, audience, enabled, size, media, sort_order, name_template, "
             " source, min_watchers, prompt, created_at, updated_at) "
-            "VALUES ('picked', :name, 'per_person', 'everyone', 1, :size, 'both', 0, :name, "
+            "VALUES ('picked', '✨ Picked for You', 'per_person', 'everyone', 1, 15, 'both', 0, '', "
             " 'all_users', 2, '{}', :now, :now)"
         ),
-        {"name": name, "size": size, "now": now},
+        {"now": now},
     )
 
 
