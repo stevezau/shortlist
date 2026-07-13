@@ -128,9 +128,9 @@ export function StepConnect({ data, update }: StepProps) {
     return (
       <div className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Connect the Plex account that owns your server. Shortlist asks Plex which
-          servers you have — it never sees your password, and your Plex token
-          stays on the server, never in this browser.
+          Connect the Plex account that owns your server. Shortlist asks Plex
+          which servers you have — it never sees your password, and your Plex
+          token stays on the server, never in this browser.
         </p>
         <PlexPinButton
           onLinked={() => {
@@ -155,12 +155,27 @@ export function StepConnect({ data, update }: StepProps) {
         ) : null}
 
         {servers.isError ? (
-          <p className="text-sm text-destructive" role="alert">
-            {servers.error instanceof ApiError
-              ? servers.error.message
-              : "Could not reach plex.tv."}{" "}
-            You can still type the address yourself below.
-          </p>
+          <div className="space-y-3">
+            <p className="text-sm text-destructive" role="alert">
+              {servers.error instanceof ApiError
+                ? servers.error.message
+                : "Could not reach plex.tv."}{" "}
+              Sign in with Plex again to list your servers, or type the address
+              yourself below.
+            </p>
+            {/* A setup session can expire (or never existed for a stale login cookie); re-signing
+                in re-establishes the Plex token so the server list can load. */}
+            <PlexPinButton
+              onLinked={() => {
+                void queryClient.invalidateQueries({
+                  queryKey: queryKeys.session,
+                });
+                void queryClient.invalidateQueries({
+                  queryKey: ["setup", "servers"],
+                });
+              }}
+            />
+          </div>
         ) : null}
 
         {servers.data?.length === 0 ? (
