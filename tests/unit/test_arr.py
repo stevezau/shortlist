@@ -58,7 +58,63 @@ class TestRadarrAddMovie:
         assert body["monitored"] is True
         assert body["addOptions"] == {"searchForMovie": True}
         assert body["tmdbId"] == 273481  # carried through from the lookup resource
+        assert body["tags"] == []  # no tag configured on this target -> no tag call, empty list
         assert post.calls.last.request.headers["X-Api-Key"] == "rk"
+
+    @respx.mock
+    def test_creates_and_applies_the_configured_tag(self):
+        tagged = ArrTarget(
+            url="http://radarr.test", api_key="rk", quality_profile_id=4, root_folder="/movies", tag="shortlist"
+        )
+        respx.get("http://radarr.test/api/v3/movie/lookup/tmdb").mock(
+            return_value=httpx.Response(200, json=MOVIE_LOOKUP)
+        )
+        respx.get("http://radarr.test/api/v3/tag").mock(return_value=httpx.Response(200, json=[]))
+        create = respx.post("http://radarr.test/api/v3/tag").mock(
+            return_value=httpx.Response(201, json={"id": 7, "label": "shortlist"})
+        )
+        post = respx.post("http://radarr.test/api/v3/movie").mock(return_value=httpx.Response(201, json={"id": 5}))
+
+        RadarrClient(tagged).add_movie(273481, dry_run=False)
+
+        assert create.called  # the tag didn't exist, so it was created
+        assert json.loads(post.calls.last.request.content)["tags"] == [7]
+
+    @respx.mock
+    def test_reuses_an_existing_tag_case_insensitively(self):
+        tagged = ArrTarget(
+            url="http://radarr.test", api_key="rk", quality_profile_id=4, root_folder="/movies", tag="shortlist"
+        )
+        respx.get("http://radarr.test/api/v3/movie/lookup/tmdb").mock(
+            return_value=httpx.Response(200, json=MOVIE_LOOKUP)
+        )
+        respx.get("http://radarr.test/api/v3/tag").mock(
+            return_value=httpx.Response(200, json=[{"id": 3, "label": "Shortlist"}])
+        )
+        create = respx.post("http://radarr.test/api/v3/tag").mock(return_value=httpx.Response(201))
+        post = respx.post("http://radarr.test/api/v3/movie").mock(return_value=httpx.Response(201, json={"id": 5}))
+
+        RadarrClient(tagged).add_movie(273481, dry_run=False)
+
+        assert not create.called  # an existing tag (any case) is reused, never duplicated
+        assert json.loads(post.calls.last.request.content)["tags"] == [3]
+
+    @respx.mock
+    def test_dry_run_with_a_tag_configured_creates_no_tag(self):
+        # Creating a tag is a write; plex-safety rule 8 says a dry-run must make none.
+        tagged = ArrTarget(
+            url="http://radarr.test", api_key="rk", quality_profile_id=4, root_folder="/movies", tag="shortlist"
+        )
+        respx.get("http://radarr.test/api/v3/movie/lookup/tmdb").mock(
+            return_value=httpx.Response(200, json=MOVIE_LOOKUP)
+        )
+        tag_get = respx.get("http://radarr.test/api/v3/tag").mock(return_value=httpx.Response(200, json=[]))
+        tag_post = respx.post("http://radarr.test/api/v3/tag").mock(return_value=httpx.Response(201, json={"id": 7}))
+
+        status, _ = RadarrClient(tagged).add_movie(273481, dry_run=True)
+
+        assert status == "would_request"
+        assert not tag_get.called and not tag_post.called  # no tag lookup or creation in a dry run
 
     @respx.mock
     def test_dry_run_makes_no_post(self):
@@ -117,6 +173,10 @@ class TestSonarrAddSeries:
         assert body["seasonFolder"] is True
         assert body["addOptions"] == {"searchForMissingEpisodes": True, "monitor": "all"}
         assert body["tvdbId"] == 371980
+        # tags==[] here (no tag configured). The create/reuse tag path lives in the shared
+        # _ArrClient._tag_ids() and is exercised by the Radarr tag tests above, so it isn't
+        # duplicated for Sonarr; add_series wires it in the same way (body["tags"]).
+        assert body["tags"] == []
 
     @respx.mock
     def test_skips_when_already_present(self):

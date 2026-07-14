@@ -205,6 +205,7 @@ class ArrTarget:
     api_key: str
     quality_profile_id: int
     root_folder: str
+    tag: str = ""  # if set, tag every title Shortlist adds (created in the app if it doesn't exist)
 
 
 @dataclass

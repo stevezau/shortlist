@@ -47,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
     "requests.auto_send": True,  # False = fully manual (every qualifying title waits for approval)
     "requests.auto_min_demand": 3,  # auto-send only titles wanted by at least this many people
     "requests.auto_min_rating": 8.0,  # ...and rated at least this high on the chosen source
+    "requests.tag": "shortlist",  # tag applied to every title Shortlist adds ("" = no tag)
     "schedule.cron": "30 3 * * *",
     "staleness_runs": 3,
     "plextv.throttle_s": 1.0,

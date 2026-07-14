@@ -38,6 +38,7 @@ class _ArrClient:
         self._timeout = timeout
         self._min_write_interval = min_write_interval
         self._last_write = 0.0
+        self._tag_ids_cache: list[int] | None = None
 
     def _headers(self) -> dict[str, str]:
         return {"X-Api-Key": self._target.api_key}
@@ -92,6 +93,28 @@ class _ArrClient:
         data = self._get("/api/v3/rootfolder")
         return [{"id": f["id"], "path": f["path"]} for f in data] if isinstance(data, list) else []
 
+    def _tag_ids(self) -> list[int]:
+        """Resolve the target's tag label to Sonarr/Radarr tag id(s), creating the tag if it doesn't
+        exist yet. Cached per client (once per run). Empty tag → no tags. Only ever called on a real
+        add, so a dry-run never creates a tag; tags are referenced by id in the add body, not by name.
+        """
+        if self._tag_ids_cache is not None:
+            return self._tag_ids_cache
+        label = (self._target.tag or "").strip()
+        if not label:
+            self._tag_ids_cache = []
+            return self._tag_ids_cache
+        existing = self._get("/api/v3/tag")
+        if isinstance(existing, list):
+            for tag in existing:
+                if isinstance(tag, dict) and str(tag.get("label", "")).lower() == label.lower():
+                    self._tag_ids_cache = [int(tag["id"])]
+                    return self._tag_ids_cache
+        created = self._post("/api/v3/tag", {"label": label})
+        has_id = isinstance(created, dict) and created.get("id") is not None
+        self._tag_ids_cache = [int(created["id"])] if has_id else []
+        return self._tag_ids_cache
+
 
 class RadarrClient(_ArrClient):
     app_name = "Radarr"
@@ -114,6 +137,7 @@ class RadarrClient(_ArrClient):
             "rootFolderPath": self._target.root_folder,
             "monitored": True,
             "minimumAvailability": "released",
+            "tags": self._tag_ids(),
             "addOptions": {"searchForMovie": True},
         }
         self._post("/api/v3/movie", body)
@@ -142,6 +166,7 @@ class SonarrClient(_ArrClient):
             "rootFolderPath": self._target.root_folder,
             "monitored": True,
             "seasonFolder": True,
+            "tags": self._tag_ids(),
             "addOptions": {"searchForMissingEpisodes": True, "monitor": "all"},
         }
         self._post("/api/v3/series", body)

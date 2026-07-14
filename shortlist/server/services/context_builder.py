@@ -302,6 +302,7 @@ class ContextBuilder:
                 api_key=api_key,
                 quality_profile_id=int(store.get(f"{prefix}.quality_profile_id") or 0),
                 root_folder=(store.get(f"{prefix}.root_folder") or "").strip(),
+                tag=(store.get("requests.tag") or "").strip(),
             )
 
         return RequestConfig(

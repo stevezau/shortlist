@@ -42,6 +42,9 @@ Set it up under **Settings → Requests**:
 5. Set the **Auto-send vs. ask me** bar: titles wanted by enough people _and_ rated highly enough
    are requested automatically each night; everything else that clears the guardrails waits in your
    **Requests** inbox. Turn auto-send off for a fully manual queue.
+6. Optionally set a **tag** (default `shortlist`). Every title Shortlist requests gets this tag in
+   Radarr/Sonarr — created there if it doesn't exist — so you can filter, find, or hang tag-based
+   rules (quality/release/cleanup) on exactly what Shortlist added. Leave blank for no tag.
 
 ### The Requests inbox
 

@@ -40,6 +40,7 @@ interface RequestsForm {
   autoSend: boolean;
   autoMinDemand: number;
   autoMinRating: number;
+  tag: string;
 }
 
 function readArr(settings: Settings, prefix: string): ArrForm {
@@ -74,6 +75,7 @@ function readForm(settings: Settings): RequestsForm {
     autoSend: settingBool(settings, "requests.auto_send", true),
     autoMinDemand: settingNumber(settings, "requests.auto_min_demand", 3),
     autoMinRating: settingNumber(settings, "requests.auto_min_rating", 8),
+    tag: settingString(settings, "requests.tag", "shortlist"),
   };
 }
 
@@ -241,6 +243,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const omdbId = useId();
   const autoDemandId = useId();
   const autoRatingId = useId();
+  const tagId = useId();
   const ratingLabel = form.ratingSource === "imdb" ? "IMDb" : "TMDB";
 
   // "Connected" for the dropdown fetch means the SAVED settings already have a URL and key on file
@@ -276,6 +279,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
         "requests.auto_send": form.autoSend,
         "requests.auto_min_demand": form.autoMinDemand,
         "requests.auto_min_rating": form.autoMinRating,
+        "requests.tag": form.tag.trim(),
       },
       { onSuccess: () => setSaved(true) },
     );
@@ -321,6 +325,23 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 onChange={(sonarr) => set({ sonarr })}
                 connected={sonarrConnected}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor={tagId}>Tag added items</Label>
+              <Input
+                id={tagId}
+                value={form.tag}
+                onChange={(e) => set({ tag: e.target.value })}
+                placeholder="shortlist"
+                className="max-w-xs"
+              />
+              <p className="text-sm text-muted-foreground">
+                Every movie/show Shortlist requests gets this tag in
+                Radarr/Sonarr (created there if it doesn&rsquo;t exist), so you
+                can spot, filter, or auto-manage what it added. Leave blank for
+                no tag.
+              </p>
             </div>
 
             <fieldset className="space-y-4 rounded-lg border p-4">
