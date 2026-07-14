@@ -173,9 +173,16 @@ class RunService:
             except Exception as e:
                 logger.exception("run {} failed", run_id)
                 self._mark_run_error(run_id, {"error": f"{type(e).__name__}: {e}"})
-                self._bus.publish("run.finished", {"run_id": run_id, "status": "error"})
+                self._bus.publish(
+                    "run.finished", {"run_id": run_id, "status": "error", "error": f"{type(e).__name__}: {e}"}
+                )
                 return
-            self._bus.publish("run.finished", {"run_id": run_id, "status": status})
+            # Carry the reason on failure so the UI (e.g. the wizard's first run) can show it inline
+            # rather than only pointing at the Runs page.
+            self._bus.publish(
+                "run.finished",
+                {"run_id": run_id, "status": status, "error": None if report.ok else report.error},
+            )
 
     async def _auto_privacy_check(self, run_id: int, loop: asyncio.AbstractEventLoop) -> None:
         """Run the Privacy Check on the run's behalf so the gate can open without the owner acting.
@@ -234,7 +241,7 @@ class RunService:
             self._persist_report(run_id, report, status="error", error=f"privacy gate: {gate}")
             if report.error:  # the remedy can degrade without raising
                 self._merge_run_stats(run_id, {"remedy_error": report.error})
-        self._bus.publish("run.finished", {"run_id": run_id, "status": "error"})
+        self._bus.publish("run.finished", {"run_id": run_id, "status": "error", "error": f"privacy gate: {gate}"})
 
     def _mark_run_error(self, run_id: int, stats: dict) -> None:
         """Force a run to a finished error state with the given stats (build/remedy failures)."""

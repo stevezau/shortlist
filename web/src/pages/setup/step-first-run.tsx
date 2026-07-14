@@ -66,6 +66,7 @@ export function StepFirstRun({ complete }: StepProps) {
   const usersQuery = useUsers();
   const [progress, setProgress] = useState<Record<string, UserProgress>>({});
   const [finishedStatus, setFinishedStatus] = useState<string | null>(null);
+  const [finishedError, setFinishedError] = useState<string | null>(null);
 
   useSSE({
     onRunUserStage: (event: RunUserStageEvent) =>
@@ -73,7 +74,10 @@ export function StepFirstRun({ complete }: StepProps) {
         ...current,
         [event.user]: { stage: event.stage, counts: event.counts },
       })),
-    onRunFinished: (event) => setFinishedStatus(event.status),
+    onRunFinished: (event) => {
+      setFinishedStatus(event.status);
+      setFinishedError(event.error ?? null);
+    },
   });
 
   const run = useMutation({
@@ -81,6 +85,7 @@ export function StepFirstRun({ complete }: StepProps) {
     onMutate: () => {
       setProgress({});
       setFinishedStatus(null);
+      setFinishedError(null);
     },
   });
 
@@ -191,9 +196,21 @@ export function StepFirstRun({ complete }: StepProps) {
           </Badge>
           <p className="text-sm text-muted-foreground">
             {failed
-              ? "Open Runs to see exactly which user failed and why — the error is recorded per user (a failed privacy verification shows here too). Nothing was half-applied: fix the cause and run it again."
+              ? "Nothing was half-applied — fix the cause and run it again. Full per-user detail is on the Runs page."
               : 'Tell your users to look for their new row tonight — something like: "Your Plex now has a private Picked-for-You row, built from what you actually watch. Enjoy."'}
           </p>
+          {failed && finishedError && (
+            <p className="rounded-md bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+              {finishedError}
+            </p>
+          )}
+          {!failed && (
+            <p className="text-sm text-muted-foreground">
+              Want more? In Settings you can add extra recommendation sources
+              (Trakt, AI web search), auto-request missing titles via
+              Sonarr/Radarr, and add more rows.
+            </p>
+          )}
           <Button onClick={() => void complete()}>
             {failed ? "Finish setup anyway" : "Finish setup"}
           </Button>

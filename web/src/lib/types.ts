@@ -365,6 +365,8 @@ export interface RunUserStageEvent {
 export interface RunFinishedEvent {
   run_id: number;
   status: string;
+  /** On failure, the reason (e.g. the privacy-gate message) so the UI can show it inline. */
+  error?: string | null;
 }
 
 /** Event `privacy.probe.step` — one live log line during the Privacy Check. */

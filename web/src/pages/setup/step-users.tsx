@@ -64,6 +64,24 @@ export function StepUsers() {
       queryClient.invalidateQueries({ queryKey: queryKeys.users }),
   });
 
+  // Users are created disabled, so a default click-through would build zero rows. Pre-select everyone
+  // once, after the first sync — but only when NOBODY is enabled yet, so a returning owner who
+  // deliberately turned people off is never re-enabled behind their back.
+  const autoSelectedRef = useRef(false);
+  const users = usersQuery.data;
+  const setAllMutate = setAll.mutate;
+  useEffect(() => {
+    if (
+      autoSelectedRef.current ||
+      !sync.isSuccess ||
+      !users ||
+      users.length === 0
+    )
+      return;
+    autoSelectedRef.current = true;
+    if (!users.some((u) => u.enabled)) setAllMutate({ users, enabled: true });
+  }, [sync.isSuccess, users, setAllMutate]);
+
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-sm">

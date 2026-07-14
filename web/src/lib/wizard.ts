@@ -44,8 +44,8 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
     why: "Shortlist reads watch history and writes rows on your server.",
   },
   {
-    title: "History source",
-    why: "Tautulli gives Shortlist deeper, more reliable watch history. Optional — Plex's own history works too.",
+    title: "Recommendations & history",
+    why: "A TMDB key (required) powers recommendations. Tautulli deepens watch history but is optional — Plex's own history works too.",
   },
   {
     title: "Choose your curator",
