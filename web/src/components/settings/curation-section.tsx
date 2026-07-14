@@ -7,6 +7,7 @@ import {
 import { SavedIndicator } from "@/components/saved-indicator";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { apiErrorMessage } from "@/lib/api";
 import { settingString } from "@/lib/format";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -51,6 +52,14 @@ export function CurationSection({ settings }: { settings: Settings }) {
               Save curation style
             </Button>
             <SavedIndicator show={justSaved && !saveSettings.isPending} />
+            {saveSettings.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                {apiErrorMessage(
+                  saveSettings.error,
+                  "Saving failed. Try again.",
+                )}
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

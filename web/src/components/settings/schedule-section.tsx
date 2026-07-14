@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { apiErrorMessage } from "@/lib/api";
 import { cronFromTime, settingString, timeFromCron } from "@/lib/format";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -64,6 +65,14 @@ export function ScheduleSection({ settings }: { settings: Settings }) {
               Save schedule
             </Button>
             <SavedIndicator show={justSaved && !saveSettings.isPending} />
+            {saveSettings.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                {apiErrorMessage(
+                  saveSettings.error,
+                  "Saving failed. Try again.",
+                )}
+              </p>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             Rows refresh {cadence} at {scheduleTime} server time.

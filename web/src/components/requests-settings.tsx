@@ -205,6 +205,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const omdbTest = useMutation({
     mutationFn: () => api.testConnection("omdb"),
   });
+  // Test reads the SAVED key server-side, so it's only meaningful once a key is on file — gate it
+  // like the ConnectionCards do, so a brand-new user can't Test a key they haven't saved yet.
+  const omdbOnFile = Boolean(settingString(settings, "requests.omdb.apikey"));
 
   const ratingId = useId();
   const votesId = useId();
@@ -369,6 +372,12 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                         size="sm"
                         onClick={() => omdbTest.mutate()}
                         loading={omdbTest.isPending}
+                        disabled={!omdbOnFile}
+                        title={
+                          omdbOnFile
+                            ? undefined
+                            : "Save the key first, then test it"
+                        }
                       >
                         {!omdbTest.isPending && <PlugZap aria-hidden="true" />}
                         Test

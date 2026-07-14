@@ -21,7 +21,7 @@ export function SettingsPage() {
       <PageHeader
         icon={SettingsIcon}
         title="Settings"
-        subtitle="Connections, schedule, row defaults, requests, privacy, and uninstall."
+        subtitle="Connections, recommendations, curation style, row defaults, schedule, requests, privacy, and uninstall."
       />
 
       <QueryBoundary
@@ -29,12 +29,14 @@ export function SettingsPage() {
         skeleton={<Skeleton className="h-96 w-full" />}
       >
         {(settings) => (
+          // Ordered as a new owner works down the page: connect things → decide where titles come
+          // from → how they're written → row/schedule defaults → optional requests → privacy/danger.
           <div className="space-y-8">
             <ConnectionsSection settings={settings} />
-            <ScheduleSection settings={settings} />
-            <DefaultsSection settings={settings} />
-            <CurationSection settings={settings} />
             <RecommendationsSection settings={settings} />
+            <CurationSection settings={settings} />
+            <DefaultsSection settings={settings} />
+            <ScheduleSection settings={settings} />
             <RequestsSection settings={settings} />
             <PrivacySection />
             <DangerZoneSection settings={settings} />

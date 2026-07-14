@@ -8,7 +8,7 @@ import {
 } from "@/components/brand-glyphs";
 import { ConnectionCard } from "@/components/connection-card";
 import { settingString } from "@/lib/format";
-import { CURATOR_PROVIDERS } from "@/lib/providers";
+import { CURATOR_PROVIDERS, findProvider } from "@/lib/providers";
 import type { Settings } from "@/lib/types";
 
 const PROVIDER_OPTIONS = CURATOR_PROVIDERS.map((provider) => ({
@@ -78,7 +78,15 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           title="AI curator"
           purpose="Writes each row and its “why we picked this”. Optional — a no-AI mode works too."
           settings={settings}
-          summary={settingString(settings, "curator.provider")}
+          summary={
+            // "none" is the default and is a real choice, not a configured connection — show the
+            // provider's friendly label only when an AI provider is actually set, else "" (not set).
+            settingString(settings, "curator.provider") &&
+            settingString(settings, "curator.provider") !== "none"
+              ? (findProvider(settingString(settings, "curator.provider"))
+                  ?.label ?? settingString(settings, "curator.provider"))
+              : ""
+          }
           glyph={
             <ProviderGlyph
               provider={settingString(settings, "curator.provider")}
@@ -96,7 +104,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               key: "curator.model",
               label: "Model (blank = a sensible default)",
               kind: "text",
-              placeholder: "e.g. claude-sonnet-4-5",
+              placeholder: "e.g. claude-haiku-4-5",
               showIf: (v) => v["curator.provider"] !== "none",
             },
             {
