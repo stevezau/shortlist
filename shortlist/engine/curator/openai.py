@@ -65,8 +65,9 @@ class OpenAICurator:
     def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
         """Propose up to k titles to watch next via the Responses API web-search tool (``llm_web``).
 
-        Returns ``[{title, year, media}]`` for the caller to resolve against TMDB; never raises — a
-        failure yields an empty list so the source degrades instead of failing the run.
+        Returns ``[{title, year, media}]`` for the caller to resolve against TMDB. Degrades to an
+        empty list on a provider error; the source's own try/except in candidates.py is the backstop
+        for any other failure, so a run never fails here.
         """
         import openai
 
@@ -83,5 +84,5 @@ class OpenAICurator:
             return []
         usage = getattr(r, "usage", None)
         if usage is not None:
-            self.last_tokens += getattr(usage, "total_tokens", 0) or 0
+            self.last_tokens = getattr(usage, "total_tokens", 0) or 0
         return parse_web_titles(getattr(r, "output_text", "") or "", k)

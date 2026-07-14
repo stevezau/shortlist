@@ -177,20 +177,27 @@ class TestGatherCandidates:
     def test_llm_web_source_resolves_proposed_titles_via_tmdb_search(self, mock_tmdb):
         mock_tmdb.suggestions.side_effect = lambda tid, mt: []
         mock_tmdb.genre_names.return_value = {}
-        # The curator proposes two titles; only one resolves to a real TMDB id, so only it is pooled.
-        mock_tmdb.search.side_effect = lambda title, mt, year=None: (
-            {"id": 800, "title": "Found", "genre_ids": [], "vote_average": 7.5} if title == "Real Film" else None
-        )
+        # A movie resolves, a SHOW resolves, and a hallucinated title doesn't (so it's dropped).
+        resolved = {
+            "Real Film": {"id": 800, "title": "Found", "genre_ids": [], "vote_average": 7.5},
+            "Real Show": {"id": 900, "name": "Found Show", "genre_ids": [], "vote_average": 8.0},
+        }
+        mock_tmdb.search.side_effect = lambda title, mt, year=None: resolved.get(title)
 
         class _WebCurator:
             def recommend_web(self, profile, seeds, k):
                 return [
                     {"title": "Real Film", "year": 2022, "media": "movie"},
+                    {"title": "Real Show", "year": 2019, "media": "show"},
                     {"title": "Made Up", "year": None, "media": "movie"},
                 ]
 
         pool = gather_candidates(mock_tmdb, [seed(1)], sources=["llm_web"], curator=_WebCurator(), profile=object())
-        assert {c.tmdb_id for c in pool} == {800}  # the hallucinated title resolved to nothing, dropped
+        assert {c.tmdb_id for c in pool} == {800, 900}  # both resolved; the hallucinated one dropped
+        # The show's media type and year are forwarded to search — not defaulted to movie / None.
+        show_call = next(c for c in mock_tmdb.search.call_args_list if c.args[0] == "Real Show")
+        assert show_call.args[1] is MediaType.SHOW and show_call.kwargs["year"] == 2019
+        assert next(c for c in pool if c.tmdb_id == 900).media_type is MediaType.SHOW
 
     def test_llm_web_is_a_noop_without_a_real_curator(self, mock_tmdb):
         mock_tmdb.suggestions.side_effect = lambda tid, mt: [
@@ -238,6 +245,16 @@ class TestParseWebTitles:
 
     def test_unparseable_reply_yields_empty(self):
         assert parse_web_titles("the model refused to answer", 10) == []
+
+    def test_skips_non_dict_items_and_caps_at_limit(self):
+        text = '[1, "junk", {"title": "A"}, {"title": "B"}, {"title": "C"}]'
+        out = parse_web_titles(text, 2)
+        assert [it["title"] for it in out] == ["A", "B"]  # non-dicts skipped, then capped at 2
+
+    def test_non_int_year_coerces_to_none(self):
+        # A string/float year from a chatty model must not leak a bad type downstream.
+        out = parse_web_titles('[{"title": "A", "year": "2021", "media": "movie"}]', 5)
+        assert out == [{"title": "A", "year": None, "media": "movie"}]
 
 
 class TestSliceForLlm:

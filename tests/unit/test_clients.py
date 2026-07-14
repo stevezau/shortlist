@@ -157,6 +157,16 @@ class TestTmdbClient:
         assert params.get("year") == "2021"  # movies gate on `year`
 
     @respx.mock
+    def test_search_shows_gate_on_first_air_date_year(self):
+        route = respx.get("https://api.themoviedb.org/3/search/tv").mock(
+            return_value=httpx.Response(200, json={"results": [{"id": 95396, "name": "Severance"}]})
+        )
+        found = TmdbClient("k").search("Severance", MediaType.SHOW, year=2022)
+        assert found["id"] == 95396
+        params = route.calls.last.request.url.params
+        assert params.get("first_air_date_year") == "2022"  # shows use first_air_date_year, not year
+
+    @respx.mock
     def test_search_returns_none_when_nothing_matches(self):
         respx.get("https://api.themoviedb.org/3/search/tv").mock(return_value=httpx.Response(200, json={"results": []}))
         assert TmdbClient("k").search("Nonexistent Show", MediaType.SHOW) is None

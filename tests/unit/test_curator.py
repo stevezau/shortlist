@@ -149,9 +149,10 @@ def _fake_anthropic_module():
             self.message = message
             self.status_code = status_code
 
-    mod.RateLimitError = type("RateLimitError", (FakeError,), {})
-    mod.APIStatusError = type("APIStatusError", (FakeError,), {})
-    mod.APIConnectionError = type("APIConnectionError", (FakeError,), {})
+    mod.APIError = type("APIError", (FakeError,), {})
+    mod.RateLimitError = type("RateLimitError", (mod.APIError,), {})
+    mod.APIStatusError = type("APIStatusError", (mod.APIError,), {})
+    mod.APIConnectionError = type("APIConnectionError", (mod.APIError,), {})
     mod.Anthropic = MagicMock()
     return mod
 
@@ -204,6 +205,39 @@ class TestAnthropicCurator:
         with pytest.raises(CuratorError, match="529"):
             AnthropicCurator(api_key="k").curate(make_profile(history=[]), candidates(), k=2)
 
+    def test_recommend_web_sends_the_web_search_tool_and_parses_titles(self, monkeypatch):
+        mod = _fake_anthropic_module()
+        monkeypatch.setitem(sys.modules, "anthropic", mod)
+        from shortlist.engine.curator.anthropic import AnthropicCurator
+
+        client = MagicMock()
+        mod.Anthropic.return_value = client
+        # A web-search server-tool block precedes the model's final text (as real responses do).
+        client.messages.create.return_value = SimpleNamespace(
+            content=[
+                SimpleNamespace(type="server_tool_use", text=None),
+                SimpleNamespace(type="text", text='[{"title": "Dune", "year": 2021, "media": "movie"}]'),
+            ],
+            usage=SimpleNamespace(input_tokens=200, output_tokens=40),
+        )
+        seeds = [Seed(tmdb_id=1, title="Arrival", media_type=MediaType.MOVIE, weight=1.0)]
+        out = AnthropicCurator(api_key="k").recommend_web(make_profile(history=[]), seeds, k=5)
+
+        assert out == [{"title": "Dune", "year": 2021, "media": "movie"}]
+        call = client.messages.create.call_args
+        assert call.kwargs["tools"][0]["type"] == "web_search_20250305"  # the SUT-controlled contract
+
+    def test_recommend_web_returns_empty_on_api_error(self, monkeypatch):
+        mod = _fake_anthropic_module()
+        monkeypatch.setitem(sys.modules, "anthropic", mod)
+        from shortlist.engine.curator.anthropic import AnthropicCurator
+
+        client = MagicMock()
+        mod.Anthropic.return_value = client
+        client.messages.create.side_effect = mod.APIStatusError("down", status_code=500)
+        seeds = [Seed(tmdb_id=1, title="Arrival", media_type=MediaType.MOVIE, weight=1.0)]
+        assert AnthropicCurator(api_key="k").recommend_web(make_profile(history=[]), seeds, k=5) == []
+
 
 class TestOpenAICurator:
     def test_sends_json_schema_response_format(self, monkeypatch):
@@ -251,6 +285,25 @@ class TestOpenAICurator:
         )
         with pytest.raises(CuratorError, match="unparseable"):
             curator.curate(make_profile(history=[]), candidates(), k=1)
+
+    def test_recommend_web_uses_the_responses_web_search_tool(self, monkeypatch):
+        curator, client, _mod = self._client(monkeypatch)
+        client.responses.create.return_value = SimpleNamespace(
+            output_text='[{"title": "Sicario", "year": 2015, "media": "movie"}]',
+            usage=SimpleNamespace(total_tokens=77),
+        )
+        seeds = [Seed(tmdb_id=1, title="Arrival", media_type=MediaType.MOVIE, weight=1.0)]
+        out = curator.recommend_web(make_profile(history=[]), seeds, k=5)
+
+        assert out == [{"title": "Sicario", "year": 2015, "media": "movie"}]
+        call = client.responses.create.call_args
+        assert call.kwargs["tools"][0]["type"] == "web_search"  # the SUT-controlled contract
+
+    def test_recommend_web_returns_empty_on_provider_error(self, monkeypatch):
+        curator, client, mod = self._client(monkeypatch)
+        client.responses.create.side_effect = mod.OpenAIError("upstream 500")
+        seeds = [Seed(tmdb_id=1, title="Arrival", media_type=MediaType.MOVIE, weight=1.0)]
+        assert curator.recommend_web(make_profile(history=[]), seeds, k=5) == []
 
 
 class TestGoogleCurator:

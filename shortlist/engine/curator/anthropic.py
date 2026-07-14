@@ -74,8 +74,9 @@ class AnthropicCurator:
     def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
         """Propose up to k titles to watch next via Claude's web-search tool (the ``llm_web`` source).
 
-        Returns ``[{title, year, media}]`` for the caller to resolve against TMDB; never raises — a
-        failure just yields an empty list so the source degrades instead of failing the run.
+        Returns ``[{title, year, media}]`` for the caller to resolve against TMDB. Degrades to an
+        empty list on a provider error; the source's own try/except in candidates.py is the backstop
+        for any other failure (unexpected response shape, etc.), so a run never fails here.
         """
         import anthropic
 
@@ -91,7 +92,7 @@ class AnthropicCurator:
         except anthropic.APIError as e:
             logger.warning("llm_web (anthropic): {}", e)
             return []
-        self.last_tokens += response.usage.input_tokens + response.usage.output_tokens
+        self.last_tokens = response.usage.input_tokens + response.usage.output_tokens
         # The model may emit several text blocks around its searches; the JSON list is in the last one.
         text = "".join(b.text for b in response.content if b.type == "text")
         return parse_web_titles(text, k)
