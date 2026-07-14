@@ -38,10 +38,19 @@ describe("canLeaveStep", () => {
     expect(canLeaveStep(1, { linked: true })).toBe(true);
   });
 
-  it("gates step 3 on a chosen curator (None counts)", () => {
+  it("gates step 3: None is ready at once, a key provider needs a passing test", () => {
     expect(canLeaveStep(3, {})).toBe(false);
     expect(canLeaveStep(3, { curator_provider: "none" })).toBe(true);
-    expect(canLeaveStep(3, { curator_provider: "anthropic" })).toBe(true);
+    // Picking a key provider's card alone must NOT open the gate — the key isn't saved/tested yet,
+    // so proceeding would silently run in heuristic mode with an AI the user thinks is active.
+    expect(canLeaveStep(3, { curator_provider: "anthropic" })).toBe(false);
+    expect(
+      canLeaveStep(3, { curator_provider: "anthropic", curator_ready: true }),
+    ).toBe(true);
+    // A failed test leaves it not-ready.
+    expect(
+      canLeaveStep(3, { curator_provider: "anthropic", curator_ready: false }),
+    ).toBe(false);
   });
 
   it("leaves the ungated steps open (privacy is verified automatically, not a wizard gate)", () => {

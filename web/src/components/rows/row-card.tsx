@@ -15,7 +15,12 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { apiErrorMessage } from "@/lib/api";
 import { audienceSummary, toInput } from "@/lib/collections";
-import { useDeleteCollection, useSaveCollection } from "@/lib/queries";
+import { settingString } from "@/lib/format";
+import {
+  useDeleteCollection,
+  useSaveCollection,
+  useSettings,
+} from "@/lib/queries";
 import type { Collection, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -31,8 +36,17 @@ export function RowCard({
 }) {
   const save = useSaveCollection();
   const remove = useDeleteCollection();
+  const settings = useSettings();
   const isDefault = collection.slug === "picked";
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  // The default row's size is delivered from Settings → Defaults, not its own column (which the
+  // backend ignores). Show the effective value so the card can't advertise a size no user gets.
+  const globalSize = Number(settingString(settings.data ?? {}, "row.size"));
+  const effectiveSize =
+    isDefault && Number.isFinite(globalSize) && globalSize > 0
+      ? globalSize
+      : collection.size;
 
   return (
     <Card className={cn(!collection.enabled && "opacity-60")}>
@@ -53,7 +67,7 @@ export function RowCard({
             {isDefault && <Badge variant="outline">default</Badge>}
           </div>
           <p className="text-sm text-muted-foreground">
-            {audienceSummary(collection, users)} · {collection.size} titles ·{" "}
+            {audienceSummary(collection, users)} · {effectiveSize} titles ·{" "}
             {collection.media === "both"
               ? "movies & shows"
               : `${collection.media}s`}

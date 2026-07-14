@@ -78,8 +78,15 @@ export function RowEditor({
               id="row-name"
               value={input.name}
               placeholder="e.g. Hidden Gems"
+              disabled={isDefault}
               onChange={(event) => set({ name: event.target.value })}
             />
+            {isDefault && (
+              <p className="text-sm text-muted-foreground">
+                The default row’s name and size follow Settings → Defaults, so
+                they stay in sync everywhere. Change them there.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -107,15 +114,17 @@ export function RowEditor({
           />
 
           <div className="grid gap-5 sm:grid-cols-2">
-            <Segmented
-              legend="Row size"
-              value={String(input.size)}
-              onChange={(size) => set({ size: Number(size) })}
-              options={ROW_SIZES.map((size) => ({
-                value: String(size),
-                label: String(size),
-              }))}
-            />
+            {!isDefault && (
+              <Segmented
+                legend="Row size"
+                value={String(input.size)}
+                onChange={(size) => set({ size: Number(size) })}
+                options={ROW_SIZES.map((size) => ({
+                  value: String(size),
+                  label: String(size),
+                }))}
+              />
+            )}
             <Segmented
               legend="Libraries"
               value={input.media}

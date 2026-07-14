@@ -19,6 +19,12 @@ export interface WizardData {
   tmdb_set?: boolean;
   /** Step 3 gate: a curator card was chosen (None counts). */
   curator_provider?: CuratorProvider;
+  /**
+   * Step 3 gate: a key/URL provider was saved AND passed its test. "none" needs no key, so it's
+   * ready the moment it's picked. Choosing a paid provider's card is NOT enough — without this the
+   * run silently degrades to heuristic mode with a key the user believes is active.
+   */
+  curator_ready?: boolean;
   customized?: boolean;
 }
 
@@ -72,8 +78,11 @@ export function canLeaveStep(step: number, data: WizardData): boolean {
     // TMDB is how Shortlist finds similar titles; without a key every run dies at the first user.
     case 2:
       return data.tmdb_set === true;
+    // "none" is a first-class choice (heuristic mode) and is ready the moment it's picked. A
+    // key/URL provider must have been saved AND passed its test — picking the card alone must not
+    // open the gate, or the run silently degrades to heuristic mode with a key that was never saved.
     case 3:
-      return data.curator_provider !== undefined;
+      return data.curator_provider === "none" || data.curator_ready === true;
     default:
       return true;
   }

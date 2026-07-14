@@ -70,6 +70,11 @@ export function StepCurator({ data, update }: StepProps) {
         };
       return api.testConnection("llm");
     },
+    onSuccess: (result, provider) => {
+      // Only a passing test opens the Next gate. testConnection resolves even when the key is
+      // wrong (ok: false) — so gate on result.ok, not merely on the call succeeding.
+      if (provider.id !== "none") update({ curator_ready: result.ok === true });
+    },
   });
 
   const choose = (provider: CuratorProviderInfo) => {
@@ -77,7 +82,12 @@ export function StepCurator({ data, update }: StepProps) {
     // previously-saved provider's key, and leaving it would imply this provider already has one
     // (and re-save it against the wrong key).
     if (provider.id !== data.curator_provider) setApiKey("");
-    update({ curator_provider: provider.id });
+    // "none" is ready immediately; a key/URL provider isn't ready until Save & test passes, so the
+    // gate closes on selection and only reopens on a successful test.
+    update({
+      curator_provider: provider.id,
+      curator_ready: provider.id === "none",
+    });
     setModel(provider.defaultModel);
     saveAndTest.reset();
     if (provider.id === "none") saveAndTest.mutate(provider);
