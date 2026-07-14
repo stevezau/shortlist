@@ -146,6 +146,26 @@ class TestTmdbClient:
         assert TmdbClient("k").discover(MediaType.MOVIE, []) == []
 
     @respx.mock
+    def test_search_returns_top_match_with_the_query_and_year(self):
+        route = respx.get("https://api.themoviedb.org/3/search/movie").mock(
+            return_value=httpx.Response(200, json={"results": [{"id": 42, "title": "Dune"}, {"id": 43}]})
+        )
+        found = TmdbClient("k").search("Dune", MediaType.MOVIE, year=2021)
+        assert found["id"] == 42  # the top result, used to resolve an LLM-proposed title
+        params = route.calls.last.request.url.params
+        assert params.get("query") == "Dune"
+        assert params.get("year") == "2021"  # movies gate on `year`
+
+    @respx.mock
+    def test_search_returns_none_when_nothing_matches(self):
+        respx.get("https://api.themoviedb.org/3/search/tv").mock(return_value=httpx.Response(200, json={"results": []}))
+        assert TmdbClient("k").search("Nonexistent Show", MediaType.SHOW) is None
+
+    def test_search_blank_title_makes_no_call(self):
+        # An empty proposed title never hits the network (respx.mock not needed — no request).
+        assert TmdbClient("k").search("   ", MediaType.MOVIE) is None
+
+    @respx.mock
     def test_tvdb_id_reads_external_ids_for_a_show(self):
         respx.get("https://api.themoviedb.org/3/tv/95396/external_ids").mock(
             return_value=httpx.Response(200, json={"tvdb_id": 371980, "imdb_id": "tt11280740"})

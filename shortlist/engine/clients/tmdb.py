@@ -73,6 +73,23 @@ class TmdbClient:
         logger.debug("TMDB suggestions for {} {}: {} pooled", kind, tmdb_id, len(pooled))
         return list(pooled.values())
 
+    def search(self, title: str, media_type: MediaType, *, year: int | None = None) -> dict | None:
+        """Resolve a free-text title to its best TMDB match, or None if nothing matches.
+
+        Used to turn an LLM's proposed titles (which come back as strings, not ids) into real
+        candidates. Returns the top result in the same shape as ``suggestions`` items (``id``,
+        ``title``/``name``, ``genre_ids``, ``vote_average``, dates), so it pools identically.
+        """
+        query = (title or "").strip()
+        if not query:
+            return None
+        kind = "movie" if media_type is MediaType.MOVIE else "tv"
+        params: dict[str, object] = {"query": query}
+        if year:
+            params["year" if media_type is MediaType.MOVIE else "first_air_date_year"] = year
+        results = self._get(f"/search/{kind}", params=params).get("results", [])
+        return results[0] if results else None
+
     def genre_names(self, media_type: MediaType) -> dict[int, str]:
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         data = self._get(f"/genre/{kind}/list")

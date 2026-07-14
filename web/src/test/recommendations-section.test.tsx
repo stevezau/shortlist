@@ -25,7 +25,10 @@ describe("RecommendationsSection", () => {
   it("blocks the AI-from-library source until a curator is configured", () => {
     renderSection({});
     expect(screen.getByLabelText(/suggests from your library/i)).toBeDisabled();
-    expect(screen.getByText(/Needs an AI curator/i)).toBeTruthy();
+    // Both AI sources (library + web search) show the curator-needed hint.
+    expect(screen.getAllByText(/Needs an AI curator/i).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("allows the AI-from-library source once a curator is set", () => {

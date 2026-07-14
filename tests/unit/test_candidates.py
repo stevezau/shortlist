@@ -1,5 +1,6 @@
 from shortlist.engine.candidates import _slice_for_llm, filter_candidates, gather_candidates
 from shortlist.engine.curator import NullCurator
+from shortlist.engine.curator.base import parse_web_titles
 from shortlist.engine.models import MediaType, Pick, Seed
 from tests.conftest import make_candidate
 
@@ -172,6 +173,71 @@ class TestGatherCandidates:
 
         pool = gather_candidates(mock_tmdb, [seed(1)], sources=["tmdb_similar", "trakt"], trakt=_Boom())
         assert {c.tmdb_id for c in pool} == {1}
+
+    def test_llm_web_source_resolves_proposed_titles_via_tmdb_search(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.genre_names.return_value = {}
+        # The curator proposes two titles; only one resolves to a real TMDB id, so only it is pooled.
+        mock_tmdb.search.side_effect = lambda title, mt, year=None: (
+            {"id": 800, "title": "Found", "genre_ids": [], "vote_average": 7.5} if title == "Real Film" else None
+        )
+
+        class _WebCurator:
+            def recommend_web(self, profile, seeds, k):
+                return [
+                    {"title": "Real Film", "year": 2022, "media": "movie"},
+                    {"title": "Made Up", "year": None, "media": "movie"},
+                ]
+
+        pool = gather_candidates(mock_tmdb, [seed(1)], sources=["llm_web"], curator=_WebCurator(), profile=object())
+        assert {c.tmdb_id for c in pool} == {800}  # the hallucinated title resolved to nothing, dropped
+
+    def test_llm_web_is_a_noop_without_a_real_curator(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
+            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
+        ]
+        # NullCurator has no web search -> the source no-ops (matching the UI gate); search never runs.
+        pool = gather_candidates(
+            mock_tmdb, [seed(1)], sources=["tmdb_similar", "llm_web"], curator=NullCurator(), profile=object()
+        )
+        assert {c.tmdb_id for c in pool} == {1}
+        assert not mock_tmdb.search.called
+
+    def test_llm_web_failure_keeps_the_other_sources(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
+            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
+        ]
+
+        class _Boom:
+            def recommend_web(self, *a):
+                raise RuntimeError("web search down")
+
+        pool = gather_candidates(
+            mock_tmdb, [seed(1)], sources=["tmdb_similar", "llm_web"], curator=_Boom(), profile=object()
+        )
+        assert {c.tmdb_id for c in pool} == {1}
+
+
+class TestParseWebTitles:
+    def test_parses_a_plain_json_array(self):
+        text = '[{"title": "Dune", "year": 2021, "media": "movie"}, {"title": "Severance", "media": "show"}]'
+        out = parse_web_titles(text, 10)
+        assert out == [
+            {"title": "Dune", "year": 2021, "media": "movie"},
+            {"title": "Severance", "year": None, "media": "show"},
+        ]
+
+    def test_extracts_the_array_from_surrounding_prose(self):
+        text = 'Here are picks:\n[{"title": "Sicario", "year": 2015, "media": "movie"}]\nHope that helps!'
+        assert parse_web_titles(text, 10) == [{"title": "Sicario", "year": 2015, "media": "movie"}]
+
+    def test_normalizes_media_aliases_and_drops_titleless_items(self):
+        text = '[{"title": "X", "media": "tv"}, {"media": "movie"}, {"title": "Y", "media": "series"}]'
+        out = parse_web_titles(text, 10)
+        assert out == [{"title": "X", "year": None, "media": "show"}, {"title": "Y", "year": None, "media": "show"}]
+
+    def test_unparseable_reply_yields_empty(self):
+        assert parse_web_titles("the model refused to answer", 10) == []
 
 
 class TestSliceForLlm:

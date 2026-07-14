@@ -37,6 +37,12 @@ export const SOURCES: readonly SourceInfo[] = [
     desc: "Uses Trakt's recommendation graph — often surfaces 'what to watch next' picks TMDB's similar list misses.",
     requires: "trakt",
   },
+  {
+    id: "llm_web",
+    label: "AI — web search for what to watch next",
+    desc: "Your AI curator searches the live web for current, well-reviewed titles to watch next, then resolves them against your library. Needs a curator with web search (Claude or GPT).",
+    requires: "curator",
+  },
 ];
 
 /** Whether an AI curator is configured (needed by curator-dependent sources). */

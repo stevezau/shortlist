@@ -37,6 +37,9 @@ wider reach. Available today:
   similar to one seed. Large libraries are sliced to each person's genres before the LLM sees them.
 - **Trakt — related titles** (needs a Trakt API key, added in Connections): uses Trakt's
   recommendation graph, which often surfaces "what to watch next" picks TMDB's similar list misses.
+- **AI — web search for what to watch next** (needs a curator with web search — Claude or GPT): the
+  curator searches the live web for current, well-reviewed titles to watch next, then resolves each
+  against your library. Reaches beyond TMDB/Trakt to fresh releases and critics' lists.
 
 These are the server-wide default. Any individual row can override them: open the row's editor,
 switch **Where this row looks** to "Choose for this row," and pick its own sources (e.g. a

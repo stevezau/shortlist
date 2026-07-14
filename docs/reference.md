@@ -79,7 +79,8 @@ inherit). `prompt-preview` assembles the prompt against sample data so the UI ca
 
 Candidate sources are set globally (`candidates.sources`) and can be overridden per row
 (`collections.candidate_sources`, `[]` = inherit the global set; valid values: `tmdb_similar`,
-`tmdb_discover`, `llm_library`, `trakt`).
+`tmdb_discover`, `llm_library`, `trakt`, `llm_web`). `llm_web` uses the AI curator's live web
+search (Anthropic/OpenAI) to propose titles, each resolved via TMDB search then library-verified.
 
 Request tags are three-layered: the global `requests.tag` setting, a per-user `request_tag`
 (`PATCH /api/users/{id}`), and a per-row `request_tag` (`collections`, per-person rows only —

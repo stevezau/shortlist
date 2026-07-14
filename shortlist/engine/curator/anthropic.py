@@ -6,7 +6,14 @@ import json
 
 from loguru import logger
 
-from shortlist.engine.curator.base import CuratorError, build_prompts, picks_schema, validate_picks
+from shortlist.engine.curator.base import (
+    CuratorError,
+    build_prompts,
+    build_web_prompt,
+    parse_web_titles,
+    picks_schema,
+    validate_picks,
+)
 from shortlist.engine.models import Candidate, Pick, UserProfile
 
 # Design doc §3: cheap tier is plenty for re-ranking ~40 owned titles.
@@ -63,3 +70,28 @@ class AnthropicCurator:
         except json.JSONDecodeError as e:
             raise CuratorError(f"Anthropic returned unparseable JSON: {text[:200]!r}") from e
         return validate_picks(data.get("picks", []), candidates, k, self.name)
+
+    def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
+        """Propose up to k titles to watch next via Claude's web-search tool (the ``llm_web`` source).
+
+        Returns ``[{title, year, media}]`` for the caller to resolve against TMDB; never raises — a
+        failure just yields an empty list so the source degrades instead of failing the run.
+        """
+        import anthropic
+
+        system, user = build_web_prompt(profile, seeds, k)
+        try:
+            response = self._client.messages.create(
+                model=self._model,
+                max_tokens=2048,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+                tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+            )
+        except anthropic.APIError as e:
+            logger.warning("llm_web (anthropic): {}", e)
+            return []
+        self.last_tokens += response.usage.input_tokens + response.usage.output_tokens
+        # The model may emit several text blocks around its searches; the JSON list is in the last one.
+        text = "".join(b.text for b in response.content if b.type == "text")
+        return parse_web_titles(text, k)

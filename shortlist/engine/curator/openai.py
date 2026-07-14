@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import json
 
-from shortlist.engine.curator.base import CuratorError, build_prompts, picks_schema, validate_picks
+from loguru import logger
+
+from shortlist.engine.curator.base import (
+    CuratorError,
+    build_prompts,
+    build_web_prompt,
+    parse_web_titles,
+    picks_schema,
+    validate_picks,
+)
 from shortlist.engine.models import Candidate, Pick, UserProfile
 
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -52,3 +61,27 @@ class OpenAICurator:
         except json.JSONDecodeError as e:
             raise CuratorError("OpenAI returned unparseable JSON") from e
         return validate_picks(data.get("picks", []), candidates, k, self.name)
+
+    def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
+        """Propose up to k titles to watch next via the Responses API web-search tool (``llm_web``).
+
+        Returns ``[{title, year, media}]`` for the caller to resolve against TMDB; never raises — a
+        failure yields an empty list so the source degrades instead of failing the run.
+        """
+        import openai
+
+        system, user = build_web_prompt(profile, seeds, k)
+        try:
+            r = self._client.responses.create(
+                model=self._model,
+                instructions=system,
+                input=user,
+                tools=[{"type": "web_search"}],
+            )
+        except openai.OpenAIError as e:
+            logger.warning("llm_web (openai): {}", e)
+            return []
+        usage = getattr(r, "usage", None)
+        if usage is not None:
+            self.last_tokens += getattr(usage, "total_tokens", 0) or 0
+        return parse_web_titles(getattr(r, "output_text", "") or "", k)

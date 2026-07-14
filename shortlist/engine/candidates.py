@@ -7,8 +7,8 @@ recommendation engine is not locked to TMDB's per-seed similarity. Sources today
 * ``tmdb_similar`` — TMDB /recommendations + /similar for each seed (the recall baseline).
 * ``tmdb_discover`` — TMDB /discover in the genres a person's history skews toward (widens recall).
 * ``llm_library`` — the AI curator proposes owned titles from a taste-sliced library catalog.
-
-More sources (Trakt, LLM+web-search) plug in as additional branches here.
+* ``trakt`` — Trakt's related-titles graph for each seed.
+* ``llm_web`` — the AI curator's live web search proposes titles, each resolved via TMDB search.
 """
 
 from __future__ import annotations
@@ -24,11 +24,12 @@ from shortlist.engine.models import Candidate, MediaType, Seed
 # Every candidate source the engine knows how to run. The owner can enable any subset globally
 # (settings ``candidates.sources``) or per row (``collections.candidate_sources``); an unknown value
 # is simply ignored by ``gather_candidates``, but the API validates against this set for good errors.
-KNOWN_SOURCES = ("tmdb_similar", "tmdb_discover", "llm_library", "trakt")
+KNOWN_SOURCES = ("tmdb_similar", "tmdb_discover", "llm_library", "trakt", "llm_web")
 DEFAULT_SOURCES = ("tmdb_similar",)
 _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
 _LLM_LIBRARY_CAP = 300  # most catalog titles to show the LLM (a big library must be sliced to fit)
 _LLM_LIBRARY_K = 40  # how many owned titles the LLM proposes as candidates
+_LLM_WEB_K = 20  # how many titles the web-search LLM proposes (each resolved to TMDB, then verified)
 
 
 def gather_candidates(
@@ -113,6 +114,19 @@ def gather_candidates(
                     cand.seeds.append(seed)
         except Exception as e:
             logger.warning("trakt source failed ({}); continuing with the other sources", type(e).__name__)
+
+    if "llm_web" in enabled and llm_ready and profile is not None and hasattr(curator, "recommend_web"):
+        try:
+            # The curator uses its provider's live web search to propose titles to watch next; each
+            # is resolved to a real TMDB id and (later) library-verified, so a hallucinated title
+            # simply resolves to nothing rather than reaching a row.
+            for rec in curator.recommend_web(profile, seeds, _LLM_WEB_K):
+                media_type = MediaType.SHOW if rec.get("media") == "show" else MediaType.MOVIE
+                found = tmdb.search(rec["title"], media_type, year=rec.get("year"))
+                if found:
+                    add(found, media_type)
+        except Exception as e:
+            logger.warning("llm_web source failed ({}); continuing with the other sources", type(e).__name__)
 
     if "llm_library" in enabled and llm_ready and catalog and profile is not None:
         try:

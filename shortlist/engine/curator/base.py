@@ -6,6 +6,7 @@ the library. Any tmdb_id it returns that wasn't in its input is dropped and logg
 
 from __future__ import annotations
 
+import json
 from string import Template
 from typing import Protocol
 
@@ -138,6 +139,67 @@ def build_prompts(profile: UserProfile, candidates: list[Candidate], k: int) -> 
         )
     user = f"{taste_summary(profile)}\n\nCandidates ({len(candidates)}):\n" + "\n".join(cand_lines)
     return system, user
+
+
+_WEB_SYSTEM = (
+    "You are a film and TV recommender with live web search. Based on what this person recently "
+    "watched, search the web for {k} current, well-reviewed titles they'd most likely want to watch "
+    "next — 'what to watch next' picks, recent releases, and critically-loved titles similar in "
+    "taste. Prefer real, findable titles over obscure guesses. Respond with ONLY a JSON array of up "
+    'to {k} objects, each {{"title": str, "year": int or null, "media": "movie" or "show"}}. No prose.'
+)
+
+
+def build_web_prompt(profile: UserProfile, seeds: list, k: int) -> tuple[str, str]:
+    """(system, user) prompts for a web-search recommendation call (the ``llm_web`` source).
+
+    Unlike ``build_prompts`` (which re-ranks a fixed candidate list), this asks the model to propose
+    NEW titles via web search; the caller resolves each to a real TMDB id and library-verifies it, so
+    a hallucinated title simply resolves to nothing rather than reaching a row.
+    """
+    liked = [getattr(s, "title", "") for s in seeds if getattr(s, "title", "")][:20]
+    if not liked:
+        liked = [w.title for w in sorted(profile.history, key=lambda w: w.watched_at, reverse=True)[:20]]
+    body = "\n".join(f"- {t}" for t in liked) or "- (no history yet — recommend broadly popular titles)"
+    system = _WEB_SYSTEM.format(k=k)
+    user = f"They recently enjoyed:\n{body}\n\nRecommend up to {k} titles to watch next."
+    return system, user
+
+
+def parse_web_titles(text: str, limit: int) -> list[dict]:
+    """Pull the JSON array of ``{title, year, media}`` out of a model's (possibly chatty) reply.
+
+    Tolerant by design: the model is asked for pure JSON but web-search answers sometimes wrap it in
+    prose, so we fall back to the outermost ``[...]`` slice. Every item is normalised; anything
+    unparseable yields an empty list (the source then simply contributes nothing).
+    """
+    raw = (text or "").strip()
+    data: object = None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        start, end = raw.find("["), raw.rfind("]")
+        if 0 <= start < end:
+            try:
+                data = json.loads(raw[start : end + 1])
+            except json.JSONDecodeError:
+                data = None
+    if not isinstance(data, list):
+        logger.warning("llm_web: could not parse a title list from the model reply")
+        return []
+    out: list[dict] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        if not title:
+            continue
+        media = "show" if str(item.get("media") or "").lower() in ("show", "tv", "series") else "movie"
+        year = item.get("year")
+        out.append({"title": title, "year": int(year) if isinstance(year, int) else None, "media": media})
+        if len(out) >= limit:
+            break
+    return out
 
 
 def validate_picks(
