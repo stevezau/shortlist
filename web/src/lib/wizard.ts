@@ -35,7 +35,7 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   },
   {
     title: "Connect Plex",
-    why: "Shortlist reads watch history and writes rows on your server. No password ever touches Shortlist.",
+    why: "Shortlist reads watch history and writes rows on your server.",
   },
   {
     title: "History source",

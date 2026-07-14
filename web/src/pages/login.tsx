@@ -1,5 +1,4 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ShieldCheck } from "lucide-react";
 import { Navigate } from "react-router-dom";
 
 import { Logo } from "@/components/brand";
@@ -90,10 +89,6 @@ export function LoginPage() {
                 });
               }}
             />
-            <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
-              <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
-              No password ever touches Shortlist.
-            </p>
           </CardContent>
         </Card>
       </div>
