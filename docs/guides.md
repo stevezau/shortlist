@@ -23,6 +23,16 @@ The % of recommended items a user actually watched within 30 days, computed from
 history source that feeds recommendations. It's Shortlist's own proof of value — visible
 globally and per user. Expect ~20-40% on engaged users after a few weeks.
 
+## Recommendation sources
+
+Settings → **Recommendations** controls where candidate titles come from. Shortlist pools every
+source you enable, keeps only what's already in your library, then the AI re-ranks. More sources =
+wider reach. Available today:
+
+- **TMDB — similar titles**: the baseline — titles TMDB says are similar to what each person watched.
+- **TMDB — discover by taste**: widens into popular, well-rated titles in the genres each person
+  leans toward (derived from their watch history).
+
 ## Requests (Radarr / Sonarr)
 
 Off by default. When on, Shortlist notices the titles the curator surfaced that your library doesn't

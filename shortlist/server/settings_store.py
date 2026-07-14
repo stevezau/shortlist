@@ -50,6 +50,8 @@ DEFAULTS: dict[str, Any] = {
     "requests.tag": "shortlist",  # tag applied to every title Shortlist adds ("" = no tag)
     "schedule.cron": "30 3 * * *",
     "staleness_runs": 3,
+    # Which candidate sources feed recommendations (engine/candidates.py). More = wider recall.
+    "candidates.sources": ["tmdb_similar", "tmdb_discover"],
     "plextv.throttle_s": 1.0,
     "paused_all": False,  # Danger zone: stop all scheduled + manual runs without disabling users
     "setup.completed": False,

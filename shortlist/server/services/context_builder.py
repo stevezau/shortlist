@@ -69,6 +69,7 @@ class ContextBuilder:
                 row_size=int(store.get("row.size")),
                 row_name_template=store.get("row.name_template"),
                 staleness_runs=int(store.get("staleness_runs")),
+                candidate_sources=list(store.get("candidates.sources") or ["tmdb_similar"]),
                 dry_run=dry_run,
                 rows=self._build_rows(session, store),
                 requests=self._build_requests(store),

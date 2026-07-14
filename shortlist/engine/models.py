@@ -291,6 +291,9 @@ class EngineConfig:
     min_completion: float = 0.7  # history completion threshold for "meaningful" watch
     max_seeds: int = 30
     staleness_runs: int = 3  # don't repeat picks recommended in the last N runs
+    # Which candidate sources to pool (see engine/candidates.py). Empty/default = TMDB similar only,
+    # preserving legacy behaviour; owners widen recall by enabling more.
+    candidate_sources: list[str] = field(default_factory=lambda: ["tmdb_similar"])
     dry_run: bool = False
     # The curated rows to deliver. Empty -> a single default per-person row synthesized from
     # row_name_template/row_size, so the CLI and existing callers behave exactly as before.

@@ -85,7 +85,7 @@ def _candidate_pool(
     is (tmdb_id, media_type), never the bare id — movie 1399 and TV 1399 are different titles.
     """
     watched_ids = {(s.tmdb_id, s.media_type) for s in seeds}
-    pool = candidates_mod.gather_candidates(ctx.tmdb, seeds)
+    pool = candidates_mod.gather_candidates(ctx.tmdb, seeds, sources=ctx.config.candidate_sources)
     valid = candidates_mod.filter_candidates(
         pool,
         library_index,

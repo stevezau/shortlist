@@ -127,6 +127,24 @@ class TestTmdbClient:
         assert sorted(x["id"] for x in pooled) == [10, 20, 30]
 
     @respx.mock
+    def test_discover_queries_genres_and_returns_results(self):
+        route = respx.get("https://api.themoviedb.org/3/discover/movie").mock(
+            return_value=httpx.Response(200, json={"results": [{"id": 7}, {"id": 8}]})
+        )
+        results = TmdbClient("k").discover(MediaType.MOVIE, [18, 28], min_votes=200)
+        assert [r["id"] for r in results] == [7, 8]
+        # The genre/sort/vote filters must reach TMDB (they're the whole point of discover).
+        params = route.calls.last.request.url.params
+        assert params.get("with_genres") == "18,28"
+        assert params.get("sort_by") == "popularity.desc"
+        assert params.get("vote_count.gte") == "200"
+
+    @respx.mock
+    def test_discover_with_no_genres_makes_no_call(self):
+        # No genres -> no query at all (respx would raise on any unmocked request).
+        assert TmdbClient("k").discover(MediaType.MOVIE, []) == []
+
+    @respx.mock
     def test_tvdb_id_reads_external_ids_for_a_show(self):
         respx.get("https://api.themoviedb.org/3/tv/95396/external_ids").mock(
             return_value=httpx.Response(200, json={"tvdb_id": 371980, "imdb_id": "tt11280740"})

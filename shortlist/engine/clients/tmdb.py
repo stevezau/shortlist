@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Protocol
+from urllib.parse import urlencode
 
 import httpx
 from loguru import logger
@@ -36,13 +37,16 @@ class TmdbClient:
         self._cache = cache or NullCache()
         self._timeout = timeout
 
-    def _get(self, path: str, **params) -> dict:
-        cache_key = f"tmdb:{path}"
+    def _get(self, path: str, *, params: dict | None = None) -> dict:
+        extra = params or {}
+        # The cache keys on path + query (never the api_key): two discover queries that differ only
+        # in their genres must cache separately, and the secret must not sit in a cache key.
+        cache_key = "tmdb:" + path + (("?" + urlencode(sorted(extra.items()))) if extra else "")
         if cached := self._cache.get(cache_key):
             return json.loads(cached)
         r = httpx.get(
             f"{API}{path}",
-            params={"api_key": self._api_key, **params},
+            params={"api_key": self._api_key, **extra},
             timeout=self._timeout,
         )
         if r.status_code == 404:
@@ -73,6 +77,31 @@ class TmdbClient:
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
         data = self._get(f"/genre/{kind}/list")
         return {g["id"]: g["name"] for g in data.get("genres", [])}
+
+    def genre_ids_for(self, tmdb_id: int, media_type: MediaType) -> list[int]:
+        """A title's own genre ids — used to derive a person's dominant genres for discover."""
+        kind = "movie" if media_type is MediaType.MOVIE else "tv"
+        data = self._get(f"/{kind}/{tmdb_id}")
+        return [g["id"] for g in data.get("genres", []) if isinstance(g, dict) and "id" in g]
+
+    def discover(
+        self, media_type: MediaType, genre_ids: list[int], *, min_votes: int = 200, page: int = 1
+    ) -> list[dict]:
+        """Popular, well-reviewed titles in the given genres — the 'discover by taste' source.
+
+        Params go through ``_get(params=…)``, which keys the cache on path + query — so two discover
+        queries that differ only by genre cache separately, and the api_key never lands in a key.
+        """
+        if not genre_ids:
+            return []
+        kind = "movie" if media_type is MediaType.MOVIE else "tv"
+        params = {
+            "with_genres": ",".join(str(g) for g in genre_ids),
+            "sort_by": "popularity.desc",
+            "vote_count.gte": min_votes,
+            "page": page,
+        }
+        return self._get(f"/discover/{kind}", params=params).get("results", [])
 
     def external_ids(self, tmdb_id: int, media_type: MediaType) -> dict:
         """A title's ids in other databases (``tvdb_id``, ``imdb_id``, …); {} if TMDB has none."""

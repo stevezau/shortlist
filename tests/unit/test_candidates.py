@@ -24,6 +24,51 @@ class TestGatherCandidates:
         gather_candidates(mock_tmdb, [seed(1), seed(2), seed(3)])
         assert mock_tmdb.genre_names.call_count == 1
 
+    def test_discover_source_widens_the_pool_with_taste_genres(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
+            {"id": 100, "title": "Similar", "genre_ids": [18], "vote_average": 7.0}
+        ]
+        mock_tmdb.genre_ids_for.side_effect = lambda tid, mt: [18, 28]
+        mock_tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": 200, "title": "Discovered", "genre_ids": [18], "vote_average": 8.5}
+        ]
+        pool = gather_candidates(mock_tmdb, [seed(1)], sources=["tmdb_similar", "tmdb_discover"])
+        assert {c.tmdb_id for c in pool} == {100, 200}  # similar + discovered, unioned
+        # discover was asked for the seeds' dominant genres
+        assert 18 in mock_tmdb.discover.call_args.args[1]
+
+    def test_sources_gate_which_apis_run(self, mock_tmdb):
+        mock_tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        mock_tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": 5, "title": "D", "genre_ids": [], "vote_average": 7.0}
+        ]
+        pool = gather_candidates(mock_tmdb, [seed(1)], sources=["tmdb_discover"])
+        assert mock_tmdb.suggestions.called is False  # similar disabled -> TMDB /similar never queried
+        assert {c.tmdb_id for c in pool} == {5}
+
+    def test_discover_failure_keeps_the_similar_pool(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
+            {"id": 1, "title": "Similar", "genre_ids": [], "vote_average": 7.0}
+        ]
+        mock_tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        mock_tmdb.discover.side_effect = RuntimeError("TMDB 503")
+        # Discover blows up, but it's only a "widen" source — the tmdb_similar pool must survive.
+        pool = gather_candidates(mock_tmdb, [seed(1)], sources=["tmdb_similar", "tmdb_discover"])
+        assert {c.tmdb_id for c in pool} == {1}
+
+    def test_empty_sources_falls_back_to_default(self, mock_tmdb):
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
+            {"id": 1, "title": "Similar", "genre_ids": [], "vote_average": 7.0}
+        ]
+        # Toggling every source off still yields the baseline, never an empty pool.
+        pool = gather_candidates(mock_tmdb, [seed(1)], sources=[])
+        assert {c.tmdb_id for c in pool} == {1}
+        assert mock_tmdb.discover.called is False
+
+    def test_default_sources_do_not_call_discover(self, mock_tmdb):
+        gather_candidates(mock_tmdb, [seed(1)])  # unset -> default (tmdb_similar only)
+        assert mock_tmdb.discover.called is False
+
 
 class TestFilterCandidates:
     def _index(self):

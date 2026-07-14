@@ -7,6 +7,7 @@ import { CurationSection } from "@/components/settings/curation-section";
 import { DangerZoneSection } from "@/components/settings/danger-zone-section";
 import { DefaultsSection } from "@/components/settings/defaults-section";
 import { PrivacySection } from "@/components/settings/privacy-section";
+import { RecommendationsSection } from "@/components/settings/recommendations-section";
 import { RequestsSection } from "@/components/settings/requests-section";
 import { ScheduleSection } from "@/components/settings/schedule-section";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,6 +34,7 @@ export function SettingsPage() {
             <ScheduleSection settings={settings} />
             <DefaultsSection settings={settings} />
             <CurationSection settings={settings} />
+            <RecommendationsSection settings={settings} />
             <RequestsSection settings={settings} />
             <PrivacySection />
             <DangerZoneSection settings={settings} />

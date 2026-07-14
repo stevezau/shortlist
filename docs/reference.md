@@ -12,37 +12,38 @@
 
 ## Settings keys (DB-backed; Settings UI or `PUT /api/settings`)
 
-| Key                                                   | Default             | Notes                                                                  |
-| ----------------------------------------------------- | ------------------- | ---------------------------------------------------------------------- |
-| `plex.url` / `plex.token`                             | —                   | token stored Fernet-encrypted, redacted in API                         |
-| `tautulli.url` / `tautulli.apikey`                    | —                   | optional                                                               |
-| `tmdb.apikey`                                         | —                   | required for personal mode                                             |
-| `curator.provider`                                    | `none`              | `anthropic` \| `openai` \| `google` \| `ollama` \| `none`              |
-| `curator.api_key` / `curator.model`                   | —                   | BYO key; sensible default model per provider                           |
-| `curator.prompt_tone`                                 | `balanced`          | `balanced`\|`warm`\|`concise`\|`cinephile`\|`playful`                  |
-| `curator.prompt_guidance`                             | —                   | free-text notes injected into the curation prompt                      |
-| `curator.prompt_template`                             | —                   | full custom system prompt; blank = built-in skeleton                   |
-| `row.name_template`                                   | `✨ Picked for You` | `{top_seed}` and `{user}` placeholders                                 |
-| `row.size`                                            | `15`                | 10/15/20 in the UI; budget across a user's rows                        |
-| `schedule.cron`                                       | `30 3 * * *`        | full cron, applied live                                                |
-| `staleness_runs`                                      | `3`                 | prefer titles not picked in the last N runs                            |
-| `plextv.throttle_s`                                   | `1.0`               | plex.tv write spacing (rule: ≤1 write/s)                               |
-| `requests.enabled`                                    | `false`             | ask Radarr/Sonarr for picks the library lacks                          |
-| `requests.radarr.url` / `.apikey`                     | —                   | Radarr (movies); key stored Fernet-encrypted, redacted                 |
-| `requests.radarr.quality_profile_id` / `.root_folder` | `0` / —             | picked from dropdowns in the UI (fetched from Radarr)                  |
-| `requests.sonarr.url` / `.apikey`                     | —                   | Sonarr (shows); key stored Fernet-encrypted, redacted                  |
-| `requests.sonarr.quality_profile_id` / `.root_folder` | `0` / —             | picked from dropdowns in the UI (fetched from Sonarr)                  |
-| `requests.rating_source`                              | `tmdb`              | `tmdb` (no setup) \| `imdb` (needs an OMDb key)                        |
-| `requests.omdb.apikey`                                | —                   | free OMDb key; required for the `imdb` source; encrypted               |
-| `requests.min_rating`                                 | `7.0`               | score floor (0–10) on the chosen source                                |
-| `requests.min_votes`                                  | `100`               | vote-count floor on the chosen source                                  |
-| `requests.min_demand`                                 | `1`                 | request only titles wanted by ≥ N distinct people                      |
-| `requests.min_year`                                   | `0`                 | `0` = any; else request only titles released ≥ this year               |
-| `requests.max_per_run`                                | `5`                 | hard cap on titles **auto**-requested per run, both apps               |
-| `requests.auto_send`                                  | `true`              | `false` = fully manual; every qualifying title is queued               |
-| `requests.auto_min_demand`                            | `3`                 | auto-send only titles wanted by ≥ N distinct people                    |
-| `requests.auto_min_rating`                            | `8.0`               | ...and rated ≥ this on the chosen source; rest are queued              |
-| `requests.tag`                                        | `shortlist`         | tag added to every requested title (created in the app; `""` = no tag) |
+| Key                                                   | Default                            | Notes                                                                  |
+| ----------------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------- |
+| `plex.url` / `plex.token`                             | —                                  | token stored Fernet-encrypted, redacted in API                         |
+| `tautulli.url` / `tautulli.apikey`                    | —                                  | optional                                                               |
+| `tmdb.apikey`                                         | —                                  | required for personal mode                                             |
+| `curator.provider`                                    | `none`                             | `anthropic` \| `openai` \| `google` \| `ollama` \| `none`              |
+| `curator.api_key` / `curator.model`                   | —                                  | BYO key; sensible default model per provider                           |
+| `curator.prompt_tone`                                 | `balanced`                         | `balanced`\|`warm`\|`concise`\|`cinephile`\|`playful`                  |
+| `curator.prompt_guidance`                             | —                                  | free-text notes injected into the curation prompt                      |
+| `curator.prompt_template`                             | —                                  | full custom system prompt; blank = built-in skeleton                   |
+| `row.name_template`                                   | `✨ Picked for You`                | `{top_seed}` and `{user}` placeholders                                 |
+| `row.size`                                            | `15`                               | 10/15/20 in the UI; budget across a user's rows                        |
+| `schedule.cron`                                       | `30 3 * * *`                       | full cron, applied live                                                |
+| `staleness_runs`                                      | `3`                                | prefer titles not picked in the last N runs                            |
+| `candidates.sources`                                  | `["tmdb_similar","tmdb_discover"]` | candidate sources to pool: `tmdb_similar`, `tmdb_discover`             |
+| `plextv.throttle_s`                                   | `1.0`                              | plex.tv write spacing (rule: ≤1 write/s)                               |
+| `requests.enabled`                                    | `false`                            | ask Radarr/Sonarr for picks the library lacks                          |
+| `requests.radarr.url` / `.apikey`                     | —                                  | Radarr (movies); key stored Fernet-encrypted, redacted                 |
+| `requests.radarr.quality_profile_id` / `.root_folder` | `0` / —                            | picked from dropdowns in the UI (fetched from Radarr)                  |
+| `requests.sonarr.url` / `.apikey`                     | —                                  | Sonarr (shows); key stored Fernet-encrypted, redacted                  |
+| `requests.sonarr.quality_profile_id` / `.root_folder` | `0` / —                            | picked from dropdowns in the UI (fetched from Sonarr)                  |
+| `requests.rating_source`                              | `tmdb`                             | `tmdb` (no setup) \| `imdb` (needs an OMDb key)                        |
+| `requests.omdb.apikey`                                | —                                  | free OMDb key; required for the `imdb` source; encrypted               |
+| `requests.min_rating`                                 | `7.0`                              | score floor (0–10) on the chosen source                                |
+| `requests.min_votes`                                  | `100`                              | vote-count floor on the chosen source                                  |
+| `requests.min_demand`                                 | `1`                                | request only titles wanted by ≥ N distinct people                      |
+| `requests.min_year`                                   | `0`                                | `0` = any; else request only titles released ≥ this year               |
+| `requests.max_per_run`                                | `5`                                | hard cap on titles **auto**-requested per run, both apps               |
+| `requests.auto_send`                                  | `true`                             | `false` = fully manual; every qualifying title is queued               |
+| `requests.auto_min_demand`                            | `3`                                | auto-send only titles wanted by ≥ N distinct people                    |
+| `requests.auto_min_rating`                            | `8.0`                              | ...and rated ≥ this on the chosen source; rest are queued              |
+| `requests.tag`                                        | `shortlist`                        | tag added to every requested title (created in the app; `""` = no tag) |
 
 ## CLI config file (`<config-dir>/config.yml`)
 
