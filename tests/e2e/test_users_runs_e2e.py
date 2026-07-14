@@ -7,6 +7,8 @@ on the next run. A toggle that only repaints the UI is the failure this file exi
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Callable
 
 import pytest
 from playwright.sync_api import Page, expect
@@ -21,6 +23,17 @@ SLOW = 90_000
 
 def _users_by_name(app: RowarrApp) -> dict[str, dict]:
     return {user["username"]: user for user in app.api("GET", "/api/users").json()}
+
+
+def _wait_until(condition: Callable[[], bool], message: str, timeout_s: float = 10.0) -> None:
+    """Poll the API until a persisted value shows up — robust to the auto-save debounce, which the
+    'Saved' indicator can race (it flips before the PUT the debounce fired has fully committed)."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if condition():
+            return
+        time.sleep(0.25)
+    raise AssertionError(message)
 
 
 class TestUsers:
@@ -52,16 +65,22 @@ class TestUsers:
         paused.click()
         expect(paused).not_to_be_checked(timeout=LOAD)
 
-        # Size is a PER-ROW override now: open a row's drawer, set 10, save.
+        # Size is a PER-ROW override now: open a row's drawer and set 10. The drawer AUTO-SAVES
+        # (no Save button — the whole app is one save paradigm), so picking the size is the action.
         page.get_by_role("button", name="Customize for this person").first.click()
         page.get_by_role("button", name="10", exact=True).click()
-        page.get_by_role("button", name="Save", exact=True).first.click()
         expect(page.get_by_text("Saved").first).to_be_visible(timeout=LOAD)
 
-        # Pause reaches the user's prefs; the size override lives on the row, not user prefs.
+        # Pause reaches the user's prefs; the size override lives on the row, not user prefs. Poll the
+        # API for the persisted value rather than trusting the indicator, which races the debounce.
         assert _users_by_name(app)["sarah"]["prefs"]["paused"] is True
-        rows = app.api("GET", f"/api/users/{sarah_id}/rows").json()
-        assert any(r["override"].get("row_size") == 10 for r in rows), "the per-row size override must persist"
+        expect_row_size = 10
+
+        def _size_persisted() -> bool:
+            rows = app.api("GET", f"/api/users/{sarah_id}/rows").json()
+            return any(r["override"].get("row_size") == expect_row_size for r in rows)
+
+        _wait_until(_size_persisted, "the per-row size override must persist")
         # Exactly this user changed — mike's prefs stay empty.
         assert _users_by_name(app)["mike"]["prefs"] == {}
 
