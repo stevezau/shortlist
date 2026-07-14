@@ -283,6 +283,7 @@ class ContextBuilder:
                     prompt=prompt,
                     min_watchers=collection.min_watchers,
                     request_tag=(collection.request_tag or "").strip(),
+                    candidate_sources=list(collection.candidate_sources or []),
                 )
             )
         return specs

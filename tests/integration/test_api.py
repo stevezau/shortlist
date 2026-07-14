@@ -352,6 +352,22 @@ class TestCollectionsApi:
         assert client.post("/api/collections", json={"name": "X", "build": "nonsense"}).status_code == 422
         assert client.post("/api/collections", json={"name": "X", "media": "vinyl"}).status_code == 422
 
+    def test_candidate_sources_round_trip_and_reject_unknown(self, client: TestClient):
+        # Empty by default (inherit the global setting).
+        created = client.post("/api/collections", json={"name": "Trakt Row"})
+        assert created.status_code == 201 and created.json()["candidate_sources"] == []
+        cid = created.json()["id"]
+        # A per-row override round-trips through PATCH and GET (the client sends the full body).
+        patched = client.patch(
+            f"/api/collections/{cid}",
+            json={"name": "Trakt Row", "candidate_sources": ["trakt", "tmdb_discover"]},
+        )
+        assert patched.status_code == 200
+        assert patched.json()["candidate_sources"] == ["trakt", "tmdb_discover"]
+        # An unknown source id is rejected with a helpful 422, not silently stored.
+        bad = client.post("/api/collections", json={"name": "Bad Row", "candidate_sources": ["imdb_magic"]})
+        assert bad.status_code == 422
+
     def test_slug_collision_gets_suffixed(self, client: TestClient):
         # Different names (duplicates are rejected) that slugify to the same base collide on slug.
         first = client.post("/api/collections", json={"name": "Date Night"}).json()

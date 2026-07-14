@@ -21,6 +21,10 @@ from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.curator import NullCurator
 from shortlist.engine.models import Candidate, MediaType, Seed
 
+# Every candidate source the engine knows how to run. The owner can enable any subset globally
+# (settings ``candidates.sources``) or per row (``collections.candidate_sources``); an unknown value
+# is simply ignored by ``gather_candidates``, but the API validates against this set for good errors.
+KNOWN_SOURCES = ("tmdb_similar", "tmdb_discover", "llm_library", "trakt")
 DEFAULT_SOURCES = ("tmdb_similar",)
 _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
 _LLM_LIBRARY_CAP = 300  # most catalog titles to show the LLM (a big library must be sliced to fit)

@@ -70,6 +70,7 @@ def _candidate_pool(
     excluded_genres: set[str],
     recent: set[tuple[int, MediaType]],
     profile=None,
+    sources: list[str] | None = None,
 ) -> tuple[list[Candidate], list[Candidate], list[Candidate], list[Candidate]]:
     """Gather TMDB candidates for ``seeds``, intersect with the library, split by staleness.
 
@@ -89,7 +90,7 @@ def _candidate_pool(
     pool = candidates_mod.gather_candidates(
         ctx.tmdb,
         seeds,
-        sources=ctx.config.candidate_sources,
+        sources=sources if sources is not None else ctx.config.candidate_sources,
         curator=ctx.curator,
         catalog=ctx.library_catalog,
         profile=profile,
@@ -154,9 +155,32 @@ def _run_user(
     user_report.counts.history = len(user.history)
 
     cold = len(user.history) < cfg.min_history
-    ranked: list[Candidate] = []
-    held_back: list[Candidate] = []
     base_cold: list[Pick] = []
+    # A candidate pool per DISTINCT effective source-set among this user's rows. Rows that share
+    # sources (the common case — every row inheriting the global set) reuse one pool; a row that
+    # picks its own sources gets its own. Keyed by the sorted source tuple, memoised across the user.
+    Pool = tuple[list[Candidate], list[Candidate], list[Candidate], list[Candidate]]
+    pool_cache: dict[tuple[str, ...], Pool] = {}
+    seeds: list = []
+    recent: set[tuple[int, MediaType]] = set()
+
+    def effective_sources(spec: RowSpec) -> tuple[str, ...]:
+        return tuple(spec.candidate_sources) if spec.candidate_sources else tuple(cfg.candidate_sources)
+
+    def pools_for(spec: RowSpec) -> Pool:
+        key = effective_sources(spec)
+        if key not in pool_cache:
+            pool_cache[key] = _candidate_pool(
+                ctx,
+                seeds,
+                library_index,
+                excluded_genres=user.excluded_genres,
+                recent=recent,
+                profile=user,
+                sources=list(key),
+            )
+        return pool_cache[key]
+
     if cold:
         base_cold = _cold_start_picks(ctx, user, cfg)
         user_report.status = "cold_start"
@@ -166,20 +190,27 @@ def _run_user(
         user_report.counts.seeds = len(seeds)
         _pipeline._emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": len(seeds)})
         recent = ctx.recent_picks.get(user.slug, set())
-        pool, in_library, ranked, held_back = _candidate_pool(
-            ctx, seeds, library_index, excluded_genres=user.excluded_genres, recent=recent, profile=user
-        )
-        user_report.counts.candidates = len(pool)
+        for spec in specs:  # build every row's pool up front so counts and demand see them all
+            pools_for(spec)
+        # Counts are the distinct union across pools (a title in two rows' pools is one candidate).
+        user_report.counts.candidates = len({(c.tmdb_id, c.media_type) for p in pool_cache.values() for c in p[0]})
+        user_report.counts.in_library = len({(c.tmdb_id, c.media_type) for p in pool_cache.values() for c in p[1]})
+        user_report.counts.pre_ranked = len({(c.tmdb_id, c.media_type) for p in pool_cache.values() for c in p[2]})
         # Record what this user wanted that the server doesn't have, for the run-wide request pass.
-        # Done here, off the FULL pool, before pool is narrowed per-row below. The pool is shared
-        # across all this user's rows, so a missing title is tagged with the user's own request tag
-        # plus every in-audience row's tag — the honest union, since it could surface in any of them.
+        # A missing title is attributed to exactly the rows whose pool surfaced it: it gets the user's
+        # own request tag plus the tag of each such row. Deduped per user so demand counts them once.
         if demand is not None:
-            row_tags = {spec.request_tag for spec in specs if spec.request_tag}
-            title_tags = ({user.request_tag} | row_tags) if user.request_tag else row_tags
-            requests_mod.accumulate(demand, requests_mod.collect_missing(pool, library_index), tags=title_tags)
-        user_report.counts.in_library = len(in_library)
-        user_report.counts.pre_ranked = len(ranked)
+            user_tag = {user.request_tag} if user.request_tag else set()
+            first_seen: dict[tuple[int, MediaType], Candidate] = {}
+            title_tags: dict[tuple[int, MediaType], set[str]] = {}
+            for spec in specs:
+                spec_tags = user_tag | ({spec.request_tag} if spec.request_tag else set())
+                for c in requests_mod.collect_missing(pools_for(spec)[0], library_index):
+                    key = (c.tmdb_id, c.media_type)
+                    first_seen.setdefault(key, c)
+                    title_tags.setdefault(key, set()).update(spec_tags)
+            for key, cand in first_seen.items():
+                requests_mod.accumulate(demand, [cand], tags=title_tags[key])
         user_report.status = "ok"
 
     if not ctx.plex.sections_by_type():
@@ -208,6 +239,8 @@ def _run_user(
             # A per-row copy carries the effective recipe to the curator; the real profile is never
             # mutated, so one row's recipe can't leak into the next row (or into delivery below).
             row_profile = _with_prompt(user, effective_prompt)
+            # This row's own pool (its chosen sources, or the global set when it inherits).
+            _pool, _in_library, ranked, held_back = pools_for(spec)
             pool_for_row = _media_filter(ranked, spec.media)
             _pipeline._emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row)})
             try:
@@ -337,8 +370,15 @@ def _shared_row(
         return None
 
     seeds = derive_seeds(agg_history, resolve, max_seeds=cfg.max_seeds)
+    row_sources = spec.candidate_sources if spec.candidate_sources else None  # None -> global default
     _pool, _in_library, ranked_all, _held_back = _candidate_pool(
-        ctx, seeds, library_index, excluded_genres=set(), recent=ctx.recent_picks.get(slug, set()), profile=agg
+        ctx,
+        seeds,
+        library_index,
+        excluded_genres=set(),
+        recent=ctx.recent_picks.get(slug, set()),
+        profile=agg,
+        sources=row_sources,
     )
     ranked = _media_filter(ranked_all, spec.media)
     k = spec.size

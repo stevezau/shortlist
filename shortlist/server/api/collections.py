@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 
+from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.models import dedupe_slug, slugify
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, CollectionAudience
@@ -37,9 +38,9 @@ class CollectionIn(BaseModel):
     media: str = "both"
     sort_order: int = 0
     name_template: str = ""
-    source: str = "all_users"
     min_watchers: int = Field(default=2, ge=2)  # a public row must never be shaped by one person
     request_tag: str = Field(default="", max_length=64)  # tag added to titles requested via this row
+    candidate_sources: list[str] = Field(default_factory=list)  # [] -> inherit global candidates.sources
     prompt: PromptIn = Field(default_factory=PromptIn)
 
 
@@ -50,6 +51,9 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(422, f"audience must be one of {sorted(AUDIENCES)}")
     if body.media not in MEDIA:
         raise HTTPException(422, f"media must be one of {sorted(MEDIA)}")
+    unknown = [s for s in body.candidate_sources if s not in KNOWN_SOURCES]
+    if unknown:
+        raise HTTPException(422, f"unknown candidate source(s) {unknown}; valid: {sorted(KNOWN_SOURCES)}")
 
 
 def _serialize(session, collection: Collection) -> dict:
@@ -68,9 +72,9 @@ def _serialize(session, collection: Collection) -> dict:
         "media": collection.media,
         "sort_order": collection.sort_order,
         "name_template": collection.name_template,
-        "source": collection.source,
         "min_watchers": collection.min_watchers,
         "request_tag": collection.request_tag or "",
+        "candidate_sources": list(collection.candidate_sources or []),
         "prompt": collection.prompt or {},
     }
 
@@ -122,9 +126,9 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             media=body.media,
             sort_order=body.sort_order,
             name_template=body.name_template,
-            source=body.source,
             min_watchers=body.min_watchers,
             request_tag=body.request_tag.strip(),
+            candidate_sources=body.candidate_sources,
             prompt=body.prompt.model_dump(),
         )
         session.add(collection)
@@ -144,9 +148,9 @@ _PATCHABLE_COLUMNS = (
     "media",
     "sort_order",
     "name_template",
-    "source",
     "min_watchers",
     "request_tag",
+    "candidate_sources",
 )
 
 

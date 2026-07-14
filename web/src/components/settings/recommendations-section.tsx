@@ -5,64 +5,21 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { apiErrorMessage } from "@/lib/api";
-import { settingString } from "@/lib/format";
+import { SOURCES, sourceBlockedReason } from "@/lib/sources";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
-
-/** Candidate sources the owner can enable. More sources = wider recall before the AI re-ranks. */
-const SOURCES: {
-  id: string;
-  label: string;
-  desc: string;
-  requires?: "curator" | "trakt";
-}[] = [
-  {
-    id: "tmdb_similar",
-    label: "TMDB — similar titles",
-    desc: "The baseline: titles TMDB says are similar to what each person watched.",
-  },
-  {
-    id: "tmdb_discover",
-    label: "TMDB — discover by taste",
-    desc: "Widens the net to popular, well-rated titles in the genres each person leans toward.",
-  },
-  {
-    id: "llm_library",
-    label: "AI — suggests from your library",
-    desc: "Your AI curator reads each person's taste and picks owned titles that fit — reaching across your whole library, not just what's similar to one seed.",
-    requires: "curator",
-  },
-  {
-    id: "trakt",
-    label: "Trakt — related titles",
-    desc: "Uses Trakt's recommendation graph — often surfaces 'what to watch next' picks TMDB's similar list misses.",
-    requires: "trakt",
-  },
-];
 
 function readSources(settings: Settings): string[] {
   const value = settings["candidates.sources"];
   return Array.isArray(value)
     ? value.filter((x): x is string => typeof x === "string")
-    : ["tmdb_similar"];
+    : ["tmdb_similar", "tmdb_discover"];
 }
 
 export function RecommendationsSection({ settings }: { settings: Settings }) {
   const save = useSaveSettings();
   const [enabled, setEnabled] = useState<string[]>(() => readSources(settings));
   const [saved, setSaved] = useState(false);
-
-  const hasCurator = !["", "none"].includes(
-    settingString(settings, "curator.provider"),
-  );
-  const hasTrakt = Boolean(settingString(settings, "trakt.client_id"));
-  const missingDep = (source: (typeof SOURCES)[number]): string | null => {
-    if (source.requires === "curator" && !hasCurator)
-      return "Needs an AI curator — set one up in Connections first.";
-    if (source.requires === "trakt" && !hasTrakt)
-      return "Needs a Trakt API key — add it in Connections first.";
-    return null;
-  };
 
   const toggle = (id: string) =>
     setEnabled((current) =>
@@ -71,8 +28,17 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
 
   const onSave = () => {
     setSaved(false);
+    // Never persist a source whose dependency is gone (e.g. llm_library after the curator is
+    // removed) — otherwise the stored value contradicts the disabled toggle and springs back later.
+    const clean = enabled.filter(
+      (id) =>
+        !sourceBlockedReason(
+          SOURCES.find((s) => s.id === id) ?? { id, label: id, desc: "" },
+          settings,
+        ),
+    );
     save.mutate(
-      { "candidates.sources": enabled },
+      { "candidates.sources": clean },
       { onSuccess: () => setSaved(true) },
     );
   };
@@ -87,10 +53,11 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
           <p className="text-sm text-muted-foreground">
             Where Shortlist looks for titles to suggest. It pools every source
             you enable, keeps only what&rsquo;s already in your library, then
-            the AI re-ranks. More sources means wider reach.
+            re-ranks (your AI curator does this when one&rsquo;s connected).
+            More sources means wider reach.
           </p>
           {SOURCES.map((source) => {
-            const blockedReason = missingDep(source);
+            const blockedReason = sourceBlockedReason(source, settings);
             const blocked = blockedReason !== null;
             return (
               <div

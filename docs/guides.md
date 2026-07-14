@@ -38,6 +38,11 @@ wider reach. Available today:
 - **Trakt — related titles** (needs a Trakt API key, added in Connections): uses Trakt's
   recommendation graph, which often surfaces "what to watch next" picks TMDB's similar list misses.
 
+These are the server-wide default. Any individual row can override them: open the row's editor,
+switch **Where this row looks** to "Choose for this row," and pick its own sources (e.g. a
+Trakt-only "What to watch next" row, or an AI-from-library "Hidden gems" row). Leaving a row on
+"Use global default" keeps it in sync with the setting above.
+
 ## Requests (Radarr / Sonarr)
 
 Off by default. When on, Shortlist notices the titles the curator surfaced that your library doesn't

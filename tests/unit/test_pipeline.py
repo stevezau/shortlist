@@ -9,7 +9,7 @@ import pytest
 
 import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.curator.base import CuratorError
-from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, RowOverride
+from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, RowOverride, RowSpec
 from shortlist.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -302,6 +302,23 @@ class TestPerRowOverrides:
         pipeline_mod.run(ctx, [sarah])
 
         assert seen == {"tone": "playful", "guidance": "be spooky"}  # the row override, not the base
+
+    def test_per_row_candidate_sources_gate_which_apis_run(self, ctx: EngineContext, mock_plextv):
+        # A row pinned to tmdb_discover only must query discover and NOT the tmdb_similar endpoint —
+        # per-row sources override the global set for that row.
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, candidate_sources=["tmdb_discover"])]
+        ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
+        ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": 20, "title": "Discovered", "genre_ids": [18], "vote_average": 8.5}
+        ]
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+
+        pipeline_mod.run(ctx, [sarah])
+
+        assert ctx.tmdb.discover.called  # the row's own source ran
+        assert not ctx.tmdb.suggestions.called  # tmdb_similar was NOT in this row's sources
 
     def test_muting_removes_an_already_delivered_row(self, ctx: EngineContext, mock_plextv):
         from shortlist.engine.delivery import row_marker

@@ -38,10 +38,11 @@ export interface Collection {
   media: "movie" | "show" | "both";
   sort_order: number;
   name_template: string;
-  source: string;
   min_watchers: number;
   /** Tag added in Sonarr/Radarr to titles requested because they surfaced in this row. */
   request_tag: string;
+  /** Per-row discovery sources; [] inherits the global candidates.sources setting. */
+  candidate_sources: string[];
   prompt: { tone?: string; guidance?: string; template?: string };
 }
 
@@ -58,6 +59,7 @@ export interface CollectionInput {
   name_template: string;
   min_watchers: number;
   request_tag: string;
+  candidate_sources: string[];
   prompt: { tone: string; guidance: string; template: string };
 }
 

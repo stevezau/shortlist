@@ -192,6 +192,8 @@ class RowSpec:
     # qualify, so no one person's solo viewing can reach a public row (aggregate-privacy floor).
     min_watchers: int = 2
     request_tag: str = ""  # tag added to titles requested because they surfaced in this row
+    # Per-row override of which discovery sources feed this row; empty -> inherit EngineConfig.candidate_sources.
+    candidate_sources: list[str] = field(default_factory=list)
 
     @property
     def label(self) -> str | None:

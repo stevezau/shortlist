@@ -5,6 +5,7 @@ import {
   type CurationStyleValue,
 } from "@/components/curation-style";
 import { AudiencePicker } from "@/components/rows/audience-picker";
+import { RowSourcesField } from "@/components/rows/row-sources-field";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import {
@@ -93,7 +94,14 @@ export function RowEditor({
             <Label>Built how?</Label>
             <Segmented
               value={input.build}
-              onChange={(build) => set({ build })}
+              onChange={(build) =>
+                // Shared rows never request missing titles, so a request tag on one is inert —
+                // clear it when switching so no orphaned value lingers hidden in the row.
+                set({
+                  build,
+                  ...(build === "shared" ? { request_tag: "" } : {}),
+                })
+              }
               options={[
                 { value: "per_person", label: "Per person" },
                 { value: "shared", label: "Shared" },
@@ -178,6 +186,11 @@ export function RowEditor({
               }
             />
           </div>
+
+          <RowSourcesField
+            value={input.candidate_sources}
+            onChange={(candidate_sources) => set({ candidate_sources })}
+          />
 
           {input.build !== "shared" && (
             <div className="space-y-2 border-t pt-4">

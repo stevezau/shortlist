@@ -67,14 +67,17 @@ def upgrade() -> None:
     # avoids parsing the JSON `settings` column from a migration, whose stored form is unreliable.
     if bind.execute(sa.text("SELECT count(*) FROM collections")).scalar():
         return
+    # Only columns with no server_default are listed; the rest (incl. the since-dropped `source`,
+    # removed in 0007) take their defaults. Naming a column here that a later migration drops would
+    # break this seed when it re-runs during recovery against an already-migrated schema.
     now = datetime.now(UTC).isoformat()
     bind.execute(
         sa.text(
             "INSERT INTO collections "
             "(slug, name, build, audience, enabled, size, media, sort_order, name_template, "
-            " source, min_watchers, prompt, created_at, updated_at) "
+            " min_watchers, prompt, created_at, updated_at) "
             "VALUES ('picked', '✨ Picked for You', 'per_person', 'everyone', 1, 15, 'both', 0, '', "
-            " 'all_users', 2, '{}', :now, :now)"
+            " 2, '{}', :now, :now)"
         ),
         {"now": now},
     )

@@ -60,7 +60,7 @@ POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 GET  /api/users · PATCH /api/users/{id} {enabled?, request_tag?, prefs?} · POST /api/users/sync
 GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, prompt_*?}
 GET  /api/users/{id}/runs · GET /api/users/{id}/history
-GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`)
+GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`)
 GET  /api/runs · GET /api/runs/{id} · POST /api/runs {user_ids?, dry_run?}
 GET  /api/requests · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids}
 GET  /api/events (SSE) · GET /api/events/log (audit feed)
@@ -76,6 +76,10 @@ The curation prompt is tunable: a `tone` preset + free-text `guidance` + an opti
 global recipe via the `curator.prompt_*` settings; override any field per user via
 `PATCH /api/users/{id}` prefs (`prompt_tone` / `prompt_guidance` / `prompt_template`, empty =
 inherit). `prompt-preview` assembles the prompt against sample data so the UI can show the effect.
+
+Candidate sources are set globally (`candidates.sources`) and can be overridden per row
+(`collections.candidate_sources`, `[]` = inherit the global set; valid values: `tmdb_similar`,
+`tmdb_discover`, `llm_library`, `trakt`).
 
 Request tags are three-layered: the global `requests.tag` setting, a per-user `request_tag`
 (`PATCH /api/users/{id}`), and a per-row `request_tag` (`collections`, per-person rows only —
