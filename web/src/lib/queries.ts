@@ -16,6 +16,7 @@ export const queryKeys = {
   privacy: ["privacy"] as const,
   settings: ["settings"] as const,
   collections: ["collections"] as const,
+  requests: ["requests"] as const,
   arrOptions: (service: "radarr" | "sonarr") =>
     ["arr-options", service] as const,
   userRows: (id: number) => ["users", id, "rows"] as const,
@@ -184,5 +185,28 @@ export function useSetUserRowOverride(userId: number) {
     }) => api.setUserRowOverride(userId, collectionId, patch),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.userRows(userId) }),
+  });
+}
+
+export function useRequests() {
+  return useQuery({ queryKey: queryKeys.requests, queryFn: api.listRequests });
+}
+
+export function useSendRequests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ids, dryRun }: { ids: number[]; dryRun?: boolean }) =>
+      api.sendRequests(ids, dryRun ?? false),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.requests }),
+  });
+}
+
+export function useRejectRequests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: number[]) => api.rejectRequests(ids),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.requests }),
   });
 }

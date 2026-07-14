@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Gauge,
+  Inbox,
   ListChecks,
   LogOut,
   Rows3,
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
   { to: "/rows", label: "Rows", icon: Rows3, end: false },
   { to: "/users", label: "Users", icon: UsersIcon, end: false },
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
+  { to: "/requests", label: "Requests", icon: Inbox, end: false },
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },
 ];
 

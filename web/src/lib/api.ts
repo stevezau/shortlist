@@ -14,6 +14,8 @@ import type {
   PrivacyStatus,
   ProbeRequest,
   ProbeResult,
+  RequestCandidate,
+  RequestSendResult,
   Run,
   RunCreated,
   RunDetail,
@@ -255,6 +257,21 @@ export const api = {
     request("/api/settings/prompt-preview", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+
+  // --- Requests (Sonarr/Radarr approval inbox) ---
+  listRequests: (): Promise<RequestCandidate[]> => request("/api/requests"),
+
+  sendRequests: (ids: number[], dryRun = false): Promise<RequestSendResult> =>
+    request("/api/requests/send", {
+      method: "POST",
+      body: JSON.stringify({ ids, dry_run: dryRun }),
+    }),
+
+  rejectRequests: (ids: number[]): Promise<{ rejected: number }> =>
+    request("/api/requests/reject", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
     }),
 
   // --- System ---

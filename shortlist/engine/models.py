@@ -228,7 +228,14 @@ class RequestConfig:
     min_votes: int = 100  # vote-count floor on the chosen source
     min_demand: int = 1  # a title must be wanted by at least this many distinct people
     min_year: int = 0  # 0 -> any year; else request only titles released in >= this year
-    max_per_run: int = 5  # hard cap on how many titles a single run may request, total
+    max_per_run: int = 5  # hard cap on how many titles a single run may auto-request, total
+    # Hybrid tier. A title that also clears these HIGHER bars (within max_per_run) is requested
+    # automatically each run; every other title that still cleared the base floors above is queued
+    # for the owner to approve by hand. Set auto_send False for a fully manual queue, or set these
+    # equal to the base floors for fully automatic requesting (nothing is ever queued).
+    auto_send: bool = True
+    auto_min_demand: int = 3  # auto-send only titles wanted by at least this many distinct people
+    auto_min_rating: float = 8.0  # ...and rated at least this high on the chosen source
 
 
 @dataclass
@@ -239,8 +246,8 @@ class MissingTitle:
     title: str
     media_type: MediaType
     year: int | None
-    rating: float  # TMDB vote_average
-    vote_count: int
+    rating: float  # rating on the chosen source: TMDB vote_average, or the IMDb rating when rating_source="imdb"
+    vote_count: int  # vote count on that same source
     demand: int = 1  # distinct users whose candidate pool contained it (multi-person demand ranks higher)
 
 
@@ -262,6 +269,9 @@ class RequestReport:
 
     considered: int = 0  # titles that cleared the rating/vote thresholds
     outcomes: list[RequestOutcome] = field(default_factory=list)
+    # Cleared the base floors but not the auto-send bar (or overflowed max_per_run): not requested,
+    # handed back for the server to persist so the owner can approve them by hand.
+    queued: list[MissingTitle] = field(default_factory=list)
 
     @property
     def requested(self) -> int:

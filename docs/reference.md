@@ -38,7 +38,10 @@
 | `requests.min_votes`                                  | `100`               | vote-count floor on the chosen source                     |
 | `requests.min_demand`                                 | `1`                 | request only titles wanted by ≥ N distinct people         |
 | `requests.min_year`                                   | `0`                 | `0` = any; else request only titles released ≥ this year  |
-| `requests.max_per_run`                                | `5`                 | hard cap on titles requested per run, across both apps    |
+| `requests.max_per_run`                                | `5`                 | hard cap on titles **auto**-requested per run, both apps  |
+| `requests.auto_send`                                  | `true`              | `false` = fully manual; every qualifying title is queued  |
+| `requests.auto_min_demand`                            | `3`                 | auto-send only titles wanted by ≥ N distinct people       |
+| `requests.auto_min_rating`                            | `8.0`               | ...and rated ≥ this on the chosen source; rest are queued |
 
 ## CLI config file (`<config-dir>/config.yml`)
 
@@ -57,6 +60,7 @@ GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, r
 GET  /api/users/{id}/runs · GET /api/users/{id}/history
 GET/POST /api/collections · PATCH/DELETE /api/collections/{id}
 GET  /api/runs · GET /api/runs/{id} · POST /api/runs {user_ids?, dry_run?}
+GET  /api/requests · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids}
 GET  /api/events (SSE) · GET /api/events/log (audit feed)
 GET  /api/privacy/status · POST /api/privacy/check {probe?} · GET /api/privacy/snapshots
 GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm|radarr|sonarr|omdb}

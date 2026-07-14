@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.pipeline import EngineContext
 from shortlist.engine.pipeline import run as engine_run
-from shortlist.server.db.models import Event, PickRow, Run, RunUser, Server, User
+from shortlist.server.db.models import Event, PickRow, RequestCandidate, Run, RunUser, Server, User
 from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.privacy_state import gate_error
 from shortlist.server.services.sse import EventBus
@@ -37,6 +37,10 @@ class RunService:
 
     def build_context(self, *, dry_run: bool, loop: asyncio.AbstractEventLoop | None = None) -> EngineContext:
         return self._ctx.build(dry_run=dry_run, loop=loop)
+
+    def build_requests_context(self):
+        """Requests config + TMDB client for the approval inbox's manual send — no Plex/LLM I/O."""
+        return self._ctx.build_requests_only()
 
     def enabled_profiles(self, session: Session, user_ids: list[int] | None = None):
         return self._ctx.enabled_profiles(session, user_ids)
@@ -169,6 +173,7 @@ class RunService:
             self._emit_sweep_event(session, run_id, report)
             self._emit_privacy_sync_events(session, run_id, report)
             self._emit_request_events(session, run_id, report)
+            self._persist_request_queue(session, run_id, report)
             if report.error:
                 session.add(Event(scope="run", level="error", message={"run_id": run_id, "error": report.error}))
             self._finalize_run(run, report, status, error, ok, errors)
@@ -298,6 +303,43 @@ class RunService:
                 },
             )
         )
+
+    @staticmethod
+    def _persist_request_queue(session: Session, run_id: int, report) -> None:
+        """Save the titles a run wanted but did not auto-send, for the owner to approve by hand.
+
+        Real runs only — a dry run is a preview and must not mutate the inbox. One row per
+        (tmdb_id, media_type): a re-surfaced title refreshes the live facts of a still-pending row;
+        a title already sent or rejected is left alone, so a download-in-progress isn't re-queued and
+        a dismissed suggestion can't reappear every night.
+        """
+        if report.requests is None or report.dry_run or not report.requests.queued:
+            return
+        existing = {(r.tmdb_id, r.media_type): r for r in session.query(RequestCandidate).all()}
+        for m in report.requests.queued:
+            row = existing.get((m.tmdb_id, m.media_type.value))
+            if row is None:
+                session.add(
+                    RequestCandidate(
+                        tmdb_id=m.tmdb_id,
+                        media_type=m.media_type.value,
+                        title=m.title,
+                        year=m.year,
+                        rating=m.rating,
+                        vote_count=m.vote_count,
+                        demand=m.demand,
+                        status="pending",
+                        first_seen_run_id=run_id,
+                    )
+                )
+            elif row.status == "pending":
+                row.title, row.year, row.rating, row.vote_count, row.demand = (
+                    m.title,
+                    m.year,
+                    m.rating,
+                    m.vote_count,
+                    m.demand,
+                )
 
     @staticmethod
     def _finalize_run(run: Run, report, status: str | None, error: str | None, ok: int, errors: int) -> None:

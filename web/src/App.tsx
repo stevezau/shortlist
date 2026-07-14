@@ -9,6 +9,7 @@ import { resolveArea } from "@/lib/auth";
 import { useSession, useSetupState } from "@/lib/queries";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
+import { RequestsPage } from "@/pages/requests";
 import { RowsPage } from "@/pages/rows";
 import { RunDetailPage } from "@/pages/run-detail";
 import { RunsPage } from "@/pages/runs";
@@ -100,6 +101,7 @@ export default function App() {
             <Route path="users/:id" element={<UserDetailPage />} />
             <Route path="runs" element={<RunsPage />} />
             <Route path="runs/:id" element={<RunDetailPage />} />
+            <Route path="requests" element={<RequestsPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route
               path="*"

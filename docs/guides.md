@@ -36,14 +36,26 @@ Set it up under **Settings → Requests**:
    General_), then click **Test connection**. Save.
 3. Once connected, pick a **Quality** profile and a **Save to** folder from the dropdowns — Shortlist
    reads these straight from the app, so there are no ids to look up.
-4. Tune the **Guardrails**: a minimum rating and minimum number of reviews a title must clear, and
-   the most titles to request per night (a hard cap across both apps).
+4. Tune the **Guardrails**: a minimum rating and minimum number of reviews a title must clear, the
+   fewest people who must want it, and the most titles to auto-request per night (a hard cap across
+   both apps).
+5. Set the **Auto-send vs. ask me** bar: titles wanted by enough people _and_ rated highly enough
+   are requested automatically each night; everything else that clears the guardrails waits in your
+   **Requests** inbox. Turn auto-send off for a fully manual queue.
 
-It stays cautious on purpose. Requests are deduplicated across all your users — three people wanting
-the same missing title is one request, and multi-person demand ranks it higher. A title already in
-Radarr/Sonarr is skipped, never re-added, and a dry-run only logs what it _would_ ask for. Every
-request (and every skip) is recorded in the audit feed, and the run's detail page shows how many
-titles it requested.
+### The Requests inbox
+
+The **Requests** tab (in the sidebar) is your approval queue. Each run adds the wanted-but-missing
+titles it didn't auto-send — with the title, year, rating, and how many people wanted it. Tick the
+ones you want and click **Send to Sonarr/Radarr**, or **Reject** the rest. Rejected titles are never
+re-queued, and a title already in the library stops appearing on its own. Sent and dismissed titles
+move to **Already handled** so you can see what you've actioned.
+
+It stays cautious on purpose. Missing titles are deduplicated across all your users — three people
+wanting the same one is a single entry, and multi-person demand ranks it higher and can push it over
+the auto-send bar. A title already in Radarr/Sonarr is skipped, never re-added, and a dry-run only
+logs what it _would_ ask for. Every request (and every skip) is recorded in the audit feed, and the
+run's detail page shows how many titles it requested.
 
 Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 

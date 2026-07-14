@@ -20,6 +20,16 @@ def _cand(tmdb_id: int, media: MediaType, *, rating: float = 8.0, votes: int = 5
     return Candidate(tmdb_id=tmdb_id, title=f"t{tmdb_id}", media_type=media, rating=rating, vote_count=votes)
 
 
+def _cfg(**kw) -> RequestConfig:
+    """A config whose auto-send bar sits on the floor, so every title clearing the base floors is
+    auto-sent (never queued). Lets the routing/gating tests below exercise the send path unchanged;
+    the hybrid auto-vs-queue split has its own tests in TestHybridSplit.
+    """
+    defaults = dict(enabled=True, min_rating=7.0, min_votes=100, max_per_run=10, auto_min_demand=1, auto_min_rating=0.0)
+    defaults.update(kw)
+    return RequestConfig(**defaults)
+
+
 class FakeArr:
     """A stand-in Radarr/Sonarr client that records adds and can be told to fail."""
 
@@ -116,7 +126,7 @@ class TestRequestMissing:
             MissingTitle(2, "low rated", MediaType.MOVIE, 2020, rating=6.0, vote_count=500),
             MissingTitle(3, "thin votes", MediaType.MOVIE, 2020, rating=9.0, vote_count=12),
         )
-        cfg = RequestConfig(enabled=True, radarr=RADARR, min_rating=7.0, min_votes=100, max_per_run=10)
+        cfg = _cfg(radarr=RADARR)
         report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert report.considered == 1  # only the well-rated, widely-voted title
         assert [c[0] for c in fake.movie_calls] == [1]
@@ -129,7 +139,7 @@ class TestRequestMissing:
             MissingTitle(2, "three wanters", MediaType.MOVIE, 2020, rating=7.1, vote_count=200, demand=3),
             MissingTitle(3, "two wanters", MediaType.MOVIE, 2020, rating=7.0, vote_count=200, demand=2),
         )
-        cfg = RequestConfig(enabled=True, radarr=RADARR, min_rating=7.0, min_votes=100, max_per_run=2)
+        cfg = _cfg(radarr=RADARR, max_per_run=2)
         requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         # Highest demand first (3 wanters, then 2), capped at 2 — the lone-wanter high score is dropped.
         assert [c[0] for c in fake.movie_calls] == [2, 3]
@@ -142,7 +152,7 @@ class TestRequestMissing:
             MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500),
             MissingTitle(20, "show", MediaType.SHOW, 2020, rating=8.0, vote_count=500),
         )
-        cfg = RequestConfig(enabled=True, radarr=RADARR, sonarr=SONARR, min_rating=7.0, min_votes=100, max_per_run=10)
+        cfg = _cfg(radarr=RADARR, sonarr=SONARR)
         tmdb = FakeTmdb({20: 55555})  # the show's TVDB id
         requests_mod.request_missing(cfg, tmdb, demand, dry_run=False)
         assert radarr.movie_calls == [(10, False)]
@@ -152,7 +162,7 @@ class TestRequestMissing:
         sonarr = FakeArr()
         monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
         demand = self._demand(MissingTitle(20, "show", MediaType.SHOW, 2020, rating=8.0, vote_count=500))
-        cfg = RequestConfig(enabled=True, sonarr=SONARR, min_rating=7.0, min_votes=100, max_per_run=10)
+        cfg = _cfg(sonarr=SONARR)
         report = requests_mod.request_missing(cfg, FakeTmdb({20: None}), demand, dry_run=False)
         assert sonarr.series_calls == []
         assert report.outcomes[0].status == "skipped_no_tvdb"
@@ -160,7 +170,7 @@ class TestRequestMissing:
     def test_missing_target_for_media_type_is_skipped(self, monkeypatch):
         # Movies wanted but only Sonarr configured -> skipped_no_target, never an error.
         demand = self._demand(MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
-        cfg = RequestConfig(enabled=True, sonarr=SONARR, min_rating=7.0, min_votes=100, max_per_run=10)
+        cfg = _cfg(sonarr=SONARR)
         report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert report.outcomes[0].status == "skipped_no_target"
         assert report.requested == 0
@@ -169,7 +179,7 @@ class TestRequestMissing:
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500))
-        cfg = RequestConfig(enabled=True, radarr=RADARR, min_rating=7.0, min_votes=100, max_per_run=10)
+        cfg = _cfg(radarr=RADARR)
         report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=True)
         assert fake.movie_calls == [(10, True)]
         assert report.outcomes[0].status == "would_request"
@@ -181,7 +191,7 @@ class TestRequestMissing:
             MissingTitle(1, "one wanter", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=1),
             MissingTitle(2, "two wanters", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=2),
         )
-        cfg = RequestConfig(enabled=True, radarr=RADARR, min_rating=7.0, min_votes=100, min_demand=2, max_per_run=10)
+        cfg = _cfg(radarr=RADARR, min_demand=2)
         requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]  # the lone-wanter title is filtered out
 
@@ -193,7 +203,7 @@ class TestRequestMissing:
             MissingTitle(2, "new", MediaType.MOVIE, 2021, rating=8.0, vote_count=900),
             MissingTitle(3, "no year", MediaType.MOVIE, None, rating=8.5, vote_count=900),
         )
-        cfg = RequestConfig(enabled=True, radarr=RADARR, min_rating=7.0, min_votes=100, min_year=2000, max_per_run=10)
+        cfg = _cfg(radarr=RADARR, min_year=2000)
         requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]  # 1998 and unknown-year both excluded
 
@@ -207,15 +217,7 @@ class TestRequestMissing:
             MissingTitle(1, "tmdb-hyped", MediaType.MOVIE, 2020, rating=9.0, vote_count=900),
             MissingTitle(2, "imdb-loved", MediaType.MOVIE, 2020, rating=7.5, vote_count=900),
         )
-        cfg = RequestConfig(
-            enabled=True,
-            radarr=RADARR,
-            rating_source="imdb",
-            omdb_api_key="k",
-            min_rating=7.0,
-            min_votes=100,
-            max_per_run=10,
-        )
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", omdb_api_key="k")
         tmdb = FakeTmdb(imdb={1: "tt0000001", 2: "tt0000002"})
         report = requests_mod.request_missing(cfg, tmdb, demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]
@@ -230,15 +232,7 @@ class TestRequestMissing:
             MissingTitle(1, "omdb boom", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=5),
             MissingTitle(2, "fine", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=1),
         )
-        cfg = RequestConfig(
-            enabled=True,
-            radarr=RADARR,
-            rating_source="imdb",
-            omdb_api_key="k",
-            min_rating=7.0,
-            min_votes=100,
-            max_per_run=10,
-        )
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", omdb_api_key="k")
         tmdb = FakeTmdb(imdb={1: "tt0000001", 2: "tt0000002"})
         requests_mod.request_missing(cfg, tmdb, demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]  # the raising lookup is skipped, the rest survive
@@ -254,15 +248,7 @@ class TestRequestMissing:
                 for i in range(1, 41)
             ]
         )
-        cfg = RequestConfig(
-            enabled=True,
-            radarr=RADARR,
-            rating_source="imdb",
-            omdb_api_key="k",
-            min_rating=7.0,
-            min_votes=100,
-            max_per_run=5,
-        )
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", omdb_api_key="k", max_per_run=5)
         requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert omdb.calls <= requests_mod._IMDB_SHORTLIST  # rate-limit guard holds
 
@@ -271,15 +257,7 @@ class TestRequestMissing:
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(1, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=900))
         # rating_source imdb but no key -> gate on TMDB (never silently request nothing).
-        cfg = RequestConfig(
-            enabled=True,
-            radarr=RADARR,
-            rating_source="imdb",
-            omdb_api_key="",
-            min_rating=7.0,
-            min_votes=100,
-            max_per_run=10,
-        )
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", omdb_api_key="")
         requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [1]
 
@@ -287,7 +265,7 @@ class TestRequestMissing:
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=9.0, vote_count=900))
-        cfg = RequestConfig(enabled=True, radarr=RADARR, min_rating=7.0, min_votes=100, max_per_run=0)
+        cfg = _cfg(radarr=RADARR, max_per_run=0)
         report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert fake.movie_calls == []  # the cap of 0 selects nothing, even though a title qualified
         assert report.requested == 0
@@ -303,7 +281,7 @@ class TestRequestMissing:
             MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500),
             MissingTitle(20, "cursed show", MediaType.SHOW, 2020, rating=8.0, vote_count=500),
         )
-        cfg = RequestConfig(enabled=True, radarr=RADARR, sonarr=SONARR, min_rating=7.0, min_votes=100, max_per_run=10)
+        cfg = _cfg(radarr=RADARR, sonarr=SONARR)
         report = requests_mod.request_missing(cfg, FakeTmdb(raise_on=20), demand, dry_run=False)
         statuses = {o.tmdb_id: o.status for o in report.outcomes}
         assert statuses == {10: "requested", 20: "error"}  # both recorded; the movie still went through
@@ -316,7 +294,118 @@ class TestRequestMissing:
             MissingTitle(10, "boom", MediaType.MOVIE, 2020, rating=9.9, vote_count=999, demand=5),
             MissingTitle(11, "fine", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, demand=1),
         )
-        cfg = RequestConfig(enabled=True, radarr=RADARR, min_rating=7.0, min_votes=100, max_per_run=10)
+        cfg = _cfg(radarr=RADARR)
         report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         statuses = {o.tmdb_id: o.status for o in report.outcomes}
         assert statuses == {10: "error", 11: "requested"}  # the second still went through
+
+
+class TestHybridSplit:
+    """The auto-send-vs-queue split: strong titles go now, borderline ones wait for the owner."""
+
+    def _demand(self, *titles: MissingTitle) -> requests_mod.DemandMap:
+        return {(t.tmdb_id, t.media_type): t for t in titles}
+
+    def _hybrid(self, **kw) -> RequestConfig:
+        base = dict(
+            enabled=True,
+            radarr=RADARR,
+            min_rating=7.0,
+            min_votes=100,
+            min_demand=1,
+            auto_send=True,
+            auto_min_demand=3,
+            auto_min_rating=8.0,
+            max_per_run=10,
+        )
+        base.update(kw)
+        return RequestConfig(**base)
+
+    def test_strong_titles_auto_send_borderline_ones_queue(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(1, "strong", MediaType.MOVIE, 2020, rating=8.5, vote_count=900, demand=4),  # clears auto
+            MissingTitle(2, "few wanters", MediaType.MOVIE, 2020, rating=8.5, vote_count=900, demand=1),  # base only
+            MissingTitle(3, "lower rated", MediaType.MOVIE, 2020, rating=7.2, vote_count=900, demand=5),  # base only
+        )
+        report = requests_mod.request_missing(self._hybrid(), FakeTmdb(), demand, dry_run=False)
+        assert [c[0] for c in fake.movie_calls] == [1]  # only the title clearing BOTH auto bars is sent
+        assert sorted(m.tmdb_id for m in report.queued) == [2, 3]  # the borderline ones wait for approval
+        assert report.considered == 3
+
+    def test_auto_send_off_queues_every_qualifying_title(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(MissingTitle(1, "strong", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=9))
+        report = requests_mod.request_missing(self._hybrid(auto_send=False), FakeTmdb(), demand, dry_run=False)
+        assert fake.movie_calls == []  # fully manual: even a clear winner waits
+        assert [m.tmdb_id for m in report.queued] == [1]
+
+    def test_auto_worthy_overflow_beyond_cap_is_queued_not_lost(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            *[MissingTitle(i, f"t{i}", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=5) for i in range(4)]
+        )
+        report = requests_mod.request_missing(self._hybrid(max_per_run=2), FakeTmdb(), demand, dry_run=False)
+        assert len(fake.movie_calls) == 2  # only max_per_run auto-sent
+        assert len(report.queued) == 2  # the two that overflowed the cap wait for approval, not dropped
+
+    def test_below_base_floor_is_neither_sent_nor_queued(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(MissingTitle(1, "too low", MediaType.MOVIE, 2020, rating=5.0, vote_count=900, demand=9))
+        report = requests_mod.request_missing(self._hybrid(), FakeTmdb(), demand, dry_run=False)
+        assert fake.movie_calls == []
+        assert report.queued == []  # below the base rating floor -> not even worth queuing
+        assert report.considered == 0
+
+    def test_imdb_rating_is_carried_onto_queued_titles(self, monkeypatch):
+        # rating_source=imdb: a queued title must show the IMDb score it was gated on, not its TMDB one.
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
+        omdb = FakeOmdb({"tt0000001": (8.8, 250000)})
+        monkeypatch.setattr(requests_mod, "OmdbClient", lambda *a, **k: omdb)
+        demand = self._demand(
+            # 1 wanter -> below the auto bar -> queued (with its IMDb score, checked below)
+            MissingTitle(1, "imdb-loved", MediaType.MOVIE, 2020, rating=7.1, vote_count=120, demand=1),
+        )
+        cfg = self._hybrid(rating_source="imdb", omdb_api_key="k")
+        report = requests_mod.request_missing(cfg, FakeTmdb(imdb={1: "tt0000001"}), demand, dry_run=False)
+        assert len(report.queued) == 1
+        assert report.queued[0].rating == 8.8  # IMDb, not the 7.1 TMDB value it arrived with
+        assert report.queued[0].vote_count == 250000
+
+
+class TestRequestTitles:
+    """Explicit send of owner-approved titles from the inbox — no floors applied."""
+
+    def test_sends_given_titles_ignoring_all_floors(self, monkeypatch):
+        radarr, sonarr = FakeArr(), FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: radarr)
+        monkeypatch.setattr(requests_mod, "SonarrClient", lambda *a, **k: sonarr)
+        titles = [
+            MissingTitle(10, "obscure film", MediaType.MOVIE, 1990, rating=3.0, vote_count=4, demand=1),
+            MissingTitle(20, "niche show", MediaType.SHOW, 1990, rating=3.0, vote_count=4, demand=1),
+        ]
+        # Floors set impossibly high: request_titles must ignore them because the owner chose by hand.
+        cfg = RequestConfig(enabled=True, radarr=RADARR, sonarr=SONARR, min_rating=9.9, min_votes=99999, min_demand=99)
+        report = requests_mod.request_titles(cfg, FakeTmdb({20: 7777}), titles, dry_run=False)
+        assert radarr.movie_calls == [(10, False)]
+        assert sonarr.series_calls == [(7777, False)]  # routed by TVDB id, same path as the auto pass
+        assert report.requested == 2
+
+    def test_dry_run_flows_through(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        titles = [MissingTitle(10, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=500)]
+        cfg = RequestConfig(enabled=True, radarr=RADARR)
+        report = requests_mod.request_titles(cfg, FakeTmdb(), titles, dry_run=True)
+        assert fake.movie_calls == [(10, True)]
+        assert report.outcomes[0].status == "would_request"
+
+    def test_empty_list_sends_nothing(self, monkeypatch):
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
+        report = requests_mod.request_titles(RequestConfig(enabled=True, radarr=RADARR), FakeTmdb(), [], dry_run=False)
+        assert report.outcomes == []
+        assert report.considered == 0

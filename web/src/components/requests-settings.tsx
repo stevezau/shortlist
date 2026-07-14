@@ -37,6 +37,9 @@ interface RequestsForm {
   minDemand: number;
   minYear: number;
   maxPerRun: number;
+  autoSend: boolean;
+  autoMinDemand: number;
+  autoMinRating: number;
 }
 
 function readArr(settings: Settings, prefix: string): ArrForm {
@@ -68,6 +71,9 @@ function readForm(settings: Settings): RequestsForm {
     minDemand: settingNumber(settings, "requests.min_demand", 1),
     minYear: settingNumber(settings, "requests.min_year", 0),
     maxPerRun: settingNumber(settings, "requests.max_per_run", 5),
+    autoSend: settingBool(settings, "requests.auto_send", true),
+    autoMinDemand: settingNumber(settings, "requests.auto_min_demand", 3),
+    autoMinRating: settingNumber(settings, "requests.auto_min_rating", 8),
   };
 }
 
@@ -233,6 +239,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const demandId = useId();
   const yearId = useId();
   const omdbId = useId();
+  const autoDemandId = useId();
+  const autoRatingId = useId();
   const ratingLabel = form.ratingSource === "imdb" ? "IMDb" : "TMDB";
 
   // "Connected" for the dropdown fetch means the SAVED settings already have a URL and key on file
@@ -265,6 +273,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
         "requests.min_demand": form.minDemand,
         "requests.min_year": form.minYear,
         "requests.max_per_run": form.maxPerRun,
+        "requests.auto_send": form.autoSend,
+        "requests.auto_min_demand": form.autoMinDemand,
+        "requests.auto_min_rating": form.autoMinRating,
       },
       { onSuccess: () => setSaved(true) },
     );
@@ -277,10 +288,11 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
           <div className="space-y-1">
             <p className="font-medium">Fill in the gaps automatically</p>
             <p className="text-sm text-muted-foreground">
-              When a great pick isn&rsquo;t in your library yet, Shortlist can ask
-              Radarr or Sonarr to grab it. It stays cautious on purpose: only a
-              handful per night, and only titles that are both highly rated and
-              widely reviewed.
+              When a great pick isn&rsquo;t in your library yet, Shortlist can
+              ask Radarr or Sonarr to grab it. The strongest picks are sent
+              automatically; the rest wait in your{" "}
+              <strong className="font-medium text-foreground">Requests</strong>{" "}
+              inbox for a yes or no. You control where that line sits below.
             </p>
           </div>
           <Switch
@@ -447,6 +459,76 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   downloads.
                 </p>
               </div>
+            </fieldset>
+
+            <fieldset className="space-y-4 rounded-lg border p-4">
+              <legend className="px-1 text-sm font-medium">
+                Auto-send vs. ask me
+              </legend>
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">
+                    Auto-send the strongest picks
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Titles clearing the higher bar below are requested for you
+                    each night. Everything else that clears the bars above waits
+                    in your Requests inbox. Turn this off to review every title
+                    yourself.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.autoSend}
+                  onCheckedChange={(autoSend) => set({ autoSend })}
+                  aria-label="Auto-send the strongest picks"
+                />
+              </div>
+
+              {form.autoSend && (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor={autoDemandId}>
+                      Auto-send when wanted by
+                    </Label>
+                    <Input
+                      id={autoDemandId}
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={form.autoMinDemand}
+                      onChange={(e) =>
+                        set({
+                          autoMinDemand: Math.max(1, Number(e.target.value)),
+                        })
+                      }
+                      className="w-28"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      At least this many people. Wanted by fewer than this? It
+                      waits in the inbox.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor={autoRatingId}>Auto-send when rated</Label>
+                    <Input
+                      id={autoRatingId}
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={0.1}
+                      value={form.autoMinRating}
+                      onChange={(e) =>
+                        set({ autoMinRating: Number(e.target.value) })
+                      }
+                      className="w-28"
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      At least this {ratingLabel} score. Lower-rated picks wait
+                      for your OK.
+                    </p>
+                  </div>
+                </div>
+              )}
             </fieldset>
           </div>
         )}

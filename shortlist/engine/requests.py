@@ -70,45 +70,86 @@ def request_missing(
     dry_run: bool,
     min_write_interval: float = 1.0,
 ) -> RequestReport:
-    """Request the top qualifying missing titles from Sonarr/Radarr.
+    """Auto-request the strongest missing titles; queue the rest for the owner to approve.
 
-    Gating (all three, always): a title must clear ``min_rating`` AND ``min_votes``, and only the
-    top ``max_per_run`` survivors — ranked by demand, then rating, then vote count — are requested.
+    Base floors first (``min_demand``, ``min_year``, then the ``rating_source`` rating/vote floors):
+    a title must clear all of them to be requestable at all. Among the survivors, those that also
+    clear the higher auto-send bar (``auto_min_demand`` and ``auto_min_rating``) are requested now —
+    ranked by demand, then rating, then votes, and capped at ``max_per_run``. Everyone else, including
+    auto-worthy titles that overflowed the cap, is returned in ``report.queued`` for manual review.
     One title's failure never stops the rest: each is caught and recorded as its own outcome.
     """
     report = RequestReport()
-    # Cheap, source-independent filters first: enough distinct wanters, and recent enough.
+    # Cheap, source-independent floors first: enough distinct wanters, and recent enough.
     pool = [
         m
         for m in demand.values()
         if m.demand >= cfg.min_demand and (cfg.min_year <= 0 or (m.year or 0) >= cfg.min_year)
     ]
-    # Then the rating gate, from whichever source the owner chose.
+    # Then the rating gate, from whichever source the owner chose (it ranks the survivors too).
     if cfg.rating_source == "imdb" and cfg.omdb_api_key:
         qualifying = _gate_by_imdb(cfg, tmdb, pool)
     else:
         qualifying = _gate_by_tmdb(cfg, pool)
     report.considered = len(qualifying)
-    selected = qualifying[: max(0, cfg.max_per_run)]
-    if not selected:
-        logger.info("requests: {} candidates cleared the thresholds, none to request", len(qualifying))
+
+    # Hybrid split: the strongest clear the auto-send bar and go now (capped); the rest wait for the
+    # owner. Auto-worthy titles beyond the cap fall through to the queue rather than being lost.
+    cap = max(0, cfg.max_per_run)
+    auto: list[MissingTitle] = []
+    for m in qualifying:  # already ranked best-first by the gate
+        clears_auto = cfg.auto_send and m.demand >= cfg.auto_min_demand and m.rating >= cfg.auto_min_rating
+        if clears_auto and len(auto) < cap:
+            auto.append(m)
+        else:
+            report.queued.append(m)
+
+    if not auto:
+        logger.info("requests: {} qualifying, 0 auto-sent, {} queued for approval", len(qualifying), len(report.queued))
         return report
 
-    # Build each client at most once for the whole pass (they throttle their own writes).
-    radarr = RadarrClient(cfg.radarr, min_write_interval=min_write_interval) if cfg.radarr else None
-    sonarr = SonarrClient(cfg.sonarr, min_write_interval=min_write_interval) if cfg.sonarr else None
-
-    for title in selected:
-        report.outcomes.append(_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run))
-    ok = report.requested
+    report.outcomes = _send(cfg, tmdb, auto, dry_run=dry_run, min_write_interval=min_write_interval)
     logger.info(
-        "requests: {} of {} qualifying title(s) {} ({} considered)",
-        ok,
-        len(selected),
-        "would be requested" if dry_run else "requested",
+        "requests: {} of {} auto-{}, {} queued for approval ({} considered)",
+        report.requested,
+        len(auto),
+        "would-send" if dry_run else "sent",
+        len(report.queued),
         report.considered,
     )
     return report
+
+
+def request_titles(
+    cfg: RequestConfig,
+    tmdb: TmdbClient,
+    titles: list[MissingTitle],
+    *,
+    dry_run: bool,
+    min_write_interval: float = 1.0,
+) -> RequestReport:
+    """Request an explicit list of titles the owner approved from the inbox — no gating.
+
+    The thresholds already decided these were worth surfacing, and the owner picked them by hand, so
+    this skips every floor and just sends. Each title's failure is its own outcome, never a raise.
+    """
+    report = RequestReport(considered=len(titles))
+    report.outcomes = _send(cfg, tmdb, titles, dry_run=dry_run, min_write_interval=min_write_interval)
+    return report
+
+
+def _send(
+    cfg: RequestConfig,
+    tmdb: TmdbClient,
+    titles: list[MissingTitle],
+    *,
+    dry_run: bool,
+    min_write_interval: float,
+) -> list[RequestOutcome]:
+    """Build each Arr client at most once (they throttle their own writes), then route every title."""
+    radarr = RadarrClient(cfg.radarr, min_write_interval=min_write_interval) if cfg.radarr else None
+    sonarr = SonarrClient(cfg.sonarr, min_write_interval=min_write_interval) if cfg.sonarr else None
+    return [_request_one(title, radarr, sonarr, tmdb, dry_run=dry_run) for title in titles]
 
 
 def _gate_by_tmdb(cfg: RequestConfig, pool: list[MissingTitle]) -> list[MissingTitle]:
@@ -139,6 +180,10 @@ def _gate_by_imdb(cfg: RequestConfig, tmdb: TmdbClient, pool: list[MissingTitle]
             continue
         rating, votes = score
         if rating >= cfg.min_rating and votes >= cfg.min_votes:
+            # Carry the chosen-source score forward so the auto-send bar and the queued rows the owner
+            # reviews both reflect IMDb, not the TMDB value the title arrived with.
+            title.rating = rating
+            title.vote_count = votes
             scored.append((title, rating, votes))
     scored.sort(key=lambda row: (row[0].demand, row[1], row[2]), reverse=True)
     return [title for title, _, _ in scored]

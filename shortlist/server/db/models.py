@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import ClassVar
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -211,3 +211,29 @@ class Event(Base):
     level: Mapped[str] = mapped_column(String(8), default="info")
     scope: Mapped[str] = mapped_column(String(64), index=True)  # e.g. run.user, privacy.sync, collection
     message: Mapped[dict] = mapped_column(JSON, default=dict)  # structured diff/audit payload
+
+
+class RequestCandidate(Base):
+    """A wanted-but-missing title in the approval inbox: surfaced by a run, awaiting the owner's call.
+
+    One row per (tmdb_id, media_type): a title re-surfaced by a later run refreshes its demand and
+    rating in place rather than duplicating. ``status`` is pending (waiting on the owner), sent (asked
+    of Sonarr/Radarr), or rejected (dismissed — never re-queued, so a "no" can't nag every night).
+    """
+
+    __tablename__ = "request_candidates"
+    __table_args__ = (UniqueConstraint("tmdb_id", "media_type", name="uq_request_candidate_title"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tmdb_id: Mapped[int] = mapped_column(Integer, index=True)
+    media_type: Mapped[str] = mapped_column(String(16))  # movie | show
+    title: Mapped[str] = mapped_column(String(512))
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rating: Mapped[float] = mapped_column(Float, default=0.0)  # on the chosen source (TMDB, or IMDb)
+    vote_count: Mapped[int] = mapped_column(Integer, default=0)  # vote count on that same source
+    demand: Mapped[int] = mapped_column(Integer, default=1)  # distinct users whose picks wanted it
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending | sent | rejected
+    detail: Mapped[str] = mapped_column(String(512), default="")  # send outcome, or why it's queued
+    first_seen_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # which run first surfaced it
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

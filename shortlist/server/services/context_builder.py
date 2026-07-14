@@ -97,6 +97,18 @@ class ContextBuilder:
             progress=progress,
         )
 
+    def build_requests_only(self) -> tuple[RequestConfig | None, TmdbClient]:
+        """Just the pieces the approval inbox's manual send needs: the request config and a TMDB client.
+
+        A request asks Sonarr/Radarr for a file — it touches no Plex object — so this deliberately does
+        NOT build a full EngineContext, which would connect to the PMS and construct the LLM curator and
+        thereby couple a manual send to Plex/LLM availability the send never uses.
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
+            return self._build_requests(store), tmdb
+
     @staticmethod
     def _history_source(store: SettingsStore, plex: PlexClient):
         """The watch-history source: Tautulli-with-Plex-fallback when Tautulli is set, else Plex."""
@@ -303,6 +315,9 @@ class ContextBuilder:
             min_demand=int(store.get("requests.min_demand")),
             min_year=int(store.get("requests.min_year")),
             max_per_run=int(store.get("requests.max_per_run")),
+            auto_send=bool(store.get("requests.auto_send")),
+            auto_min_demand=int(store.get("requests.auto_min_demand")),
+            auto_min_rating=float(store.get("requests.auto_min_rating")),
         )
 
     @staticmethod

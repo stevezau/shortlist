@@ -42,7 +42,11 @@ DEFAULTS: dict[str, Any] = {
     "requests.min_votes": 100,  # vote-count floor on the chosen source
     "requests.min_demand": 1,  # a title must be wanted by at least this many distinct people
     "requests.min_year": 0,  # 0 = any; else only titles released in >= this year
-    "requests.max_per_run": 5,  # hard cap on titles requested per run, total
+    "requests.max_per_run": 5,  # hard cap on titles auto-requested per run, total
+    # Hybrid tier: titles clearing these higher bars auto-send; the rest queue for manual approval.
+    "requests.auto_send": True,  # False = fully manual (every qualifying title waits for approval)
+    "requests.auto_min_demand": 3,  # auto-send only titles wanted by at least this many people
+    "requests.auto_min_rating": 8.0,  # ...and rated at least this high on the chosen source
     "schedule.cron": "30 3 * * *",
     "staleness_runs": 3,
     "plextv.throttle_s": 1.0,

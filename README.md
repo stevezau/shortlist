@@ -28,8 +28,9 @@ Home/Recommended (v1.43.1) and Related hubs (v1.43.2). Shortlist is built on tha
 - 💬 **Explainable** — every pick carries "Because you watched X"; every Plex write lands in
   an audit feed you can read.
 - 📥 **Fills its own gaps (optional)** — when a great pick isn't in your library yet, Shortlist can
-  ask **Radarr/Sonarr** to grab it. Off by default and deliberately cautious: only a few per
-  night, and only titles that are both highly rated and widely reviewed.
+  ask **Radarr/Sonarr** to grab it. Off by default and deliberately cautious: the strongest picks
+  are auto-sent (a few per night, highly rated and widely wanted); everything else waits in a
+  **Requests** inbox for your one-click approval.
 - 🧹 **Kometa-friendly** — Shortlist never touches collections it didn't create.
 - ↩️ **Provable uninstall** — one flow restores your server exactly as Shortlist found it.
 - 📦 **Homelab-native** — one container, `/config` volume, dark UI, GHCR multi-arch,

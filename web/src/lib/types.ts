@@ -380,3 +380,35 @@ export interface PlexServer {
     ok: boolean;
   }[];
 }
+
+/** GET /api/requests — one wanted-but-missing title in the Sonarr/Radarr approval inbox. */
+export interface RequestCandidate {
+  id: number;
+  tmdb_id: number;
+  media_type: "movie" | "show";
+  title: string;
+  year: number | null;
+  /** Rating on the chosen source (TMDB, or IMDb when that source is selected). */
+  rating: number;
+  vote_count: number;
+  /** Distinct people whose picks wanted it. */
+  demand: number;
+  status: "pending" | "sent" | "rejected";
+  /** Send outcome, or why it's queued. */
+  detail: string;
+}
+
+/** One title's result from POST /api/requests/send. */
+export interface RequestSendOutcome {
+  id: number;
+  title: string;
+  status: string;
+  detail: string;
+}
+
+/** POST /api/requests/send response. */
+export interface RequestSendResult {
+  sent: number;
+  dry_run: boolean;
+  outcomes: RequestSendOutcome[];
+}
