@@ -73,6 +73,13 @@ style** always follow the global Settings (Defaults and Curation style) so they 
 everywhere — the row editor points you there instead of offering its own. Its sources, libraries and
 audience are its own, exactly like any other row.
 
+**Disabling a row removes it.** Turn a row off and its collection is taken off its audience's Plex
+Home on the next run — "off" means gone, not just "stops updating". Two things are left in place
+(still private — the row's label keeps it excluded from everyone else — just not auto-removed): a row
+whose title is built from a person's top pick (its title can't be matched without those picks), and a
+row you *delete* outright (Shortlist no longer has the record it needs to find the collection). In
+both cases the collection stays until you rebuild the row (re-enable it) or remove it by hand.
+
 ## Requests (Radarr / Sonarr)
 
 Off by default. When on, Shortlist notices the titles your people's taste surfaced that your library

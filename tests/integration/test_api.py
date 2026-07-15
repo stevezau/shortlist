@@ -342,6 +342,68 @@ class TestCollectionsSeed:
         assert picked.size == 10  # follows the setting, not the collection's seeded 15
         assert picked.name_template == ""  # falls through to the global row name
 
+    def test_a_disabled_row_becomes_a_retired_row_for_cleanup(self, client: TestClient):
+        """A row switched off is not delivered (dropped from _build_rows) AND handed to the engine as
+        a retired row, so its lingering collection is removed from its owner's Home on the next run."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Hidden Gems"})
+        cid = created.json()["id"]
+        client.patch(f"/api/collections/{cid}", json={"name": "Hidden Gems", "enabled": False})
+
+        from shortlist.server.settings_store import SettingsStore
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            retired = builder._retired_rows(session, store)
+            built = builder._build_rows(session, store)
+
+        assert "hidden_gems" not in {s.slug for s in built}  # not delivered
+        assert "hidden_gems" in {s.slug for s in retired}  # but queued for removal
+        assert next(s for s in retired if s.slug == "hidden_gems").name_template == "Hidden Gems"
+
+    def test_a_disabled_dynamic_title_row_is_not_retired(self, client: TestClient):
+        """A {top_seed} title renders to the DEFAULT row's title when there are no picks, and all of a
+        user's per-person rows share one label (told apart by title only). Retiring such a row would
+        match and DELETE the user's live default row — so it must be skipped, not queued for removal."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+        from shortlist.server.settings_store import SettingsStore
+
+        created = client.post("/api/collections", json={"name": "Because You Watched"})
+        cid = created.json()["id"]
+        # Give it a dynamic title, then disable it.
+        client.patch(
+            f"/api/collections/{cid}",
+            json={"name": "Because You Watched", "name_template": "Because you watched {top_seed}", "enabled": False},
+        )
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            retired = builder._retired_rows(session, SettingsStore(session, client.app.state.secrets))
+
+        assert "because_you_watched" not in {s.slug for s in retired}, "a dynamic-title row must not be auto-removed"
+
+    def test_a_disabled_whitespace_title_row_is_not_retired(self, client: TestClient):
+        """A whitespace-only template also renders to the DEFAULT title (strip -> empty), so it would
+        collide with the live default row just like {top_seed}. The guard tests the RENDERED title,
+        not a substring, so this must be skipped too."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+        from shortlist.server.settings_store import SettingsStore
+
+        created = client.post("/api/collections", json={"name": "Blankish"})
+        cid = created.json()["id"]
+        client.patch(f"/api/collections/{cid}", json={"name": "Blankish", "name_template": "   ", "enabled": False})
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            retired = builder._retired_rows(session, SettingsStore(session, client.app.state.secrets))
+
+        assert "blankish" not in {s.slug for s in retired}, "a whitespace-title row must not be auto-removed"
+
     def test_default_row_prompt_by_build(self, client: TestClient):
         """The default row's style comes from global Settings — but HOW it gets there differs by
         build, and the shared cell used to fall through to a bare default (ignoring Settings).

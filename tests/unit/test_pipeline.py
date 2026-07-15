@@ -585,6 +585,35 @@ class TestPerRowOverrides:
         assert ctx.config.row_name_template in report.users[0].diff.deleted
         ctx.plex.create_collection.assert_not_called()  # muted -> nothing rebuilt
 
+    def test_a_disabled_rows_collection_is_removed_from_its_owners_home(self, ctx: EngineContext, mock_plextv):
+        """A row switched OFF in the UI still sat on its owner's Home (excluded from everyone else, so
+        private — just not gone). The server hands disabled rows to the engine as retired_rows, which
+        removes them like a mute — so 'off' means gone, not merely 'not refreshed'."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.engine.models import RowSpec
+
+        # No enabled rows at all — the user's every row was disabled. Removal must still happen (it
+        # sits before the "no rows -> return" check).
+        ctx.config.rows = []
+        ctx.config.rows_defined = True
+        ctx.config.retired_rows = [RowSpec(slug="gems", name_template="Hidden Gems", size=5)]
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        target = MagicMock()
+        target.title = "Hidden Gems" + row_marker(100)
+        # A DIFFERENT-titled collection under the same label must NOT be touched — removal matches by
+        # title, so the guard has to be load-bearing.
+        bystander = MagicMock()
+        bystander.title = ctx.config.row_name_template + row_marker(100)
+        ctx.plex.find_owned_collections.return_value = [target, bystander]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is target  # exactly the retired row
+        assert "Hidden Gems" in report.users[0].diff.deleted
+        ctx.plex.create_collection.assert_not_called()
+
 
 class TestRequestsWiring:
     """The request pass only runs when enabled, and it sees the titles the library lacks."""

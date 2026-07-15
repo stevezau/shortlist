@@ -341,6 +341,11 @@ class EngineConfig:
     # OFF", which must deliver nothing. Without it, disabling every row in the UI silently rebuilt
     # "✨ Picked for You" for everyone: the Rows page said off, Plex said on.
     rows_defined: bool = False
+    # Per-person rows DISABLED in the UI: no longer delivered, but their collections still sit on
+    # their owners' Home (the label keeps them excluded from everyone else, so it's not a leak — just
+    # "off" that isn't gone). Each is removed like a mute on the next run. Static-titled rows only; a
+    # {top_seed} row can't be re-titled without picks, so it's left until the row is re-enabled.
+    retired_rows: list[RowSpec] = field(default_factory=list)
     # Sonarr/Radarr requests for picks the library lacks. None -> the feature is entirely off, so
     # no missing-title bookkeeping happens at all (the common case pays nothing for it).
     requests: RequestConfig | None = None

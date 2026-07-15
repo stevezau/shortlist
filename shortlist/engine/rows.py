@@ -207,6 +207,22 @@ def _run_user(
                 sections=ctx.delivery_sections,
             )
 
+    # A row DISABLED in the UI is gone from cfg.rows, but its collection still sits on this person's
+    # Home (excluded from everyone else, so private — just not gone). Remove it, same as a mute. This
+    # runs before the "no rows -> return" check below, so a user whose every row was switched off
+    # still gets cleaned up rather than keeping a stale row forever.
+    for spec in cfg.retired_rows:
+        if not spec.shared and in_audience(spec):
+            remove_row(
+                ctx.plex,
+                user,
+                cfg,
+                spec,
+                dry_run=cfg.dry_run,
+                diff=user_report.diff,
+                sections=ctx.delivery_sections,
+            )
+
     specs = [spec for spec in cfg.per_person_rows() if in_audience(spec) and not is_muted(spec)]
     if not specs:
         return False  # this user is in no per-person row (none in audience, or all muted)
