@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
 import { PickList } from "@/components/pick-list";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
+import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ import { mergeRunLog } from "@/lib/run-log";
 import { STAGE_LABELS } from "@/lib/run-stages";
 import { useSSE } from "@/lib/sse";
 import type {
+  Pick,
   RunDetail,
   RunLibraryBreakdown,
   RunLogEntry,
@@ -125,205 +127,205 @@ function CopyForGitHubButton({
   );
 }
 
-const DIFF_TONES = {
-  added: {
-    label: "text-success",
-    chip: "border-success/30 bg-success/10 text-success",
-  },
-  removed: {
-    label: "text-destructive",
-    chip: "border-destructive/30 bg-destructive/10 text-destructive",
-  },
-  kept: {
-    label: "text-muted-foreground",
-    chip: "border-border bg-muted text-muted-foreground",
-  },
-} as const;
+/** Rank badge colour by tier — the top picks stand out, lower ones recede. */
+function rankClass(rank: number): string {
+  if (rank <= 3) return "text-amber-400";
+  if (rank <= 10) return "text-foreground";
+  return "text-muted-foreground";
+}
 
-function DiffChips({
-  label,
-  items,
-  tone,
-}: {
-  label: string;
-  items: string[];
-  tone: keyof typeof DIFF_TONES;
-}) {
-  if (items.length === 0) return null;
-  const styles = DIFF_TONES[tone];
+/** One ranked pick: rank, a status dot (green = new this run), title, and its reason (one line). */
+function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
   return (
-    <div className="space-y-1.5">
-      <p
+    <li className="flex items-baseline gap-3 py-1.5">
+      <span
         className={cn(
-          "text-xs font-semibold uppercase tracking-wide",
-          styles.label,
+          "w-9 shrink-0 text-right text-sm font-semibold tabular-nums",
+          rankClass(pick.rank),
         )}
       >
-        {label} ({items.length})
-      </p>
-      <ul className="flex flex-wrap gap-1.5">
-        {items.map((item) => (
-          <li
-            key={item}
-            className={cn(
-              "rounded-md border px-2 py-0.5 text-xs font-medium",
-              styles.chip,
-            )}
-          >
-            {item}
-          </li>
-        ))}
-      </ul>
-    </div>
+        #{pick.rank}
+      </span>
+      <span
+        className={cn(
+          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+          isNew ? "bg-success" : "bg-muted-foreground/30",
+        )}
+        aria-label={isNew ? "new this run" : "kept"}
+        title={isNew ? "New this run" : "Kept from last run"}
+      />
+      <span className="min-w-0 flex-1 truncate text-sm">
+        <span className="font-medium">{pick.title}</span>
+        {pick.reason && (
+          <span className="text-muted-foreground"> — {pick.reason}</span>
+        )}
+      </span>
+    </li>
   );
 }
 
-/** One library's slice of a row: what changed there + that library's own ranked picks. */
-function LibraryBlock({ entry }: { entry: RunLibraryBreakdown }) {
-  const touched =
-    entry.added.length +
-      entry.removed.length +
-      entry.kept.length +
-      entry.deleted.length >
-    0;
+/** One library's ranked picks: first five, a show-all toggle, and a quiet "removed" footer. */
+function LibraryPicks({ entry }: { entry: RunLibraryBreakdown }) {
+  const [expanded, setExpanded] = useState(false);
+  const added = new Set(entry.added);
+  const shown = expanded ? entry.picks : entry.picks.slice(0, 5);
   return (
-    <div className="space-y-2 rounded-md border border-border/60 p-3">
-      <div className="flex items-center gap-2">
-        <Badge variant="outline">{entry.library_title}</Badge>
-        <span className="text-xs text-muted-foreground">
-          {entry.picks.length} pick{entry.picks.length === 1 ? "" : "s"}
-        </span>
-      </div>
-      <DiffChips label="Added" items={entry.added} tone="added" />
-      <DiffChips label="Removed" items={entry.removed} tone="removed" />
-      <DiffChips label="Kept" items={entry.kept} tone="kept" />
-      <DiffChips label="Rows deleted" items={entry.deleted} tone="removed" />
-      {!touched && (
+    <div className="space-y-2">
+      {entry.picks.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No changes — this library’s row was already up to date.
+          No picks in this library.
+        </p>
+      ) : (
+        <ul className="divide-y divide-border/40">
+          {shown.map((pick) => (
+            <PickLine
+              key={pick.rank}
+              pick={pick}
+              isNew={added.has(pick.title)}
+            />
+          ))}
+        </ul>
+      )}
+      {entry.picks.length > 5 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "Show fewer" : `Show all ${entry.picks.length}`}
+        </Button>
+      )}
+      {entry.removed.length > 0 && (
+        <p className="pt-1 text-xs text-muted-foreground">
+          <span className="font-medium text-destructive/80">
+            −{entry.removed.length} removed:
+          </span>{" "}
+          <span className="line-through">{entry.removed.join(", ")}</span>
         </p>
       )}
-      {entry.picks.length > 0 && (
-        <PickList picks={entry.picks} className="mt-1" />
+      {entry.deleted.length > 0 && (
+        <p className="text-xs font-medium text-destructive">
+          Row deleted: {entry.deleted.join(", ")}
+        </p>
       )}
     </div>
   );
 }
 
-/** Group a user's per-(row, library) breakdown by row, so each row shows its libraries together. */
-function BreakdownView({ breakdown }: { breakdown: RunLibraryBreakdown[] }) {
+/** One row (its libraries as tabs when there's more than one), showing the selected library's picks. */
+function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
+  const [libKey, setLibKey] = useState(entries[0]?.library_key ?? "");
+  const active =
+    entries.find((entry) => entry.library_key === libKey) ?? entries[0];
+  const added = entries.reduce((n, entry) => n + entry.added.length, 0);
+  return (
+    <div className="space-y-3">
+      <div className="flex items-baseline gap-2">
+        <h3 className="text-sm font-semibold">{entries[0]?.row_title}</h3>
+        {added > 0 && (
+          <span className="text-xs text-success">+{added} new</span>
+        )}
+      </div>
+      {entries.length > 1 && (
+        <Segmented
+          value={libKey}
+          onChange={setLibKey}
+          ariaLabel="Library"
+          options={entries.map((entry) => ({
+            value: entry.library_key,
+            label: `${entry.library_title} · ${entry.picks.length}`,
+          }))}
+        />
+      )}
+      {active && <LibraryPicks entry={active} />}
+    </div>
+  );
+}
+
+/** The selected user's result: an error, or their rows grouped from the per-(row, library) breakdown. */
+function UserPanel({ run, result }: { run: RunDetail; result: RunUserResult }) {
+  if (result.error !== null) {
+    return (
+      <div role="alert" className="space-y-3 rounded-md bg-destructive/10 p-3">
+        <p className="font-mono text-sm text-destructive">{result.error}</p>
+        <CopyForGitHubButton run={run} result={result} />
+      </div>
+    );
+  }
+  if (result.breakdown.length === 0) {
+    // Still running (this user hasn't finished) or a legacy run with no breakdown.
+    if (result.picks.length > 0)
+      return <PickList picks={result.picks} className="mt-1" />;
+    return (
+      <p className="text-sm text-muted-foreground">
+        {result.status === "ok" || result.status === "cold_start"
+          ? "No changes — this person’s rows were already up to date."
+          : "Working on this person…"}
+      </p>
+    );
+  }
   const rows = new Map<string, RunLibraryBreakdown[]>();
-  for (const entry of breakdown) {
-    const list = rows.get(entry.row_slug) ?? [];
-    list.push(entry);
-    rows.set(entry.row_slug, list);
+  for (const entry of result.breakdown) {
+    rows.set(entry.row_slug, [...(rows.get(entry.row_slug) ?? []), entry]);
   }
   return (
-    <div className="space-y-4">
-      {[...rows.values()].map((entries) => {
-        const head = entries[0];
-        if (!head) return null;
+    <div className="space-y-6">
+      {[...rows.values()].map((entries) => (
+        <RowSection key={entries[0]?.row_slug} entries={entries} />
+      ))}
+    </div>
+  );
+}
+
+/** The clickable user nav at the top of a run — pick whose rows to see (failures flagged). */
+function UserTabs({
+  results,
+  selected,
+  onSelect,
+}: {
+  results: RunUserResult[];
+  selected: string;
+  onSelect: (slug: string) => void;
+}) {
+  return (
+    <div
+      className="flex flex-wrap gap-2"
+      role="tablist"
+      aria-label="Users in this run"
+    >
+      {results.map((result) => {
+        const failed = result.error !== null;
+        const isSelected = result.slug === selected;
         return (
-          <div key={head.row_slug} className="space-y-2">
-            <p className="text-sm font-semibold">{head.row_title}</p>
-            <div className="space-y-2">
-              {entries.map((entry) => (
-                <LibraryBlock key={entry.library_key} entry={entry} />
-              ))}
-            </div>
-          </div>
+          <button
+            key={result.slug}
+            type="button"
+            role="tab"
+            aria-selected={isSelected}
+            onClick={() => onSelect(result.slug)}
+            className={cn(
+              "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              isSelected
+                ? "border-primary bg-primary/10"
+                : "border-border hover:bg-muted",
+              failed && !isSelected && "border-destructive/40",
+            )}
+          >
+            <UserAvatar name={result.username} size="sm" />
+            <span className="font-medium">{result.username}</span>
+            {failed ? (
+              <AlertCircle
+                className="h-3.5 w-3.5 text-destructive"
+                aria-hidden="true"
+              />
+            ) : (
+              <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+            )}
+          </button>
         );
       })}
     </div>
-  );
-}
-
-function UserResultCard({
-  run,
-  result,
-  userId,
-}: {
-  run: RunDetail;
-  result: RunUserResult;
-  /** Numeric id of this user for a deep-link, or null when they're no longer on the server. */
-  userId: number | null;
-}) {
-  const failed = result.error !== null;
-  // A user the run left alone comes back with `diff: {}` — not three empty lists.
-  const added = result.diff.added ?? [];
-  const removed = result.diff.removed ?? [];
-  const kept = result.diff.kept ?? [];
-  // Deleting a whole row is the most destructive thing a run does. It has to be on this page:
-  // "what changed on whose share at 03:31" must always be answerable from the UI.
-  const deleted = result.diff.deleted ?? [];
-  return (
-    <Card className={failed ? "border-destructive/50" : ""}>
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
-        <CardTitle className="flex items-center gap-2.5">
-          <UserAvatar name={result.username} size="sm" />
-          {userId !== null ? (
-            <Link
-              to={`/users/${userId}`}
-              className="rounded-sm hover:text-primary hover:underline"
-            >
-              {result.username}
-            </Link>
-          ) : (
-            result.username
-          )}
-          <Badge
-            variant={failed ? "destructive" : runStatusVariant(result.status)}
-          >
-            {result.status}
-          </Badge>
-        </CardTitle>
-        <p className="text-sm text-muted-foreground">
-          {formatDuration(result.duration_ms)}
-          {result.llm_tokens > 0
-            ? ` · ${result.llm_tokens.toLocaleString()} AI tokens`
-            : ""}
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {failed ? (
-          <div
-            role="alert"
-            className="space-y-3 rounded-md bg-destructive/10 p-3"
-          >
-            <p className="font-mono text-sm text-destructive">{result.error}</p>
-            <CopyForGitHubButton run={run} result={result} />
-          </div>
-        ) : result.breakdown.length > 0 ? (
-          // Per-(row, library) — each library shows what changed there and its OWN ranked picks,
-          // so a row spanning Movies + TV reads as two clear groups, not one merged list.
-          <BreakdownView breakdown={result.breakdown} />
-        ) : (
-          // Legacy runs (before the breakdown was recorded): the merged diff + flat pick list.
-          <>
-            <DiffChips label="Added" items={added} tone="added" />
-            <DiffChips label="Removed" items={removed} tone="removed" />
-            <DiffChips label="Kept" items={kept} tone="kept" />
-            <DiffChips label="Rows deleted" items={deleted} tone="removed" />
-            {added.length === 0 &&
-              removed.length === 0 &&
-              kept.length === 0 &&
-              deleted.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  No changes — the row was already up to date.
-                </p>
-              )}
-            {result.picks.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Picks ({result.picks.length})
-                </p>
-                <PickList picks={result.picks} className="mt-1" />
-              </div>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -377,6 +379,17 @@ export function RunDetailPage() {
       }
     },
   });
+
+  // Which user's rows are on screen. Default to the first FAILED user (what you opened the page to
+  // see), else the first user; keep the current pick as long as they're still in the run.
+  const [selectedSlug, setSelectedSlug] = useState("");
+  useEffect(() => {
+    const users = runQuery.data?.users ?? [];
+    const first = users[0];
+    if (first && !users.some((u) => u.slug === selectedSlug)) {
+      setSelectedSlug((users.find((u) => u.error !== null) ?? first).slug);
+    }
+  }, [runQuery.data, selectedSlug]);
 
   return (
     <div className="space-y-6">
@@ -445,23 +458,65 @@ export function RunDetailPage() {
                   }
                 />
               ) : (
-                <div className="space-y-4">
-                  {/* Failures first — when a run partly fails, the thing you opened this page to see
-                    is the error, not the twelve users that succeeded above it. */}
-                  {[...run.users]
-                    .sort(
-                      (a, b) =>
-                        Number(b.error !== null) - Number(a.error !== null),
-                    )
-                    .map((result) => (
-                      <UserResultCard
-                        key={result.slug}
-                        run={run}
-                        result={result}
-                        userId={idBySlug.get(result.slug) ?? null}
-                      />
-                    ))}
-                </div>
+                (() => {
+                  // Failures first in the nav, so a partly-failed run opens on the error you came for.
+                  const ordered = [...run.users].sort(
+                    (a, b) =>
+                      Number(b.error !== null) - Number(a.error !== null),
+                  );
+                  const selected =
+                    run.users.find((u) => u.slug === selectedSlug) ??
+                    ordered[0];
+                  if (!selected) return null;
+                  const failed = selected.error !== null;
+                  const userId = idBySlug.get(selected.slug) ?? null;
+                  return (
+                    <div className="space-y-4">
+                      {run.users.length > 1 && (
+                        <UserTabs
+                          results={ordered}
+                          selected={selected.slug}
+                          onSelect={setSelectedSlug}
+                        />
+                      )}
+                      <Card className={failed ? "border-destructive/50" : ""}>
+                        <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+                          <CardTitle className="flex items-center gap-2.5">
+                            <UserAvatar name={selected.username} size="sm" />
+                            {userId !== null ? (
+                              <Link
+                                to={`/users/${userId}`}
+                                className="rounded-sm hover:text-primary hover:underline"
+                              >
+                                {selected.username}
+                              </Link>
+                            ) : (
+                              selected.username
+                            )}
+                            <Badge
+                              variant={
+                                failed
+                                  ? "destructive"
+                                  : runStatusVariant(selected.status)
+                              }
+                            >
+                              {selected.status}
+                            </Badge>
+                          </CardTitle>
+                          <p className="text-sm text-muted-foreground">
+                            {formatDuration(selected.duration_ms)}
+                            {selected.llm_tokens > 0
+                              ? ` · ${selected.llm_tokens.toLocaleString()} AI tokens`
+                              : ""}
+                          </p>
+                        </CardHeader>
+                        <CardContent>
+                          <UserPanel run={run} result={selected} />
+                        </CardContent>
+                      </Card>
+                    </div>
+                  );
+                })()
               )}
             </div>
           )}

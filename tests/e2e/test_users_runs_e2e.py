@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 import time
-from collections import Counter
 from collections.abc import Callable
 
 import pytest
@@ -133,29 +132,25 @@ class TestRuns:
 
         page.get_by_role("link", name="#1").click()
         expect(page.get_by_role("heading", name="Run #1")).to_be_visible(timeout=LOAD)
+        # Every user is a clickable tab in the run's nav; the selected one's rows show below it.
         for username in ("sarah", "mike", "canary"):
-            expect(page.get_by_role("link", name=username, exact=True)).to_be_visible()
+            expect(page.get_by_role("tab", name=re.compile(username, re.IGNORECASE))).to_be_visible()
 
     def test_run_detail_shows_what_changed(self, page: Page, app: ShortlistApp, reset_fake_plex):
         """The diff is the audit trail (rule 10): everything Added on the first run, and on the
         next run the staleness guard rotates fresh titles in — without ever shrinking a row."""
         state = reset_fake_plex
         first = build_real_rows(app)
-        # The diff shown must be the diff the engine reported — now PER (user, library): each library
-        # group shows its own "Added (N)". Asserting the engine's own breakdown (not literal fixture
-        # counts) keeps this robust to data shifts; a movies-and-TV watcher yields TWO library groups.
+        # The engine must record a per-(row, library) breakdown — the whole run page is built from it.
         run = app.api("GET", f"/api/runs/{first['id']}").json()
-        added_by_lib = Counter(len(b["added"]) for u in run["users"] for b in u["breakdown"] if b["added"])
-        # Guard against a silent regression: if the engine stopped recording the breakdown the loop
-        # below would vacuously pass on the legacy merged view. A real run must produce library groups.
-        assert added_by_lib, "the run produced no per-library breakdown"
+        assert any(b["added"] for u in run["users"] for b in u["breakdown"]), "no per-library breakdown recorded"
 
         page.goto(f"/runs/{first['id']}")
         expect(page.get_by_role("heading", name=f"Run #{first['id']}")).to_be_visible(timeout=LOAD)
-        for count, groups in added_by_lib.items():
-            expect(page.get_by_text(re.compile(rf"^Added \({count}\)$"))).to_have_count(groups)
-        expect(page.get_by_text(re.compile(r"^Removed"))).to_have_count(0)
-        # Titles, not counts: "which titles landed on whose row" must be answerable from here.
+        # First run: every pick is new, so the selected user's row shows a "+N new" badge and nothing
+        # removed. Picks render as a ranked list, and their titles are answerable from here.
+        expect(page.get_by_text(re.compile(r"\+\d+ new")).first).to_be_visible()
+        expect(page.get_by_text(re.compile(r"\d+ removed"))).to_have_count(0)
         expect(page.locator("body")).to_contain_text(re.compile(r"(Movie|Show) \d+"))
 
         def row_sizes() -> dict[str, int]:
@@ -181,7 +176,8 @@ class TestRuns:
             assert len(diff.get("added", [])) == len(diff.get("removed", [])), (
                 f"{user['slug']}: a rotated-out title must be replaced, not simply dropped"
             )
-        expect(page.get_by_text(re.compile(r"^(Added|Kept) \(\d+\)$")).first).to_be_visible()
+        # The second run's page renders its users (the per-user nav), so its results are reachable.
+        expect(page.get_by_role("tab").first).to_be_visible(timeout=LOAD)
 
     def test_a_users_picks_explain_themselves(self, page: Page, app: ShortlistApp):
         """Every pick carries its "Because you watched …" reason — the product's whole promise."""

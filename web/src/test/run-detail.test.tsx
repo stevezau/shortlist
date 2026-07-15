@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -129,14 +130,20 @@ describe("RunDetailPage — grouped by library", () => {
 
     renderDetail();
 
-    // Both library groups are labelled and carry their own picks — each ranked #1 within its library.
-    expect(await screen.findByText("Movies")).toBeInTheDocument();
-    expect(screen.getByText("TV Shows")).toBeInTheDocument();
-    // The pick reasons are unique to each library's pick list.
+    // A row spanning two libraries shows them as TABS — the selected library's picks only, so the
+    // page stays short. Movies is selected first; TV Shows appears when you click it.
+    expect(
+      await screen.findByRole("button", { name: /Movies/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /TV Shows/ }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/war epic/)).toBeInTheDocument();
+    expect(screen.queryByText(/survival series/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /TV Shows/ }));
     expect(screen.getByText(/survival series/)).toBeInTheDocument();
-    // Two "#1" ranks — one per library — not a single merged list with duplicate ranks.
-    expect(screen.getAllByText("#1")).toHaveLength(2);
+    expect(screen.queryByText(/war epic/)).not.toBeInTheDocument();
   });
 
   it("groups entries by row, so two different rows render as separate groups", async () => {
@@ -195,9 +202,8 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.getByText(/120 candidates/)).toBeInTheDocument();
   });
 
-  it("falls back to the merged list for legacy runs with no breakdown", async () => {
-    getRun.mockResolvedValue(run([]));
-    // Legacy run: no breakdown, but a flat diff/picks path still renders.
+  it("falls back to the flat pick list for legacy runs with no breakdown", async () => {
+    // A legacy run has no per-library breakdown, but its picks still render as a plain list.
     getRun.mockResolvedValue({
       ...run([]),
       users: [
@@ -208,8 +214,8 @@ describe("RunDetailPage — grouped by library", () => {
           error: null,
           duration_ms: 1000,
           llm_tokens: 0,
-          diff: { added: ["Old Title"] },
-          picks: [],
+          diff: {},
+          picks: [{ rank: 1, title: "Old Title", reason: "legacy" }],
           breakdown: [],
         },
       ],
