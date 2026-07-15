@@ -8,8 +8,8 @@ type Level = (typeof LEVELS)[number];
 
 const CONCURRENCY = [1, 2, 4, 8] as const;
 
-/** Console/file log verbosity + run concurrency. Auto-saves and applies live — no restart. */
-export function DiagnosticsSection({ settings }: { settings: Settings }) {
+/** Power-user knobs: log verbosity + run concurrency. Both auto-save and apply live — no restart. */
+export function AdvancedSection({ settings }: { settings: Settings }) {
   const saveSettings = useSaveSettings();
   const level = (
     LEVELS.includes(settings["log.level"] as Level)
@@ -21,9 +21,9 @@ export function DiagnosticsSection({ settings }: { settings: Settings }) {
   );
 
   return (
-    <section aria-labelledby="diagnostics-heading" className="space-y-3">
-      <h2 id="diagnostics-heading" className="text-lg font-semibold">
-        Diagnostics
+    <section aria-labelledby="advanced-heading" className="space-y-3">
+      <h2 id="advanced-heading" className="text-lg font-semibold">
+        Advanced
       </h2>
       <Card>
         <CardContent className="space-y-3 pt-6">

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DiagnosticsSection } from "@/components/settings/diagnostics-section";
+import { AdvancedSection } from "@/components/settings/advanced-section";
 import type { Settings } from "@/lib/types";
 
 const { putSettings } = vi.hoisted(() => ({
@@ -20,12 +20,12 @@ function renderSection(settings: Settings) {
   });
   render(
     <QueryClientProvider client={client}>
-      <DiagnosticsSection settings={settings} />
+      <AdvancedSection settings={settings} />
     </QueryClientProvider>,
   );
 }
 
-describe("DiagnosticsSection", () => {
+describe("AdvancedSection", () => {
   beforeEach(() => putSettings.mockClear());
 
   it("marks the saved level active and defaults an unset level to DEBUG", () => {
