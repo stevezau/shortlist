@@ -112,6 +112,10 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     for position, user in enumerate(users, start=1):
         _emit(ctx, user.slug, "queued", {"position": position})
 
+    # Reading the libraries is the long, quiet phase between "queued" and the first per-user stage
+    # (it walks every item in every library, ~thousands of PMS reads). Narrate it so the activity log
+    # doesn't look frozen while it runs.
+    _emit(ctx, "Shortlist", "preparing", {})
     sections = ctx.plex.sections()
     targets = ctx.plex.sections_by_type()
     seed_index, library_index = _build_indexes(ctx, users, sections, targets)
@@ -189,8 +193,11 @@ def _build_indexes(
     # must not be preceded by anything that can fail.
     for section in sections if users else []:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+        # Named by library so a stuck scan shows WHICH library it's on (a slow PMS retries per call).
+        _emit(ctx, section.title, "indexing", {})
         # Capture episode counts only for show libraries — movies have no leafCount to speak of.
         index = ctx.plex.build_library_index(section, episode_counts if kind is MediaType.SHOW else None)
+        _emit(ctx, section.title, "indexed", {"items": len(index)})
         seed_index.update({rating_key: tmdb_id for tmdb_id, rating_key in index.items()})
         # Every library of a deliverable type is both a recommendation source (union) and a possible
         # delivery target (its own per-section index) — a row picks which ones under library_keys.
@@ -208,6 +215,7 @@ def _build_indexes(
         seen: dict[MediaType, set[int]] = {MediaType.MOVIE: set(), MediaType.SHOW: set()}
         for section in sections:
             kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+            _emit(ctx, section.title, "cataloguing", {})
             items = ctx.plex.build_library_catalog(section)
             section_catalog[section.key] = items
             # Deduped across libraries: the same film in "Movies" and "4K Movies" is one title to

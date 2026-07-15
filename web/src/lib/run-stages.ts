@@ -10,6 +10,10 @@ export const RUN_STAGES = [
 
 export const STAGE_LABELS: Record<string, string> = {
   queued: "queued",
+  preparing: "getting ready — reading your libraries",
+  indexing: "reading library…",
+  indexed: "library read",
+  cataloguing: "reading library for AI picks…",
   history: "reading watch history",
   candidates: "gathering candidates",
   curating: "curating with AI",
