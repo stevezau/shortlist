@@ -51,7 +51,7 @@ export function StepWelcome({ next }: StepProps) {
           heuristic mode needs no keys and no cloud, and works just as well.
         </p>
         <Button size="lg" onClick={next}>
-          Connect Plex
+          Get started
         </Button>
       </div>
     </div>
