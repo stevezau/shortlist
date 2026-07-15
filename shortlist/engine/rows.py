@@ -527,6 +527,7 @@ def _run_user(
             sections=ctx.delivery_sections,
             section_index=ctx.section_index,
             section_picks=section_picks,
+            breakdown=user_report.breakdown,
         )
         delivered_any = delivered_any or bool(picks)
 
@@ -696,6 +697,7 @@ def _shared_row(
         sections=ctx.delivery_sections,
         section_index=ctx.section_index,
         section_picks=section_picks,
+        breakdown=user_report.breakdown,
     )
     return agg if picks else None
 

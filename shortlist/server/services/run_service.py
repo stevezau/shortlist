@@ -420,6 +420,7 @@ class RunService:
                 duration_ms=int(user_report.duration_s * 1000),
                 llm_tokens=user_report.llm_tokens,
                 diff=user_report.diff.__dict__ if user_report.diff else {},
+                breakdown=user_report.breakdown,
             )
         )
         if not dry_run:

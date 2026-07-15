@@ -27,6 +27,7 @@ function makeResult(overrides: Partial<RunUserResult> = {}): RunUserResult {
     llm_tokens: 0,
     diff: {},
     picks: [],
+    breakdown: [],
     ...overrides,
   };
 }

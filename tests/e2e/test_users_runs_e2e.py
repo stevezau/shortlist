@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections import Counter
 from collections.abc import Callable
 
 import pytest
@@ -140,16 +141,19 @@ class TestRuns:
         next run the staleness guard rotates fresh titles in — without ever shrinking a row."""
         state = reset_fake_plex
         first = build_real_rows(app)
-        # The diff shown must be the diff the engine reported, per user — asserting literal
-        # counts here just re-encodes today's fixture data and breaks whenever it shifts.
-        added = {u["slug"]: len(u["picks"]) for u in app.api("GET", f"/api/runs/{first['id']}").json()["users"]}
+        # The diff shown must be the diff the engine reported — now PER (user, library): each library
+        # group shows its own "Added (N)". Asserting the engine's own breakdown (not literal fixture
+        # counts) keeps this robust to data shifts; a movies-and-TV watcher yields TWO library groups.
+        run = app.api("GET", f"/api/runs/{first['id']}").json()
+        added_by_lib = Counter(len(b["added"]) for u in run["users"] for b in u["breakdown"] if b["added"])
+        # Guard against a silent regression: if the engine stopped recording the breakdown the loop
+        # below would vacuously pass on the legacy merged view. A real run must produce library groups.
+        assert added_by_lib, "the run produced no per-library breakdown"
 
         page.goto(f"/runs/{first['id']}")
         expect(page.get_by_role("heading", name=f"Run #{first['id']}")).to_be_visible(timeout=LOAD)
-        for count in set(added.values()):
-            expect(page.get_by_text(re.compile(rf"^Added \({count}\)$"))).to_have_count(
-                sum(1 for n in added.values() if n == count)
-            )
+        for count, groups in added_by_lib.items():
+            expect(page.get_by_text(re.compile(rf"^Added \({count}\)$"))).to_have_count(groups)
         expect(page.get_by_text(re.compile(r"^Removed"))).to_have_count(0)
         # Titles, not counts: "which titles landed on whose row" must be answerable from here.
         expect(page.locator("body")).to_contain_text(re.compile(r"(Movie|Show) \d+"))

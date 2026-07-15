@@ -649,6 +649,55 @@ class TestPerRowOverrides:
         assert {10, 11, 12, 13, 14, 15} in seen, f"Movies library should curate from its own ids, saw {seen}"
         assert {50, 51, 52, 53, 54, 55} in seen, f"4K library should curate from its own ids, saw {seen}"
 
+    def test_run_records_a_breakdown_entry_per_library(self, ctx: EngineContext, mock_plextv):
+        """The per-user report carries a per-(row, library) breakdown so the UI can show 'added X to
+        Movies, Y to TV' with each library's own picks — not one merged list."""
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        movies_4k = MagicMock(type="movie", key="2", title="4K Movies")
+        ctx.plex.sections.return_value = [movies, movies_4k]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        idx_std = {900: 999, **{i: 1000 + i for i in range(10, 16)}}
+        idx_4k = {900: 999, **{i: 2000 + i for i in range(50, 56)}}
+        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: idx_std if sec is movies else idx_4k
+        pool = [
+            {"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in [*range(10, 16), *range(50, 56)]
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: pool
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie")]
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        breakdown = report.users[0].breakdown
+        by_library = {e["library_title"]: e for e in breakdown}
+        assert set(by_library) == {"Movies", "4K Movies"}, f"one entry per library, got {list(by_library)}"
+        for entry in breakdown:
+            assert entry["row_slug"] == "picked"
+            assert len(entry["picks"]) == 5, "each library's row has its own full set of picks"
+            assert [p["rank"] for p in entry["picks"]] == [1, 2, 3, 4, 5], "picks ranked 1..k within the library"
+
+    def test_a_shared_row_also_records_a_breakdown(self, ctx: EngineContext, mock_plextv):
+        """A shared 'popular on this server' row records a per-library breakdown too, keyed by its own
+        slug — so the run detail groups a public row the same way it groups a private one."""
+        ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
+        sarah = make_profile("sarah", account_id=100)
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        # Both watch the same title, so it clears the 2-distinct-watchers floor for a public row.
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.curator.curate.side_effect = curated_picks
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        shared_report = next(u for u in report.users if u.slug == "shared_popular")
+        assert shared_report.breakdown, "the shared row records a breakdown"
+        assert all(e["row_slug"] == "popular" for e in shared_report.breakdown)
+
     def test_default_watched_cap_excludes_finished_titles(self, ctx: EngineContext, mock_plextv):
         """watched_pct defaults to 0 (all fresh): a title the user has finished, even if it resurfaces
         as a candidate, is never recommended back. Guards the pool_key/pools_for `== 0` branch — an

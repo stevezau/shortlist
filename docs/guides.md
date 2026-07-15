@@ -6,8 +6,9 @@
   their current row, hit rate, and a Run now button. Live-updates during runs.
 - **Users** — enable/disable, pause, a request tag, per-row overrides (size, curation style,
   mute), and each user's restriction status.
-- **Runs** — every run with per-user diffs ("added X, removed Y (watched ✓)"), errors as
-  first-class rows with copy-for-GitHub buttons, LLM token usage.
+- **Runs** — every run with per-user diffs grouped by row then library ("added X to Movies, Y to
+  TV Shows"), each library showing its own ranked picks; errors as first-class rows with
+  copy-for-GitHub buttons, LLM token usage.
 - **Settings** — every connection re-testable in place; **Recommendations** (which candidate
   sources to pool); curation style; row defaults; schedule editor (cron for power users); the
   Danger Zone.
@@ -77,7 +78,7 @@ audience are its own, exactly like any other row.
 Home on the next run — "off" means gone, not just "stops updating". Two things are left in place
 (still private — the row's label keeps it excluded from everyone else — just not auto-removed): a row
 whose title is built from a person's top pick (its title can't be matched without those picks), and a
-row you *delete* outright (Shortlist no longer has the record it needs to find the collection). In
+row you _delete_ outright (Shortlist no longer has the record it needs to find the collection). In
 both cases the collection stays until you rebuild the row (re-enable it) or remove it by hand.
 
 ## Requests (Radarr / Sonarr)

@@ -59,6 +59,8 @@ async def get_run(run_id: int, request: Request) -> dict:
                         {"rank": p.rank, "title": p.title, "reason": p.reason, "seed_title": p.seed_title}
                         for p in picks
                     ],
+                    # Per-(row, library) breakdown; [] on legacy runs -> UI falls back to diff + picks.
+                    "breakdown": run_user.breakdown or [],
                 }
             )
         return {**_run_summary(run), "users": users}

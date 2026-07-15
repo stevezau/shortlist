@@ -162,6 +162,10 @@ class RunUser(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     llm_tokens: Mapped[int] = mapped_column(Integer, default=0)
     diff: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Per-(row, library) delivery breakdown for the run detail UI; [] on legacy rows (falls back to
+    # the merged `diff` + `picks`). Each entry: row_slug/row_title, library_key/library_title,
+    # added/removed/kept/deleted, created, and that library's own picks.
+    breakdown: Mapped[list] = mapped_column(JSON, default=list)
 
     run: Mapped[Run] = relationship(back_populates="users")
     user: Mapped[User] = relationship(back_populates="run_users")

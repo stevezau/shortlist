@@ -443,6 +443,10 @@ class UserRunReport:
     # phase applies the right row's placement/pin. Recorded per library because a {top_seed} title
     # differs library to library. Transient (not persisted); populated during delivery.
     placement_titles: dict[str, str] = field(default_factory=dict)
+    # Per-(row, library) delivery result, so the UI can show "added X to Movies, Y to TV" instead of
+    # one merged list. Each entry: row_slug/row_title, library_key/library_title, added/removed/kept/
+    # deleted, created, and that library's own ranked picks. Persisted on RunUser.breakdown.
+    breakdown: list[dict] = field(default_factory=list)
     privacy_synced: bool = False
     error: str | None = None
     duration_s: float = 0.0

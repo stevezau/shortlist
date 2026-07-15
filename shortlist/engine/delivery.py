@@ -96,6 +96,7 @@ def deliver_rows(
     sections: list | None = None,
     section_index: dict[str, dict[int, int]] | None = None,
     section_picks: dict[str, list[Pick]] | None = None,
+    breakdown: list[dict] | None = None,
 ) -> tuple[CollectionDiff, str | None]:
     """Deliver one row's picks as one collection per targeted library. Returns (diff, stored label).
 
@@ -177,6 +178,33 @@ def deliver_rows(
         combined.kept += one.kept
         combined.deleted += one.deleted
         combined.created = combined.created or one.created
+        # Per-(row, library) breakdown for the UI: what changed in THIS library and its own picks,
+        # so a run shows "added X to Movies, Y to TV" rather than one merged list.
+        if breakdown is not None:
+            breakdown.append(
+                {
+                    "row_slug": spec.slug,
+                    "row_title": one.collection_title,
+                    "library_key": str(section.key),
+                    "library_title": getattr(section, "title", str(section.key)),
+                    "added": list(one.added),
+                    "removed": list(one.removed),
+                    "kept": list(one.kept),
+                    "deleted": list(one.deleted),
+                    "created": one.created,
+                    "picks": [
+                        {
+                            "rank": p.rank,
+                            "title": p.title,
+                            "reason": p.reason,
+                            "seed_title": p.seed_title,
+                            "tmdb_id": p.tmdb_id,
+                            "media_type": p.media_type.value,
+                        }
+                        for p in this_section
+                    ],
+                }
+            )
         # Recorded the instant the PMS confirms the label — if the NEXT library blows up, this
         # row still gets excluded on every other user's share this run.
         if stored_labels is not None and not dry_run:

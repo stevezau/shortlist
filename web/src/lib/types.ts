@@ -214,6 +214,20 @@ export interface RunDiff {
   deleted?: string[];
 }
 
+/** One (row, library) slice of a user's run result: what changed in that library + its own picks. */
+export interface RunLibraryBreakdown {
+  row_slug: string;
+  row_title: string;
+  library_key: string;
+  library_title: string;
+  added: string[];
+  removed: string[];
+  kept: string[];
+  deleted: string[];
+  created: boolean;
+  picks: Pick[];
+}
+
 /** Per-user slice of GET /api/runs/{id}. */
 export interface RunUserResult {
   username: string;
@@ -224,6 +238,8 @@ export interface RunUserResult {
   llm_tokens: number;
   diff: RunDiff;
   picks: Pick[];
+  /** Per-(row, library) breakdown; empty on legacy runs (render the merged diff + picks instead). */
+  breakdown: RunLibraryBreakdown[];
 }
 
 /** GET /api/runs/{id} — the run plus its per-user results. */

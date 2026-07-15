@@ -16,7 +16,11 @@ import { formatDate, formatDuration, runStatusVariant } from "@/lib/format";
 import { githubIssueSnippet } from "@/lib/github";
 import { queryKeys, useRun, useUsers } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
-import type { RunDetail, RunUserResult } from "@/lib/types";
+import type {
+  RunDetail,
+  RunLibraryBreakdown,
+  RunUserResult,
+} from "@/lib/types";
 
 function CopyForGitHubButton({
   run,
@@ -99,6 +103,66 @@ function DiffChips({
   );
 }
 
+/** One library's slice of a row: what changed there + that library's own ranked picks. */
+function LibraryBlock({ entry }: { entry: RunLibraryBreakdown }) {
+  const touched =
+    entry.added.length +
+      entry.removed.length +
+      entry.kept.length +
+      entry.deleted.length >
+    0;
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 p-3">
+      <div className="flex items-center gap-2">
+        <Badge variant="outline">{entry.library_title}</Badge>
+        <span className="text-xs text-muted-foreground">
+          {entry.picks.length} pick{entry.picks.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <DiffChips label="Added" items={entry.added} tone="added" />
+      <DiffChips label="Removed" items={entry.removed} tone="removed" />
+      <DiffChips label="Kept" items={entry.kept} tone="kept" />
+      <DiffChips label="Rows deleted" items={entry.deleted} tone="removed" />
+      {!touched && (
+        <p className="text-sm text-muted-foreground">
+          No changes — this library’s row was already up to date.
+        </p>
+      )}
+      {entry.picks.length > 0 && (
+        <PickList picks={entry.picks} className="mt-1" />
+      )}
+    </div>
+  );
+}
+
+/** Group a user's per-(row, library) breakdown by row, so each row shows its libraries together. */
+function BreakdownView({ breakdown }: { breakdown: RunLibraryBreakdown[] }) {
+  const rows = new Map<string, RunLibraryBreakdown[]>();
+  for (const entry of breakdown) {
+    const list = rows.get(entry.row_slug) ?? [];
+    list.push(entry);
+    rows.set(entry.row_slug, list);
+  }
+  return (
+    <div className="space-y-4">
+      {[...rows.values()].map((entries) => {
+        const head = entries[0];
+        if (!head) return null;
+        return (
+          <div key={head.row_slug} className="space-y-2">
+            <p className="text-sm font-semibold">{head.row_title}</p>
+            <div className="space-y-2">
+              {entries.map((entry) => (
+                <LibraryBlock key={entry.library_key} entry={entry} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function UserResultCard({
   run,
   result,
@@ -154,7 +218,12 @@ function UserResultCard({
             <p className="font-mono text-sm text-destructive">{result.error}</p>
             <CopyForGitHubButton run={run} result={result} />
           </div>
+        ) : result.breakdown.length > 0 ? (
+          // Per-(row, library) — each library shows what changed there and its OWN ranked picks,
+          // so a row spanning Movies + TV reads as two clear groups, not one merged list.
+          <BreakdownView breakdown={result.breakdown} />
         ) : (
+          // Legacy runs (before the breakdown was recorded): the merged diff + flat pick list.
           <>
             <DiffChips label="Added" items={added} tone="added" />
             <DiffChips label="Removed" items={removed} tone="removed" />
