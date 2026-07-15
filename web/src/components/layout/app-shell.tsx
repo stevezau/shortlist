@@ -110,7 +110,10 @@ export function AppShell() {
         <SessionFooter />
       </aside>
       <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
-        <div className="mx-auto max-w-5xl animate-fade-in">
+        {/* Left-aligned (not centred) with a generous cap: next to a left nav, content that hugs the
+            nav uses the width far better than a narrow block floating in the middle — the two-pane
+            Settings page especially. Wide enough to breathe, capped so it never sprawls on ultrawide. */}
+        <div className="max-w-6xl animate-fade-in">
           <Outlet />
         </div>
       </main>
