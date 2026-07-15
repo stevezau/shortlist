@@ -174,7 +174,11 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     return report
 
 
-INDEX_CACHE_TTL_S = 30 * 24 * 3600  # long: the signature self-invalidates when the library changes
+# The real invalidation is the section SIGNATURE (item count + last-updated): the moment the library
+# changes, the key changes and this is bypassed. This TTL is only a backstop for the rare change the
+# signature can't see (a 1-for-1 swap that doesn't bump updatedAt) — kept short so even that self-heals
+# within a couple of days rather than lingering.
+INDEX_CACHE_TTL_S = 2 * 24 * 3600
 
 
 def _library_index(ctx: EngineContext, section) -> tuple[dict[int, int], dict[int, int]]:

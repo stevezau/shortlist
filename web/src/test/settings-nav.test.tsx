@@ -1,12 +1,13 @@
 import { render, screen } from "@testing-library/react";
+import { Cable, SlidersHorizontal, TriangleAlert } from "lucide-react";
 import { describe, expect, it } from "vitest";
 
 import { SettingsNav } from "@/components/settings/settings-nav";
 
 const SECTIONS = [
-  { id: "connections", label: "Connections" },
-  { id: "advanced", label: "Advanced" },
-  { id: "danger", label: "Danger zone" },
+  { id: "connections", label: "Connections", icon: Cable },
+  { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
+  { id: "danger", label: "Danger zone", icon: TriangleAlert },
 ];
 
 describe("SettingsNav", () => {

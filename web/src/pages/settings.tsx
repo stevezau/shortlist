@@ -1,4 +1,15 @@
-import { Settings as SettingsIcon } from "lucide-react";
+import {
+  AlertTriangle,
+  Cable,
+  Clock,
+  Inbox,
+  Rows3,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Wand2,
+} from "lucide-react";
 import type { ReactNode } from "react";
 
 import { PageHeader } from "@/components/page-header";
@@ -22,47 +33,55 @@ import type { Settings } from "@/lib/types";
 // `id`s anchor the side-rail nav; the labels are what it lists.
 function sections(
   settings: Settings,
-): { id: string; label: string; el: ReactNode }[] {
+): { id: string; label: string; icon: typeof Cable; el: ReactNode }[] {
   return [
     {
       id: "connections",
       label: "Connections",
+      icon: Cable,
       el: <ConnectionsSection settings={settings} />,
     },
-    {
-      id: "recommendations",
-      label: "Recommendations",
-      el: <RecommendationsSection settings={settings} />,
-    },
+    { id: "recommendations", label: "Recommendations", icon: Sparkles, el: <RecommendationsSection settings={settings} /> }, // prettier-ignore
     {
       id: "curation",
       label: "Curation",
+      icon: Wand2,
       el: <CurationSection settings={settings} />,
     },
     {
       id: "defaults",
       label: "Row defaults",
+      icon: Rows3,
       el: <DefaultsSection settings={settings} />,
     },
     {
       id: "schedule",
       label: "Schedule",
+      icon: Clock,
       el: <ScheduleSection settings={settings} />,
     },
     {
       id: "requests",
       label: "Requests",
+      icon: Inbox,
       el: <RequestsSection settings={settings} />,
     },
-    { id: "privacy", label: "Privacy", el: <PrivacySection /> },
+    {
+      id: "privacy",
+      label: "Privacy",
+      icon: ShieldCheck,
+      el: <PrivacySection />,
+    },
     {
       id: "advanced",
       label: "Advanced",
+      icon: SlidersHorizontal,
       el: <AdvancedSection settings={settings} />,
     },
     {
       id: "danger",
       label: "Danger zone",
+      icon: AlertTriangle,
       el: <DangerZoneSection settings={settings} />,
     },
   ];
@@ -86,9 +105,13 @@ export function SettingsPage() {
         {(settings) => {
           const items = sections(settings);
           return (
-            <div className="lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-10">
+            <div className="lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-8">
               <SettingsNav
-                sections={items.map(({ id, label }) => ({ id, label }))}
+                sections={items.map(({ id, label, icon }) => ({
+                  id,
+                  label,
+                  icon,
+                }))}
               />
               <div className="space-y-8">
                 {items.map(({ id, el }) => (
