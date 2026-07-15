@@ -171,11 +171,14 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     expect(page.get_by_text("Rows are live on Plex")).to_be_visible(timeout=SLOW)
     expect(page.get_by_text("run ok")).to_be_visible()
 
-    # Per-user progress must have STREAMED: a card parked on its last pipeline stage proves the
-    # run.user.stage events arrived. Without SSE the cards would all read "waiting…"/"done".
+    # Per-user progress must have STREAMED: each card ends on its terminal STREAMED detail
+    # ("row built — N picks"), which only renders from the run.user.stage 'done' event. Without SSE
+    # a card falls back to a bare "done" with no counts. Asserting the streamed detail (not a
+    # mid-run stage) is race-free — the earlier "parked on delivering" check flaked because the run
+    # completes and transitions the card to done before the assertion runs.
     for username in ("sarah", "mike", "canary"):
         expect(page.get_by_text(username, exact=True)).to_be_visible()
-    expect(page.get_by_text(re.compile(r"^delivering"))).to_have_count(3)
+    expect(page.get_by_text(re.compile(r"^row built — \d+ picks"))).to_have_count(3)
 
     page.get_by_role("button", name="Finish setup").click()
     expect(page.get_by_role("heading", name="Dashboard")).to_be_visible(timeout=LOAD)
