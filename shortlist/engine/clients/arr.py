@@ -16,6 +16,7 @@ import time
 
 import httpx
 
+from shortlist.engine.clients import http_retry
 from shortlist.engine.models import ArrTarget
 
 
@@ -46,7 +47,7 @@ class _ArrClient:
 
     def _get(self, path: str, **params: object) -> object:
         try:
-            r = httpx.get(f"{self._base}{path}", headers=self._headers(), params=params, timeout=self._timeout)
+            r = http_retry.get(f"{self._base}{path}", headers=self._headers(), params=params, timeout=self._timeout)
         except httpx.HTTPError as e:
             # str(e) can embed the request URL but never the api key (that's a header) — still, keep
             # the message generic so no target detail leaks into events.
@@ -60,7 +61,11 @@ class _ArrClient:
     def _post(self, path: str, body: dict) -> dict:
         self._throttle()
         try:
-            r = httpx.post(f"{self._base}{path}", headers=self._headers(), json=body, timeout=self._timeout)
+            # A POST adds a movie/series — retry only when it provably never landed (connect error) or
+            # was rate-limited (429), never on a read timeout, so we can't double-add a title.
+            r = http_retry.request(
+                "POST", f"{self._base}{path}", headers=self._headers(), json=body, timeout=self._timeout
+            )
         except httpx.HTTPError as e:
             raise ArrError(f"{self.app_name} unreachable ({type(e).__name__})") from e
         if r.status_code == 401:

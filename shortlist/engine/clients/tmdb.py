@@ -6,9 +6,9 @@ import json
 from typing import Protocol
 from urllib.parse import urlencode
 
-import httpx
 from loguru import logger
 
+from shortlist.engine.clients import http_retry
 from shortlist.engine.models import MediaType
 
 API = "https://api.themoviedb.org/3"
@@ -44,7 +44,7 @@ class TmdbClient:
         cache_key = "tmdb:" + path + (("?" + urlencode(sorted(extra.items()))) if extra else "")
         if cached := self._cache.get(cache_key):
             return json.loads(cached)
-        r = httpx.get(
+        r = http_retry.get(
             f"{API}{path}",
             params={"api_key": self._api_key, **extra},
             timeout=self._timeout,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import httpx
 from loguru import logger
 
+from shortlist.engine.clients import http_retry
 from shortlist.engine.models import MediaType
 
 TRAKT_API = "https://api.trakt.tv"
@@ -29,7 +30,7 @@ class TraktClient:
 
     def _get(self, path: str) -> object:
         try:
-            r = httpx.get(f"{TRAKT_API}{path}", headers=self._headers(), timeout=self._timeout)
+            r = http_retry.get(f"{TRAKT_API}{path}", headers=self._headers(), timeout=self._timeout)
         except httpx.HTTPError as e:
             raise TraktError(f"Trakt unreachable ({type(e).__name__})") from e
         if r.status_code in (401, 403):

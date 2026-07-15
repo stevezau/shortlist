@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import httpx
 from loguru import logger
 
+from shortlist.engine.clients import http_retry
 from shortlist.engine.models import UserType
 
 PLEXTV = "https://plex.tv"
@@ -62,19 +63,11 @@ class PlexTvClient:
     def list_users(self) -> list[PlexTvUser]:
         """All shared + Home users with their share filters (the owner is not in this list).
 
-        Retried with backoff on 429 like the write path: a rate-limited READ that raises would
-        abort the privacy sync, and the accounts we hadn't reached yet would keep seeing rows
-        that aren't theirs until some later run got luckier (rule 6).
+        A rate-limited or timed-out READ that raised would abort the privacy sync, and the accounts
+        we hadn't reached yet would keep seeing rows that aren't theirs until some later run got
+        luckier (rule 6) — so it retries transient failures (429, 5xx, timeouts).
         """
-        url = f"{PLEXTV}/api/users"
-        backoff = 5.0
-        for attempt in range(4):
-            r = httpx.get(url, headers=self._headers(), timeout=self._timeout)
-            if r.status_code != 429:
-                break
-            logger.warning("plex.tv 429 on user list (attempt {}); backing off {}s", attempt + 1, backoff)
-            time.sleep(backoff)
-            backoff *= 2
+        r = http_retry.get(f"{PLEXTV}/api/users", headers=self._headers(), timeout=self._timeout)
         r.raise_for_status()
         users = []
         for el in ET.fromstring(r.text):
@@ -109,7 +102,16 @@ class PlexTvClient:
         backoff = 5.0
         for attempt in range(4):
             self._throttle()
-            r = httpx.put(url, params=fields, headers=self._headers(), timeout=self._timeout)
+            try:
+                r = httpx.put(url, params=fields, headers=self._headers(), timeout=self._timeout)
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as e:
+                # The request provably never reached plex.tv, so re-sending the SAME pre-merged filter
+                # is safe (it's a full-value PUT, not a delta — rule 3's merge already happened). A
+                # read timeout is deliberately NOT retried here: the write may have applied.
+                logger.warning("plex.tv unreachable on filter write (attempt {}): {}", attempt + 1, type(e).__name__)
+                time.sleep(backoff)
+                backoff *= 2
+                continue
             if r.status_code in (200, 201):
                 logger.debug("PUT {} {} -> {}", url, sorted(fields), r.status_code)
                 return
@@ -119,10 +121,10 @@ class PlexTvClient:
                 backoff *= 2
                 continue
             raise RuntimeError(f"plex.tv rejected filter update for {plex_account_id}: HTTP {r.status_code}")
-        raise RuntimeError(f"plex.tv still throttling filter update for {plex_account_id} after retries")
+        raise RuntimeError(f"plex.tv still unreachable/throttling filter update for {plex_account_id} after retries")
 
     def home_users(self) -> list[dict]:
-        r = httpx.get(f"{PLEXTV}/api/v2/home/users", headers=self._headers(json=True), timeout=self._timeout)
+        r = http_retry.get(f"{PLEXTV}/api/v2/home/users", headers=self._headers(json=True), timeout=self._timeout)
         r.raise_for_status()
         data = r.json()
         return data.get("users", data if isinstance(data, list) else [])
@@ -138,14 +140,15 @@ class PlexTvClient:
             raise LookupError(f"account {plex_account_id} is not a Home user — T2 needs a Home canary")
         if me.get("protected"):
             raise PermissionError(f"Home user {me.get('title')} is PIN-protected — cannot switch automatically")
-        r = httpx.post(
+        r = http_retry.request(
+            "POST",
             f"{PLEXTV}/api/v2/home/users/{me['uuid']}/switch",
             headers=self._headers(json=True),
             timeout=self._timeout,
         )
         r.raise_for_status()
         switch_token = r.json()["authToken"]
-        r = httpx.get(
+        r = http_retry.get(
             f"{PLEXTV}/api/v2/resources?includeHttps=1",
             headers=self._headers(token=switch_token, json=True),
             timeout=self._timeout,

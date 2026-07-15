@@ -65,6 +65,29 @@ class TestPlexTvClient:
         assert 5.0 in sleeps
 
     @respx.mock
+    def test_connect_error_resends_the_same_merged_filter(self, monkeypatch):
+        # A connect error proves the PUT never landed, so re-sending the SAME pre-merged filter is
+        # safe (rule 3: no rebuild) and expected (rule 6: the sync can't strand a user's restriction).
+        sleeps = []
+        monkeypatch.setattr(plextv_mod.time, "sleep", sleeps.append)
+        route = respx.put("https://plex.tv/api/users/100")
+        route.side_effect = [httpx.ConnectError("never landed"), httpx.Response(200)]
+        self._client().update_user_filters(100, {"filterMovies": "label!=Shortlist_a"})
+        assert len(route.calls) == 2, "a connect error is retried"
+        assert route.calls.last.request.url.params["filterMovies"] == "label!=Shortlist_a", "byte-identical resend"
+        assert sleeps, "backoff ran before the retry"
+
+    @respx.mock
+    def test_read_timeout_on_filter_write_is_not_retried(self):
+        # A read timeout MAY mean the write applied server-side; retrying could double-apply a
+        # restriction, so it must propagate on the first attempt (the double-apply guard).
+        route = respx.put("https://plex.tv/api/users/100")
+        route.side_effect = httpx.ReadTimeout("maybe applied")
+        with pytest.raises(httpx.ReadTimeout):
+            self._client().update_user_filters(100, {"filterMovies": "x=y"})
+        assert len(route.calls) == 1, "no retry on a read timeout for a write"
+
+    @respx.mock
     def test_non_429_error_raises_without_retry(self):
         respx.put("https://plex.tv/api/users/100").mock(return_value=httpx.Response(403))
         with pytest.raises(RuntimeError, match="403"):

@@ -11,6 +11,8 @@ from __future__ import annotations
 import httpx
 from loguru import logger
 
+from shortlist.engine.clients import http_retry
+
 API = "https://www.omdbapi.com/"
 
 
@@ -27,7 +29,7 @@ class OmdbClient:
         exception or log (plex-safety rule 9).
         """
         try:
-            r = httpx.get(API, params={"apikey": self._api_key, "i": imdb_id}, timeout=self._timeout)
+            r = http_retry.get(API, params={"apikey": self._api_key, "i": imdb_id}, timeout=self._timeout)
         except httpx.HTTPError as e:
             logger.warning("OMDb unreachable for {}: {}", imdb_id, type(e).__name__)
             return None
@@ -48,7 +50,7 @@ class OmdbClient:
 
     def ping(self) -> str:
         """A tiny lookup for the settings 'Test' button; raises on a bad key."""
-        r = httpx.get(API, params={"apikey": self._api_key, "i": "tt0111161"}, timeout=self._timeout)
+        r = http_retry.get(API, params={"apikey": self._api_key, "i": "tt0111161"}, timeout=self._timeout)
         data = r.json() if r.status_code == 200 else {}
         if data.get("Response") == "True":
             return "OMDb key works"

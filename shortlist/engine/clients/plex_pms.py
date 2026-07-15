@@ -9,12 +9,15 @@ Plex quirks encoded here (all live-verified in Phase 0, 2026-07-12):
 
 from __future__ import annotations
 
-import httpx
+import requests
 from loguru import logger
 from plexapi.collection import Collection
 from plexapi.library import LibrarySection
 from plexapi.server import PlexServer
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
+from shortlist.engine.clients import http_retry
 from shortlist.engine.models import MediaType, OwnedRow
 
 # Label restrictions only apply on Home/Recommended/Related from this PMS build (PM-5174).
@@ -35,11 +38,36 @@ def _tmdb_guid(item) -> int | None:
     return None
 
 
+def _retrying_session() -> requests.Session:
+    """A requests session that retries transient PMS failures (read/connect timeouts, 429, 5xx).
+
+    plexapi talks to the PMS over ``requests``; without this a single slow response fails the whole
+    run (SFLIX run 3 died on one 30s read timeout). Only idempotent methods are retried, so a
+    collection create/label (POST/PUT) is never repeated — just the reads that dominate a run.
+    """
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        status=3,
+        backoff_factor=1.5,  # waits ~0s, 1.5s, 3s between tries
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset({"GET", "HEAD", "OPTIONS"}),
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    session = requests.Session()
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
 class PlexClient:
     """PMS operations, restricted to collections Shortlist owns (label-gated)."""
 
     def __init__(self, base_url: str, token: str, *, timeout: int = 30):
-        self._server = PlexServer(base_url, token, timeout=timeout)
+        self._server = PlexServer(base_url, token, session=_retrying_session(), timeout=timeout)
 
     @property
     def machine_id(self) -> str:
@@ -258,7 +286,7 @@ class PlexClient:
 
     def user_hubs(self, canary_token: str, path: str = "/hubs") -> list[dict]:
         """Fetch hubs AS another user (T2). Uses the canary's server token, not the owner's."""
-        r = httpx.get(
+        r = http_retry.get(
             self._server.url(path, includeToken=False),
             headers={"X-Plex-Token": canary_token, "Accept": "application/json"},
             timeout=30,

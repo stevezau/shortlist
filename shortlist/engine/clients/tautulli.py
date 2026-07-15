@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import httpx
 from loguru import logger
+
+from shortlist.engine.clients import http_retry
 
 
 class TautulliClient:
@@ -13,7 +14,7 @@ class TautulliClient:
         self._timeout = timeout
 
     def _cmd(self, cmd: str, **params) -> dict:
-        r = httpx.get(
+        r = http_retry.get(
             f"{self._base_url}/api/v2",
             params={"apikey": self._api_key, "cmd": cmd, **params},
             timeout=self._timeout,
