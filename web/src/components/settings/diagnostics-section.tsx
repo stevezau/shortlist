@@ -14,7 +14,7 @@ export function DiagnosticsSection({ settings }: { settings: Settings }) {
   const level = (
     LEVELS.includes(settings["log.level"] as Level)
       ? settings["log.level"]
-      : "INFO"
+      : "DEBUG"
   ) as Level;
   const concurrency = String(
     (settings["run.concurrency"] as number | undefined) ?? 4,

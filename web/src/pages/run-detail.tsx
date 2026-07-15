@@ -440,10 +440,6 @@ export function RunDetailPage() {
                 </p>
               </header>
 
-              {(liveLog.length > 0 || !run.finished_at) && (
-                <ActivityLog entries={liveLog} running={!run.finished_at} />
-              )}
-
               {run.users.length === 0 ? (
                 <EmptyState
                   title={
@@ -454,7 +450,7 @@ export function RunDetailPage() {
                   hint={
                     run.finished_at
                       ? "This run didn't process any users."
-                      : "Watch the activity log above for live progress; each user's picks land here when they finish."
+                      : "Each user's picks land here when they finish; the activity log below shows live progress."
                   }
                 />
               ) : (
@@ -517,6 +513,10 @@ export function RunDetailPage() {
                     </div>
                   );
                 })()
+              )}
+
+              {(liveLog.length > 0 || !run.finished_at) && (
+                <ActivityLog entries={liveLog} running={!run.finished_at} />
               )}
             </div>
           )}

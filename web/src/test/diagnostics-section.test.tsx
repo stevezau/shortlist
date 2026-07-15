@@ -28,18 +28,18 @@ function renderSection(settings: Settings) {
 describe("DiagnosticsSection", () => {
   beforeEach(() => putSettings.mockClear());
 
-  it("marks the saved level active and defaults an unset level to INFO", () => {
-    renderSection({ "log.level": "DEBUG" });
+  it("marks the saved level active and defaults an unset level to DEBUG", () => {
+    renderSection({ "log.level": "TRACE" });
     expect(
       screen
-        .getByRole("button", { name: "DEBUG" })
+        .getByRole("button", { name: "TRACE" })
         .getAttribute("aria-pressed"),
     ).toBe("true");
 
     renderSection({});
-    // Two INFO buttons now on screen (one per render); the second render's is unset → INFO active.
-    const info = screen.getAllByRole("button", { name: "INFO" });
-    expect(info.some((b) => b.getAttribute("aria-pressed") === "true")).toBe(
+    // Two DEBUG buttons now on screen (one per render); the second render's is unset → DEBUG active.
+    const debug = screen.getAllByRole("button", { name: "DEBUG" });
+    expect(debug.some((b) => b.getAttribute("aria-pressed") === "true")).toBe(
       true,
     );
   });

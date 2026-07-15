@@ -63,9 +63,11 @@ DEFAULTS: dict[str, Any] = {
     # and plex.tv write stays strictly serial. 1 = fully sequential; higher = faster big runs at the
     # cost of more concurrent load on Plex + the AI provider. 4 is a safe default.
     "run.concurrency": 4,
-    # Console/file log verbosity for the container. DEBUG surfaces per-source candidate counts, AI
-    # request/response, cache hits and throttle waits; TRACE adds the full prompts. Live-changeable.
-    "log.level": "INFO",
+    # Console/file log verbosity for the container. DEBUG (the default, so `docker logs` narrates a
+    # run in full out of the box) surfaces per-source candidate counts, AI request/response with
+    # tokens+latency, HTTP call timing, cache hits and throttle waits; TRACE adds the full prompts;
+    # INFO trims to the stage narration. Live-changeable in Settings → Diagnostics.
+    "log.level": "DEBUG",
     "paused_all": False,  # Danger zone: stop all scheduled + manual runs without disabling users
     "setup.completed": False,
     "setup.step": 0,
