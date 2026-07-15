@@ -8,6 +8,7 @@ separate so the run service is only about orchestration (gate, execute, persist)
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 
 from loguru import logger
@@ -43,6 +44,8 @@ from shortlist.server.db.models import (
     PickRow,
     RequestCandidate,
     User,
+    iso_utc,
+    utcnow,
 )
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
@@ -56,7 +59,14 @@ class ContextBuilder:
         self._secrets = secrets
         self._bus = bus
 
-    def build(self, *, dry_run: bool, loop: asyncio.AbstractEventLoop | None = None) -> EngineContext:
+    def build(
+        self,
+        *,
+        dry_run: bool,
+        loop: asyncio.AbstractEventLoop | None = None,
+        run_id: int | None = None,
+        log_sink: Callable[[dict], None] | None = None,
+    ) -> EngineContext:
         with self._sessions() as session:
             store = SettingsStore(session, self._secrets)
             plex_url = store.get("plex.url")
@@ -104,10 +114,13 @@ class ContextBuilder:
             known_slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
 
         def progress(slug: str, stage: str, counts: dict) -> None:
+            # Runs in the engine's executor thread. One entry both STREAMS (SSE, live) and, via
+            # log_sink, lands in the run's in-memory activity log so a page reload can replay it.
+            entry = {"ts": iso_utc(utcnow()), "run_id": run_id, "user": slug, "stage": stage, "counts": counts}
+            if log_sink is not None:
+                log_sink(entry)
             if loop is not None:
-                loop.call_soon_threadsafe(
-                    self._bus.publish, "run.user.stage", {"user": slug, "stage": stage, "counts": counts}
-                )
+                loop.call_soon_threadsafe(self._bus.publish, "run.user.stage", entry)
 
         return EngineContext(
             config=config,

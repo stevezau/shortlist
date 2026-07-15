@@ -397,6 +397,19 @@ export interface RunUserStageEvent {
   user: string;
   stage: string;
   counts: Record<string, number>;
+  /** Present on run-scoped stage events; lets a run page ignore other runs' events. */
+  run_id?: number | null;
+  /** ISO timestamp the server stamped the stage, when available. */
+  ts?: string | null;
+}
+
+/** One line of a run's activity log (GET /api/runs/{id}/log + the SSE stage stream). */
+export interface RunLogEntry {
+  ts?: string | null;
+  run_id?: number | null;
+  user: string;
+  stage: string;
+  counts: Record<string, number>;
 }
 
 /** Event `run.finished`. */

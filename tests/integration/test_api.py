@@ -182,6 +182,12 @@ class TestRunsApi:
     def test_unknown_run_404(self, client: TestClient):
         assert client.get("/api/runs/424242").status_code == 404
 
+    def test_run_log_endpoint_returns_a_list(self, client: TestClient):
+        # A run whose process never buffered a log returns an empty list, not a 404 — the page seeds
+        # its activity feed from this and tops it up over SSE.
+        r = client.get("/api/runs/424242/log")
+        assert r.status_code == 200 and r.json() == []
+
 
 class TestSettingsValidation:
     """PUT /api/settings validated the KEY but never the VALUE, so any non-UI client could push a

@@ -9,6 +9,7 @@ config, profiles) lives in ``context_builder.ContextBuilder``; this module is on
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -52,11 +53,36 @@ class RunService:
         self._ctx = ContextBuilder(session_factory, secret_box, bus)
         self._lock = asyncio.Lock()  # one run at a time; nightly + manual runs must not overlap
         self._tasks: set[asyncio.Task] = set()  # strong refs so in-flight runs aren't GC'd
+        # run_id -> the run's stage activity log, in memory so a page reload can replay it. Bounded
+        # per run and to the last few runs (the per-user RESULTS are the durable record; this is the
+        # live/recent debugging feed). Lost on restart, which is fine — it's not an audit trail.
+        self._run_logs: OrderedDict[int, deque[dict]] = OrderedDict()
+        self._run_log_runs = 10  # keep the activity log for this many most-recent runs
+
+    def _new_run_log(self, run_id: int) -> Callable[[dict], None]:
+        """Start (or reset) a run's activity buffer and return an append sink for the progress hook."""
+        log: deque[dict] = deque(maxlen=2000)
+        self._run_logs[run_id] = log
+        self._run_logs.move_to_end(run_id)
+        while len(self._run_logs) > self._run_log_runs:
+            self._run_logs.popitem(last=False)
+        return log.append
+
+    def run_log(self, run_id: int) -> list[dict]:
+        """The in-memory stage activity log for a run (empty if evicted or never run this process)."""
+        return list(self._run_logs.get(run_id, ()))
 
     # -- context assembly (delegated to ContextBuilder) ----------------------------------
 
-    def build_context(self, *, dry_run: bool, loop: asyncio.AbstractEventLoop | None = None) -> EngineContext:
-        return self._ctx.build(dry_run=dry_run, loop=loop)
+    def build_context(
+        self,
+        *,
+        dry_run: bool,
+        loop: asyncio.AbstractEventLoop | None = None,
+        run_id: int | None = None,
+        log_sink: Callable[[dict], None] | None = None,
+    ) -> EngineContext:
+        return self._ctx.build(dry_run=dry_run, loop=loop, run_id=run_id, log_sink=log_sink)
 
     def build_requests_context(self):
         """Requests config + TMDB client for the approval inbox's manual send — no Plex/LLM I/O."""
@@ -199,7 +225,7 @@ class RunService:
                 session.commit()
                 profiles = self.enabled_profiles(session, user_ids)
             try:
-                ctx = self.build_context(dry_run=dry_run, loop=loop)
+                ctx = self.build_context(dry_run=dry_run, loop=loop, run_id=run_id, log_sink=self._new_run_log(run_id))
                 report = await loop.run_in_executor(None, engine_run, ctx, profiles)
                 self._persist_report(run_id, report)
                 # The engine filled each profile's history in place, so this is the one moment we hold

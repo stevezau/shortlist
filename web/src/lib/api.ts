@@ -20,6 +20,7 @@ import type {
   Run,
   RunCreated,
   RunDetail,
+  RunLogEntry,
   RunRequest,
   RowOverridePatch,
   Session,
@@ -200,6 +201,9 @@ export const api = {
   getRuns: (): Promise<Run[]> => request("/api/runs"),
 
   getRun: (id: number): Promise<RunDetail> => request(`/api/runs/${id}`),
+
+  getRunLog: (id: number): Promise<RunLogEntry[]> =>
+    request(`/api/runs/${id}/log`),
 
   startRun: (body: RunRequest = {}): Promise<RunCreated> =>
     request("/api/runs", { method: "POST", body: JSON.stringify(body) }),

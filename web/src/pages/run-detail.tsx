@@ -1,6 +1,6 @@
-import { useQueryClient } from "@tanstack/react-query";
-import { Check, Copy } from "lucide-react";
-import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Copy, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
@@ -11,16 +11,91 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatDate, formatDuration, runStatusVariant } from "@/lib/format";
 import { githubIssueSnippet } from "@/lib/github";
 import { queryKeys, useRun, useUsers } from "@/lib/queries";
+import { mergeRunLog } from "@/lib/run-log";
+import { STAGE_LABELS } from "@/lib/run-stages";
 import { useSSE } from "@/lib/sse";
 import type {
   RunDetail,
   RunLibraryBreakdown,
+  RunLogEntry,
   RunUserResult,
+  RunUserStageEvent,
 } from "@/lib/types";
+
+/** A run's live activity log: seeded from the server buffer, topped up by the SSE stage stream. */
+function ActivityLog({
+  entries,
+  running,
+}: {
+  entries: RunLogEntry[];
+  running: boolean;
+}) {
+  const endRef = useRef<HTMLDivElement>(null);
+  // Follow the tail as new lines arrive, but don't yank the page for reduced-motion users.
+  useEffect(() => {
+    const reduce = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    )?.matches;
+    endRef.current?.scrollIntoView?.({
+      block: "nearest",
+      behavior: reduce ? "auto" : "smooth",
+    });
+  }, [entries.length]);
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+        <CardTitle className="text-base">Activity</CardTitle>
+        {running && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            live
+          </span>
+        )}
+      </CardHeader>
+      <CardContent>
+        <div
+          className="max-h-72 space-y-1 overflow-y-auto rounded-md bg-muted/40 p-3 font-mono text-xs"
+          role="log"
+          aria-live="polite"
+          aria-label="Run activity log"
+        >
+          {entries.length === 0 ? (
+            <p className="text-muted-foreground">
+              {running ? "Starting…" : "No activity recorded for this run."}
+            </p>
+          ) : (
+            entries.map((entry, i) => <LogLine key={i} entry={entry} />)
+          )}
+          <div ref={endRef} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LogLine({ entry }: { entry: RunLogEntry }) {
+  const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
+  const label = STAGE_LABELS[entry.stage] ?? entry.stage;
+  const detail = Object.entries(entry.counts ?? {})
+    .map(([k, v]) => `${v} ${k}`)
+    .join(", ");
+  return (
+    <div className="flex gap-2">
+      {time && <span className="shrink-0 text-muted-foreground">{time}</span>}
+      <span className="shrink-0 font-medium">{entry.user}</span>
+      <span className="text-muted-foreground">
+        {label}
+        {detail ? ` · ${detail}` : ""}
+      </span>
+    </div>
+  );
+}
 
 function CopyForGitHubButton({
   run,
@@ -265,11 +340,34 @@ export function RunDetailPage() {
     (usersQuery.data ?? []).map((user) => [user.slug, user.id]),
   );
 
-  // Keep an in-flight run's page live: refetch on every stage/finish event.
-  // run.user.stage carries no run_id, so any stage event refreshes this page
-  // (only the newest run can be in flight anyway).
+  // The activity log: seed from the server's in-memory buffer, then top it up live from the SSE
+  // stage stream. Held in a ref+state so appends don't depend on stale closures.
+  const logQuery = useQuery({
+    queryKey: ["run-log", runId],
+    queryFn: () => api.getRunLog(runId),
+    enabled: Number.isFinite(runId),
+  });
+  const [liveLog, setLiveLog] = useState<RunLogEntry[]>([]);
+  // Seed from the server snapshot; mergeRunLog dedups, so re-merging the same data is a no-op and an
+  // event captured by BOTH the snapshot and the live stream is never doubled.
+  useEffect(() => {
+    if (logQuery.data) {
+      setLiveLog((prev) => mergeRunLog(prev, logQuery.data, runId));
+    }
+  }, [logQuery.data, runId]);
+
+  const appendStage = useCallback(
+    (event: RunUserStageEvent) => {
+      setLiveLog((prev) => mergeRunLog(prev, [event], runId));
+    },
+    [runId],
+  );
+
+  // Keep an in-flight run's page live: refetch on every stage/finish event, and append the stage to
+  // the activity log so it scrolls in real time.
   useSSE({
-    onRunUserStage: () => {
+    onRunUserStage: (event) => {
+      appendStage(event);
       void queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) });
     },
     onRunFinished: (event) => {
@@ -329,10 +427,22 @@ export function RunDetailPage() {
                 </p>
               </header>
 
+              {(liveLog.length > 0 || !run.finished_at) && (
+                <ActivityLog entries={liveLog} running={!run.finished_at} />
+              )}
+
               {run.users.length === 0 ? (
                 <EmptyState
-                  title="No per-user results yet"
-                  hint="This run hasn't processed any users so far. Results appear here as each user finishes."
+                  title={
+                    run.finished_at
+                      ? "No per-user results"
+                      : "Working — results appear as each user finishes"
+                  }
+                  hint={
+                    run.finished_at
+                      ? "This run didn't process any users."
+                      : "Watch the activity log above for live progress; each user's picks land here when they finish."
+                  }
                 />
               ) : (
                 <div className="space-y-4">

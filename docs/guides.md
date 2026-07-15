@@ -6,9 +6,10 @@
   their current row, hit rate, and a Run now button. Live-updates during runs.
 - **Users** — enable/disable, pause, a request tag, per-row overrides (size, curation style,
   mute), and each user's restriction status.
-- **Runs** — every run with per-user diffs grouped by row then library ("added X to Movies, Y to
-  TV Shows"), each library showing its own ranked picks; errors as first-class rows with
-  copy-for-GitHub buttons, LLM token usage.
+- **Runs** — a live **Activity** log streams each user through history → candidates → curating →
+  delivering as the run happens (seeded from the server so a reload replays it); per-user diffs
+  grouped by row then library ("added X to Movies, Y to TV Shows"), each library showing its own
+  ranked picks; errors as first-class rows with copy-for-GitHub buttons, LLM token usage.
 - **Settings** — every connection re-testable in place; **Recommendations** (which candidate
   sources to pool); curation style; row defaults; schedule editor (cron for power users); the
   Danger Zone.

@@ -424,3 +424,20 @@ class TestSnapshotsForAccountsShortlistDoesNotKnow:
             slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
         assert slugs[111] != slugs[222], "two accounts must never share a slug — the label is built from it"
         assert store.get(111) is not None and store.get(222) is not None
+
+
+class TestRunLogBuffer:
+    """The in-memory run activity log: append via the progress sink, replay, and bounded eviction."""
+
+    def test_appends_replays_and_evicts_old_runs(self, sessions, tmp_path):
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        sink = service._new_run_log(1)
+        sink({"stage": "history", "user": "sarah"})
+        sink({"stage": "candidates", "user": "sarah"})
+        assert [e["stage"] for e in service.run_log(1)] == ["history", "candidates"]
+
+        # Only the most-recent runs' logs are kept in memory; older ones are evicted.
+        for run_id in range(2, 2 + service._run_log_runs + 1):
+            service._new_run_log(run_id)
+        assert service.run_log(1) == [], "the oldest run's log is evicted once the cap is exceeded"
+        assert service.run_log(999_999) == [], "a run that never ran this process has an empty log"

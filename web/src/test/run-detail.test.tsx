@@ -7,16 +7,21 @@ import type * as ApiModule from "@/lib/api";
 import { RunDetailPage } from "@/pages/run-detail";
 import type { RunDetail } from "@/lib/types";
 
-const { getRun, getUsers } = vi.hoisted(() => ({
+const { getRun, getUsers, getRunLog } = vi.hoisted(() => ({
   getRun: vi.fn(),
   getUsers: vi.fn(),
+  getRunLog: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
   return {
     ...actual,
-    api: { getRun: (id: number) => getRun(id), getUsers: () => getUsers() },
+    api: {
+      getRun: (id: number) => getRun(id),
+      getUsers: () => getUsers(),
+      getRunLog: (id: number) => getRunLog(id),
+    },
   };
 });
 
@@ -73,7 +78,9 @@ describe("RunDetailPage — grouped by library", () => {
   beforeEach(() => {
     getRun.mockReset();
     getUsers.mockReset();
+    getRunLog.mockReset();
     getUsers.mockResolvedValue([]);
+    getRunLog.mockResolvedValue([]);
   });
 
   it("shows each library as its own group with its own picks, not one merged list", async () => {
@@ -167,6 +174,25 @@ describe("RunDetailPage — grouped by library", () => {
     // Each row shows as its own group header — not collapsed into one.
     expect(await screen.findByText("✨ Picked for You")).toBeInTheDocument();
     expect(screen.getByText("💎 Hidden Gems")).toBeInTheDocument();
+  });
+
+  it("shows the run's activity log, seeded from the server buffer", async () => {
+    getRun.mockResolvedValue(run([]));
+    getRunLog.mockResolvedValue([
+      {
+        ts: "2026-07-15T04:18:05Z",
+        run_id: 2,
+        user: "moohouse",
+        stage: "curating",
+        counts: { candidates: 120 },
+      },
+    ]);
+
+    renderDetail();
+
+    // The stage renders with its human label + the count detail.
+    expect(await screen.findByText(/curating with AI/)).toBeInTheDocument();
+    expect(screen.getByText(/120 candidates/)).toBeInTheDocument();
   });
 
   it("falls back to the merged list for legacy runs with no breakdown", async () => {

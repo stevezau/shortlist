@@ -66,6 +66,16 @@ async def get_run(run_id: int, request: Request) -> dict:
         return {**_run_summary(run), "users": users}
 
 
+@router.get("/{run_id}/log")
+async def get_run_log(run_id: int, request: Request) -> list[dict]:
+    """The run's stage activity log (history -> candidates -> curating -> delivering, per user).
+
+    In-memory and live: it seeds the run page's activity feed on load and is topped up by the SSE
+    `run.user.stage` stream. Empty for a run whose process has since restarted — the per-user results
+    are the durable record; this is the live/recent debugging feed."""
+    return request.app.state.run_service.run_log(run_id)
+
+
 @router.post("", status_code=202)
 async def trigger_run(body: RunRequest, request: Request) -> dict:
     run_id = await request.app.state.run_service.start_run(
