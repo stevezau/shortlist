@@ -38,7 +38,8 @@ def _connect_plex(page: Page, pms_url: str) -> None:
     already tried from where Shortlist actually runs.
     """
     expect(page.get_by_role("heading", name="Welcome")).to_be_visible(timeout=LOAD)
-    page.get_by_role("button", name="Connect Plex").click()
+    # The welcome CTA just advances to the sign-in step; it must NOT pre-empt it with "Connect Plex".
+    page.get_by_role("button", name="Get started").click()
     expect(page.get_by_role("heading", name="Connect Plex")).to_be_visible()
 
     # THE sign-in — exactly one, and it happens here, inside the step that needs it.
