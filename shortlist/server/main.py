@@ -15,6 +15,7 @@ from loguru import logger
 from starlette.responses import FileResponse
 
 import shortlist
+from shortlist.logging_config import configure_logging
 from shortlist.server import auth
 from shortlist.server.api import collections, events, privacy, requests, runs, setup, system, user_rows, users
 from shortlist.server.api import settings as settings_api
@@ -87,7 +88,13 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         app.state.holds_secrets = holds_secrets
 
         with sessions() as session:
-            SettingsStore(session, secret_box).seed_from_env(dict(os.environ))
+            store = SettingsStore(session, secret_box)
+            store.seed_from_env(dict(os.environ))
+            # Configure logging from the DB setting (seeded from LOG_LEVEL on first boot). The
+            # rotating file sink under /config/logs always captures DEBUG, so a quiet console still
+            # leaves a full on-disk trail to diagnose a run after the fact.
+            (config_dir / "logs").mkdir(parents=True, exist_ok=True)
+            configure_logging(store.get("log.level"), log_file=str(config_dir / "logs" / "shortlist.log"))
             stale = session.query(Run).filter(Run.status.in_(("queued", "running"))).all()
             for run in stale:
                 run.status = "aborted"

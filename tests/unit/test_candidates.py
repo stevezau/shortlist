@@ -54,6 +54,28 @@ class TestGatherCandidates:
         assert shared.year == 2020
         assert len(pool) == 3
 
+    def test_logs_a_per_source_breakdown(self, mock_tmdb):
+        # The run log should show WHERE candidates came from — a title found by two sources counts
+        # under each, so the parts can exceed the unique total.
+        from loguru import logger
+
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
+            {"id": 42, "title": "Both", "genre_ids": [], "vote_average": 8.0},
+        ]
+        trakt = _FakeTrakt([{"tmdb_id": 42, "title": "Both", "year": 2020, "genres": []}])
+
+        lines: list[str] = []
+        sink = logger.add(lines.append, level="DEBUG", format="{message}")
+        try:
+            gather_candidates(mock_tmdb, [seed(1)], sources=["tmdb_similar", "trakt"], trakt=trakt)
+        finally:
+            logger.remove(sink)
+
+        breakdown = next(line for line in lines if line.startswith("candidates ·"))
+        assert "tmdb_similar 1" in breakdown
+        assert "trakt 1" in breakdown
+        assert "1 unique" in breakdown
+
     def test_genre_map_fetched_once_per_media_type(self, mock_tmdb):
         gather_candidates(mock_tmdb, [seed(1), seed(2), seed(3)])
         assert mock_tmdb.genre_names.call_count == 1

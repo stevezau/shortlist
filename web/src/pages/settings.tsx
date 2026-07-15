@@ -6,6 +6,7 @@ import { ConnectionsSection } from "@/components/settings/connections-section";
 import { CurationSection } from "@/components/settings/curation-section";
 import { DangerZoneSection } from "@/components/settings/danger-zone-section";
 import { DefaultsSection } from "@/components/settings/defaults-section";
+import { DiagnosticsSection } from "@/components/settings/diagnostics-section";
 import { PrivacySection } from "@/components/settings/privacy-section";
 import { RecommendationsSection } from "@/components/settings/recommendations-section";
 import { RequestsSection } from "@/components/settings/requests-section";
@@ -39,6 +40,7 @@ export function SettingsPage() {
             <ScheduleSection settings={settings} />
             <RequestsSection settings={settings} />
             <PrivacySection />
+            <DiagnosticsSection settings={settings} />
             <DangerZoneSection settings={settings} />
           </div>
         )}

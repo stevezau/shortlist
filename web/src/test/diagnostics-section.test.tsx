@@ -1,0 +1,54 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { DiagnosticsSection } from "@/components/settings/diagnostics-section";
+import type { Settings } from "@/lib/types";
+
+const { putSettings } = vi.hoisted(() => ({
+  putSettings: vi.fn((values: Settings) => Promise.resolve(values)),
+}));
+
+vi.mock("@/lib/api", () => ({
+  api: { putSettings: (values: Settings) => putSettings(values) },
+}));
+
+function renderSection(settings: Settings) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <DiagnosticsSection settings={settings} />
+    </QueryClientProvider>,
+  );
+}
+
+describe("DiagnosticsSection", () => {
+  beforeEach(() => putSettings.mockClear());
+
+  it("marks the saved level active and defaults an unset level to INFO", () => {
+    renderSection({ "log.level": "DEBUG" });
+    expect(
+      screen
+        .getByRole("button", { name: "DEBUG" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    renderSection({});
+    // Two INFO buttons now on screen (one per render); the second render's is unset → INFO active.
+    const info = screen.getAllByRole("button", { name: "INFO" });
+    expect(info.some((b) => b.getAttribute("aria-pressed") === "true")).toBe(
+      true,
+    );
+  });
+
+  it("auto-saves the chosen level (no Save button)", async () => {
+    renderSection({ "log.level": "INFO" });
+    await userEvent.click(screen.getByRole("button", { name: "TRACE" }));
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith({ "log.level": "TRACE" }),
+    );
+  });
+});

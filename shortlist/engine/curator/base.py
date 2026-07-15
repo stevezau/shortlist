@@ -48,6 +48,24 @@ _SHARED_SKELETON = (
 )
 
 
+def log_curate_request(provider: str, model: str, system: str, user: str, n_candidates: int, k: int) -> None:
+    """Observe one outgoing curate call. Prompts are titles+years only (no PII, no secrets — the
+    api_key lives inside the SDK client and is never passed here), so the full text is safe to log.
+    DEBUG shows the shape; TRACE adds the full prompt for anyone debugging the recipe itself.
+    """
+    logger.debug("curate → {} · {} · {} candidates → top {}", provider, model, n_candidates, k)
+    logger.trace("curate prompt · {}\n── system ──\n{}\n── user ──\n{}", provider, system, user)
+
+
+def log_curate_response(
+    provider: str, model: str, n_picks: int, tokens: int, elapsed_s: float, raw: str | None = None
+) -> None:
+    """Observe one curate reply: pick count, token spend, and latency at DEBUG; raw text at TRACE."""
+    logger.debug("curate ← {} · {} · {} picks · {} tokens · {:.2f}s", provider, model, n_picks, tokens, elapsed_s)
+    if raw is not None:
+        logger.trace("curate reply · {}\n{}", provider, raw[:4000])
+
+
 class _SafeDict(dict):
     """format_map helper: unknown ``{placeholders}`` render empty instead of raising KeyError."""
 

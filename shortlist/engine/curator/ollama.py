@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import json
+import time
 
 import httpx
 
-from shortlist.engine.curator.base import CuratorError, build_prompts, picks_schema, validate_picks
+from shortlist.engine.curator.base import (
+    CuratorError,
+    build_prompts,
+    log_curate_request,
+    log_curate_response,
+    picks_schema,
+    validate_picks,
+)
 from shortlist.engine.models import Candidate, Pick, UserProfile
 
 DEFAULT_MODEL = "llama3.1"
@@ -28,6 +36,8 @@ class OllamaCurator:
 
     def curate(self, profile: UserProfile, candidates: list[Candidate], k: int) -> list[Pick]:
         system, user = build_prompts(profile, candidates, k)
+        log_curate_request(self.name, self._model, system, user, len(candidates), k)
+        started = time.monotonic()
         try:
             r = httpx.post(
                 f"{self._base_url}/api/chat",
@@ -47,8 +57,11 @@ class OllamaCurator:
             raise CuratorError(f"Ollama error: {e}") from e
         body = r.json()
         self.last_tokens = (body.get("prompt_eval_count") or 0) + (body.get("eval_count") or 0)
+        text = body.get("message", {}).get("content") or ""
         try:
-            data = json.loads(body.get("message", {}).get("content") or "")
+            data = json.loads(text)
         except json.JSONDecodeError as e:
             raise CuratorError("Ollama returned unparseable JSON") from e
-        return validate_picks(data.get("picks", []), candidates, k, self.name)
+        picks = validate_picks(data.get("picks", []), candidates, k, self.name)
+        log_curate_response(self.name, self._model, len(picks), self.last_tokens, time.monotonic() - started, text)
+        return picks

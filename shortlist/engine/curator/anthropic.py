@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from loguru import logger
 
@@ -10,6 +11,8 @@ from shortlist.engine.curator.base import (
     CuratorError,
     build_prompts,
     build_web_prompt,
+    log_curate_request,
+    log_curate_response,
     parse_web_titles,
     picks_schema,
     validate_picks,
@@ -44,6 +47,8 @@ class AnthropicCurator:
         import anthropic
 
         system, user = build_prompts(profile, candidates, k)
+        log_curate_request(self.name, self._model, system, user, len(candidates), k)
+        started = time.monotonic()
         try:
             response = self._client.messages.create(
                 model=self._model,
@@ -65,6 +70,11 @@ class AnthropicCurator:
         if response.stop_reason == "max_tokens":
             logger.warning("anthropic: output truncated at max_tokens; picks may be partial")
         text = next((b.text for b in response.content if b.type == "text"), "")
+        picks = self._parse(text, candidates, k)
+        log_curate_response(self.name, self._model, len(picks), self.last_tokens, time.monotonic() - started, text)
+        return picks
+
+    def _parse(self, text: str, candidates: list[Candidate], k: int) -> list[Pick]:
         try:
             data = json.loads(text)
         except json.JSONDecodeError as e:

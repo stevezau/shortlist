@@ -62,6 +62,7 @@ def _send(
 ) -> httpx.Response:
     host = _host(url)
     for attempt in range(1, attempts + 1):
+        started = time.monotonic()
         try:
             response = httpx.request(method, url, **kwargs)
         except retry_exc as exc:
@@ -69,6 +70,9 @@ def _send(
                 raise
             _wait(_backoff(attempt, base_backoff, max_backoff), method, host, type(exc).__name__, attempt, attempts)
             continue
+        # Host + status + latency only (never the URL — its query can carry an api_key, rule 9). This
+        # is the per-call trail that answers "which service was slow tonight" at DEBUG.
+        logger.debug("{} {} → {} in {:.2f}s", method, host, response.status_code, time.monotonic() - started)
         if response.status_code in retry_status and attempt < attempts:
             delay = _retry_after(response) or _backoff(attempt, base_backoff, max_backoff)
             _wait(delay, method, host, f"HTTP {response.status_code}", attempt, attempts)

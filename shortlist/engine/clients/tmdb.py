@@ -43,6 +43,7 @@ class TmdbClient:
         # in their genres must cache separately, and the secret must not sit in a cache key.
         cache_key = "tmdb:" + path + (("?" + urlencode(sorted(extra.items()))) if extra else "")
         if cached := self._cache.get(cache_key):
+            logger.trace("tmdb cache hit · {}", path)
             return json.loads(cached)
         r = http_retry.get(
             f"{API}{path}",

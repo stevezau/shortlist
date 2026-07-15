@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from loguru import logger
 
@@ -10,6 +11,8 @@ from shortlist.engine.curator.base import (
     CuratorError,
     build_prompts,
     build_web_prompt,
+    log_curate_request,
+    log_curate_response,
     parse_web_titles,
     picks_schema,
     validate_picks,
@@ -43,6 +46,8 @@ class OpenAICurator:
         import openai
 
         system, user = build_prompts(profile, candidates, k)
+        log_curate_request(self.name, self._model, system, user, len(candidates), k)
+        started = time.monotonic()
         try:
             r = self._client.chat.completions.create(
                 model=self._model,
@@ -56,11 +61,14 @@ class OpenAICurator:
             raise CuratorError(f"OpenAI error: {e}") from e
         usage = getattr(r, "usage", None)
         self.last_tokens = (usage.total_tokens or 0) if usage else 0
+        text = r.choices[0].message.content or ""
         try:
-            data = json.loads(r.choices[0].message.content or "")
+            data = json.loads(text)
         except json.JSONDecodeError as e:
             raise CuratorError("OpenAI returned unparseable JSON") from e
-        return validate_picks(data.get("picks", []), candidates, k, self.name)
+        picks = validate_picks(data.get("picks", []), candidates, k, self.name)
+        log_curate_response(self.name, self._model, len(picks), self.last_tokens, time.monotonic() - started, text)
+        return picks
 
     def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
         """Propose up to k titles to watch next via the Responses API web-search tool (``llm_web``).

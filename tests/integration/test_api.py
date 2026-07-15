@@ -227,6 +227,11 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"curator.provider": "bogus"}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"curator.provider": "none"}}).status_code == 200
 
+    def test_log_level_is_validated_and_applied(self, client: TestClient):
+        assert client.put("/api/settings", json={"values": {"log.level": "LOUD"}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"log.level": "DEBUG"}}).status_code == 200
+        assert client.get("/api/settings").json()["log.level"] == "DEBUG"
+
     def test_a_valid_settings_payload_still_saves(self, client: TestClient):
         r = client.put(
             "/api/settings",

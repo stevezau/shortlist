@@ -77,6 +77,7 @@ VALIDATORS = {
     "candidates.sources": _known_sources,
     "recommendations.watched_pct": _bounded_float(0.0, 1.0),
     "recommendations.freshness": _bounded_float(0.0, 1.0),
+    "log.level": _one_of("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"),
     "curator.provider": _one_of("anthropic", "openai", "google", "ollama", "none"),
     "curator.prompt_tone": _one_of("balanced", "warm", "concise", "cinephile", "playful"),
     "requests.rating_source": _one_of("tmdb", "imdb"),
@@ -155,6 +156,12 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
             store.set(key, value)
         if "schedule.cron" in update.values:
             reschedule(request.app, str(update.values["schedule.cron"]))
+        if "log.level" in update.values:
+            # Apply immediately so a live "turn on DEBUG to watch this run" takes effect without a
+            # container restart. The file sink is preserved from boot.
+            from shortlist.logging_config import configure_logging
+
+            configure_logging(str(update.values["log.level"]))
         return store.all_public()
 
 

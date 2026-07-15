@@ -327,6 +327,20 @@ class TestGoogleCurator:
         call = client.models.generate_content.call_args
         assert call.kwargs["config"]["response_json_schema"] == picks_schema()
 
+    def test_applies_the_timeout_to_the_client_in_milliseconds(self, monkeypatch):
+        # Regression: the ctor accepted `timeout` but never passed it, so a stalled Gemini call was
+        # unbounded. google-genai's HttpOptions.timeout is in milliseconds.
+        google_pkg = ModuleType("google")
+        genai = ModuleType("google.genai")
+        genai.Client = MagicMock()
+        google_pkg.genai = genai
+        monkeypatch.setitem(sys.modules, "google", google_pkg)
+        monkeypatch.setitem(sys.modules, "google.genai", genai)
+        from shortlist.engine.curator.google import GoogleCurator
+
+        GoogleCurator(api_key="k", timeout=45.0)
+        assert genai.Client.call_args.kwargs["http_options"] == {"timeout": 45000}
+
     def _client(self, monkeypatch):
         google_pkg = ModuleType("google")
         genai = ModuleType("google.genai")

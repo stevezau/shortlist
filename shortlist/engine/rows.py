@@ -690,6 +690,8 @@ def _shared_row(
         sub = _rotate_for_freshness(sub, k, freshness, ctx.run_day)  # rotate a public row day to day too
         try:
             sec_picks = ctx.curator.curate(agg, sub, k)
+            # Shared-row LLM spend used to vanish — only the per-person path accounted tokens.
+            user_report.llm_tokens += getattr(ctx.curator, "last_tokens", 0)
         except CuratorError:
             sec_picks = NullCurator().curate(agg, sub, k)
         if len(sec_picks) < k:

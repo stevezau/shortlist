@@ -727,6 +727,23 @@ class TestPerRowOverrides:
         assert shared_report.breakdown, "the shared row records a breakdown"
         assert all(e["row_slug"] == "popular" for e in shared_report.breakdown)
 
+    def test_a_shared_row_accounts_its_llm_tokens(self, ctx: EngineContext, mock_plextv):
+        """Shared-row LLM spend used to vanish — only the per-person path accumulated tokens. Each
+        curated library section adds its curator's token count to the shared report."""
+        ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
+        sarah = make_profile("sarah", account_id=100)
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.curator.curate.side_effect = curated_picks
+        ctx.curator.last_tokens = 37  # each curated section reports this
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        shared_report = next(u for u in report.users if u.slug == "shared_popular")
+        sections = len({e["library_key"] for e in shared_report.breakdown})
+        assert shared_report.llm_tokens == 37 * sections, "shared-row tokens sum across curated libraries"
+
     def test_default_watched_cap_excludes_finished_titles(self, ctx: EngineContext, mock_plextv):
         """watched_pct defaults to 0 (all fresh): a title the user has finished, even if it resurfaces
         as a candidate, is never recommended back. Guards the pool_key/pools_for `== 0` branch — an

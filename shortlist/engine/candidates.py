@@ -183,7 +183,12 @@ def gather_candidates(
         detail = "; ".join(f"{source}: {why}" for source, why in sorted(failures.items()))
         raise RuntimeError(f"every candidate source failed — no candidates gathered ({detail})")
 
-    logger.debug("candidate pool: {} unique titles from {} seeds via {}", len(pool), len(seeds), sorted(enabled))
+    # Per-source contribution, so a run's log shows WHERE candidates came from — e.g.
+    # "candidates · tmdb_similar 142, trakt 63, tmdb_discover 40 → 187 unique". A title found by two
+    # sources counts under each (its .sources set), so the parts sum to more than the unique total.
+    by_source = Counter(source for cand in pool.values() for source in cand.sources)
+    breakdown = ", ".join(f"{source} {count}" for source, count in by_source.most_common())
+    logger.debug("candidates · {} → {} unique from {} seeds", breakdown or "none", len(pool), len(seeds))
     return list(pool.values())
 
 

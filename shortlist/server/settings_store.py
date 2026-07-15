@@ -59,6 +59,9 @@ DEFAULTS: dict[str, Any] = {
     # deep for variety). Per-row overridable.
     "recommendations.freshness": 0.0,
     "plextv.throttle_s": 1.0,
+    # Console/file log verbosity for the container. DEBUG surfaces per-source candidate counts, AI
+    # request/response, cache hits and throttle waits; TRACE adds the full prompts. Live-changeable.
+    "log.level": "INFO",
     "paused_all": False,  # Danger zone: stop all scheduled + manual runs without disabling users
     "setup.completed": False,
     "setup.step": 0,
@@ -82,6 +85,7 @@ ENV_SEEDS = {
     "TAUTULLI_URL": "tautulli.url",
     "TAUTULLI_APIKEY": "tautulli.apikey",
     "TMDB_APIKEY": "tmdb.apikey",
+    "LOG_LEVEL": "log.level",
 }
 
 
