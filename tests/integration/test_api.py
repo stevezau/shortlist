@@ -533,6 +533,103 @@ class TestCollectionsApi:
         assert client.delete(f"/api/collections/{cid}").status_code == 204
         assert [c["slug"] for c in client.get("/api/collections").json()] == ["picked"]
 
+    def _fake_plex_ctx(self, monkeypatch, client, *, collections):
+        """Point run_service.build_context at a fake Plex that records deletions."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.models import EngineConfig
+
+        deleted: list[str] = []
+        section = SimpleNamespace(title="Movies")
+        plex = MagicMock()
+        plex.sections.return_value = [section]
+        # Return objects with a .title for each (title, label) pair whose label matches.
+        plex.find_owned_collections.side_effect = lambda s, label: [
+            SimpleNamespace(title=title) for (title, lbl) in collections if lbl == label
+        ]
+        plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append(c.title)
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig())
+        monkeypatch.setattr(client.app.state.run_service, "build_context", lambda **kw: ctx)
+        return deleted
+
+    def test_cleanup_removes_a_shared_rows_collection_by_its_label(self, client: TestClient, monkeypatch):
+        from shortlist.engine.delivery import row_marker
+
+        created = client.post("/api/collections", json={"name": "Popular", "build": "shared"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        deleted = self._fake_plex_ctx(
+            monkeypatch,
+            client,
+            collections=[("🔥 Popular" + row_marker(0), f"shortlist__shared_{slug}")],
+        )
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+        assert r.status_code == 200
+        assert r.json()["removed"] == ["🔥 Popular"]  # marker stripped for the audit
+        assert len(deleted) == 1
+
+    def test_cleanup_dry_run_reports_without_deleting(self, client: TestClient, monkeypatch):
+        from shortlist.engine.delivery import row_marker
+
+        created = client.post("/api/collections", json={"name": "Popular", "build": "shared"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        deleted = self._fake_plex_ctx(
+            monkeypatch, client, collections=[("🔥 Popular" + row_marker(0), f"shortlist__shared_{slug}")]
+        )
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": True})
+        assert r.status_code == 200
+        assert r.json()["removed"] == ["🔥 Popular"] and r.json()["dry_run"] is True
+        assert deleted == []  # nothing actually removed
+
+    def test_cleanup_removes_a_per_person_row_for_each_user_in_the_breakdown(
+        self, client: TestClient, monkeypatch
+    ):
+        """The complex branch: pin each user's collection by the exact title the last run delivered,
+        under that user's own label — and skip a user whose breakdown has no entry for this row."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Run, RunUser, User
+
+        created = client.post("/api/collections", json={"name": "Hidden Gems"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+
+        with client.app.state.sessions() as session:
+            users = session.query(User).order_by(User.id).all()
+            assert len(users) >= 2, "fixture must seed at least two users"
+            u1, u2 = users[0], users[1]
+            u1_slug, u1_acct = u1.slug, u1.plex_account_id
+            u2_slug, u2_acct = u2.slug, u2.plex_account_id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            # Both users got this row last run (only u2's breakdown lacks it below stays skipped);
+            # here BOTH have it, and any third user has none.
+            for uid in (u1.id, u2.id):
+                session.add(
+                    RunUser(
+                        run_id=run.id,
+                        user_id=uid,
+                        status="ok",
+                        breakdown=[{"row_slug": slug, "row_title": "Gems", "library_key": "1"}],
+                    )
+                )
+            session.commit()
+
+        deleted = self._fake_plex_ctx(
+            monkeypatch,
+            client,
+            collections=[
+                ("Gems" + row_marker(u1_acct), f"shortlist_{u1_slug}"),
+                ("Gems" + row_marker(u2_acct), f"shortlist_{u2_slug}"),
+            ],
+        )
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+        assert r.status_code == 200
+        assert set(r.json()["removed"]) == {"Gems"}  # marker stripped; both users' collections
+        assert len(deleted) == 2  # one per user WITH a breakdown entry for this row
+
     def test_shared_collection_with_subset_audience(self, client: TestClient):
         users = client.get("/api/users").json()
         ids = [u["id"] for u in users]

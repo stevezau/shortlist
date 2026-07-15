@@ -1,4 +1,5 @@
-import { Trash2, UserCheck, Users as UsersIcon } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { Eraser, Trash2, UserCheck, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
 
 import { MutationAlert } from "@/components/mutation-alert";
@@ -14,7 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
-import { apiErrorMessage } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 import { audienceSummary, rowOverrides, toInput } from "@/lib/collections";
 import { DEFAULT_ROW_SLUG } from "@/lib/constants";
 import { settingString } from "@/lib/format";
@@ -43,6 +44,14 @@ export function RowCard({
   const libraries = useLibraries();
   const isDefault = collection.slug === DEFAULT_ROW_SLUG;
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  // A dry-run first (what WOULD be removed), then the real removal on confirm.
+  const preview = useMutation({
+    mutationFn: () => api.cleanupCollection(collection.id, true),
+  });
+  const cleanup = useMutation({
+    mutationFn: () => api.cleanupCollection(collection.id, false),
+  });
   // null until the library list actually arrives — a half-loaded card must not label a row's
   // libraries with raw Plex section keys, which mean nothing to the owner.
   const overrides = rowOverrides(
@@ -105,6 +114,20 @@ export function RowCard({
           />
           <Button variant="outline" size="sm" onClick={onEdit}>
             Edit
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              cleanup.reset();
+              preview.reset();
+              setCleanupOpen(true);
+              preview.mutate();
+            }}
+            aria-label={`Remove ${collection.name} from Plex`}
+            title="Remove from Plex"
+          >
+            <Eraser aria-hidden="true" />
           </Button>
           {!isDefault && (
             <Button
@@ -171,6 +194,72 @@ export function RowCard({
             >
               Delete row
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={cleanupOpen}
+        onOpenChange={(open) => {
+          setCleanupOpen(open);
+          if (!open) {
+            preview.reset();
+            cleanup.reset();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove “{collection.name}” from Plex?</DialogTitle>
+            <DialogDescription>
+              Deletes this row’s collections from Plex for everyone who has it.
+              The titles stay in your library and the row’s settings here are
+              kept — it’ll be rebuilt on the next run unless you also turn it
+              off or delete it.
+            </DialogDescription>
+          </DialogHeader>
+          {preview.isPending && (
+            <p className="text-sm text-muted-foreground">Checking Plex…</p>
+          )}
+          {preview.isSuccess && !cleanup.isSuccess && (
+            <p className="text-sm">
+              {preview.data.removed.length === 0
+                ? "Nothing to remove — this row has no collections on Plex right now."
+                : `This will remove ${preview.data.removed.length} collection${
+                    preview.data.removed.length === 1 ? "" : "s"
+                  } from Plex.`}
+            </p>
+          )}
+          {cleanup.isSuccess && (
+            <p role="status" className="text-sm text-success">
+              {cleanup.data.message}
+            </p>
+          )}
+          {(preview.isError || cleanup.isError) && (
+            <p role="alert" className="text-sm text-destructive">
+              {apiErrorMessage(
+                preview.error ?? cleanup.error,
+                "Couldn’t reach Plex. Try again.",
+              )}
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCleanupOpen(false)}>
+              {cleanup.isSuccess ? "Close" : "Cancel"}
+            </Button>
+            {!cleanup.isSuccess && (
+              <Button
+                variant="destructive"
+                loading={cleanup.isPending}
+                disabled={
+                  preview.isPending ||
+                  (preview.isSuccess && preview.data.removed.length === 0)
+                }
+                onClick={() => cleanup.mutate()}
+              >
+                Remove from Plex
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

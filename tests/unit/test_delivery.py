@@ -647,3 +647,63 @@ class TestTheSweepRemovesSharedTagRows:
 
         assert deleted == {"mike": ["✨ Picked for You"]}
         plex.delete_owned_collection.assert_not_called()
+
+
+class TestRemoveRowCollections:
+    """The on-demand reconcile primitive: remove a row's collections outside a run (removal only)."""
+
+    def test_strip_marker_is_the_inverse_of_the_marker_suffix(self):
+        from shortlist.engine.delivery import strip_marker
+
+        assert strip_marker("Picked for You" + row_marker(218833834)) == "Picked for You"
+        assert strip_marker("No marker here") == "No marker here"
+
+    def test_removes_only_the_titles_asked_for(self, engine_config: EngineConfig, movies):
+        from shortlist.engine.delivery import remove_row_collections
+
+        keep = MagicMock(title="💎 Hidden Gems" + row_marker(100))
+        drop = MagicMock(title="✨ Picked for You" + row_marker(100))
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda section, label: [keep, drop]
+
+        removed = remove_row_collections(
+            plex, engine_config, label="shortlist_sarah", displays={"✨ Picked for You"}, dry_run=False
+        )
+
+        assert removed == ["✨ Picked for You"]  # the other row is left alone
+        plex.delete_owned_collection.assert_called_once_with(drop, "shortlist")
+
+    def test_displays_none_removes_every_collection_under_the_label(self, engine_config: EngineConfig, movies, shows):
+        from shortlist.engine.delivery import remove_row_collections
+
+        m = MagicMock(title="🔥 Popular" + row_marker(0))
+        s = MagicMock(title="🔥 Popular" + row_marker(0))
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies, shows]
+        plex.find_owned_collections.side_effect = lambda section, label: [m] if section is movies else [s]
+
+        removed = remove_row_collections(
+            plex, engine_config, label="shortlist__shared_popular", displays=None, dry_run=False
+        )
+
+        assert removed == ["🔥 Popular", "🔥 Popular"]  # every library
+        # The exact objects the SUT selected were the ones deleted — not just "two deletes happened".
+        from unittest.mock import call
+
+        assert plex.delete_owned_collection.call_args_list == [call(m, "shortlist"), call(s, "shortlist")]
+
+    def test_dry_run_reports_but_deletes_nothing(self, engine_config: EngineConfig, movies):
+        from shortlist.engine.delivery import remove_row_collections
+
+        c = MagicMock(title="✨ Picked for You" + row_marker(100))
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda section, label: [c]
+
+        removed = remove_row_collections(
+            plex, engine_config, label="shortlist_sarah", displays={"✨ Picked for You"}, dry_run=True
+        )
+
+        assert removed == ["✨ Picked for You"]
+        plex.delete_owned_collection.assert_not_called()

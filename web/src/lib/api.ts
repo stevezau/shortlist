@@ -5,6 +5,7 @@ import type {
   Health,
   LinkRequest,
   PinCreated,
+  CleanupResult,
   Collection,
   CollectionInput,
   PinStatus,
@@ -259,6 +260,13 @@ export const api = {
 
   deleteCollection: (id: number): Promise<void> =>
     request(`/api/collections/${id}`, { method: "DELETE" }),
+
+  /** Remove this row's collections from Plex for everyone (or dry-run a preview). Removal only. */
+  cleanupCollection: (id: number, dryRun: boolean): Promise<CleanupResult> =>
+    request(`/api/collections/${id}/cleanup`, {
+      method: "POST",
+      body: JSON.stringify({ dry_run: dryRun }),
+    }),
 
   /** Assemble the prompt from a recipe against sample data, to preview its effect before saving. */
   previewPrompt: (body: PromptPreviewRequest): Promise<PromptPreview> =>

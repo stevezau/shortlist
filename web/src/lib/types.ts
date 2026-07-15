@@ -305,6 +305,13 @@ export interface UninstallResult {
   message: string;
 }
 
+/** POST /api/collections/{id}/cleanup — remove a row's collections from Plex. */
+export interface CleanupResult {
+  removed: string[];
+  dry_run: boolean;
+  message: string;
+}
+
 // --- Auth (Plex PIN login) ---
 
 /** POST /api/auth/pin. */

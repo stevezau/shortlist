@@ -44,6 +44,19 @@ def row_marker(plex_account_id: int) -> str:
     return "".join(_INVISIBLE[(plex_account_id >> bit) & 1] for bit in range(64))
 
 
+def strip_marker(title: str) -> str:
+    """A collection's human title with the invisible per-account marker removed — for display in
+    audits and for matching a delivered display name against what Plex stores.
+
+    The marker is ALWAYS exactly 64 marker-chars (``row_marker``), so strip that fixed-width suffix
+    rather than every trailing invisible char — a human title that legitimately ends in one is kept.
+    """
+    suffix = title[-64:]
+    if len(suffix) == 64 and all(c in _INVISIBLE for c in suffix):
+        return title[:-64]
+    return title
+
+
 def render_row_name(template: str, profile: UserProfile, picks: list[Pick]) -> str:
     """Render the row title as a HUMAN reads it — no marker. Used for reports and the UI.
 
@@ -252,6 +265,43 @@ def remove_row(
                 plex.delete_owned_collection(collection, config.label_prefix)
                 logger.info("{}: removed muted row '{}' in '{}'", profile.username, display, section.title)
             diff.deleted.append(display)
+
+
+def remove_row_collections(
+    plex: PlexClient,
+    config: EngineConfig,
+    *,
+    label: str,
+    displays: set[str] | None,
+    dry_run: bool,
+) -> list[str]:
+    """Delete Shortlist collections carrying ``label`` — an on-demand reconcile OUTSIDE a run (a
+    config change, or a manual "remove from Plex").
+
+    ``displays`` pins WHICH collections go: with a set, only those whose human title (marker stripped)
+    is in it — a specific per-person row, since all of a user's rows share their label and differ only
+    by title. With ``None``, every collection under the label — a shared row's own label, or a user's
+    whole label when the user is removed.
+
+    Removal only — it never creates or promotes, so (like the remedy pass and uninstall) it needs no
+    passing Privacy Check: deleting a row can only make the server more private. Scans EVERY library,
+    so a copy left in a library the row no longer targets is still removed. ``delete_owned_collection``
+    refuses anything without a ``shortlist_`` label, so a foreign (Kometa) collection is never touched.
+    Returns the display titles removed (or, in a dry run, that would be).
+    """
+    removed: list[str] = []
+    for section in plex.sections():
+        for collection in plex.find_owned_collections(section, label):
+            display = strip_marker(collection.title)
+            if displays is not None and display not in displays:
+                continue
+            removed.append(display)
+            if dry_run:
+                logger.info("[dry-run] would remove '{}' in '{}' (label {})", display, section.title, label)
+            else:
+                plex.delete_owned_collection(collection, config.label_prefix)
+                logger.info("removed '{}' in '{}' (label {})", display, section.title, label)
+    return removed
 
 
 def _create_labelled_collection(
