@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets as pysecrets
 import uuid
@@ -38,9 +39,23 @@ def _instance_secret(config_dir: Path, name: str) -> str:
     return path.read_text().strip()
 
 
+class _AccessNoiseFilter(logging.Filter):
+    """Drop the health-check + SSE access-log lines that otherwise flood `docker logs` every few
+    seconds and bury the app's own run logs. Every other request is still logged."""
+
+    _NOISY = ("/api/system/health", "/api/events")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not any(path in message for path in self._NOISY)
+
+
 def create_app(config_dir: Path | None = None) -> FastAPI:
     config_dir = config_dir or Path(os.environ.get("SHORTLIST_CONFIG", "/config"))
     config_dir.mkdir(parents=True, exist_ok=True)
+    # Quiet uvicorn's per-request access log for the noise endpoints, so a run's DEBUG narration is
+    # actually readable in `docker logs`.
+    logging.getLogger("uvicorn.access").addFilter(_AccessNoiseFilter())
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

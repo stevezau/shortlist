@@ -81,3 +81,20 @@ class TestATrulyEmptyInstanceOpensTheWizard:
             assert client.get("/api/settings").status_code == 401
         finally:
             client.__exit__(None, None, None)
+
+
+class TestAccessNoiseFilter:
+    def test_drops_healthcheck_and_sse_but_keeps_real_requests(self):
+        import logging
+
+        from shortlist.server.main import _AccessNoiseFilter
+
+        flt = _AccessNoiseFilter()
+
+        def record(msg: str) -> logging.LogRecord:
+            return logging.LogRecord("uvicorn.access", logging.INFO, "", 0, msg, None, None)
+
+        assert flt.filter(record('127.0.0.1 - "GET /api/system/health HTTP/1.1" 200')) is False
+        assert flt.filter(record('127.0.0.1 - "GET /api/events HTTP/1.1" 200')) is False
+        assert flt.filter(record('127.0.0.1 - "POST /api/runs HTTP/1.1" 200')) is True
+        assert flt.filter(record('127.0.0.1 - "GET /api/settings HTTP/1.1" 200')) is True
