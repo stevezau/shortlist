@@ -221,6 +221,9 @@ class RowSpec:
     request_tag: str = ""  # tag added to titles requested because they surfaced in this row
     # Per-row override of which discovery sources feed this row; empty -> inherit EngineConfig.candidate_sources.
     candidate_sources: list[str] = field(default_factory=list)
+    # Per-row cap on already-watched titles, as a fraction of the row (0.0 = all fresh, 1.0 = no
+    # filtering). None -> inherit EngineConfig.watched_pct.
+    watched_pct: float | None = None
 
     @property
     def label(self) -> str | None:
@@ -329,6 +332,12 @@ class EngineConfig:
     min_completion: float = 0.7  # history completion threshold for "meaningful" watch
     max_seeds: int = 30
     staleness_runs: int = 3  # don't repeat picks recommended in the last N runs
+    # Cap on already-watched titles in a row, as a fraction of the row. 0.0 (default): all fresh —
+    # drop every finished title (a movie you watched, or a show you've seen >= watched_show_pct of;
+    # a partly-watched show or one with a new season stays eligible). 1.0: no filtering. Between:
+    # at most that fraction of the row may be things already finished. Overridable per row.
+    watched_pct: float = 0.0
+    watched_show_pct: float = 0.9  # a show watched to >= this fraction of its episodes counts as finished
     # Which candidate sources to pool (see engine/candidates.py). Empty/default = TMDB similar only,
     # preserving legacy behaviour; owners widen recall by enabling more.
     candidate_sources: list[str] = field(default_factory=lambda: ["tmdb_similar"])

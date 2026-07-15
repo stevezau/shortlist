@@ -96,6 +96,9 @@ class Collection(Base):
     name_template: Mapped[str] = mapped_column(String(255), default="")  # per_person display name
     # Per-row override of which discovery sources feed this row; [] -> inherit global candidates.sources.
     candidate_sources: Mapped[list] = mapped_column(JSON, default=list)
+    # Per-row cap on already-finished titles, as a fraction (0.0 all fresh .. 1.0 no filtering).
+    # NULL -> inherit the global recommendations.watched_pct.
+    watched_pct: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # Specific Plex library section keys this row builds in; [] -> every library of its media type.
     library_keys: Mapped[list] = mapped_column(JSON, default=list)
     min_watchers: Mapped[int] = mapped_column(Integer, default=2)  # shared: aggregate-privacy threshold

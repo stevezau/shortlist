@@ -391,7 +391,7 @@ class TestPerRowOverrides:
         lib2.key = "2"  # the SECOND movie library — never returned by sections_by_type()
         ctx.plex.sections.return_value = [lib1, lib2]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: lib1}  # lowest-key only
-        ctx.plex.build_library_index.side_effect = lambda s: (
+        ctx.plex.build_library_index.side_effect = lambda s, ep=None: (
             {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010, 20: 2020}
         )
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, library_keys=["2"])]
@@ -431,7 +431,7 @@ class TestPerRowOverrides:
         ctx.plex.sections.return_value = [lib1, lib2]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: lib1}
         # Candidate 10 is in BOTH libraries; candidate 20 lives only in lib1.
-        ctx.plex.build_library_index.side_effect = lambda s: (
+        ctx.plex.build_library_index.side_effect = lambda s, ep=None: (
             {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010}
         )
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, library_keys=["2"])]
@@ -465,7 +465,7 @@ class TestPerRowOverrides:
         ctx.config.candidates_pre_rank = 5  # a tiny cut, so crowding-out is easy to trigger
         movies = {900: 999, **{i: 1000 + i for i in range(1, 60)}}
         shows = {5000: 5999, 5001: 5001}
-        ctx.plex.build_library_index.side_effect = lambda s: movies if s is movie_section else shows
+        ctx.plex.build_library_index.side_effect = lambda s, ep=None: movies if s is movie_section else shows
         ctx.config.rows = [RowSpec(slug="tv", name_template="TV Picks", size=2, media="show")]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
@@ -572,6 +572,130 @@ class TestPerRowOverrides:
         pipeline_mod.run(ctx, [sarah])
 
         ctx.plex.create_collection.assert_called()  # the synthesized "Picked for You"
+
+    def test_a_both_row_fills_each_library_to_its_own_size(self, ctx: EngineContext, mock_plextv):
+        """A 'both' row delivers a movie collection AND a show collection, and each library fills to
+        its own size. One shared budget split by what the curator picked left a mostly-TV watcher with
+        a full show row and a one-item movie row."""
+        movie_section = MagicMock()
+        movie_section.type = "movie"
+        movie_section.key = "1"
+        show_section = MagicMock()
+        show_section.type = "show"
+        show_section.key = "2"
+        ctx.plex.sections.return_value = [movie_section, show_section]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movie_section, MediaType.SHOW: show_section}
+        movies = {900: 999, **{i: 1000 + i for i in range(1, 40)}}
+        shows = {5000: 5999, **{5000 + i: 6000 + i for i in range(1, 40)}}
+        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: movies if sec is movie_section else shows
+
+        def suggestions(tid, mt):
+            # Plenty of BOTH movie and show candidates in the pool.
+            base = 1 if mt is MediaType.MOVIE else 5000
+            return [
+                {"id": base + i, "title": f"T{base + i}", "genre_ids": [], "vote_average": 8.0} for i in range(1, 40)
+            ]
+
+        ctx.tmdb.suggestions.side_effect = suggestions
+        # A watcher of one movie + one show, so both media types seed.
+        ctx.history_source.fetch.return_value = [
+            make_watched("Fargo", days_ago=1, rating_key=999),
+            make_watched("Breaking Bad", days_ago=2, rating_key=5999, media_type=MediaType.SHOW),
+        ]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=10, media="both")]
+        ctx.config.min_history = 1  # 2 watches is enough here — exercise the real curate path, not cold start
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        picks = report.users[0].picks
+        movie_picks = [p for p in picks if p.media_type is MediaType.MOVIE]
+        show_picks = [p for p in picks if p.media_type is MediaType.SHOW]
+        assert len(movie_picks) == 10, f"movie row should fill to 10, got {len(movie_picks)}"
+        assert len(show_picks) == 10, f"show row should fill to 10, got {len(show_picks)}"
+
+    def test_a_row_curates_each_library_from_that_librarys_own_contents(self, ctx: EngineContext, mock_plextv):
+        """Two libraries of the SAME media type each get their OWN full row, curated only from the
+        titles that library holds — not one recommendation split between them. This is what makes a
+        row 'per library': a server with a Movies and a 4K library fills both, from their own shelves.
+        """
+        movies = MagicMock(type="movie", key="1")
+        movies_4k = MagicMock(type="movie", key="2")
+        ctx.plex.sections.return_value = [movies, movies_4k]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        # Disjoint catalogues: Movies holds tmdb 10-15, 4K holds tmdb 50-55 (seed 900 in both).
+        idx_std = {900: 999, **{i: 1000 + i for i in range(10, 16)}}
+        idx_4k = {900: 999, **{i: 2000 + i for i in range(50, 56)}}
+        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: idx_std if sec is movies else idx_4k
+        # The candidate pool spans BOTH libraries' titles; each library must pick only its own.
+        pool = [
+            {"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in [*range(10, 16), *range(50, 56)]
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: pool
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie")]
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50  # keep the whole 12-title pool; don't truncate either library
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+
+        pipeline_mod.run(ctx, [sarah])
+
+        # One curate call per library, each seeing ONLY that library's tmdb ids.
+        seen = [{c.tmdb_id for c in call.args[1]} for call in ctx.curator.curate.call_args_list]
+        assert {10, 11, 12, 13, 14, 15} in seen, f"Movies library should curate from its own ids, saw {seen}"
+        assert {50, 51, 52, 53, 54, 55} in seen, f"4K library should curate from its own ids, saw {seen}"
+
+    def test_default_watched_cap_excludes_finished_titles(self, ctx: EngineContext, mock_plextv):
+        """watched_pct defaults to 0 (all fresh): a title the user has finished, even if it resurfaces
+        as a candidate, is never recommended back. Guards the pool_key/pools_for `== 0` branch — an
+        inversion there would recommend everyone their already-watched titles and pass every leaf test.
+        """
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        # She finished movie 900 (the seed, ratingKey 999). It resurfaces as a candidate — must drop.
+        ctx.tmdb.suggestions.return_value = [
+            {"id": 900, "title": "Already Finished", "genre_ids": [], "vote_average": 9.0},
+            {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
+            {"id": 20, "title": "Fresh Twenty", "genre_ids": [], "vote_average": 7.0},
+        ]
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020}
+        ctx.curator.curate.side_effect = curated_picks
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        ids = {p.tmdb_id for p in report.users[0].picks}
+        assert 900 not in ids, "a finished title must never be recommended at the 0% default"
+        assert ids & {10, 20}, "fresh candidates still fill the row"
+
+    def test_watched_pct_of_one_lets_finished_non_seed_titles_through(self, ctx: EngineContext, mock_plextv):
+        """At 100% there is no filtering: a finished title (that isn't itself a seed) stays in the pool
+        AND may be delivered. Guards the opposite inversion of the `== 0` branch. The seed is always
+        excluded regardless — you don't re-recommend the exact thing just watched."""
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.config.max_seeds = 1  # only movie 900 becomes a seed; movie 50 stays a finished non-seed
+        ctx.config.min_history = 1
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=10, media="both", watched_pct=1.0)]
+        ctx.history_source.fetch.return_value = [
+            make_watched("Seed Movie", days_ago=1, rating_key=999),  # tmdb 900 — the sole seed
+            make_watched("Finished Extra", days_ago=9, rating_key=550),  # tmdb 50 — finished, not a seed
+        ]
+        ctx.tmdb.suggestions.return_value = [
+            {"id": 50, "title": "Finished Extra", "genre_ids": [], "vote_average": 9.0},  # finished, resurfaced
+            {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
+        ]
+        ctx.plex.build_library_index.return_value = {900: 999, 50: 550, 10: 1010}
+        ctx.curator.curate.side_effect = curated_picks
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        ids = {p.tmdb_id for p in report.users[0].picks}
+        assert 50 in ids, "at 100% a finished (non-seed) title may still be recommended"
+        assert 900 not in ids, "the seed itself is always excluded"
 
     def test_muting_removes_an_already_delivered_row(self, ctx: EngineContext, mock_plextv):
         from shortlist.engine.delivery import row_marker

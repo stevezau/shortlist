@@ -212,6 +212,11 @@ class TestSettingsValidation:
         ok = client.put("/api/settings", json={"values": {"candidates.sources": ["trakt", "tmdb_similar"]}})
         assert ok.status_code == 200
 
+    def test_watched_cap_is_validated(self, client: TestClient):
+        assert client.put("/api/settings", json={"values": {"recommendations.watched_pct": 1.5}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.watched_pct": 0.25}}).status_code == 200
+        assert client.get("/api/settings").json()["recommendations.watched_pct"] == 0.25
+
     def test_an_unknown_curator_provider_is_refused(self, client: TestClient):
         assert client.put("/api/settings", json={"values": {"curator.provider": "bogus"}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"curator.provider": "none"}}).status_code == 200
@@ -341,6 +346,21 @@ class TestCollectionsSeed:
         picked = next(spec for spec in specs if spec.slug == "picked")
         assert picked.size == 10  # follows the setting, not the collection's seeded 15
         assert picked.name_template == ""  # falls through to the global row name
+
+    def test_per_row_watched_pct_round_trips_and_reaches_the_spec(self, client: TestClient):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+        from shortlist.server.settings_store import SettingsStore
+
+        created = client.post("/api/collections", json={"name": "Rewatch Row", "watched_pct": 0.5})
+        assert created.status_code == 201 and created.json()["watched_pct"] == 0.5
+        # Out of the 0..1 range is rejected.
+        assert client.post("/api/collections", json={"name": "X", "watched_pct": 2.0}).status_code == 422
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        assert next(s for s in specs if s.slug == "rewatch_row").watched_pct == 0.5
 
     def test_a_disabled_row_becomes_a_retired_row_for_cleanup(self, client: TestClient):
         """A row switched off is not delivered (dropped from _build_rows) AND handed to the engine as

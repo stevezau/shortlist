@@ -2,9 +2,12 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { SaveStatus } from "@/components/save-status";
+import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useAutosave } from "@/lib/autosave";
+import { WATCHED_PCT_DEFAULT } from "@/lib/constants";
 import { cleanSources, SOURCES, sourceBlockedReason } from "@/lib/sources";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -16,9 +19,19 @@ function readSources(settings: Settings): string[] {
     : ["tmdb_similar", "tmdb_discover"];
 }
 
+/** Global watched cap, stored 0..1, edited as whole percent. */
+function readWatchedPct(settings: Settings): number {
+  const value = Number(settings["recommendations.watched_pct"]);
+  if (!Number.isFinite(value)) return WATCHED_PCT_DEFAULT;
+  return Math.round(Math.min(1, Math.max(0, value)) * 100);
+}
+
 export function RecommendationsSection({ settings }: { settings: Settings }) {
   const save = useSaveSettings();
   const [enabled, setEnabled] = useState<string[]>(() => readSources(settings));
+  const [watchedPct, setWatchedPct] = useState<number>(() =>
+    readWatchedPct(settings),
+  );
   const [saved, setSaved] = useState(false);
 
   const toggle = (id: string) =>
@@ -26,10 +39,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
     );
 
-  const retry = useAutosave(enabled, () => {
+  const retry = useAutosave({ enabled, watchedPct }, () => {
     setSaved(false);
     save.mutate(
-      { "candidates.sources": cleanSources(enabled, settings) },
+      {
+        "candidates.sources": cleanSources(enabled, settings),
+        "recommendations.watched_pct": watchedPct / 100,
+      },
       { onSuccess: () => setSaved(true) },
     );
   });
@@ -79,6 +95,19 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               </div>
             );
           })}
+          <div className="space-y-2 border-t pt-4">
+            <Label htmlFor="watched-pct">Already-watched titles</Label>
+            <p className="text-sm text-muted-foreground">
+              How much of a row may be things a person has already finished.
+              This is the default every row inherits; any row can choose its
+              own.
+            </p>
+            <WatchedSlider
+              id="watched-pct"
+              value={watchedPct}
+              onChange={setWatchedPct}
+            />
+          </div>
           <div className="pt-1">
             <SaveStatus
               isPending={save.isPending}

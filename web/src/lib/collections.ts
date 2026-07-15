@@ -1,4 +1,8 @@
-import { DEFAULT_ROW_SLUG, TONE_LABELS } from "@/lib/constants";
+import {
+  DEFAULT_ROW_SLUG,
+  TONE_LABELS,
+  watchedBadgeLabel,
+} from "@/lib/constants";
 import { sourceShortLabel } from "@/lib/sources";
 import type {
   Collection,
@@ -23,6 +27,7 @@ export function blankInput(): CollectionInput {
     request_tag: "",
     candidate_sources: [],
     library_keys: [],
+    watched_pct: null,
     prompt: { tone: "", guidance: "", template: "" },
   };
 }
@@ -43,6 +48,7 @@ export function toInput(collection: Collection): CollectionInput {
     request_tag: collection.request_tag,
     candidate_sources: collection.candidate_sources,
     library_keys: collection.library_keys,
+    watched_pct: collection.watched_pct ?? null,
     prompt: {
       tone: collection.prompt.tone ?? "",
       guidance: collection.prompt.guidance ?? "",
@@ -90,6 +96,12 @@ export function rowOverrides(
       (key) => libraries.find((l) => l.key === key)?.title ?? `Library ${key}`,
     );
     parts.push(`Libraries: ${titles.join(", ")}`);
+  }
+
+  // null inherits the global recommendations.watched_pct, so there's nothing to badge. Unlike the
+  // prompt, this override IS honoured on the default row, so it isn't gated on the slug.
+  if (collection.watched_pct !== null && collection.watched_pct !== undefined) {
+    parts.push(watchedBadgeLabel(collection.watched_pct));
   }
 
   // The default row's style is the GLOBAL recipe — the server discards its stored prompt — so

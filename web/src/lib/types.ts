@@ -45,6 +45,8 @@ export interface Collection {
   candidate_sources: string[];
   /** Specific Plex library section keys to build in; [] = every library of the row's media type. */
   library_keys: string[];
+  /** Max fraction of the row that may be already-watched (0..1); null inherits the global cap. */
+  watched_pct: number | null;
   prompt: { tone?: string; guidance?: string; template?: string };
 }
 
@@ -70,6 +72,7 @@ export interface CollectionInput {
   request_tag: string;
   candidate_sources: string[];
   library_keys: string[];
+  watched_pct: number | null;
   prompt: { tone: string; guidance: string; template: string };
 }
 

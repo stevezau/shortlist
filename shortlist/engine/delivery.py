@@ -95,6 +95,7 @@ def deliver_rows(
     diff: CollectionDiff | None = None,
     sections: list | None = None,
     section_index: dict[str, dict[int, int]] | None = None,
+    section_picks: dict[str, list[Pick]] | None = None,
 ) -> tuple[CollectionDiff, str | None]:
     """Deliver one row's picks as one collection per targeted library. Returns (diff, stored label).
 
@@ -158,15 +159,18 @@ def deliver_rows(
         # library's items. A pick this library doesn't have is skipped (delivered wherever it does
         # live). With no per-section index (legacy caller), fall back to the pick's existing key.
         keys = idx.get(section.key)
-        section_picks = [
+        # When the caller curated PER LIBRARY (section_picks), deliver this library its own list;
+        # otherwise fall back to splitting the one pick list by media type (legacy/shared/CLI).
+        source_picks = section_picks.get(section.key, []) if section_picks is not None else by_type.get(kind, [])
+        this_section = [
             (replace(p, rating_key=keys[p.tmdb_id]) if keys is not None else p)
-            for p in by_type.get(kind, [])
+            for p in source_picks
             if keys is None or p.tmdb_id in keys
         ]
-        if not section_picks:
+        if not this_section:
             continue
         one, stored = _deliver_one(
-            plex, section, profile, section_picks, template, wanted_label, marker, sole_row, dry_run=dry_run
+            plex, section, profile, this_section, template, wanted_label, marker, sole_row, dry_run=dry_run
         )
         combined.added += one.added
         combined.removed += one.removed

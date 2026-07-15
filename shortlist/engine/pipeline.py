@@ -63,6 +63,9 @@ class EngineContext:
     # section key -> {tmdb_id: ratingKey}: per-library index so a row delivered into a specific
     # library uses that library's ratingKeys. Built by _build_indexes each run.
     section_index: dict[str, dict[int, int]] = field(default_factory=dict)
+    # tmdb_id -> total episode count (leafCount) for every show, so the watched-filter can tell a
+    # finished show from a sampled one or one with a new season. Built by _build_indexes.
+    episode_counts: dict[int, int] = field(default_factory=dict)
     # Every library rows may be delivered to (all movie + show sections), for resolving a row's
     # library_keys to real sections. Built by _build_indexes each run.
     delivery_sections: list = field(default_factory=list)
@@ -171,19 +174,22 @@ def _build_indexes(
     library_index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
     section_index: dict[str, dict[int, int]] = {}
     section_catalog: dict[str, list[dict]] = {}
+    episode_counts: dict[int, int] = {}
     # Only when there is someone to recommend to. The indexes walk every item in every library, and
     # are read only inside _run_user — so with no users this is thousands of PMS reads thrown away,
     # in front of the sweep, on the one path (a closed gate) where the sweep is the entire point and
     # must not be preceded by anything that can fail.
     for section in sections if users else []:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-        index = ctx.plex.build_library_index(section)
+        # Capture episode counts only for show libraries — movies have no leafCount to speak of.
+        index = ctx.plex.build_library_index(section, episode_counts if kind is MediaType.SHOW else None)
         seed_index.update({rating_key: tmdb_id for tmdb_id, rating_key in index.items()})
         # Every library of a deliverable type is both a recommendation source (union) and a possible
         # delivery target (its own per-section index) — a row picks which ones under library_keys.
         library_index[kind].update(index)
         section_index[section.key] = index
     ctx.section_index = section_index
+    ctx.episode_counts = episode_counts
     ctx.delivery_sections = list(sections) if users else []
     # The AI-from-library source needs titles/genres. Built when ANY row wants it — not just the
     # global setting: a row overriding its sources to llm_library found an empty catalog and

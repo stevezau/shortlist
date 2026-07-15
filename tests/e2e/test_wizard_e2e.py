@@ -201,12 +201,17 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
 
     assert set(rows) == {"shortlist_sarah", "shortlist_mike", "shortlist_canary"}
     for label, collections in rows.items():
-        # row.size is the budget across a user's rows: sarah's 10 picks split into a movie row
-        # and a TV row, and each row is big enough for Plex to render it.
-        assert sum(len(c.item_keys) for c in collections) == 10, f"{label} should hold the chosen row size"
+        # A row runs PER LIBRARY: EACH library the user has picks in fills to the chosen size on its
+        # own — not one budget of 10 split across libraries. So a 'both' watcher gets a full movie
+        # row AND a full TV row, and every row is big enough for Plex to render.
         for collection in collections:
+            assert len(collection.item_keys) <= 10, f"{label} library row exceeds the chosen size"
             assert len(collection.item_keys) >= 2, f"{label} has a row too small for Plex to render"
             assert collection.promoted_shared_home, f"{label} was never promoted onto shared Home"
+    # sarah watches movies AND TV, so she gets a full row in each of her two libraries (10 + 10).
+    assert sum(len(c.item_keys) for c in rows["shortlist_sarah"]) == 20, "sarah's two library rows each fill to 10"
+    # mike watches only TV, so exactly one full row of 10.
+    assert sum(len(c.item_keys) for c in rows["shortlist_mike"]) == 10, "mike's single TV row fills to 10"
 
     # The dynamic template renders per row, from the top seed of that row's own picks — so a TV
     # row says "Because you watched <a show>", not whatever movie happened to rank first.

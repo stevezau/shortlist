@@ -19,7 +19,7 @@ from shortlist.engine import candidates as candidates_mod
 from shortlist.engine import ranking
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.curator import CuratorError, NullCurator
-from shortlist.engine.delivery import deliver_rows, remove_row
+from shortlist.engine.delivery import _section_kind, _target_sections, deliver_rows, remove_row
 from shortlist.engine.history import derive_seeds
 from shortlist.engine.models import (
     SHARED_SLUG_PREFIX,
@@ -47,6 +47,58 @@ def _media_filter(items: list, media: str) -> list:
         return list(items)
     kind = MediaType(media)
     return [item for item in items if item.media_type is kind]
+
+
+def _watched_titles(
+    watched_movies: set[int],
+    show_plays: dict[int, int],
+    episode_counts: dict[int, int],
+    show_pct: float,
+) -> set[tuple[int, MediaType]]:
+    """The (tmdb_id, media_type) titles this person has FINISHED — the ones a watched-cap counts.
+
+    Every watched movie, plus every show seen to >= ``show_pct`` of its episodes. A partly-watched
+    show, or one with a new season (its episode count grew, so the fraction dropped), is NOT counted
+    — it can still be recommended. A show whose episode count is unknown is counted as finished
+    rather than risk surfacing one the person has already worked through.
+    """
+    finished: set[tuple[int, MediaType]] = {(tid, MediaType.MOVIE) for tid in watched_movies}
+    for tid, plays in show_plays.items():
+        total = episode_counts.get(tid)
+        if not total or plays >= total * show_pct:
+            finished.add((tid, MediaType.SHOW))
+    return finished
+
+
+def _apply_watched_cap(
+    picks: list[Pick],
+    candidates: list[Candidate],
+    watched: set[tuple[int, MediaType]],
+    k: int,
+    pct: float,
+) -> list[Pick]:
+    """Keep at most ``floor(k * pct)`` already-finished picks; backfill freed slots with fresh ones.
+
+    The row shows unwatched titles first and lets at most ``pct`` of it be things the person has
+    already finished. Only used when ``pct`` > 0 — at 0 the pool already excludes finished titles.
+    Backfill prefers fresh candidates the curator didn't pick; it re-admits finished ones only if
+    the row still can't reach ``k`` and the cap has room.
+    """
+    max_watched = int(k * pct)  # floor: 20% of a 15-row is 3
+    kept: list[Pick] = []
+    watched_kept = 0
+    for pick in picks:
+        if (pick.tmdb_id, pick.media_type) in watched:
+            if watched_kept >= max_watched:
+                continue  # over the cap — drop, backfill below
+            watched_kept += 1
+        kept.append(pick)
+    if len(kept) < k:
+        fresh = [c for c in candidates if (c.tmdb_id, c.media_type) not in watched]
+        room = max_watched - watched_kept
+        spare_watched = [c for c in candidates if (c.tmdb_id, c.media_type) in watched][: max(0, room)]
+        kept = _pad_picks(kept, [*fresh, *spare_watched], k)
+    return [replace(p, rank=i + 1) for i, p in enumerate(kept)]
 
 
 def _rating_key_resolver(seed_index: dict[int, int]) -> Callable[[WatchedItem], int | None]:
@@ -122,6 +174,7 @@ def _candidate_pool(
     sources: list[str] | None = None,
     media: str = "both",
     catalog: dict[MediaType, list[dict]] | None = None,
+    watched_exclusions: set[tuple[int, MediaType]] | None = None,
 ) -> tuple[list[Candidate], list[Candidate], list[Candidate], list[Candidate]]:
     """Gather TMDB candidates for ``seeds``, intersect with the library, split by staleness.
 
@@ -141,7 +194,10 @@ def _candidate_pool(
     One ``filter_candidates`` pass, not two: the valid set is partitioned by ``recent``. Identity
     is (tmdb_id, media_type), never the bare id — movie 1399 and TV 1399 are different titles.
     """
-    watched_ids = {(s.tmdb_id, s.media_type) for s in seeds}
+    # The titles this person has already watched (per the row's policy), not just the ~30 seeds — a
+    # recommendation you've finished is the exact thing the row shouldn't surface. Falls back to the
+    # seed set for callers that don't compute the full breakdown (e.g. shared rows).
+    watched_ids = watched_exclusions if watched_exclusions is not None else {(s.tmdb_id, s.media_type) for s in seeds}
     pool = candidates_mod.gather_candidates(
         ctx.tmdb,
         seeds,
@@ -161,8 +217,13 @@ def _candidate_pool(
     valid = _media_filter(valid, media)
     in_library = [c for c in valid if (c.tmdb_id, c.media_type) not in recent]
     held = [c for c in valid if (c.tmdb_id, c.media_type) in recent]
-    ranked = ranking.pre_rank(in_library, ctx.config.candidates_pre_rank)
-    held_back = ranking.pre_rank(held, ctx.config.candidates_pre_rank)
+    # Pre-rank EACH media type to its own cap, not the mixed pool to one cap — otherwise a 'both'
+    # row whose pool skews one way (a mostly-TV watcher) truncates the other type away before the
+    # per-media curate ever sees it, and that library's collection comes up empty.
+    kinds = [MediaType.MOVIE, MediaType.SHOW] if media == "both" else [MediaType(media)]
+    cap = ctx.config.candidates_pre_rank
+    ranked = [c for kind in kinds for c in ranking.pre_rank([x for x in in_library if x.media_type is kind], cap)]
+    held_back = [c for kind in kinds for c in ranking.pre_rank([x for x in held if x.media_type is kind], cap)]
     return pool, in_library, ranked, held_back
 
 
@@ -244,6 +305,15 @@ def _run_user(
     pool_failures: dict[tuple, str] = {}  # pool key -> why every source for it failed
     seeds: list = []
     recent: set[tuple[int, MediaType]] = set()
+    # This person's watched breakdown, filled in the non-cold branch and read by pools_for: watched
+    # movie tmdb_ids, and show tmdb_id -> episode-play count (for the finished-show fraction). The
+    # derived set of FINISHED (tmdb_id, media_type) titles is computed once the breakdown is in.
+    watched_movies: set[int] = set()
+    show_plays: dict[int, int] = {}
+    watched_titles: set[tuple[int, MediaType]] = set()
+
+    def effective_watched_pct(spec: RowSpec) -> float:
+        return spec.watched_pct if spec.watched_pct is not None else cfg.watched_pct
 
     def effective_sources(spec: RowSpec) -> tuple[str, ...]:
         # Sorted so two rows with the same sources in a different order share ONE pool (gather is
@@ -256,7 +326,15 @@ def _run_user(
         # survive — and both now narrow the pool BEFORE the pre-rank truncation, so two rows that
         # differ in either must not share a pool. Rows that differ in none of the three (the common
         # case: everything inheriting the defaults) still share exactly one.
-        return (effective_sources(spec), spec.media, tuple(sorted(str(k) for k in spec.library_keys)))
+        return (
+            effective_sources(spec),
+            spec.media,
+            tuple(sorted(str(k) for k in spec.library_keys)),
+            # Only whether the pool hard-excludes finished titles changes the CANDIDATES: a 0% row
+            # drops them from the pool; any >0 row keeps them and caps at delivery. Two >0 rows (20%
+            # and 50%) share one pool and differ only in their cap, so they must not key apart.
+            effective_watched_pct(spec) == 0,
+        )
 
     def pools_for(spec: RowSpec) -> Pool | None:
         """This row's pool, or None when every source it uses is down.
@@ -280,6 +358,9 @@ def _run_user(
                     sources=list(key[0]),
                     media=spec.media,
                     catalog=_row_catalog(ctx, spec),
+                    # A 0% row drops finished titles from the pool entirely; a >0 row keeps them (the
+                    # per-library cap trims the surplus at delivery). None -> exclude only the seeds.
+                    watched_exclusions=watched_titles if effective_watched_pct(spec) == 0 else None,
                 )
             except Exception as e:
                 pool_failures[key] = f"{type(e).__name__}: {e}"
@@ -295,6 +376,19 @@ def _run_user(
         resolve = _rating_key_resolver(seed_index)
         seeds = derive_seeds(user.history, resolve, max_seeds=cfg.max_seeds)
         user_report.counts.seeds = len(seeds)
+        # Full watched breakdown (not just the seeds): every watched movie, and each show's
+        # episode-play count. History is already completion-filtered, so this is meaningful watches.
+        for item in user.history:
+            tid = item.tmdb_id if item.tmdb_id is not None else resolve(item)
+            if tid is None:
+                continue
+            if item.media_type is MediaType.MOVIE:
+                watched_movies.add(tid)
+            else:
+                show_plays[tid] = show_plays.get(tid, 0) + 1
+        # The finished-title set, derived once: read by pools_for (0% hard-exclude) and the per-row
+        # watched cap (>0). Mutated in place so the pools_for closure sees it.
+        watched_titles |= _watched_titles(watched_movies, show_plays, ctx.episode_counts, cfg.watched_show_pct)
         _pipeline._emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": len(seeds)})
         recent = ctx.recent_picks.get(user.slug, set())
         for spec in specs:  # build every row's pool up front so counts and demand see them all
@@ -348,12 +442,12 @@ def _run_user(
         # name template and the curation recipe resolve in.
         override = user.row_overrides.get(spec.slug)
         k = (override.size if override and override.size else None) or spec.size or cfg.row_size
-        if cold:
-            picks = [
-                Pick(**{**pick.__dict__, "rank": i + 1})
-                for i, pick in enumerate(_media_filter(base_cold, spec.media)[:k])
-            ]
-        else:
+        # A row runs PER LIBRARY, not per media type: each library it targets gets its own full
+        # collection of k, curated from that library's own contents. So a server with two movie
+        # libraries (Movies + 4K) gets a full row in EACH, and a mostly-TV watcher still gets a full
+        # movie row and a full show row (the "one movie in Picked for You" bug, SFLIX 2026-07-15).
+        targets = _target_sections(ctx.delivery_sections, spec)
+        if not cold:
             # The row's recipe (already the global one with the row's fields laid over it), then this
             # person's override laid over THAT. Setting only a tone for one person used to wipe the
             # row's guidance and custom prompt.
@@ -370,16 +464,39 @@ def _run_user(
                 continue  # every source this row uses is down; its siblings still deliver
             _pool, _in_library, pool_for_row, held_back = pools
             _pipeline._emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row)})
+        section_picks: dict[str, list[Pick]] = {}
+        for section in targets:
+            kind = _section_kind(section)
+            # tmdb_id -> ratingKey for THIS library only; a candidate not in this library isn't a
+            # valid pick for it, however well it ranks for the row overall.
+            if cold:
+                # Cold picks already come FROM a library (plex.top_rated), so they're in-library by
+                # construction; delivery remaps each to the target library and drops any it lacks.
+                cands = [p for p in base_cold if p.media_type is kind][:k]
+                section_picks[section.key] = [replace(p, rank=i + 1) for i, p in enumerate(cands)]
+                continue
+            sec_idx = ctx.section_index.get(section.key, {})
+            sub = [c for c in pool_for_row if c.media_type is kind and c.tmdb_id in sec_idx]
+            if not sub:
+                continue
             try:
-                picks = ctx.curator.curate(row_profile, pool_for_row, k)
+                sec_picks = ctx.curator.curate(row_profile, sub, k)
                 user_report.llm_tokens += getattr(ctx.curator, "last_tokens", 0)
             except CuratorError as e:
                 logger.warning("{}: curator failed ({}); degrading to heuristic mode", user.username, e)
-                picks = NullCurator().curate(row_profile, pool_for_row, k)
-            if len(picks) < k:
-                picks = _pad_picks(picks, pool_for_row + held_back, k)
+                sec_picks = NullCurator().curate(row_profile, sub, k)
+            held = [c for c in held_back if c.media_type is kind and c.tmdb_id in sec_idx]
+            if len(sec_picks) < k:
+                sec_picks = _pad_picks(sec_picks, sub + held, k)
+            pct = effective_watched_pct(spec)
+            if pct > 0:
+                # Let at most `pct` of this library's row be already-finished titles; backfill the
+                # rest from its fresh candidates. (At pct == 0 the pool already dropped finished ones.)
+                sec_picks = _apply_watched_cap(sec_picks, sub + held, watched_titles, k, pct)
+            section_picks[section.key] = sec_picks
         # Stamp each pick with the row it belongs to, so the user page can group picks per row.
-        picks = [Pick(**{**pick.__dict__, "collection_slug": spec.slug}) for pick in picks]
+        section_picks = {key: [replace(p, collection_slug=spec.slug) for p in sp] for key, sp in section_picks.items()}
+        picks = [pick for sp in section_picks.values() for pick in sp]
         all_picks.extend(picks)
         _pipeline._emit(ctx, user.slug, "delivering", {"picks": len(picks)})
         deliver_rows(
@@ -394,6 +511,7 @@ def _run_user(
             diff=user_report.diff,
             sections=ctx.delivery_sections,
             section_index=ctx.section_index,
+            section_picks=section_picks,
         )
         delivered_any = delivered_any or bool(picks)
 
@@ -513,28 +631,37 @@ def _shared_row(
         catalog=_row_catalog(ctx, spec),
     )
     k = spec.size
-    try:
-        picks = ctx.curator.curate(agg, ranked, k)
-    except CuratorError:
-        picks = NullCurator().curate(agg, ranked, k)
-    if len(picks) < k:
-        # Backfill from held-back titles too — a shared row used to SHRINK on a thin pool while a
-        # per-person row backfilled.
-        picks = _pad_picks(picks, ranked + held_back, k)
+    # Curate PER LIBRARY, exactly like a per-person row: each targeted library gets its own full k
+    # from its own contents. One mixed curate over a now media-segregated pool would let a 'both'
+    # shared row come back all-movies-no-shows.
+    targets = _target_sections(ctx.delivery_sections, spec)
+    section_picks: dict[str, list[Pick]] = {}
+    for section in targets:
+        kind = _section_kind(section)
+        sec_idx = ctx.section_index.get(section.key, {})
+        sub = [c for c in ranked if c.media_type is kind and c.tmdb_id in sec_idx]
+        if not sub:
+            continue
+        try:
+            sec_picks = ctx.curator.curate(agg, sub, k)
+        except CuratorError:
+            sec_picks = NullCurator().curate(agg, sub, k)
+        if len(sec_picks) < k:
+            # Backfill from held-back titles too — a shared row used to SHRINK on a thin pool while a
+            # per-person row backfilled.
+            held = [c for c in held_back if c.media_type is kind and c.tmdb_id in sec_idx]
+            sec_picks = _pad_picks(sec_picks, sub + held, k)
+        section_picks[section.key] = sec_picks
     # Force aggregate framing regardless of curator: a shared row is nobody's "because you watched",
     # and the seed is dropped so a {top_seed} name template can never surface one person's title.
-    picks = [
-        Pick(
-            **{
-                **pick.__dict__,
-                "reason": "Popular on this server",
-                "seed_title": None,
-                "seed_tmdb_id": None,
-                "collection_slug": spec.slug,
-            }
-        )
-        for pick in picks
-    ]
+    section_picks = {
+        key: [
+            replace(p, reason="Popular on this server", seed_title=None, seed_tmdb_id=None, collection_slug=spec.slug)
+            for p in sp
+        ]
+        for key, sp in section_picks.items()
+    }
+    picks = [pick for sp in section_picks.values() for pick in sp]
 
     user_report.picks = picks
     user_report.counts.picks = len(picks)
@@ -553,6 +680,7 @@ def _shared_row(
         diff=user_report.diff,
         sections=ctx.delivery_sections,
         section_index=ctx.section_index,
+        section_picks=section_picks,
     )
     return agg if picks else None
 

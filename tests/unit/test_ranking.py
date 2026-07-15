@@ -88,3 +88,64 @@ class TestPreRank:
         """Candidates built by hand (cold start, tests) carry no source tag and must not vanish."""
         pool = [make_candidate(i, f"m{i}", rating=float(i)) for i in range(1, 6)]
         assert len(pre_rank(pool, keep=3)) == 3
+
+
+class TestWatchedTitles:
+    """The finished-title set: a movie you watched, or a show seen >= show_pct — but not a partway
+    show or one with a new season."""
+
+    def _finished(self, movies, plays, episodes, pct=0.9):
+        from shortlist.engine.rows import _watched_titles
+
+        return _watched_titles(set(movies), dict(plays), dict(episodes), pct)
+
+    def test_counts_finished_movies_and_shows_but_not_partial(self):
+        # movie 1 watched; show 10 finished (9 of 10 eps); show 20 partway (2 of 10); show 30 new
+        # season so only 5 of 40 eps watched.
+        finished = self._finished(
+            movies={1},
+            plays={10: 9, 20: 2, 30: 5},
+            episodes={10: 10, 20: 10, 30: 40},
+        )
+        assert (1, MediaType.MOVIE) in finished  # finished movie
+        assert (10, MediaType.SHOW) in finished  # finished show
+        assert (20, MediaType.SHOW) not in finished  # partway -> still recommend
+        assert (30, MediaType.SHOW) not in finished  # new season -> eligible again
+
+    def test_unknown_episode_count_is_treated_as_finished(self):
+        finished = self._finished(movies=set(), plays={10: 3}, episodes={})
+        assert (10, MediaType.SHOW) in finished  # can't tell -> count as finished, don't re-recommend
+
+
+class TestWatchedCap:
+    """The percentage cap: at most `floor(k*pct)` of a row may be already-finished; the rest is
+    backfilled from fresh candidates."""
+
+    def _pick(self, tmdb_id: int):
+        from shortlist.engine.models import Pick
+
+        return Pick(
+            tmdb_id=tmdb_id, rating_key=tmdb_id * 10, title=f"t{tmdb_id}", rank=1, reason="", media_type=MediaType.MOVIE
+        )
+
+    def test_zero_pct_would_not_be_called_but_cap_of_one_keeps_only_one_watched(self):
+        from shortlist.engine.rows import _apply_watched_cap
+
+        # 5 picks, first 3 already finished. Cap at 20% of 5 = 1 watched; the other two are dropped
+        # and backfilled from fresh candidates 90, 91.
+        watched = {(1, MediaType.MOVIE), (2, MediaType.MOVIE), (3, MediaType.MOVIE)}
+        picks = [self._pick(i) for i in (1, 2, 3, 4, 5)]
+        candidates = [make_candidate(i, f"c{i}") for i in (1, 2, 3, 4, 5, 90, 91)]
+        out = _apply_watched_cap(picks, candidates, watched, k=5, pct=0.2)
+        assert len(out) == 5
+        kept_watched = [p for p in out if (p.tmdb_id, p.media_type) in watched]
+        assert len(kept_watched) == 1, "only floor(5*0.2)=1 finished title may remain"
+        assert {90, 91} <= {p.tmdb_id for p in out}, "freed slots backfilled from fresh candidates"
+
+    def test_full_pct_keeps_every_watched_pick(self):
+        from shortlist.engine.rows import _apply_watched_cap
+
+        watched = {(1, MediaType.MOVIE), (2, MediaType.MOVIE)}
+        picks = [self._pick(i) for i in (1, 2, 3)]
+        out = _apply_watched_cap(picks, [make_candidate(i, f"c{i}") for i in (1, 2, 3)], watched, k=3, pct=1.0)
+        assert {p.tmdb_id for p in out} == {1, 2, 3}  # no filtering at 100%

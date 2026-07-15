@@ -36,7 +36,8 @@ function collection(patch: Partial<Collection> = {}): Collection {
     request_tag: "",
     candidate_sources: [],
     library_keys: [],
-    prompt: { tone: "", guidance: "", template: "" },  // blank = inherit the global style
+    watched_pct: null,
+    prompt: { tone: "", guidance: "", template: "" }, // blank = inherit the global style
     ...patch,
   } as Collection;
 }

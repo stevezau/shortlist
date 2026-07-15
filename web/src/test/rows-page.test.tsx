@@ -42,6 +42,7 @@ const SUBSET_ROW: Collection = {
   request_tag: "",
   candidate_sources: [],
   library_keys: [],
+  watched_pct: null,
   prompt: { tone: "balanced", guidance: "", template: "" },
 };
 

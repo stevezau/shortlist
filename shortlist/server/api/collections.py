@@ -50,6 +50,7 @@ class CollectionIn(BaseModel):
     min_watchers: int = Field(default=2, ge=2)  # a public row must never be shaped by one person
     request_tag: str = Field(default="", max_length=64)  # tag added to titles requested via this row
     candidate_sources: list[str] = Field(default_factory=list)  # [] -> inherit global candidates.sources
+    watched_pct: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global watched cap
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
     prompt: PromptIn = Field(default_factory=PromptIn)
 
@@ -87,6 +88,7 @@ def _serialize(session, collection: Collection) -> dict:
         "min_watchers": collection.min_watchers,
         "request_tag": collection.request_tag or "",
         "candidate_sources": list(collection.candidate_sources or []),
+        "watched_pct": collection.watched_pct,
         "library_keys": [str(k) for k in (collection.library_keys or [])],
         "prompt": collection.prompt or {},
     }
@@ -149,6 +151,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             min_watchers=body.min_watchers,
             request_tag=body.request_tag.strip(),
             candidate_sources=body.candidate_sources,
+            watched_pct=body.watched_pct,
             library_keys=body.library_keys,
             prompt=_prompt_for(slug, body),
         )
@@ -172,6 +175,7 @@ _PATCHABLE_COLUMNS = (
     "min_watchers",
     "request_tag",
     "candidate_sources",
+    "watched_pct",
     "library_keys",
 )
 

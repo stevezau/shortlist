@@ -26,7 +26,8 @@ function collection(patch: Partial<Collection> = {}): Collection {
     request_tag: "",
     candidate_sources: [],
     library_keys: [],
-    prompt: { tone: "", guidance: "", template: "" },  // blank = inherit the global style
+    watched_pct: null,
+    prompt: { tone: "", guidance: "", template: "" }, // blank = inherit the global style
     ...patch,
   } as Collection;
 }
@@ -97,6 +98,32 @@ describe("rowOverrides", () => {
     );
     // Its sources and libraries ARE its own; only name/size/style follow the global settings.
     expect(parts).toEqual(["Sources: Trakt", "Libraries: 4K Movies"]);
+  });
+
+  it("badges a row's own watched cap tersely, by percentage", () => {
+    expect(rowOverrides(collection({ watched_pct: 0 }), LIBRARIES)).toContain(
+      "Watched: all fresh",
+    );
+    expect(
+      rowOverrides(collection({ watched_pct: 0.25 }), LIBRARIES),
+    ).toContain("Watched: ≤25%");
+    expect(rowOverrides(collection({ watched_pct: 1 }), LIBRARIES)).toContain(
+      "Watched: no filter",
+    );
+  });
+
+  it("shows no watched badge when the row inherits the global cap", () => {
+    expect(rowOverrides(collection({ watched_pct: null }), LIBRARIES)).toEqual(
+      [],
+    );
+  });
+
+  it("badges the watched override even on the default row — the engine honours it there", () => {
+    const parts = rowOverrides(
+      collection({ slug: "picked", watched_pct: 0 }),
+      LIBRARIES,
+    );
+    expect(parts).toContain("Watched: all fresh");
   });
 
   it("withholds the libraries part until the library list has loaded (no raw section keys)", () => {

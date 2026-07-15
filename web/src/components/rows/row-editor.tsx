@@ -8,6 +8,7 @@ import { AudiencePicker } from "@/components/rows/audience-picker";
 import { LibraryPicker } from "@/components/rows/library-picker";
 import { RowSourcesField } from "@/components/rows/row-sources-field";
 import { Segmented } from "@/components/segmented";
+import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
 import { ROW_SIZES } from "@/lib/constants";
@@ -162,6 +164,29 @@ export function RowEditor({
             value={input.candidate_sources}
             onChange={(candidate_sources) => set({ candidate_sources })}
           />
+
+          <div className="space-y-3 border-t pt-4">
+            <Label htmlFor="row-watched-pct">Already-watched titles</Label>
+            <p className="text-sm text-muted-foreground">
+              How much of this row may be things a person has already finished.
+              Leave on the global default to follow Settings → Recommendations.
+            </p>
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm">Use the global default</span>
+              <Switch
+                checked={input.watched_pct === null}
+                onCheckedChange={(on) => set({ watched_pct: on ? null : 0 })}
+                aria-label="Use the global already-watched default"
+              />
+            </div>
+            {input.watched_pct !== null && (
+              <WatchedSlider
+                id="row-watched-pct"
+                value={Math.round(input.watched_pct * 100)}
+                onChange={(pct) => set({ watched_pct: pct / 100 })}
+              />
+            )}
+          </div>
 
           <div className="space-y-2 border-t pt-4">
             <Label>Curation style</Label>

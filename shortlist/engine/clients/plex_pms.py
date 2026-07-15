@@ -73,13 +73,24 @@ class PlexClient:
             by_type.setdefault(kind, section)
         return by_type
 
-    def build_library_index(self, section: LibrarySection) -> dict[int, int]:
-        """Map tmdb_id -> ratingKey for every item in a section (once per run, cached upstream)."""
+    def build_library_index(
+        self, section: LibrarySection, episode_counts: dict[int, int] | None = None
+    ) -> dict[int, int]:
+        """Map tmdb_id -> ratingKey for every item in a section (once per run, cached upstream).
+
+        When ``episode_counts`` is given, also record each show's total episode count (``leafCount``)
+        keyed by tmdb_id — the watched-filter uses it to tell a finished show from one you've only
+        sampled or that just got a new season (which grows the count).
+        """
         index: dict[int, int] = {}
         for item in section.all():
             tmdb_id = _tmdb_guid(item)
             if tmdb_id is not None:
                 index[tmdb_id] = item.ratingKey
+                if episode_counts is not None:
+                    leaf = getattr(item, "leafCount", None)
+                    if leaf:
+                        episode_counts[tmdb_id] = int(leaf)
         logger.debug(
             "library index for '{}': {} of {} items have TMDB ids", section.title, len(index), section.totalSize
         )
