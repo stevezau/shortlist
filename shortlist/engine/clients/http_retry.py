@@ -21,6 +21,7 @@ from __future__ import annotations
 import random
 import re
 import time
+from collections.abc import Callable
 
 import httpx
 from loguru import logger
@@ -108,6 +109,18 @@ def _retry_after(response: httpx.Response) -> float | None:
         return min(MAX_RETRY_AFTER_S, max(0.0, float(value)))
     except ValueError:
         return None  # an HTTP-date form — fall back to computed backoff rather than parse dates
+
+
+def throttle(last_write: float, min_interval: float, on_wait: Callable[[float], None] | None = None) -> float:
+    """Space out writes so they're at least ``min_interval`` seconds apart (plex.tv/Arr rule-6
+    politeness). Sleeps if needed and returns the new last-write monotonic time to store back.
+    ``on_wait`` is called with the wait seconds before sleeping (plextv uses it to log the stall)."""
+    wait = min_interval - (time.monotonic() - last_write)
+    if wait > 0:
+        if on_wait is not None:
+            on_wait(wait)
+        time.sleep(wait)
+    return time.monotonic()
 
 
 def _wait(delay: float, method: str, host: str, reason: str, attempt: int, attempts: int) -> None:

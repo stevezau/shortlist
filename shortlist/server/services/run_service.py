@@ -407,31 +407,38 @@ class RunService:
             self._emit_request_events(session, run_id, report)
             self._persist_request_queue(session, run_id, report)
             if report.error:
-                session.add(Event(scope="run", level="error", message={"run_id": run_id, "error": report.error}))
+                self._add_event(session, "run", "error", run_id, error=report.error)
             self._finalize_run(run, report, status, error, ok, errors)
             session.commit()
 
     @staticmethod
-    def _emit_shared_row_event(session: Session, run_id: int, user_report, dry_run: bool) -> None:
+    def _add_event(session: Session, scope: str, level: str, run_id: int, *, dry_run: bool | None = None, **fields):
+        """Append one audit Event, injecting the run_id (and dry_run, where relevant) that every
+        emitter shares (plex-safety rule 10). Callers pass only their distinctive message fields."""
+        message: dict = {"run_id": run_id}
+        if dry_run is not None:
+            message["dry_run"] = dry_run
+        message.update(fields)
+        session.add(Event(scope=scope, level=level, message=message))
+
+    @classmethod
+    def _emit_shared_row_event(cls, session: Session, run_id: int, user_report, dry_run: bool) -> None:
         """The audit record for a shared row — it has no user, so it gets no RunUser row.
 
         Rule 10: every write, real or dry-run, leaves a structured event with its diff. "What changed
         on the shared row at 03:31" must be answerable from the UI.
         """
-        session.add(
-            Event(
-                scope="run.shared",
-                level="error" if user_report.status == "error" else "info",
-                message={
-                    "run_id": run_id,
-                    "row": user_report.slug,
-                    "status": user_report.status,
-                    "picks": len(user_report.picks),
-                    "error": user_report.error,
-                    "dry_run": dry_run,
-                    "diff": user_report.diff.__dict__ if user_report.diff else {},
-                },
-            )
+        cls._add_event(
+            session,
+            "run.shared",
+            "error" if user_report.status == "error" else "info",
+            run_id,
+            dry_run=dry_run,
+            row=user_report.slug,
+            status=user_report.status,
+            picks=len(user_report.picks),
+            error=user_report.error,
+            diff=user_report.diff.__dict__ if user_report.diff else {},
         )
 
     @staticmethod
@@ -483,101 +490,88 @@ class RunService:
             )
         )
 
-    @staticmethod
-    def _emit_sweep_event(session: Session, run_id: int, report) -> None:
+    @classmethod
+    def _emit_sweep_event(cls, session: Session, run_id: int, report) -> None:
         # Rows deleted because Plex could not hide them. This is a SERVER-wide sweep, so it
         # can touch users who were not in this run at all (paused, disabled) — those have no
         # RunUser row to carry the audit, and deleting someone's row is the most destructive
         # thing a run does. It gets its own event (plex-safety rule 10).
         if not report.swept_rows:
             return
-        session.add(
-            Event(
-                scope="run.sweep",
-                level="warning",
-                message={
-                    "run_id": run_id,
-                    "dry_run": report.dry_run,
-                    "reason": "row was broken beyond repair-in-place — either no share "
-                    "filter could hide it (wrong type for its library), or it shared a "
-                    "collection tag with other users' rows and held their picks",
-                    "deleted": report.swept_rows,
-                },
-            )
+        cls._add_event(
+            session,
+            "run.sweep",
+            "warning",
+            run_id,
+            dry_run=report.dry_run,
+            reason="row was broken beyond repair-in-place — either no share filter could hide it "
+            "(wrong type for its library), or it shared a collection tag with other users' rows "
+            "and held their picks",
+            deleted=report.swept_rows,
         )
 
-    @staticmethod
-    def _emit_privacy_sync_events(session: Session, run_id: int, report) -> None:
+    @classmethod
+    def _emit_privacy_sync_events(cls, session: Session, run_id: int, report) -> None:
         # Share-filter writes. Most of these accounts are NOT in this run's user list — they
         # are simply people the server is shared with — so they have no RunUser row to carry
         # the audit. Changing someone's Plex share permissions is the most sensitive thing
         # Shortlist does; "what changed on whose share at 03:31" has to be answerable for every
         # one of them (plex-safety rule 10).
         for account_id, write in report.filter_writes.items():
-            session.add(
-                Event(
-                    scope="run.privacy_sync",
-                    level="info",
-                    message={
-                        "run_id": run_id,
-                        "dry_run": report.dry_run,
-                        "plex_account_id": account_id,
-                        "username": write["username"],
-                        "fields": {
-                            field: {"before": before, "after": after}
-                            for field, (before, after) in write["fields"].items()
-                        },
-                    },
-                )
+            cls._add_event(
+                session,
+                "run.privacy_sync",
+                "info",
+                run_id,
+                dry_run=report.dry_run,
+                plex_account_id=account_id,
+                username=write["username"],
+                fields={
+                    field: {"before": before, "after": after} for field, (before, after) in write["fields"].items()
+                },
             )
 
-    @staticmethod
-    def _emit_hub_ordering_events(session: Session, run_id: int, report) -> None:
+    @classmethod
+    def _emit_hub_ordering_events(cls, session: Session, run_id: int, report) -> None:
         # Recommended-shelf reorders. Moving a managed hub shifts every collection's position on a
         # server-wide shelf that a co-managing tool (Kometa) also cares about, so each library we
         # actually moved rows in is audited — "what changed on the shelf at 03:31" (plex-safety rule 10).
         for entry in report.hub_orderings:
-            session.add(
-                Event(
-                    scope="run.hub_order",
-                    level="info",
-                    message={
-                        "run_id": run_id,
-                        "dry_run": report.dry_run,
-                        "library": entry.get("library"),
-                        "anchor": entry.get("anchor"),
-                        "moved": entry.get("moved", []),
-                    },
-                )
+            cls._add_event(
+                session,
+                "run.hub_order",
+                "info",
+                run_id,
+                dry_run=report.dry_run,
+                library=entry.get("library"),
+                anchor=entry.get("anchor"),
+                moved=entry.get("moved", []),
             )
 
-    @staticmethod
-    def _emit_request_events(session: Session, run_id: int, report) -> None:
+    @classmethod
+    def _emit_request_events(cls, session: Session, run_id: int, report) -> None:
         # Sonarr/Radarr requests. Adding a title to a download app is a real outward-facing
         # write (it consumes disk and bandwidth), so every request — and every skip — is audited
         # with the app's own outcome message, dry-run included (plex-safety rule 10 spirit).
         if report.requests is None or not report.requests.outcomes:
             return
-        session.add(
-            Event(
-                scope="run.requests",
-                level="info",
-                message={
-                    "run_id": run_id,
-                    "dry_run": report.dry_run,
-                    "considered": report.requests.considered,
-                    "outcomes": [
-                        {
-                            "tmdb_id": o.tmdb_id,
-                            "title": o.title,
-                            "media_type": o.media_type.value,
-                            "status": o.status,
-                            "detail": o.detail,
-                        }
-                        for o in report.requests.outcomes
-                    ],
-                },
-            )
+        cls._add_event(
+            session,
+            "run.requests",
+            "info",
+            run_id,
+            dry_run=report.dry_run,
+            considered=report.requests.considered,
+            outcomes=[
+                {
+                    "tmdb_id": o.tmdb_id,
+                    "title": o.title,
+                    "media_type": o.media_type.value,
+                    "status": o.status,
+                    "detail": o.detail,
+                }
+                for o in report.requests.outcomes
+            ],
         )
 
     @staticmethod

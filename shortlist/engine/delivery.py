@@ -93,18 +93,23 @@ def _section_kind(section) -> MediaType:
     return MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
 
 
+def sections_for_keys(sections: list, library_keys) -> list:
+    """The sections a row's ``library_keys`` name, in ``sections`` order.
+
+    str() on BOTH sides is load-bearing: the pool-narrowing half of the decision
+    (rows.row_library_index) coerces too, so if either side ever compared an int the two would
+    silently disagree — the row would curate fine and land in no library at all.
+    """
+    wanted = {str(key) for key in library_keys}
+    return [s for s in sections if str(s.key) in wanted]
+
+
 def _target_sections(sections: list, spec: RowSpec) -> list:
     """The libraries this row delivers into: the specific ones it named (``library_keys``), else
     every library of an allowed media type. A named key that no longer exists is simply skipped."""
     allowed = _allowed_media(spec.media)
     candidates = [s for s in sections if _section_kind(s) in allowed]
-    if spec.library_keys:
-        # str() on BOTH sides: the pool-narrowing half of this decision (rows.row_library_index)
-        # coerces, so if either side ever sees an int the two would silently disagree — the row would
-        # curate fine and land in no library at all.
-        wanted = {str(key) for key in spec.library_keys}
-        return [s for s in candidates if str(s.key) in wanted]
-    return candidates
+    return sections_for_keys(candidates, spec.library_keys) if spec.library_keys else candidates
 
 
 def deliver_rows(

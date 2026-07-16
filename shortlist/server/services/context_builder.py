@@ -53,6 +53,32 @@ from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
 
 
+def _prompt_from_recipe(recipe: dict) -> PromptConfig:
+    """A stored recipe dict → PromptConfig, blank fields preserved. Empty means "inherit": the engine
+    overlays this on the layer below field by field, so defaulting any field here (e.g. tone →
+    "balanced") would let an empty recipe silently beat the global/row recipe it should inherit."""
+    return PromptConfig(
+        tone=(recipe.get("tone") or "").strip(),
+        guidance=(recipe.get("guidance") or "").strip(),
+        template=(recipe.get("template") or "").strip(),
+    )
+
+
+def curator_kwargs(get: Callable[[str], object]) -> dict:
+    """Assemble ``make_curator`` kwargs from settings. Ollama takes a base_url and no key (a key
+    would be rejected by its ctor); every other provider takes an api_key; an optional model applies
+    to all. The single source of truth the runtime context and the settings 'Test' probe both build
+    from — so a change to how a provider is configured can't drift between them."""
+    kwargs: dict = {}
+    if get("curator.provider") == "ollama":
+        kwargs["base_url"] = get("curator.ollama_url")
+    elif get("curator.api_key"):
+        kwargs["api_key"] = get("curator.api_key")
+    if get("curator.model"):
+        kwargs["model"] = get("curator.model")
+    return kwargs
+
+
 class ContextBuilder:
     """Builds an EngineContext and user profiles from DB settings — the engine's server adapter."""
 
@@ -89,15 +115,7 @@ class ContextBuilder:
             search = ExaClient(exa_key) if exa_key else None
             history = self._history_source(store, plex)
             provider = store.get("curator.provider")
-            curator_kwargs = {}
-            if provider == "ollama":
-                # Ollama takes a base URL and no key — a key would be rejected by its ctor.
-                curator_kwargs["base_url"] = store.get("curator.ollama_url")
-            elif store.get("curator.api_key"):
-                curator_kwargs["api_key"] = store.get("curator.api_key")
-            if store.get("curator.model"):
-                curator_kwargs["model"] = store.get("curator.model")
-            curator = make_curator(provider, **curator_kwargs)
+            curator = make_curator(provider, **curator_kwargs(store.get))
             config = EngineConfig(
                 row_size=int(store.get("row.size")),
                 row_name_template=store.get("row.name_template"),
@@ -287,14 +305,7 @@ class ContextBuilder:
             recipe = row.prompt or {}
             prompt = None
             if recipe.get("tone") or recipe.get("guidance") or recipe.get("template"):
-                # Blank stays blank — the engine overlays this on the row's recipe field by field, so
-                # an empty field means "inherit". Defaulting tone to "balanced" here meant setting
-                # ONLY the tone for one person silently wiped that row's guidance and custom prompt.
-                prompt = PromptConfig(
-                    tone=(recipe.get("tone") or "").strip(),
-                    guidance=(recipe.get("guidance") or "").strip(),
-                    template=(recipe.get("template") or "").strip(),
-                )
+                prompt = _prompt_from_recipe(recipe)
             out.setdefault(row.user_id, {})[slug] = RowOverride(muted=row.muted, size=row.row_size, prompt=prompt)
         return out
 
@@ -331,12 +342,7 @@ class ContextBuilder:
                 # unconditionally before, an empty row recipe produced a bare `balanced` PromptConfig
                 # that beat the global one downstream — so Settings -> Curation style applied to the
                 # default row and NOTHING else, while its own copy claimed it wrote "everyone's rows".
-                recipe = collection.prompt or {}
-                row_recipe = PromptConfig(
-                    tone=(recipe.get("tone") or "").strip(),
-                    guidance=(recipe.get("guidance") or "").strip(),
-                    template=(recipe.get("template") or "").strip(),
-                )
+                row_recipe = _prompt_from_recipe(collection.prompt or {})
                 merged = overlay_prompt(self._resolve_prompt(store, {}), row_recipe)
                 prompt = replace(merged, shared=shared)
             elif shared:

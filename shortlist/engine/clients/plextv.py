@@ -55,13 +55,13 @@ class PlexTvClient:
         return h
 
     def _throttle(self) -> None:
-        wait = self._min_write_interval - (time.monotonic() - self._last_write)
-        if wait > 0:
-            # The ≤1 write/s plex.tv throttle (rule 6) is the hard-serial part of the privacy sync;
-            # surfacing the wait makes "why did the sync take W seconds" answerable from the log.
-            logger.debug("plex.tv throttle: waiting {:.2f}s before next write", wait)
-            time.sleep(wait)
-        self._last_write = time.monotonic()
+        # The ≤1 write/s plex.tv throttle (rule 6) is the hard-serial part of the privacy sync;
+        # surfacing the wait makes "why did the sync take W seconds" answerable from the log.
+        self._last_write = http_retry.throttle(
+            self._last_write,
+            self._min_write_interval,
+            on_wait=lambda w: logger.debug("plex.tv throttle: waiting {:.2f}s before next write", w),
+        )
 
     def list_users(self) -> list[PlexTvUser]:
         """All shared + Home users with their share filters (the owner is not in this list).

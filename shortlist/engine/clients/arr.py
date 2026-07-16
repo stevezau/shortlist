@@ -12,8 +12,6 @@ Sonarr/Radarr versions instead of guessing at required metadata fields.
 
 from __future__ import annotations
 
-import time
-
 import httpx
 
 from shortlist.engine.clients import http_retry
@@ -78,10 +76,7 @@ class _ArrClient:
 
     def _throttle(self) -> None:
         """At most one write per ``min_write_interval`` seconds — be a polite client (rule 6 spirit)."""
-        elapsed = time.monotonic() - self._last_write
-        if elapsed < self._min_write_interval:
-            time.sleep(self._min_write_interval - elapsed)
-        self._last_write = time.monotonic()
+        self._last_write = http_retry.throttle(self._last_write, self._min_write_interval)
 
     def ping(self) -> str:
         """A tiny authenticated call for the settings 'Test' button; returns a friendly version line."""
@@ -189,6 +184,11 @@ class SonarrClient(_ArrClient):
         }
         self._post("/api/v3/series", body)
         return "requested", "added to Sonarr and searching"
+
+
+def make_arr_client(service: str, target: ArrTarget) -> _ArrClient:
+    """Radarr for ``"radarr"``, Sonarr for ``"sonarr"`` — the one place that maps the name to a client."""
+    return (RadarrClient if service == "radarr" else SonarrClient)(target)
 
 
 def _match_tvdb(results: object, tvdb_id: int) -> dict | None:

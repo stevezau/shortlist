@@ -217,7 +217,7 @@ async def test_connection(service: str, request: Request) -> dict:
                 raise RuntimeError("TMDB rejected the key")
             return "TMDB key works"
         if service in ("radarr", "sonarr"):
-            from shortlist.engine.clients.arr import RadarrClient, SonarrClient
+            from shortlist.engine.clients.arr import make_arr_client
             from shortlist.engine.models import ArrTarget
 
             prefix = f"requests.{service}"
@@ -226,8 +226,7 @@ async def test_connection(service: str, request: Request) -> dict:
             if not url or not api_key:
                 raise RuntimeError(f"{service.title()} URL and API key are both required")
             target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
-            client = (RadarrClient if service == "radarr" else SonarrClient)(target)
-            return client.ping()
+            return make_arr_client(service, target).ping()
         if service == "omdb":
             from shortlist.engine.clients.omdb import OmdbClient
 
@@ -251,16 +250,10 @@ async def test_connection(service: str, request: Request) -> dict:
             return ExaClient(api_key).ping()
         if service == "llm":
             from shortlist.engine.curator import make_curator
+            from shortlist.server.services.context_builder import curator_kwargs
 
             provider = config["curator.provider"]
-            kwargs = {}
-            if provider == "ollama":
-                kwargs["base_url"] = config["curator.ollama_url"]
-            elif config["curator.api_key"]:
-                kwargs["api_key"] = config["curator.api_key"]
-            if config["curator.model"]:
-                kwargs["model"] = config["curator.model"]
-            curator = make_curator(provider, **kwargs)
+            curator = make_curator(provider, **curator_kwargs(config.__getitem__))
             if hasattr(curator, "ping"):
                 return f"Curator replied: {curator.ping()!r}"
             return "Heuristic mode — nothing to test, always works"
@@ -292,11 +285,11 @@ async def arr_options(service: str, request: Request) -> dict:
         raise HTTPException(status_code=409, detail=f"{service.title()} isn't connected yet")
 
     def fetch() -> dict:
-        from shortlist.engine.clients.arr import RadarrClient, SonarrClient
+        from shortlist.engine.clients.arr import make_arr_client
         from shortlist.engine.models import ArrTarget
 
         target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
-        client = (RadarrClient if service == "radarr" else SonarrClient)(target)
+        client = make_arr_client(service, target)
         return {"quality_profiles": client.quality_profiles(), "root_folders": client.root_folders()}
 
     try:

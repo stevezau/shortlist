@@ -27,6 +27,7 @@ from shortlist.engine.delivery import (
     render_row_name,
     resolve_row_template,
     row_marker,
+    sections_for_keys,
 )
 from shortlist.engine.history import derive_seeds
 from shortlist.engine.models import (
@@ -162,12 +163,10 @@ def row_library_index(
     """
     if not spec.library_keys:
         return library_index
-    wanted = {str(key) for key in spec.library_keys}
     narrowed: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
-    for section in ctx.delivery_sections:
-        if str(section.key) in wanted:
-            kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-            narrowed[kind].update(ctx.section_index.get(section.key, {}))
+    for section in sections_for_keys(ctx.delivery_sections, spec.library_keys):
+        kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+        narrowed[kind].update(ctx.section_index.get(section.key, {}))
     return narrowed
 
 
@@ -175,12 +174,9 @@ def _row_catalog(ctx: EngineContext, spec: RowSpec) -> dict[MediaType, list[dict
     """The AI-from-library catalog THIS row may propose from — its own libraries only."""
     if not spec.library_keys or not ctx.section_catalog:
         return ctx.library_catalog
-    wanted = {str(key) for key in spec.library_keys}
     catalog: dict[MediaType, list[dict]] = {MediaType.MOVIE: [], MediaType.SHOW: []}
     seen: dict[MediaType, set[int]] = {MediaType.MOVIE: set(), MediaType.SHOW: set()}
-    for section in ctx.delivery_sections:
-        if str(section.key) not in wanted:
-            continue
+    for section in sections_for_keys(ctx.delivery_sections, spec.library_keys):
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
         for item in ctx.section_catalog.get(section.key, []):
             # A row pinned to both "Movies" and "4K Movies" must not show the LLM the same film
