@@ -411,7 +411,7 @@ async def _run_reconcile(
     return removed, error
 
 
-def _reconcile_row_rename(state, *, slug: str, new_template: str, renamed: list[str]) -> None:
+def _reconcile_row_rename(state, *, slug: str, new_template: str, entries: list[dict]) -> None:
     """Rename a per-person row's collections IN PLACE for every user who has it — multi-row users would
     otherwise keep the old-named copy alongside the one the next run builds under the new name.
 
@@ -420,7 +420,10 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, renamed: list[
     title (same account marker). Privacy-neutral, so gate-exempt (the hiding filter is keyed on the
     label, which never changes here). STATIC titles only: a ``{top_seed}`` template renders to the
     default row's name with no picks, so a dynamic new template is skipped — its title changes every
-    run anyway, and the next run's delivery already renames the sole-row case. Runs in an executor."""
+    run anyway, and the next run's delivery already renames the sole-row case. Runs in an executor.
+
+    Accumulates one ``{user, old, new, libraries}`` entry per user actually renamed into ``entries``,
+    so the audit can answer "whose row went from what to what, in which libraries" (rule 10)."""
     with state.sessions() as session:
         latest = session.query(Run).filter(Run.status.in_(("ok", "error"))).order_by(Run.id.desc()).first()
         breakdown_by_user = {ru.user_id: (ru.breakdown or []) for ru in latest.users} if latest else {}
@@ -448,27 +451,27 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, renamed: list[
         for old_display in old_titles:
             if old_display == new_display:
                 continue  # this user's title didn't actually change (e.g. a {user} template)
-            renamed.extend(
-                rename_row_collections(
-                    ctx.plex,
-                    ctx.config,
-                    label=f"{ctx.config.label_prefix}_{user.slug}",
-                    marker=marker,
-                    old_display=old_display,
-                    new_display=new_display,
-                    dry_run=False,
-                )
+            libraries = rename_row_collections(
+                ctx.plex,
+                ctx.config,
+                label=f"{ctx.config.label_prefix}_{user.slug}",
+                marker=marker,
+                old_display=old_display,
+                new_display=new_display,
+                dry_run=False,
             )
+            if libraries:
+                entries.append({"user": user.slug, "old": old_display, "new": new_display, "libraries": libraries})
 
 
-async def _run_row_rename(state, *, slug: str, new_template: str, scope: str) -> tuple[list[str], str | None]:
-    """Run ``_reconcile_row_rename`` in an executor and audit it (rule 10). Best-effort — a Plex outage
-    is logged, never fatal to the PATCH. Returns ``(renamed_library_titles, error)``."""
-    renamed: list[str] = []
+async def _run_row_rename(state, *, slug: str, new_template: str, scope: str) -> tuple[list[dict], str | None]:
+    """Run ``_reconcile_row_rename`` in an executor and audit it with per-user old→new detail (rule 10).
+    Best-effort — a Plex outage is logged, never fatal to the PATCH. Returns ``(rename_entries, error)``."""
+    entries: list[dict] = []
     error: str | None = None
     try:
         await asyncio.get_running_loop().run_in_executor(
-            None, lambda: _reconcile_row_rename(state, slug=slug, new_template=new_template, renamed=renamed)
+            None, lambda: _reconcile_row_rename(state, slug=slug, new_template=new_template, entries=entries)
         )
     except Exception as e:
         error = redact(f"{type(e).__name__}: {e}")  # a PMS error can carry a tokened URL (rule 9)
@@ -479,7 +482,7 @@ async def _run_row_rename(state, *, slug: str, new_template: str, scope: str) ->
                 level="info",
                 message={
                     "slug": slug,
-                    "renamed": renamed,
+                    "renames": entries,  # per user: {user, old, new, libraries} — answers rule 10's "whose, what→what"
                     "new_template": new_template,
                     "error": error,
                     "at": datetime.now(UTC).isoformat(),
@@ -487,7 +490,13 @@ async def _run_row_rename(state, *, slug: str, new_template: str, scope: str) ->
             )
         )
         session.commit()
+    total = sum(len(e["libraries"]) for e in entries)
     logger.info(
-        "{} '{}': renamed {} collection(s){}", scope, slug, len(renamed), f" then FAILED: {error}" if error else ""
+        "{} '{}': renamed {} collection(s) for {} user(s){}",
+        scope,
+        slug,
+        total,
+        len(entries),
+        f" then FAILED: {error}" if error else "",
     )
-    return renamed, error
+    return entries, error

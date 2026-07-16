@@ -835,10 +835,11 @@ class TestCollectionsApi:
         assert r.status_code == 200 and r.json()["size"] == 15
         spy.assert_not_called()
 
-    def _fake_rename_ctx(self, monkeypatch, client, *, titles_by_label):
+    def _fake_rename_ctx(self, monkeypatch, client, *, titles_by_label, fail=False):
         """Point build_context at a fake Plex whose collections record editTitle() renames.
 
-        titles_by_label: {label -> current title}. Returns the `renames` list of (old, new) titles."""
+        titles_by_label: {label -> current title}. Returns the `renames` list of (old, new) titles.
+        When `fail`, editTitle raises — to exercise the best-effort/audit failure path (rule 5/9)."""
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
@@ -848,7 +849,10 @@ class TestCollectionsApi:
         cols = {}
         for label, title in titles_by_label.items():
             col = MagicMock(title=title)
-            col.editTitle.side_effect = lambda new, c=col: renames.append((c.title, new))
+            if fail:
+                col.editTitle.side_effect = RuntimeError("PMS 500 at http://pms:32400/library?X-Plex-Token=SEKRET")
+            else:
+                col.editTitle.side_effect = lambda new, c=col: renames.append((c.title, new))
             cols[label] = col
         section = SimpleNamespace(title="Movies")
         plex = MagicMock()
@@ -893,6 +897,78 @@ class TestCollectionsApi:
         assert r.status_code == 200
         expected = {("Old Gems" + row_marker(acct), "Buried Treasure" + row_marker(acct)) for _, acct in info}
         assert set(renames) == expected  # each account's row retitled, marker preserved
+
+        # The audit records WHOSE row went from what to what, in which libraries (rule 10).
+        from shortlist.server.db.models import Event
+
+        with client.app.state.sessions() as session:
+            audit = session.query(Event).filter_by(scope="collection.rename").order_by(Event.id.desc()).first()
+        by_user = {e["user"]: e for e in audit.message["renames"]}
+        assert set(by_user) == {uslug for uslug, _ in info}
+        for uslug, _ in info:
+            assert by_user[uslug]["old"] == "Old Gems" and by_user[uslug]["new"] == "Buried Treasure"
+            assert by_user[uslug]["libraries"] == ["Movies"]
+
+    def test_renaming_via_a_static_name_template_also_reconciles(self, client: TestClient, monkeypatch):
+        """A name_template-only change (name untouched) is a rename too — the effective title is the
+        template, so changing it must retitle the collection in place."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Run, RunUser, User
+
+        created = client.post("/api/collections", json={"name": "Gems"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id, user_id=user.id, status="ok", breakdown=[{"row_slug": slug, "row_title": "Gems"}]
+                )
+            )
+            session.commit()
+
+        renames = self._fake_rename_ctx(
+            monkeypatch, client, titles_by_label={f"shortlist_{uslug}": "Gems" + row_marker(acct)}
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "name_template": "Buried Treasure"})
+        assert r.status_code == 200
+        assert renames == [("Gems" + row_marker(acct), "Buried Treasure" + row_marker(acct))]
+
+    def test_rename_reconcile_survives_a_plex_error(self, client: TestClient, monkeypatch):
+        """A PMS failure mid-rename is best-effort: the PATCH still returns 200, and the failure is
+        audited with the token redacted (rules 5 + 9) — never surfaced raw or fatal."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Event, Run, RunUser, User
+
+        created = client.post("/api/collections", json={"name": "Old Gems"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id, user_id=user.id, status="ok", breakdown=[{"row_slug": slug, "row_title": "Old Gems"}]
+                )
+            )
+            session.commit()
+
+        self._fake_rename_ctx(
+            monkeypatch, client, titles_by_label={f"shortlist_{uslug}": "Old Gems" + row_marker(acct)}, fail=True
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Buried Treasure"})
+        assert r.status_code == 200  # best-effort: the rename failure never fails the PATCH
+        with client.app.state.sessions() as session:
+            audit = session.query(Event).filter_by(scope="collection.rename").order_by(Event.id.desc()).first()
+        assert audit.message["error"] is not None
+        assert "SEKRET" not in str(audit.message) and "REDACTED" in audit.message["error"]  # rule 9
 
     def test_renaming_to_a_dynamic_template_is_left_for_the_next_run(self, client: TestClient, monkeypatch):
         """A {top_seed} template renders to the default title with no picks, so the reconcile skips it

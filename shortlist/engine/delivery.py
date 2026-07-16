@@ -326,6 +326,12 @@ def rename_row_collections(
     foreign (Kometa) collection never carries our label and ``find_owned_collections`` only returns
     ours. Returns the library titles renamed (or, in a dry run, that would be).
     """
+    if not label.startswith(config.label_prefix):
+        # Belt-and-suspenders (rule 4): only ever retitle under one of OUR labels, matching the delete
+        # path's ownership re-check. find_owned_collections already scopes to this label, so this only
+        # guards against a caller ever passing a foreign one.
+        logger.warning("refusing to rename under a non-Shortlist label {!r}", label)
+        return []
     renamed: list[str] = []
     new_title = new_display + marker
     for section in plex.sections():
