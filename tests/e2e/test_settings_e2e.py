@@ -64,21 +64,24 @@ class TestDefaults:
         # The preview must show what Plex will show, not the raw template.
         expect(page.get_by_text("🍿 Tonight's picks for Fargo")).to_be_visible()
 
-        page.get_by_role("button", name="20", exact=True).click()
+        # Row size is a free number field now; blur commits the typed value.
+        row_size = page.get_by_label("Row size")
+        row_size.fill("22")
+        row_size.blur()
         # No Save button — the section auto-saves (debounced). Poll until it reaches the database.
         for _ in range(24):
             stored = app.api("GET", "/api/settings").json()
-            if stored.get("row.name_template") == "🍿 Tonight's picks for {top_seed}" and stored.get("row.size") == 20:
+            if stored.get("row.name_template") == "🍿 Tonight's picks for {top_seed}" and stored.get("row.size") == 22:
                 break
             page.wait_for_timeout(250)
         stored = app.api("GET", "/api/settings").json()
         assert stored["row.name_template"] == "🍿 Tonight's picks for {top_seed}"
-        assert stored["row.size"] == 20
+        assert stored["row.size"] == 22
 
         # Reload: only a value that reached the database can come back.
         page.reload()
         expect(page.get_by_label("Row name template")).to_have_value("🍿 Tonight's picks for {top_seed}", timeout=LOAD)
-        expect(page.get_by_role("button", name="20", exact=True)).to_have_attribute("aria-pressed", "true")
+        expect(page.get_by_label("Row size")).to_have_value("22", timeout=LOAD)
 
     def test_pause_all_stops_runs_without_disabling_anyone(self, page: Page, app: ShortlistApp):
         """The Danger Zone switch must actually pause runs — it used to 422 as an unknown key."""
@@ -106,8 +109,8 @@ class TestSchedule:
         _open_settings(page)
 
         page.get_by_label("Run at").fill("04:45")
-        page.get_by_role("button", name="weekly", exact=True).click()
-        expect(page.get_by_text(re.compile(r"Rows refresh weekly at 04:45"))).to_be_visible()
+        page.get_by_role("button", name="Weekly", exact=True).click()
+        expect(page.get_by_text(re.compile(r"Rows refresh every Sunday at 04:45"))).to_be_visible()
 
         # No Save button — the section auto-saves (debounced). Poll until it reaches the database.
         for _ in range(24):
@@ -119,12 +122,27 @@ class TestSchedule:
         page.reload()
         expect(page.get_by_label("Run at")).to_have_value("04:45", timeout=LOAD)
 
-    def test_an_invalid_cron_is_rejected_with_a_readable_message(self, page: Page, app: ShortlistApp):
-        """The backend must never accept a cron that would silently kill the nightly run.
+    def test_a_custom_cron_persists_and_reloads_in_custom_mode(self, page: Page, app: ShortlistApp):
+        """The Custom (cron) mode round-trips a non-preset schedule the presets can't represent."""
+        _open_settings(page)
 
-        Issued through the SPA's own fetch (session cookie + CSRF header, same as any mutation)
-        rather than a UI control, because there is no cron field on the page yet — Settings says
-        "Cron expressions ... are coming to this page". When that field lands, point this at it.
+        page.get_by_role("button", name="Custom (cron)", exact=True).click()
+        cron_field = page.get_by_label("Cron expression")
+        cron_field.fill("0 4 * * 1")  # Mondays at 4am — not a nightly/weekly preset
+
+        for _ in range(24):
+            if app.api("GET", "/api/settings").json().get("schedule.cron") == "0 4 * * 1":
+                break
+            page.wait_for_timeout(250)
+        assert app.api("GET", "/api/settings").json()["schedule.cron"] == "0 4 * * 1"
+
+        # A non-Sunday weekday must come back in Custom mode, not be flattened onto the weekly preset.
+        page.reload()
+        expect(page.get_by_label("Cron expression")).to_have_value("0 4 * * 1", timeout=LOAD)
+
+    def test_an_invalid_cron_is_rejected_with_a_readable_message(self, page: Page, app: ShortlistApp):
+        """The backend must never accept a cron that would silently kill the nightly run. A well-formed
+        five-field expression clears the client gate and reaches the API, which rejects bad values.
         """
         _open_settings(page)
 
@@ -133,7 +151,7 @@ class TestSchedule:
                 const response = await fetch('/api/settings', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json', 'x-shortlist-csrf': '1' },
-                    body: JSON.stringify({ values: { 'schedule.cron': 'not a cron' } }),
+                    body: JSON.stringify({ values: { 'schedule.cron': '99 99 * * *' } }),
                 });
                 return { status: response.status, body: await response.json() };
             }"""

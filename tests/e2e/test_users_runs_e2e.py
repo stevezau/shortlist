@@ -65,10 +65,13 @@ class TestUsers:
         paused.click()
         expect(paused).not_to_be_checked(timeout=LOAD)
 
-        # Size is a PER-ROW override now: open a row's drawer and set 10. The drawer AUTO-SAVES
-        # (no Save button — the whole app is one save paradigm), so picking the size is the action.
+        # Size is a PER-ROW override now: open a row's drawer, switch on a custom size and type 10.
+        # The drawer AUTO-SAVES (no Save button — the whole app is one save paradigm).
         page.get_by_role("button", name="Customize for this person").first.click()
-        page.get_by_role("button", name="10", exact=True).click()
+        page.get_by_role("switch", name="Custom row size for this person").click()
+        titles = page.get_by_label("Titles for this person")
+        titles.fill("10")
+        titles.blur()  # the free number field commits on blur
         expect(page.get_by_text("Saved").first).to_be_visible(timeout=LOAD)
 
         # Pause reaches the user's prefs; the size override lives on the row, not user prefs. Poll the

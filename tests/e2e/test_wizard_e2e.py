@@ -158,9 +158,10 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
 
     # 10, not the 15 default: the seeded library can suggest exactly 10 unwatched titles per
     # user, so this is the largest row every user can actually fill (the engine never invents).
-    size_10 = page.get_by_role("button", name="10", exact=True)
-    size_10.click()
-    expect(size_10).to_have_attribute("aria-pressed", "true")
+    size_field = page.get_by_label("Row size")
+    size_field.fill("10")
+    size_field.blur()  # the free number field commits on blur
+    expect(size_field).to_have_value("10")
     page.get_by_label("Refresh rows nightly at").fill("02:15")
     page.get_by_role("button", name="Save & continue").click()
 
