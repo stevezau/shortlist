@@ -2,44 +2,26 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { SaveStatus } from "@/components/save-status";
-import { Segmented } from "@/components/segmented";
+import { AiWebSearchCard } from "@/components/settings/ai-web-search-card";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
+import { InlineKeyField } from "@/components/settings/inline-key-field";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useAutosave } from "@/lib/autosave";
 import { FRESHNESS_DEFAULT, WATCHED_PCT_DEFAULT } from "@/lib/constants";
+import { useSaveSettings } from "@/lib/queries";
 import {
-  cleanSources,
-  hasExa,
-  hasNativeWebSearch,
+  hasCurator,
+  hasTrakt,
   SOURCES,
-  sourceBlockedReason,
   webSearchProvider,
 } from "@/lib/sources";
-import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
-const SEARCH_BACKENDS = [
-  { value: "auto", label: "Auto" },
-  { value: "native", label: "Curator’s own" },
-  { value: "exa", label: "Exa" },
-] as const;
-
-/** Plain-English note on what the chosen web-search backend does, given the current setup. */
-function backendNote(mode: string, settings: Settings): string {
-  if (mode === "native")
-    return "Uses your AI curator’s own web search (Claude, GPT, or Gemini). Local Ollama models can’t do this.";
-  if (mode === "exa")
-    return "Uses the Exa search API for every provider — the only option for a local Ollama curator. Needs an Exa key in Connections.";
-  const via = hasNativeWebSearch(settings)
-    ? "your curator’s own web search"
-    : hasExa(settings)
-      ? "your Exa key"
-      : "your curator’s web search, or an Exa key";
-  return `Uses ${via} automatically — the curator’s own tool where it has one (Claude/GPT/Gemini), otherwise Exa.`;
-}
+// Every source except AI web search — that one gets its own card (backend choice + inline key).
+const SIMPLE_SOURCES = SOURCES.filter((s) => s.id !== "llm_web");
 
 function readSources(settings: Settings): string[] {
   const value = settings["candidates.sources"];
@@ -57,6 +39,40 @@ function readPercent(
   const value = Number(settings[key]);
   if (!Number.isFinite(value)) return fallback;
   return Math.round(Math.min(1, Math.max(0, value)) * 100);
+}
+
+/** When an enabled source is missing its dependency, show how to satisfy it RIGHT HERE. */
+function InlineFix({
+  sourceId,
+  settings,
+}: {
+  sourceId: string;
+  settings: Settings;
+}) {
+  if (sourceId === "trakt" && !hasTrakt(settings)) {
+    return (
+      <InlineKeyField
+        settingKey="trakt.client_id"
+        service="trakt"
+        label="Trakt API key"
+        placeholder="Trakt app client id"
+        hint="Paste your Trakt app client id to switch this source on — no trip to Connections."
+        settings={settings}
+      />
+    );
+  }
+  if (sourceId === "llm_library" && !hasCurator(settings)) {
+    return (
+      <p className="text-sm text-warning">
+        Needs an AI curator to read each person’s taste —{" "}
+        <a href="#connections" className="font-medium underline">
+          set one up in Connections
+        </a>
+        .
+      </p>
+    );
+  }
+  return null;
 }
 
 export function RecommendationsSection({ settings }: { settings: Settings }) {
@@ -78,13 +94,15 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
     );
 
+  // Persist the owner's INTENT (the enabled set as chosen). A source whose dependency isn't met yet
+  // no-ops safely in the engine and shows an inline "here's what's needed" prompt — never a silent lie.
   const retry = useAutosave(
     { enabled, watchedPct, freshness, searchBackend },
     () => {
       setSaved(false);
       save.mutate(
         {
-          "candidates.sources": cleanSources(enabled, settings),
+          "candidates.sources": enabled,
           "recommendations.watched_pct": watchedPct / 100,
           "recommendations.freshness": freshness / 100,
           "llm_web.search_provider": searchBackend,
@@ -99,76 +117,58 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       <h2 id="recs-heading" className="text-lg font-semibold">
         Recommendations
       </h2>
+
       <Card>
         <CardContent className="space-y-4 pt-6">
           <p className="text-sm text-muted-foreground">
             Where Shortlist looks for titles to suggest. It pools every source
-            you enable, keeps only what&rsquo;s already in your library, then
-            re-ranks (your AI curator does this when one&rsquo;s connected).
-            More sources means wider reach.
+            you enable, keeps only what’s already in your library, then
+            re-ranks. More sources means wider reach.
           </p>
           <p className="text-sm text-muted-foreground">
             This is the <strong>default every row inherits</strong>. Any row can
-            use its own sources and its own AI style instead —{" "}
+            use its own sources instead —{" "}
             <Link to="/rows" className="font-medium underline">
               Rows
             </Link>{" "}
             → Edit → Recommendation sources.
           </p>
-          {SOURCES.map((source) => {
-            const blockedReason = sourceBlockedReason(source, settings);
-            const blocked = blockedReason !== null;
-            return (
-              <div
-                key={source.id}
-                className="flex items-start justify-between gap-4"
-              >
+          {SIMPLE_SOURCES.map((source) => (
+            <div key={source.id} className="space-y-2">
+              <div className="flex items-start justify-between gap-4">
                 <div className="space-y-0.5">
                   <p className="text-sm font-medium">{source.label}</p>
                   <p className="text-sm text-muted-foreground">{source.desc}</p>
-                  {blocked && (
-                    <p className="text-xs text-warning">{blockedReason}</p>
-                  )}
                 </div>
                 <Switch
-                  checked={enabled.includes(source.id) && !blocked}
-                  disabled={blocked}
+                  checked={enabled.includes(source.id)}
                   onCheckedChange={() => toggle(source.id)}
                   aria-label={`Enable ${source.label}`}
                 />
               </div>
-            );
-          })}
-          {enabled.includes("llm_web") && (
-            <div className="space-y-2 border-t pt-4">
-              <Label>Search backend</Label>
-              <p className="text-sm text-muted-foreground">
-                How the &ldquo;AI — web search&rdquo; source searches the web.{" "}
-                <a href="#connections" className="font-medium underline">
-                  Connections
-                </a>{" "}
-                is where the Exa key lives.
-              </p>
-              <Segmented<string>
-                value={searchBackend}
-                ariaLabel="Web search backend"
-                options={SEARCH_BACKENDS.map((b) => ({
-                  value: b.value,
-                  label: b.label,
-                }))}
-                onChange={setSearchBackend}
-              />
-              <p className="text-xs text-muted-foreground">
-                {backendNote(searchBackend, settings)}
-              </p>
+              {enabled.includes(source.id) && (
+                <InlineFix sourceId={source.id} settings={settings} />
+              )}
             </div>
-          )}
-          <div className="space-y-2 border-t pt-4">
+          ))}
+        </CardContent>
+      </Card>
+
+      <AiWebSearchCard
+        settings={settings}
+        enabled={enabled.includes("llm_web")}
+        onToggle={() => toggle("llm_web")}
+        backend={searchBackend}
+        onBackendChange={setSearchBackend}
+      />
+
+      <Card>
+        <CardContent className="space-y-4 pt-6">
+          <div className="space-y-2">
             <Label htmlFor="watched-pct">Already-watched titles</Label>
             <p className="text-sm text-muted-foreground">
-              How much of a row may be things a person has already finished.
-              This is the default every row inherits; any row can choose its
-              own.
+              How much of a row may be things a person has already finished. The
+              default every row inherits; any row can choose its own.
             </p>
             <WatchedSlider
               id="watched-pct"
@@ -179,8 +179,8 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
           <div className="space-y-2 border-t pt-4">
             <Label htmlFor="freshness">Freshness</Label>
             <p className="text-sm text-muted-foreground">
-              How much rows change day to day. This is the default every row
-              inherits; any row can choose its own.
+              How much rows change day to day. The default every row inherits;
+              any row can choose its own.
             </p>
             <FreshnessSlider
               id="freshness"

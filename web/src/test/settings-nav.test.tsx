@@ -1,19 +1,22 @@
 import { render, screen } from "@testing-library/react";
-import { Cable, SlidersHorizontal, TriangleAlert } from "lucide-react";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
-import { SettingsNav } from "@/components/settings/settings-nav";
+import { SETTINGS_SECTIONS } from "@/components/settings/sections";
+import { SettingsSubNav } from "@/components/settings/settings-nav";
 
-const SECTIONS = [
-  { id: "connections", label: "Connections", icon: Cable },
-  { id: "advanced", label: "Advanced", icon: SlidersHorizontal },
-  { id: "danger", label: "Danger zone", icon: TriangleAlert },
-];
+function renderAt(path: string) {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <SettingsSubNav />
+    </MemoryRouter>,
+  );
+}
 
-describe("SettingsNav", () => {
-  it("lists every section as an anchor link that jumps to its id", () => {
-    render(<SettingsNav sections={SECTIONS} />);
-    for (const { id, label } of SECTIONS) {
+describe("SettingsSubNav", () => {
+  it("lists every settings section as an anchor link that jumps to its id, on /settings", () => {
+    renderAt("/settings");
+    for (const { id, label } of SETTINGS_SECTIONS) {
       const link = screen.getByRole("link", { name: label });
       expect(link.getAttribute("href")).toBe(`#${id}`);
     }
@@ -21,7 +24,7 @@ describe("SettingsNav", () => {
 
   it("marks the first section active when nothing is scrolled into view yet", () => {
     // jsdom has no IntersectionObserver, so the scroll-spy degrades to "first section active".
-    render(<SettingsNav sections={SECTIONS} />);
+    renderAt("/settings");
     expect(
       screen
         .getByRole("link", { name: "Connections" })
@@ -32,5 +35,10 @@ describe("SettingsNav", () => {
         .getByRole("link", { name: "Advanced" })
         .getAttribute("aria-current"),
     ).toBeNull();
+  });
+
+  it("renders nothing when NOT on the settings page (it lives in the shared sidebar)", () => {
+    renderAt("/rows");
+    expect(screen.queryByRole("link", { name: "Connections" })).toBeNull();
   });
 });

@@ -1,15 +1,4 @@
-import {
-  AlertTriangle,
-  Cable,
-  Clock,
-  Inbox,
-  Rows3,
-  Settings as SettingsIcon,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
-  Wand2,
-} from "lucide-react";
+import { Settings as SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { PageHeader } from "@/components/page-header";
@@ -23,68 +12,24 @@ import { PrivacySection } from "@/components/settings/privacy-section";
 import { RecommendationsSection } from "@/components/settings/recommendations-section";
 import { RequestsSection } from "@/components/settings/requests-section";
 import { ScheduleSection } from "@/components/settings/schedule-section";
-import { SettingsNav } from "@/components/settings/settings-nav";
+import { SETTINGS_SECTIONS } from "@/components/settings/sections";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
-// Ordered as a new owner works down the page: connect things → decide where titles come from → how
-// they're written → row/schedule defaults → optional requests → privacy → advanced → danger. The
-// `id`s anchor the side-rail nav; the labels are what it lists.
-function sections(
-  settings: Settings,
-): { id: string; label: string; icon: typeof Cable; el: ReactNode }[] {
-  return [
-    {
-      id: "connections",
-      label: "Connections",
-      icon: Cable,
-      el: <ConnectionsSection settings={settings} />,
-    },
-    { id: "recommendations", label: "Recommendations", icon: Sparkles, el: <RecommendationsSection settings={settings} /> }, // prettier-ignore
-    {
-      id: "curation",
-      label: "Curation",
-      icon: Wand2,
-      el: <CurationSection settings={settings} />,
-    },
-    {
-      id: "defaults",
-      label: "Row defaults",
-      icon: Rows3,
-      el: <DefaultsSection settings={settings} />,
-    },
-    {
-      id: "schedule",
-      label: "Schedule",
-      icon: Clock,
-      el: <ScheduleSection settings={settings} />,
-    },
-    {
-      id: "requests",
-      label: "Requests",
-      icon: Inbox,
-      el: <RequestsSection settings={settings} />,
-    },
-    {
-      id: "privacy",
-      label: "Privacy",
-      icon: ShieldCheck,
-      el: <PrivacySection />,
-    },
-    {
-      id: "advanced",
-      label: "Advanced",
-      icon: SlidersHorizontal,
-      el: <AdvancedSection settings={settings} />,
-    },
-    {
-      id: "danger",
-      label: "Danger zone",
-      icon: AlertTriangle,
-      el: <DangerZoneSection settings={settings} />,
-    },
-  ];
+/** Each section's content, keyed by the id in SETTINGS_SECTIONS (the sidebar sub-nav lists them). */
+function sectionContent(settings: Settings): Record<string, ReactNode> {
+  return {
+    connections: <ConnectionsSection settings={settings} />,
+    recommendations: <RecommendationsSection settings={settings} />,
+    curation: <CurationSection settings={settings} />,
+    defaults: <DefaultsSection settings={settings} />,
+    schedule: <ScheduleSection settings={settings} />,
+    requests: <RequestsSection settings={settings} />,
+    privacy: <PrivacySection />,
+    advanced: <AdvancedSection settings={settings} />,
+    danger: <DangerZoneSection settings={settings} />,
+  };
 }
 
 export function SettingsPage() {
@@ -103,24 +48,15 @@ export function SettingsPage() {
         skeleton={<Skeleton className="h-96 w-full" />}
       >
         {(settings) => {
-          const items = sections(settings);
+          const content = sectionContent(settings);
           return (
-            <div className="lg:grid lg:grid-cols-[13rem_minmax(0,1fr)] lg:gap-8">
-              <SettingsNav
-                sections={items.map(({ id, label, icon }) => ({
-                  id,
-                  label,
-                  icon,
-                }))}
-              />
-              <div className="space-y-8">
-                {items.map(({ id, el }) => (
-                  // scroll-mt keeps the section heading clear of the top when the nav jumps to it.
-                  <div key={id} id={id} className="scroll-mt-6">
-                    {el}
-                  </div>
-                ))}
-              </div>
+            <div className="space-y-8">
+              {SETTINGS_SECTIONS.map(({ id }) => (
+                // scroll-mt keeps the heading clear of the top when the sidebar sub-nav jumps here.
+                <section key={id} id={id} className="scroll-mt-6">
+                  {content[id]}
+                </section>
+              ))}
             </div>
           );
         }}

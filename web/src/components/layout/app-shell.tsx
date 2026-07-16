@@ -12,6 +12,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 
 import { Wordmark } from "@/components/brand";
 import { ActivityPill } from "@/components/layout/activity-pill";
+import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useSession } from "@/lib/queries";
@@ -73,37 +74,40 @@ export function AppShell() {
         </div>
         <nav
           aria-label="Main"
-          className="flex gap-1 px-2 pb-2 md:flex-1 md:flex-col md:px-3 md:pb-0"
+          className="flex gap-1 px-2 pb-2 md:flex-1 md:flex-col md:overflow-y-auto md:px-3 md:pb-3"
         >
           {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                cn(
-                  "group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  {/* Left accent bar on the active item — a clearer "you are here" than color alone. */}
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      "absolute left-0 top-1/2 hidden h-5 -translate-y-1/2 rounded-r-full bg-primary transition-all md:block",
-                      isActive ? "w-1 opacity-100" : "w-0 opacity-0",
-                    )}
-                  />
-                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  {label}
-                </>
-              )}
-            </NavLink>
+            <div key={to} className="contents md:block">
+              <NavLink
+                to={to}
+                end={end}
+                className={({ isActive }) =>
+                  cn(
+                    "group relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    {/* Left accent bar on the active item — a clearer "you are here" than color alone. */}
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "absolute left-0 top-1/2 hidden h-5 -translate-y-1/2 rounded-r-full bg-primary transition-all md:block",
+                        isActive ? "w-1 opacity-100" : "w-0 opacity-0",
+                      )}
+                    />
+                    <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    {label}
+                  </>
+                )}
+              </NavLink>
+              {/* Settings' sections nest here, so the page needs no middle rail. Shown only on /settings. */}
+              {to === "/settings" && <SettingsSubNav />}
+            </div>
           ))}
         </nav>
         <ActivityPill />
