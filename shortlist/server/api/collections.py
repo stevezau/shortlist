@@ -14,8 +14,14 @@ from sqlalchemy import func
 from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.curator.base import TONE_PRESETS
-from shortlist.engine.delivery import remove_row_collections
-from shortlist.engine.models import SHARED_LABEL_PREFIX, dedupe_slug, slugify
+from shortlist.engine.delivery import (
+    DEFAULT_ROW_NAME,
+    remove_row_collections,
+    rename_row_collections,
+    render_row_name,
+    row_marker,
+)
+from shortlist.engine.models import SHARED_LABEL_PREFIX, UserProfile, UserType, dedupe_slug, slugify
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Event, Run, User
 
@@ -209,12 +215,14 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
     sent = body.model_fields_set
     state = request.app.state
     dropped_user_ids: set[int] = set()
+    new_row_template: str | None = None  # set when a rename should be reconciled onto Plex
     slug = build = None
     with state.sessions() as session:
         collection = session.get(Collection, collection_id)
         if collection is None:
             raise HTTPException(404, "collection not found")
         slug, build = collection.slug, collection.build
+        is_default = collection.slug == DEFAULT_SLUG
         # Capture the audience BEFORE the patch so we can tell WHO was dropped (their row is now stale
         # on Plex and must be removed). "everyone" resolves to the full user set.
         touching_audience = build == "per_person" and bool(sent & {"audience", "audience_user_ids"})
@@ -225,6 +233,11 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 if collection.audience == "everyone"
                 else {a.user_id for a in session.query(CollectionAudience).filter_by(collection_id=collection.id)}
             )
+        # A rename only matters for a NON-default per-person row (the default row's title follows the
+        # global Settings template, not this column). Capture the old effective template to tell whether
+        # the title actually changed — delivery renders from `name_template or name`.
+        touching_name = build == "per_person" and not is_default and bool(sent & {"name", "name_template"})
+        old_template = (collection.name_template or collection.name) if touching_name else None
         if "name" in sent:
             _reject_duplicate_name(session, body.name, exclude_id=collection_id)
             collection.name = body.name
@@ -243,6 +256,10 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 else {a.user_id for a in session.query(CollectionAudience).filter_by(collection_id=collection.id)}
             )
             dropped_user_ids = old_users - new_users  # users no longer in the audience → clean them up
+        if touching_name:
+            new_effective = collection.name_template or collection.name
+            if new_effective != old_template:
+                new_row_template = new_effective
         result = _serialize(session, collection)
     # Removing a dropped user's row is a removal (gate-exempt); a newly-ADDED user's row is a create,
     # so it's left for the next run's gated delivery. Best-effort + audited.
@@ -250,6 +267,10 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         await _run_reconcile(
             state, slug=slug, build=build, dry_run=False, scope="collection.audience", only_user_ids=dropped_user_ids
         )
+    # A rename updates each user's collection title IN PLACE (multi-row users would otherwise keep the
+    # old-named copy until the next run rebuilt it). Privacy-neutral, so gate-exempt. Best-effort + audited.
+    if new_row_template is not None:
+        await _run_row_rename(state, slug=slug, new_template=new_row_template, scope="collection.rename")
     return result
 
 
@@ -388,3 +409,85 @@ async def _run_reconcile(
         session.commit()
     logger.warning("{} '{}': {} collection(s){}", scope, slug, len(removed), f" then FAILED: {error}" if error else "")
     return removed, error
+
+
+def _reconcile_row_rename(state, *, slug: str, new_template: str, renamed: list[str]) -> None:
+    """Rename a per-person row's collections IN PLACE for every user who has it — multi-row users would
+    otherwise keep the old-named copy alongside the one the next run builds under the new name.
+
+    Each user's collection is found by the exact title the last run delivered for THIS row (its
+    persisted breakdown), scoped to that user's own label, and renamed to the freshly-rendered new
+    title (same account marker). Privacy-neutral, so gate-exempt (the hiding filter is keyed on the
+    label, which never changes here). STATIC titles only: a ``{top_seed}`` template renders to the
+    default row's name with no picks, so a dynamic new template is skipped — its title changes every
+    run anyway, and the next run's delivery already renames the sole-row case. Runs in an executor."""
+    with state.sessions() as session:
+        latest = session.query(Run).filter(Run.status.in_(("ok", "error"))).order_by(Run.id.desc()).first()
+        breakdown_by_user = {ru.user_id: (ru.breakdown or []) for ru in latest.users} if latest else {}
+        users = session.query(User).all()
+    ctx = state.run_service.build_context(dry_run=False)
+    for user in users:
+        old_titles = {
+            entry["row_title"]
+            for entry in breakdown_by_user.get(user.id, [])
+            if entry.get("row_slug") == slug and entry.get("row_title")
+        }
+        if not old_titles:
+            continue
+        profile = UserProfile(
+            username=user.username,
+            plex_account_id=user.plex_account_id,
+            user_type=UserType(user.user_type),
+            slug=user.slug,
+        )
+        new_display = render_row_name(new_template, profile, [])
+        if new_display == DEFAULT_ROW_NAME:
+            logger.debug("rename reconcile: '{}' renders to the default title with no picks — left for a run", slug)
+            continue
+        marker = row_marker(user.plex_account_id)
+        for old_display in old_titles:
+            if old_display == new_display:
+                continue  # this user's title didn't actually change (e.g. a {user} template)
+            renamed.extend(
+                rename_row_collections(
+                    ctx.plex,
+                    ctx.config,
+                    label=f"{ctx.config.label_prefix}_{user.slug}",
+                    marker=marker,
+                    old_display=old_display,
+                    new_display=new_display,
+                    dry_run=False,
+                )
+            )
+
+
+async def _run_row_rename(state, *, slug: str, new_template: str, scope: str) -> tuple[list[str], str | None]:
+    """Run ``_reconcile_row_rename`` in an executor and audit it (rule 10). Best-effort — a Plex outage
+    is logged, never fatal to the PATCH. Returns ``(renamed_library_titles, error)``."""
+    renamed: list[str] = []
+    error: str | None = None
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: _reconcile_row_rename(state, slug=slug, new_template=new_template, renamed=renamed)
+        )
+    except Exception as e:
+        error = redact(f"{type(e).__name__}: {e}")  # a PMS error can carry a tokened URL (rule 9)
+    with state.sessions() as session:
+        session.add(
+            Event(
+                scope=scope,
+                level="info",
+                message={
+                    "slug": slug,
+                    "renamed": renamed,
+                    "new_template": new_template,
+                    "error": error,
+                    "at": datetime.now(UTC).isoformat(),
+                },
+            )
+        )
+        session.commit()
+    logger.info(
+        "{} '{}': renamed {} collection(s){}", scope, slug, len(renamed), f" then FAILED: {error}" if error else ""
+    )
+    return renamed, error

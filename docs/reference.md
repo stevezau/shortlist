@@ -114,6 +114,15 @@ model — and `auto` picks native where the provider supports it, else Exa. The 
 the toggle when neither a web-capable provider nor an Exa key is present, so it can never read as on
 while doing nothing.
 
+Config changes reconcile onto Plex immediately, without waiting for a run. Deleting a row, disabling
+a user, and dropping a user from a row's audience all remove the now-stale collections (a removal, so
+gate-exempt); renaming a row retitles its collections in place for every user (privacy-neutral — the
+hiding filter is keyed on the row's label, which never changes). A per-person row's per-user
+collection is found by the exact title the last run delivered for it (the run's persisted breakdown),
+scoped to that user's own label, so a reconcile can never touch another user's row or a foreign
+(Kometa) collection. Each row also has a **Remove from Plex** button (`POST
+/api/collections/{id}/cleanup`, dry-run-able) for an on-demand sweep. Every reconcile is audited.
+
 A row builds a Plex collection in each library it targets (`collections.library_keys`, a list of
 Plex section keys; `[]` = every library of the row's media type — the default). A row's `media` is
 derived from the types of its selected libraries. This lets an owner point a row at a specific

@@ -707,3 +707,100 @@ class TestRemoveRowCollections:
 
         assert removed == ["✨ Picked for You"]
         plex.delete_owned_collection.assert_not_called()
+
+
+class TestRenameRowCollections:
+    """The on-demand rename reconcile: retitle a row's collections in place (privacy-neutral)."""
+
+    def test_renames_only_the_matching_row_in_place(self, engine_config: EngineConfig, movies):
+        from shortlist.engine.delivery import rename_row_collections
+
+        marker = row_marker(100)
+        target = MagicMock(title="Old Gems" + marker)
+        other = MagicMock(title="Popular" + marker)  # a different row of the same user — must be untouched
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda section, label: [target, other]
+
+        renamed = rename_row_collections(
+            plex,
+            engine_config,
+            label="shortlist_sarah",
+            marker=marker,
+            old_display="Old Gems",
+            new_display="Buried Treasure",
+            dry_run=False,
+        )
+
+        assert renamed == ["Movies"]
+        # SUT-controlled contract: the NEW human title + the SAME account marker, only on the matched row.
+        target.editTitle.assert_called_once_with("Buried Treasure" + marker)
+        other.editTitle.assert_not_called()
+
+    def test_scans_every_library(self, engine_config: EngineConfig, movies, shows):
+        from shortlist.engine.delivery import rename_row_collections
+
+        marker = row_marker(0)
+        m = MagicMock(title="Old Gems" + marker)
+        s = MagicMock(title="Old Gems" + marker)
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies, shows]
+        plex.find_owned_collections.side_effect = lambda section, label: [m] if section is movies else [s]
+
+        renamed = rename_row_collections(
+            plex,
+            engine_config,
+            label="shortlist_sarah",
+            marker=marker,
+            old_display="Old Gems",
+            new_display="New Gems",
+            dry_run=False,
+        )
+
+        assert renamed == ["Movies", "TV Shows"]
+        m.editTitle.assert_called_once_with("New Gems" + marker)
+        s.editTitle.assert_called_once_with("New Gems" + marker)
+
+    def test_already_renamed_is_skipped(self, engine_config: EngineConfig, movies):
+        from shortlist.engine.delivery import rename_row_collections
+
+        marker = row_marker(100)
+        already = MagicMock(title="New Gems" + marker)  # its stripped title != old_display → not matched
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda section, label: [already]
+
+        renamed = rename_row_collections(
+            plex,
+            engine_config,
+            label="shortlist_sarah",
+            marker=marker,
+            old_display="Old Gems",
+            new_display="New Gems",
+            dry_run=False,
+        )
+
+        assert renamed == []
+        already.editTitle.assert_not_called()
+
+    def test_dry_run_reports_but_renames_nothing(self, engine_config: EngineConfig, movies):
+        from shortlist.engine.delivery import rename_row_collections
+
+        marker = row_marker(100)
+        c = MagicMock(title="Old Gems" + marker)
+        plex = MagicMock(spec=PlexClient)
+        plex.sections.return_value = [movies]
+        plex.find_owned_collections.side_effect = lambda section, label: [c]
+
+        renamed = rename_row_collections(
+            plex,
+            engine_config,
+            label="shortlist_sarah",
+            marker=marker,
+            old_display="Old Gems",
+            new_display="New Gems",
+            dry_run=True,
+        )
+
+        assert renamed == ["Movies"]
+        c.editTitle.assert_not_called()

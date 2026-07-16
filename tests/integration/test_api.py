@@ -835,6 +835,94 @@ class TestCollectionsApi:
         assert r.status_code == 200 and r.json()["size"] == 15
         spy.assert_not_called()
 
+    def _fake_rename_ctx(self, monkeypatch, client, *, titles_by_label):
+        """Point build_context at a fake Plex whose collections record editTitle() renames.
+
+        titles_by_label: {label -> current title}. Returns the `renames` list of (old, new) titles."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.models import EngineConfig
+
+        renames: list[tuple[str, str]] = []
+        cols = {}
+        for label, title in titles_by_label.items():
+            col = MagicMock(title=title)
+            col.editTitle.side_effect = lambda new, c=col: renames.append((c.title, new))
+            cols[label] = col
+        section = SimpleNamespace(title="Movies")
+        plex = MagicMock()
+        plex.sections.return_value = [section]
+        plex.find_owned_collections.side_effect = lambda s, label: [cols[label]] if label in cols else []
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig())
+        monkeypatch.setattr(client.app.state.run_service, "build_context", lambda **kw: ctx)
+        return renames
+
+    def test_renaming_a_row_retitles_each_users_collection_in_place(self, client: TestClient, monkeypatch):
+        """Rename → every user who has the row gets their collection retitled in place (multi-row users
+        would otherwise keep the old-named copy). New human title, same per-account marker."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Run, RunUser, User
+
+        created = client.post("/api/collections", json={"name": "Old Gems"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            users = session.query(User).order_by(User.id).all()[:2]
+            info = [(u.slug, u.plex_account_id) for u in users]
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            for u in users:
+                session.add(
+                    RunUser(
+                        run_id=run.id,
+                        user_id=u.id,
+                        status="ok",
+                        breakdown=[{"row_slug": slug, "row_title": "Old Gems"}],
+                    )
+                )
+            session.commit()
+
+        renames = self._fake_rename_ctx(
+            monkeypatch,
+            client,
+            titles_by_label={f"shortlist_{uslug}": "Old Gems" + row_marker(acct) for uslug, acct in info},
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Buried Treasure"})
+        assert r.status_code == 200
+        expected = {("Old Gems" + row_marker(acct), "Buried Treasure" + row_marker(acct)) for _, acct in info}
+        assert set(renames) == expected  # each account's row retitled, marker preserved
+
+    def test_renaming_to_a_dynamic_template_is_left_for_the_next_run(self, client: TestClient, monkeypatch):
+        """A {top_seed} template renders to the default title with no picks, so the reconcile skips it
+        rather than retitle to the wrong name — the next run's delivery renames the sole-row case."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Run, RunUser, User
+
+        created = client.post("/api/collections", json={"name": "Old Gems"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id, user_id=user.id, status="ok", breakdown=[{"row_slug": slug, "row_title": "Old Gems"}]
+                )
+            )
+            session.commit()
+
+        renames = self._fake_rename_ctx(
+            monkeypatch, client, titles_by_label={f"shortlist_{uslug}": "Old Gems" + row_marker(acct)}
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Old Gems", "name_template": "{top_seed} Picks"})
+        assert r.status_code == 200
+        assert renames == []  # dynamic new title → skipped, not retitled to the default name
+
     def test_shared_collection_with_subset_audience(self, client: TestClient):
         users = client.get("/api/users").json()
         ids = [u["id"] for u in users]

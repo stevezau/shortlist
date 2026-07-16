@@ -304,6 +304,43 @@ def remove_row_collections(
     return removed
 
 
+def rename_row_collections(
+    plex: PlexClient,
+    config: EngineConfig,
+    *,
+    label: str,
+    marker: str,
+    old_display: str,
+    new_display: str,
+    dry_run: bool,
+) -> list[str]:
+    """Rename this account's row collection IN PLACE — ``old_display`` → ``new_display``, keeping the
+    invisible account marker — across every library that holds it. An on-demand reconcile OUTSIDE a
+    run (the owner renamed a row): a multi-row user's renamed row is updated rather than orphaned with
+    a new copy (single-row users are already renamed seamlessly by the next run's delivery).
+
+    Privacy-neutral, so — like the removal reconciles — it needs no passing Privacy Check: the filter
+    that hides a row is keyed on its LABEL, which is untouched here, so changing only the human title
+    can never make the server less private (it neither creates, promotes, nor alters a share filter).
+    Matches only collections under ``label`` whose marker-stripped title equals ``old_display``; a
+    foreign (Kometa) collection never carries our label and ``find_owned_collections`` only returns
+    ours. Returns the library titles renamed (or, in a dry run, that would be).
+    """
+    renamed: list[str] = []
+    new_title = new_display + marker
+    for section in plex.sections():
+        for collection in plex.find_owned_collections(section, label):
+            if strip_marker(collection.title) != old_display or collection.title == new_title:
+                continue  # not this row, or already carries the new title
+            renamed.append(section.title)
+            if dry_run:
+                logger.info("[dry-run] would rename '{}' → '{}' in '{}'", old_display, new_display, section.title)
+            else:
+                collection.editTitle(new_title)
+                logger.info("renamed '{}' → '{}' in '{}'", old_display, new_display, section.title)
+    return renamed
+
+
 def _create_labelled_collection(
     plex: PlexClient,
     section,
