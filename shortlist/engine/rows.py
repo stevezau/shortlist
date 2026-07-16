@@ -253,6 +253,33 @@ def _candidate_pool(
     return pool, in_library, ranked, held_back
 
 
+def _in_audience(user: UserProfile, spec: RowSpec) -> bool:
+    return spec.audience is None or user.plex_account_id in spec.audience
+
+
+def _is_muted(user: UserProfile, spec: RowSpec) -> bool:
+    override = user.row_overrides.get(spec.slug)
+    return bool(override and override.muted)
+
+
+def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, diff: CollectionDiff) -> None:
+    """Remove this user's rows that were muted or disabled since the last run.
+
+    A row muted or switched off in the UI is gone from ``cfg.rows``, but its collection still sits on
+    this person's Home (excluded from everyone else, so private — just not gone). Removing it makes
+    "muted"/"disabled" mean *gone*. This runs before the "no active rows -> return" check so a user
+    whose every row was switched off is still cleaned up, and only ever makes the server MORE private,
+    so it happens regardless of whether the user has any row this time.
+    """
+    muted = [s for s in cfg.per_person_rows() if _in_audience(user, s) and _is_muted(user, s)]
+    retired = [s for s in cfg.retired_rows if not s.shared and _in_audience(user, s)]
+    for spec in (*muted, *retired):
+        # write_lock: a Plex mutation (and the collections-cache read/invalidate inside it) must be
+        # serialized when users run concurrently — only reads + LLM overlap (Stage 3).
+        with ctx.write_lock:
+            remove_row(ctx.plex, user, cfg, spec, dry_run=cfg.dry_run, diff=diff, sections=ctx.delivery_sections)
+
+
 def _run_user(
     ctx: EngineContext,
     user: UserProfile,
@@ -271,50 +298,10 @@ def _run_user(
     """
     cfg = ctx.config
 
-    def in_audience(spec: RowSpec) -> bool:
-        return spec.audience is None or user.plex_account_id in spec.audience
-
-    def is_muted(spec: RowSpec) -> bool:
-        override = user.row_overrides.get(spec.slug)
-        return bool(override and override.muted)
-
-    # A row muted AFTER it was delivered still exists on the server — remove it before anything else,
-    # so "muted" really means "gone", not merely "not refreshed". This only ever makes the server
-    # more private, so it runs regardless of whether the user has any other rows this time.
     user_report.diff = CollectionDiff()
-    for spec in cfg.per_person_rows():
-        if in_audience(spec) and is_muted(spec):
-            # write_lock: a Plex mutation (and the collections-cache read/invalidate inside it) must
-            # be serialized when users run concurrently — only reads + LLM overlap (Stage 3).
-            with ctx.write_lock:
-                remove_row(
-                    ctx.plex,
-                    user,
-                    cfg,
-                    spec,
-                    dry_run=cfg.dry_run,
-                    diff=user_report.diff,
-                    sections=ctx.delivery_sections,
-                )
+    _remove_muted_and_retired(ctx, user, cfg, user_report.diff)
 
-    # A row DISABLED in the UI is gone from cfg.rows, but its collection still sits on this person's
-    # Home (excluded from everyone else, so private — just not gone). Remove it, same as a mute. This
-    # runs before the "no rows -> return" check below, so a user whose every row was switched off
-    # still gets cleaned up rather than keeping a stale row forever.
-    for spec in cfg.retired_rows:
-        if not spec.shared and in_audience(spec):
-            with ctx.write_lock:  # serialized against other users' writes (Stage 3 parallel runs)
-                remove_row(
-                    ctx.plex,
-                    user,
-                    cfg,
-                    spec,
-                    dry_run=cfg.dry_run,
-                    diff=user_report.diff,
-                    sections=ctx.delivery_sections,
-                )
-
-    specs = [spec for spec in cfg.per_person_rows() if in_audience(spec) and not is_muted(spec)]
+    specs = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec) and not _is_muted(user, spec)]
     if not specs:
         return False  # this user is in no per-person row (none in audience, or all muted)
     # The adapter puts the Phase-A global+per-user recipe on the profile; a row with its own recipe
