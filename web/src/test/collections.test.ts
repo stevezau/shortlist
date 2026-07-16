@@ -48,6 +48,17 @@ describe("rowOverrides", () => {
     expect(parts).toContain("Sources: Trakt, AI web search");
   });
 
+  it("badges a source whose global dependency isn't met as 'Needs setup', not as active", () => {
+    // With settings known: Trakt has a key (runnable), AI web search has neither curator nor Exa key.
+    const parts = rowOverrides(
+      collection({ candidate_sources: ["trakt", "llm_web"] }),
+      LIBRARIES,
+      { "trakt.client_id": "•••••" },
+    );
+    expect(parts).toContain("Sources: Trakt"); // only the runnable one is advertised as active
+    expect(parts).toContain("Needs setup: AI web search"); // the dead one is flagged, never claimed
+  });
+
   it("names the libraries a row is pinned to", () => {
     const parts = rowOverrides(collection({ library_keys: ["2"] }), LIBRARIES);
     expect(parts).toContain("Libraries: 4K Movies");

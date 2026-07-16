@@ -4,11 +4,12 @@ import {
   TONE_LABELS,
   watchedBadgeLabel,
 } from "@/lib/constants";
-import { sourceShortLabel } from "@/lib/sources";
+import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
 import type {
   Collection,
   CollectionInput,
   PlexLibrary,
+  Settings,
   User,
 } from "@/lib/types";
 
@@ -89,13 +90,31 @@ export function audienceSummary(collection: Collection, users: User[]): string {
 export function rowOverrides(
   collection: Collection,
   libraries: PlexLibrary[] | null,
+  settings?: Settings,
 ): string[] {
   const parts: string[] = [];
 
   if (collection.candidate_sources.length > 0) {
-    parts.push(
-      `Sources: ${collection.candidate_sources.map(sourceShortLabel).join(", ")}`,
-    );
+    if (!settings) {
+      // Settings not known yet — list every chosen source without judging what can run.
+      parts.push(
+        `Sources: ${collection.candidate_sources.map(sourceShortLabel).join(", ")}`,
+      );
+    } else {
+      // Capability-aware: a source whose global dependency (key/curator) isn't met can't run, so it's
+      // badged "Needs setup" rather than advertised as active — the card never claims a dead source.
+      const runnable: string[] = [];
+      const blocked: string[] = [];
+      for (const id of collection.candidate_sources) {
+        const source = SOURCES.find((s) => s.id === id);
+        const isBlocked = source
+          ? sourceBlockedReason(source, settings) !== null
+          : false;
+        (isBlocked ? blocked : runnable).push(sourceShortLabel(id));
+      }
+      if (runnable.length > 0) parts.push(`Sources: ${runnable.join(", ")}`);
+      if (blocked.length > 0) parts.push(`Needs setup: ${blocked.join(", ")}`);
+    }
   }
 
   if (collection.library_keys.length > 0 && libraries !== null) {

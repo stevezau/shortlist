@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Segmented } from "@/components/segmented";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useSettings } from "@/lib/queries";
-import { cleanSources, SOURCES, sourceBlockedReason } from "@/lib/sources";
+import { SOURCES, sourceBlockedReason } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
 
 function globalSources(settings: Settings | undefined): string[] {
@@ -17,7 +17,9 @@ function globalSources(settings: Settings | undefined): string[] {
 /**
  * Per-row discovery-source override. An empty array means "inherit the global Settings →
  * Recommendations set" (the default); choosing "Custom" seeds from the current global set so the
- * owner starts from what's active, then tweaks. Dependency-gated exactly like the global picker.
+ * owner starts from what's active, then tweaks. Intent-based like the global picker: a source can be
+ * ticked even if its key/curator isn't set up (a note says what's needed — the key itself is entered
+ * globally, since it's not per-row); the engine no-ops it and the row card badges it "Needs setup".
  */
 export function RowSourcesField({
   value,
@@ -34,20 +36,11 @@ export function RowSourcesField({
   );
   const custom = mode === "custom";
 
-  // Until the settings land we cannot tell which sources are even allowed, so every switch stays
-  // locked — briefly clickable toggles let an owner turn on a source their setup can't run.
+  // Until the settings land we can't tell which sources are runnable, so the switches stay locked to
+  // keep the dependency notes accurate. The owner's CHOICE persists regardless (intent) — a source
+  // whose global key/curator isn't set yet no-ops in the engine and the row card badges it "Needs
+  // setup", so it's never silently on-but-dead (matching the global Recommendations picker).
   const loaded = settings.data !== undefined;
-
-  // Never keep a source whose dependency is gone (e.g. llm_library after the curator is removed):
-  // the row would store a source its own toggle shows as OFF, and the row card would go on
-  // advertising "Sources: AI from library" for a source no run can use. Same strip as the global
-  // picker, applied the moment we know what's blocked.
-  useEffect(() => {
-    const data = settings.data;
-    if (!data || value.length === 0) return;
-    const clean = cleanSources(value, data);
-    if (clean.length !== value.length) onChange(clean);
-  }, [settings.data, value, onChange]);
 
   const chooseMode = (next: string) => {
     if (next === "global") {
@@ -55,8 +48,7 @@ export function RowSourcesField({
       onChange([]);
     } else {
       setMode("custom");
-      // Seed Custom from the current global set, minus anything this setup can't run.
-      onChange(cleanSources(globalSources(settings.data), settings.data ?? {}));
+      onChange(globalSources(settings.data)); // seed from the current global set as-is
     }
   };
 
@@ -111,8 +103,8 @@ export function RowSourcesField({
                   )}
                 </div>
                 <Switch
-                  checked={value.includes(source.id) && !blocked}
-                  disabled={blocked || !loaded}
+                  checked={value.includes(source.id)}
+                  disabled={!loaded}
                   onCheckedChange={() => toggle(source.id)}
                   aria-label={`Enable ${source.label} for this row`}
                 />

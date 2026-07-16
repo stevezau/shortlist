@@ -68,23 +68,29 @@ describe("RowSourcesField", () => {
     ).toBeTruthy();
   });
 
-  it("strips a source whose dependency is gone, so the row can't store one its toggle says is off", async () => {
-    // No curator configured, but the row still carries llm_library from when there was one.
+  it("keeps a source whose dependency isn't met (intent) and shows what's needed — never strips it", async () => {
+    // No curator, but the row carries llm_library. Intent model: it's kept (not stripped), the toggle
+    // stays usable and ON, and a note explains the missing dependency (fixed globally, not per-row).
     const onChange = vi.fn();
     renderField(["tmdb_similar", "llm_library"], onChange);
 
-    await waitFor(() =>
-      expect(onChange).toHaveBeenCalledWith(["tmdb_similar"]),
-    );
-    expect(aiSwitch()).toBeDisabled();
+    await waitFor(() => expect(aiSwitch()).not.toBeDisabled());
+    expect(aiSwitch()).toBeChecked(); // still on — intent preserved
+    expect(onChange).not.toHaveBeenCalled(); // NOT auto-stripped
+    expect(
+      screen.getByText(/Needs an AI curator — set one up in Connections/i),
+    ).toBeInTheDocument();
   });
 
-  it("keeps a source whose dependency is satisfied", async () => {
+  it("shows no library-source dependency note once a curator is configured", async () => {
     getSettings.mockResolvedValue({ "curator.provider": "anthropic" });
     const onChange = vi.fn();
     renderField(["llm_library"], onChange);
 
     await waitFor(() => expect(aiSwitch()).not.toBeDisabled());
+    expect(
+      screen.queryByText(/Needs an AI curator — set one up in Connections/i),
+    ).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
   });
 

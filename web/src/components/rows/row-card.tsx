@@ -57,6 +57,7 @@ export function RowCard({
   const overrides = rowOverrides(
     collection,
     libraries.isSuccess ? libraries.data : null,
+    settings.data,
   );
 
   // The default row's size is delivered from Settings → Defaults, not its own column (which the
