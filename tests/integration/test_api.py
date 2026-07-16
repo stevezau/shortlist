@@ -384,6 +384,20 @@ class TestSettingsApi:
         ok = client.post("/api/settings/test/exa").json()
         assert ok["ok"] is True and "ok" in ok["message"]
 
+    def test_connection_error_redacts_a_plex_token(self, client: TestClient, monkeypatch):
+        # plexapi errors can embed the tokened request URL; the connection-test response must never
+        # echo it back (plex-safety rule 9). Simulate a probe that raises with a token in the message.
+        client.put("/api/settings", json={"values": {"plex.url": "http://pms:32400", "plex.token": "tok"}})
+
+        def boom(self, *a, **k):
+            raise RuntimeError("BadRequest: http://pms:32400/library?X-Plex-Token=super-secret-abc failed")
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient.__init__", boom)
+        body = client.post("/api/settings/test/plex").json()
+        assert body["ok"] is False
+        assert "super-secret-abc" not in body["message"]
+        assert "X-Plex-Token=REDACTED" in body["message"]
+
     def test_prompt_preview_reflects_the_recipe(self, client: TestClient):
         r = client.post("/api/settings/prompt-preview", json={"tone": "cinephile", "guidance": "Prefer noir."})
         assert r.status_code == 200

@@ -7,6 +7,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from shortlist.engine.clients.http_retry import redact
 from shortlist.server.auth import require_owner
 from shortlist.server.scheduler import reschedule
 from shortlist.server.settings_store import DEFAULTS, SECRET_KEYS, SettingsStore
@@ -271,7 +272,9 @@ async def test_connection(service: str, request: Request) -> dict:
     except HTTPException:
         raise
     except Exception as e:
-        return {"ok": False, "message": f"{type(e).__name__}: {e}"}
+        # plexapi/PMS exceptions can embed the tokened request URL — redact before it reaches the
+        # API response (plex-safety rule 9: tokens never leave the box, even in an error string).
+        return {"ok": False, "message": redact(f"{type(e).__name__}: {e}")}
 
 
 @router.get("/arr/{service}/options")
@@ -299,4 +302,4 @@ async def arr_options(service: str, request: Request) -> dict:
     try:
         return await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}") from e
+        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e

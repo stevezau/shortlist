@@ -82,10 +82,16 @@ async def list_servers(request: Request) -> list[dict]:
     servers = [r for r in response.json() if "server" in (r.get("provides") or "")]
 
     async def test(uri: str) -> dict:
-        """One cheap /identity call — does this address actually answer from inside the container?"""
+        """One cheap /identity call — does this address actually answer from inside the container?
+
+        No token: /identity is Plex's unauthenticated reachability endpoint, so the probe sends
+        nothing secret. That matters because `verify=False` is required here (local connections
+        advertise self-signed certs) — with the token attached, an on-path attacker on any advertised
+        address could have MITM'd it off the wire (plex-safety rule 9). Without it, there's nothing
+        to steal, so relaxed TLS only costs us a truthful reachability answer."""
         try:
             async with httpx.AsyncClient(timeout=4, verify=False) as client:
-                r = await client.get(f"{uri}/identity", headers={"X-Plex-Token": token})
+                r = await client.get(f"{uri}/identity")
             return {"uri": uri, "ok": r.status_code == 200}
         except Exception:
             return {"uri": uri, "ok": False}
