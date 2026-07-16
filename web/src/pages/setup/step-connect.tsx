@@ -37,8 +37,8 @@ function CheckLine({ label, check }: { label: string; check: ProbeCheck }) {
 }
 
 function connectionLabel(connection: PlexServer["connections"][number]) {
-  if (connection.relay) return "relay";
-  return connection.local ? "local" : "remote";
+  if (connection.relay) return "via Plex relay";
+  return connection.local ? "on your network" : "over the internet";
 }
 
 /**
@@ -252,7 +252,7 @@ export function StepConnect({ data, update }: StepProps) {
                         {connection.uri}
                         <span className="ml-1 opacity-70">
                           ({connectionLabel(connection)}
-                          {connection.ok ? "" : ", unreachable"})
+                          {connection.ok ? "" : ", couldn’t reach"})
                         </span>
                       </span>
                     </Button>
@@ -275,8 +275,10 @@ export function StepConnect({ data, update }: StepProps) {
           className="font-mono"
         />
         <p className="text-sm text-muted-foreground">
-          Always editable — auto-discovery never traps you. A self-signed
-          certificate is fine: use the plain http:// address on your LAN.
+          Always editable — auto-discovery never traps you. If the secure
+          address won’t connect, use the plain{" "}
+          <span className="font-mono">http://</span> address on your home
+          network instead.
         </p>
       </div>
 

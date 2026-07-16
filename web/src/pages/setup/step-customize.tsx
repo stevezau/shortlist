@@ -169,11 +169,12 @@ export function StepCustomize({ update, next }: StepProps) {
           )}
           Save & continue
         </Button>
-        {/* Everything here has a sensible default already saved, so skipping is safe — the row name,
-            size, and schedule can all be changed later in Settings. */}
+        {/* Skip also SAVES the current values (they're always valid — every field is pre-filled), so a
+            name or size the user typed is never silently dropped by taking the quick path out. It's a
+            softer-worded alias for the same save; everything can still be changed later in Settings. */}
         <Button
           variant="ghost"
-          onClick={() => next()}
+          onClick={() => save.mutate()}
           disabled={save.isPending}
         >
           Skip for now — you can change this later

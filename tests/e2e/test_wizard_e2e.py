@@ -54,9 +54,9 @@ def _connect_plex(page: Page, pms_url: str) -> None:
     working = page.locator("button", has_text=pms_url).first
     expect(working).to_be_enabled(timeout=LOAD)
     # An unreachable address stays CLICKABLE by design — the probe only tried the plex.direct URL
-    # and can be a false negative, so it's marked "unreachable" as a hint, not disabled outright.
+    # and can be a false negative, so it's marked "couldn't reach" as a hint, not disabled outright.
     unreachable = page.locator("button", has_text="10.255.255.1").first
-    expect(unreachable).to_contain_text("unreachable")
+    expect(unreachable).to_contain_text("reach")
 
     # It preselects the address that worked, so the common case is one click.
     url_field = page.get_by_label("Plex server URL")
