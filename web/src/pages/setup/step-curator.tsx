@@ -66,7 +66,7 @@ export function StepCurator({ data, update }: StepProps) {
       if (provider.id === "none")
         return {
           ok: true,
-          message: "Heuristic mode is ready — no AI, no keys, no cloud.",
+          message: "Built-in picker ready — no AI, no keys, no cloud.",
         };
       return api.testConnection("llm");
     },

@@ -23,6 +23,17 @@ export function clampRowSize(value: number): number {
  */
 export const DEFAULT_ROW_SLUG = "picked";
 
+/**
+ * Plain-English names for the privacy check's internal tier codes. The engine names them T1/T2/
+ * PROBE; an owner shouldn't have to decode that on the app's most trust-sensitive screen. Each maps
+ * to what the tier actually verifies. Unknown codes fall back to the raw code (kept as a tooltip).
+ */
+export const PRIVACY_TIER_LABELS: Record<string, string> = {
+  T1: "Share filters",
+  T2: "Home view",
+  PROBE: "Live probe",
+};
+
 /** Display names for the curation tones (`PROMPT_TONES`), shared by the editor and the row list. */
 export const TONE_LABELS: Record<string, string> = {
   balanced: "Balanced",

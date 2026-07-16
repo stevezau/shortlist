@@ -60,7 +60,14 @@ function RunRow({ run }: { run: Run }) {
           <Badge variant={runStatusVariant(run.status)}>
             {runStatusLabel(run.status)}
           </Badge>
-          {run.dry_run && <Badge variant="outline">dry-run</Badge>}
+          {run.dry_run && (
+            <Badge
+              variant="outline"
+              title="A rehearsal — nothing was written to Plex."
+            >
+              Test run
+            </Badge>
+          )}
         </div>
       </TableCell>
       <TableCell className="text-muted-foreground">

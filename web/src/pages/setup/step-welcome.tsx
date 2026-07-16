@@ -48,7 +48,7 @@ export function StepWelcome({ next }: StepProps) {
         <p className="text-sm text-muted-foreground">
           Setup takes about ten minutes, including your first rows. Use an AI
           curator (Claude, GPT, Gemini, or a local Ollama) — or none at all: the
-          heuristic mode needs no keys and no cloud, and works just as well.
+          built-in picker needs no keys and no cloud, and works just as well.
         </p>
         <Button size="lg" onClick={next}>
           Get started

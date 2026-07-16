@@ -57,10 +57,10 @@ export function UninstallDialog({
         <DialogHeader>
           <DialogTitle>Uninstall Shortlist from this server?</DialogTitle>
           <DialogDescription>
-            This deletes every Shortlist collection, strips the shortlist_* labels,
-            and restores each user's share filters from the original pre-Shortlist
-            snapshots. Your Plex server ends up as Shortlist found it. This cannot
-            be undone.
+            This deletes every Shortlist collection, removes the labels
+            Shortlist added to your collections, and restores each user's share
+            filters from the original pre-Shortlist snapshots. Your Plex server
+            ends up as Shortlist found it. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
 

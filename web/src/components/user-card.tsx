@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { formatHitRate, timeAgo } from "@/lib/format";
+import { STAGE_LABELS } from "@/lib/run-stages";
 import type { User } from "@/lib/types";
 
 export interface UserCardProps {
@@ -21,7 +22,10 @@ export interface UserCardProps {
 }
 
 function statusLine(user: User, activeStage: string | null): string {
-  if (activeStage) return `Running: ${activeStage}…`;
+  // Map the raw SSE stage token ("candidates", "cataloguing"…) to its human label, matching the
+  // run-detail log and activity pill — a bare token like "Running: candidates…" reads as jargon.
+  if (activeStage)
+    return `Running: ${STAGE_LABELS[activeStage] ?? activeStage}…`;
   if (!user.enabled) return "Turned off — no row is maintained for this user.";
   if (user.cold_start)
     return "Thin history — getting the popular-titles fallback row.";

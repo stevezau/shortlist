@@ -21,12 +21,12 @@ export function PrivacySection() {
       <Card>
         <CardContent className="space-y-4 pt-6">
           <p className="text-sm text-muted-foreground">
-            Shortlist will not write to Plex unless a Privacy Check has passed in
-            the last seven days. The quick check reads every user&rsquo;s share
-            filters back from plex.tv and looks at a canary account&rsquo;s own
-            Home. The full probe goes further: it creates a throwaway
-            collection, proves it disappears for the canary, and removes it
-            again.
+            Shortlist will not write to Plex unless a Privacy Check has passed
+            in the last seven days. The quick check reads every user&rsquo;s
+            share filters back from plex.tv and looks at what one of your
+            users&rsquo; accounts can actually see on their own Home. The full
+            check goes further: it creates a throwaway test row, proves it stays
+            hidden from that stand-in account, and removes it again.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -41,7 +41,7 @@ export function PrivacySection() {
               onClick={() => privacyCheck.mutate(true)}
               disabled={privacyCheck.isPending}
             >
-              Run full probe (~90s)
+              Run full check (~90s)
             </Button>
           </div>
           {privacyCheck.isSuccess ? (

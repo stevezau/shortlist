@@ -2,6 +2,7 @@ import { Loader2, ShieldAlert, ShieldCheck } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PRIVACY_TIER_LABELS } from "@/lib/constants";
 
 export type PrivacyPhase = "idle" | "running" | "passed" | "failed";
 
@@ -22,8 +23,14 @@ function TierBadges({ tiers }: { tiers: Record<string, boolean> }) {
   return (
     <div className="flex flex-wrap gap-2">
       {Object.entries(tiers).map(([tier, ok]) => (
-        <Badge key={tier} variant={ok ? "success" : "destructive"}>
-          {tier.toUpperCase()}: {ok ? "private" : "leaked"}
+        // Raw tier code kept as a tooltip so support can still map back to T1/T2/PROBE.
+        <Badge
+          key={tier}
+          variant={ok ? "success" : "destructive"}
+          title={tier.toUpperCase()}
+        >
+          {PRIVACY_TIER_LABELS[tier.toUpperCase()] ?? tier.toUpperCase()}:{" "}
+          {ok ? "kept private" : "visible to others"}
         </Badge>
       ))}
     </div>
@@ -64,9 +71,9 @@ export function PrivacyPanel({
       {phase === "idle" && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Shortlist creates a throwaway probe collection, hides it from a
-            canary user, and verifies they truly can't see it — then cleans
-            everything up. Your server is untouched either way.
+            Shortlist creates a throwaway test row, hides it from a stand-in
+            viewer account, and confirms that account truly can't see it — then
+            cleans everything up. Your server is untouched either way.
           </p>
           <Button onClick={onRun}>
             <ShieldCheck aria-hidden="true" />

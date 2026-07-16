@@ -76,7 +76,7 @@ describe("UserCard", () => {
   it("shows the live stage and disables Run now while a run is in flight", () => {
     renderCard({ activeStage: "curating" });
 
-    expect(screen.getByText("Running: curating…")).toBeInTheDocument();
+    expect(screen.getByText("Running: curating with AI…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /run now/i })).toBeDisabled();
   });
 

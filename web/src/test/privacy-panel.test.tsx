@@ -30,7 +30,7 @@ describe("PrivacyPanel", () => {
     const runButton = screen.getByRole("button", {
       name: /run privacy check/i,
     });
-    expect(screen.getByText(/throwaway probe collection/i)).toBeInTheDocument();
+    expect(screen.getByText(/throwaway test row/i)).toBeInTheDocument();
 
     await user.click(runButton);
     expect(onRun).toHaveBeenCalledOnce();
@@ -56,8 +56,10 @@ describe("PrivacyPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       /your server keeps rows private/i,
     );
-    expect(screen.getByText(/t1: private/i)).toBeInTheDocument();
-    expect(screen.getByText(/t2: private/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/share filters: kept private/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/home view: kept private/i)).toBeInTheDocument();
     expect(
       screen.queryByText(/i understand the risk/i),
     ).not.toBeInTheDocument();
@@ -69,7 +71,9 @@ describe("PrivacyPanel", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       /privacy check failed/i,
     );
-    expect(screen.getByText(/t2: leaked/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/home view: visible to others/i),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /run the check again/i }),
     ).toBeInTheDocument();

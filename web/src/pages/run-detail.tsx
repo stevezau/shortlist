@@ -19,6 +19,7 @@ import {
   formatDuration,
   runStatusLabel,
   runStatusVariant,
+  triggerLabel,
 } from "@/lib/format";
 import { githubIssueSnippet } from "@/lib/github";
 import { queryKeys, useRun, useUsers } from "@/lib/queries";
@@ -423,16 +424,17 @@ export function RunDetailPage() {
                     Run #{run.id}
                   </h1>
                   <Badge variant={runStatusVariant(run.status)}>
-                    {run.status}
+                    {runStatusLabel(run.status)}
                   </Badge>
                   {run.dry_run && (
                     <Badge variant="outline">
-                      dry-run — nothing was written to Plex
+                      Test run — nothing was written to Plex
                     </Badge>
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {run.trigger} · started {formatDate(run.started_at)}
+                  {triggerLabel(run.trigger)} · started{" "}
+                  {formatDate(run.started_at)}
                   {run.finished_at
                     ? ` · finished ${formatDate(run.finished_at)}`
                     : " · still running"}{" "}

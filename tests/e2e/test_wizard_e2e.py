@@ -104,7 +104,7 @@ def _choose_no_curator(page: Page) -> None:
     expect(none_card).to_contain_text("Fully functional")
     none_card.click()
     expect(none_card).to_have_attribute("aria-pressed", "true")
-    expect(page.get_by_text("Heuristic mode is ready — no AI, no keys, no cloud.")).to_be_visible(timeout=LOAD)
+    expect(page.get_by_text("Built-in picker ready — no AI, no keys, no cloud.")).to_be_visible(timeout=LOAD)
 
 
 def _pick_users(page: Page, *usernames: str) -> None:

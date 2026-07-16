@@ -39,7 +39,14 @@ export function RecentRuns({ userId }: { userId: number }) {
                     <Badge variant={runStatusVariant(run.status)}>
                       {run.status}
                     </Badge>
-                    {run.dry_run && <Badge variant="outline">dry-run</Badge>}
+                    {run.dry_run && (
+                      <Badge
+                        variant="outline"
+                        title="A rehearsal — nothing was written to Plex."
+                      >
+                        Test run
+                      </Badge>
+                    )}
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {run.finished_at
