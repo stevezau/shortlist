@@ -128,7 +128,8 @@ class TestRuns:
 
         app.wait_for_run(1)
         page.reload()
-        expect(page.get_by_text("ok", exact=True)).to_be_visible(timeout=LOAD)
+        # The status badge renders the title-cased label ("OK"); the users cell keeps the "3 ok" count.
+        expect(page.get_by_text("OK", exact=True)).to_be_visible(timeout=LOAD)
         expect(page.get_by_role("cell", name="3 ok")).to_be_visible()
         # 5 rows for 3 users: sarah and the cold-start canary each get one per library; mike watches only TV.
         assert len(state.collections) == 5
