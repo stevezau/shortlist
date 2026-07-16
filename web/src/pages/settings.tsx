@@ -52,14 +52,33 @@ export function SettingsPage() {
         {(settings) => {
           const content = sectionContent(settings);
           return (
-            <div className="space-y-8">
-              {SETTINGS_SECTIONS.map(({ id }) => (
-                // scroll-mt keeps the heading clear of the top when the sidebar sub-nav jumps here.
-                <section key={id} id={id} className="scroll-mt-6">
-                  {content[id]}
-                </section>
-              ))}
-            </div>
+            <>
+              {/* On phones the sidebar sub-nav is hidden, so jumping between sections meant scrolling
+                  the whole page. This gives mobile its own horizontally-scrollable section jumper. */}
+              <nav
+                aria-label="Settings sections"
+                className="mb-4 flex gap-1.5 overflow-x-auto pb-2 md:hidden"
+              >
+                {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => (
+                  <a
+                    key={id}
+                    href={`#${id}`}
+                    className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    {label}
+                  </a>
+                ))}
+              </nav>
+              <div className="space-y-8">
+                {SETTINGS_SECTIONS.map(({ id }) => (
+                  // scroll-mt keeps the heading clear of the top when a sub-nav jumps here.
+                  <section key={id} id={id} className="scroll-mt-6">
+                    {content[id]}
+                  </section>
+                ))}
+              </div>
+            </>
           );
         }}
       </QueryBoundary>
