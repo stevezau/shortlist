@@ -2,14 +2,14 @@
 
 ## Environment variables (container)
 
-| Variable                                                                   | Default   | Live or seed                                                                                       |
-| -------------------------------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------- |
-| `PORT`                                                                     | `5959`    | live                                                                                               |
-| `TZ`                                                                       | `Etc/UTC` | live                                                                                               |
-| `PUID` / `PGID`                                                            | `1000`    | live                                                                                               |
-| `SHORTLIST_CONFIG`                                                         | `/config` | live                                                                                               |
-| `PLEX_URL`, `PLEX_TOKEN`, `TAUTULLI_URL`, `TAUTULLI_APIKEY`, `TMDB_APIKEY` | —         | **seed once**: copied into settings on first boot, ignored afterwards                              |
-| `LOG_LEVEL`                                                                | `INFO`    | **seed once**: initial value for the `log.level` setting; change it live in Settings → Diagnostics |
+| Variable                                                                   | Default   | Live or seed                                                                                    |
+| -------------------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------------------------- |
+| `PORT`                                                                     | `5959`    | live                                                                                            |
+| `TZ`                                                                       | `Etc/UTC` | live                                                                                            |
+| `PUID` / `PGID`                                                            | `1000`    | live                                                                                            |
+| `SHORTLIST_CONFIG`                                                         | `/config` | live                                                                                            |
+| `PLEX_URL`, `PLEX_TOKEN`, `TAUTULLI_URL`, `TAUTULLI_APIKEY`, `TMDB_APIKEY` | —         | **seed once**: copied into settings on first boot, ignored afterwards                           |
+| `LOG_LEVEL`                                                                | `DEBUG`   | **seed once**: initial value for the `log.level` setting; change it live in Settings → Advanced |
 
 ## Settings keys (DB-backed; Settings UI or `PUT /api/settings`)
 

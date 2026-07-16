@@ -40,9 +40,13 @@ wider reach. Available today:
   similar to one seed. Large libraries are sliced to each person's genres before the LLM sees them.
 - **Trakt — related titles** (needs a Trakt API key, added in Connections): uses Trakt's
   recommendation graph, which often surfaces "what to watch next" picks TMDB's similar list misses.
-- **AI — web search for what to watch next** (needs a curator with web search — Claude or GPT): the
-  curator searches the live web for current, well-reviewed titles to watch next, then resolves each
-  against your library. Reaches beyond TMDB/Trakt to fresh releases and critics' lists.
+- **AI — web search for what to watch next**: searches the live web for current, well-reviewed titles
+  to watch next, then resolves each against your library — reaching beyond TMDB/Trakt to fresh releases
+  and critics' lists. Works on **every** provider, via the **Search backend** you pick in its card:
+  your curator's own web search (Claude, GPT, or Gemini), an **Exa** key (any provider — the only path
+  for a local Ollama model), or **Auto** (the default), which uses your curator's tool _and_ Exa
+  together when both are set up, since they surface mostly different titles. If a backend needs a key
+  you don't have yet, the card lets you enter it right there.
 
 Each row also chooses **which libraries** it builds in (the row editor's Libraries picker). A Plex
 collection lives in one library, so a row builds one collection per library you tick — leave them all
@@ -75,12 +79,20 @@ style** always follow the global Settings (Defaults and Curation style) so they 
 everywhere — the row editor points you there instead of offering its own. Its sources, libraries and
 audience are its own, exactly like any other row.
 
-**Disabling a row removes it.** Turn a row off and its collection is taken off its audience's Plex
-Home on the next run — "off" means gone, not just "stops updating". Two things are left in place
-(still private — the row's label keeps it excluded from everyone else — just not auto-removed): a row
-whose title is built from a person's top pick (its title can't be matched without those picks), and a
-row you _delete_ outright (Shortlist no longer has the record it needs to find the collection). In
-both cases the collection stays until you rebuild the row (re-enable it) or remove it by hand.
+**Changes clean up Plex right away.** You don't have to wait for a run:
+
+- **Delete a row** → its collections are removed from Plex immediately, for everyone who had it
+  (including rows whose title is built from a person's top pick — Shortlist finds them by the exact
+  title the last run delivered). The titles stay in your library; only the row goes.
+- **Rename a row** → its collection is retitled in place for every user, so nothing is orphaned.
+- **Disable a user, or drop someone from a row's audience** → that person's now-stale collections are
+  removed immediately.
+- **Remove from Plex** (the button on each row) → clears a row's collections on demand, without
+  deleting the row's settings — handy to force a rebuild on the next run.
+- **Disable a row** (its on/off switch) → its collection comes off Plex Home on the next run. A row
+  whose title is dynamic (built from a top pick) is left for that rebuild; use **Remove from Plex** if
+  you want it gone right now. Everything left in place stays private — the row's label keeps it
+  excluded from everyone else.
 
 ## Requests (Radarr / Sonarr)
 

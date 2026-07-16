@@ -120,7 +120,13 @@ export function DashboardPage() {
   const scheduleCron = settingsQuery.data
     ? settingString(settingsQuery.data, "schedule.cron")
     : "";
-  const scheduleTime = scheduleCron ? timeFromCron(scheduleCron).time : "";
+  const schedule = scheduleCron ? timeFromCron(scheduleCron) : null;
+  // Name the cadence honestly — a weekly schedule isn't "tonight" (it runs Sundays).
+  const scheduleSubtitle = schedule
+    ? schedule.weekly
+      ? `Rows refresh every Sunday at ${schedule.time}`
+      : `Rows refresh nightly at ${schedule.time}`
+    : "No schedule set yet";
 
   const handleRunNow = (user: User) => {
     setPendingRunUserIds((ids) => new Set(ids).add(user.id));
@@ -158,11 +164,7 @@ export function DashboardPage() {
       <PageHeader
         icon={Gauge}
         title="Dashboard"
-        subtitle={
-          scheduleTime
-            ? `Next run tonight at ${scheduleTime}`
-            : "No schedule set yet"
-        }
+        subtitle={scheduleSubtitle}
         actions={
           <>
             <PrivacyBadge status={privacyQuery.data} />

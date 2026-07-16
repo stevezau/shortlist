@@ -26,12 +26,11 @@ function backendNote(backend: string, settings: Settings): string {
     return "Uses the Exa search API — works for every provider, and the only option for a local Ollama curator.";
   if (hasNativeWebSearch(settings) && hasExa(settings))
     return "Uses your curator’s own search AND Exa together — they surface mostly different titles, so you get the widest pool (two searches per run).";
-  const via = hasNativeWebSearch(settings)
-    ? "your curator’s own web search"
-    : hasExa(settings)
-      ? "your Exa key"
-      : "—";
-  return `Uses the curator’s own tool and Exa together when both are set up. Right now: ${via}.`;
+  if (hasNativeWebSearch(settings))
+    return "Uses your curator’s own web search. Add an Exa key below to search with both (they find different titles).";
+  if (hasExa(settings))
+    return "Uses your Exa key. A Claude, GPT, or Gemini curator would add its own web search alongside it.";
+  return "Set up a search backend below — an Exa key, or a Claude/GPT/Gemini curator that can search on its own.";
 }
 
 /**

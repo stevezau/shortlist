@@ -127,20 +127,3 @@ export function sourceBlockedReason(
   }
   return null;
 }
-
-/**
- * Drop every source whose dependency is gone (e.g. `llm_library` once the curator is removed).
- *
- * Persisting a blocked source stores a value that contradicts its own toggle — the row/settings say
- * the source is on while the UI shows it off and disabled — and it springs back into use the moment
- * the dependency returns. Both the global picker and the per-row picker strip through here, so
- * neither can save one. A source id the UI doesn't know is left alone rather than dropped.
- */
-export function cleanSources(ids: string[], settings: Settings): string[] {
-  return ids.filter((id) => {
-    const source = SOURCES.find((s) => s.id === id);
-    return (
-      source === undefined || sourceBlockedReason(source, settings) === null
-    );
-  });
-}

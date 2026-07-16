@@ -999,6 +999,39 @@ class TestCollectionsApi:
         assert r.status_code == 200
         assert renames == []  # dynamic new title → skipped, not retitled to the default name
 
+    def test_changing_a_rows_build_removes_the_old_builds_collections(self, client: TestClient, monkeypatch):
+        """Flipping per-person → shared removes the old per-person per-user collections, so both builds
+        don't live on Home at once. A removal, so gate-exempt."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Run, RunUser, User
+
+        created = client.post("/api/collections", json={"name": "Gems"})  # per_person by default
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            users = session.query(User).order_by(User.id).all()[:2]
+            info = [(u.slug, u.plex_account_id) for u in users]
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            for u in users:
+                session.add(
+                    RunUser(
+                        run_id=run.id, user_id=u.id, status="ok", breakdown=[{"row_slug": slug, "row_title": "Gems"}]
+                    )
+                )
+            session.commit()
+
+        deleted = self._fake_plex_ctx(
+            monkeypatch,
+            client,
+            collections=[("Gems" + row_marker(acct), f"shortlist_{uslug}") for uslug, acct in info],
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "build": "shared"})
+        assert r.status_code == 200 and r.json()["build"] == "shared"
+        # Every user's OLD per-person collection was removed (the new shared row builds on the next run).
+        assert set(deleted) == {"Gems" + row_marker(acct) for _, acct in info}
+
     def test_shared_collection_with_subset_audience(self, client: TestClient):
         users = client.get("/api/users").json()
         ids = [u["id"] for u in users]

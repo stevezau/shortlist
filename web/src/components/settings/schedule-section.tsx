@@ -69,7 +69,9 @@ export function ScheduleSection({ settings }: { settings: Settings }) {
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            Rows refresh {cadence} at {scheduleTime} server time.
+            {cadence === "weekly"
+              ? `Rows refresh every Sunday at ${scheduleTime} server time.`
+              : `Rows refresh nightly at ${scheduleTime} server time.`}
           </p>
         </CardContent>
       </Card>

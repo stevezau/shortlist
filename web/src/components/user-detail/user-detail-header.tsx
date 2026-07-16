@@ -1,4 +1,5 @@
 import { RefreshCw } from "lucide-react";
+import { Link } from "react-router-dom";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { UserAvatar } from "@/components/user-avatar";
@@ -15,6 +16,9 @@ export function UserDetailHeader({ user }: { user: User }) {
   const patchUser = usePatchUser();
   const startRun = useStartRun();
   const paused = user.prefs?.paused ?? false;
+  // Two distinct states, kept from contradicting each other: `enabled` (does this person get a
+  // Shortlist row at all — the Users-list On/Off) vs `paused` (temporarily skipped on runs, row kept).
+  // When they're OFF, "paused" is moot, so we show the off state instead of an "Active" that lies.
 
   return (
     <div className="space-y-8">
@@ -27,7 +31,10 @@ export function UserDetailHeader({ user }: { user: User }) {
                 {user.username}
               </h1>
               <UserBadges user={user} />
-              {paused && <Badge variant="secondary">paused</Badge>}
+              {!user.enabled && <Badge variant="secondary">off</Badge>}
+              {user.enabled && paused && (
+                <Badge variant="secondary">paused</Badge>
+              )}
             </div>
             <p className="text-sm text-muted-foreground">
               {user.history_depth} titles watched · last run{" "}
@@ -37,19 +44,33 @@ export function UserDetailHeader({ user }: { user: User }) {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            {paused ? "Paused" : "Active"}
-            <Switch
-              checked={!paused}
-              onCheckedChange={(active) =>
-                patchUser.mutate({
-                  id: user.id,
-                  patch: { prefs: { paused: !active } },
-                })
-              }
-              aria-label={`Pause or resume ${user.username}`}
-            />
-          </label>
+          {!user.enabled ? (
+            // Off entirely — pausing is moot. Point at the one switch that turns them back on.
+            <p className="text-sm text-muted-foreground">
+              Turned off — no Shortlist row.{" "}
+              <Link to="/users" className="font-medium underline">
+                Turn on from Users
+              </Link>
+              .
+            </p>
+          ) : (
+            <label
+              className="flex items-center gap-2 text-sm text-muted-foreground"
+              title="Pausing skips this person on runs but keeps their row — unlike turning them off on the Users list."
+            >
+              {paused ? "Paused" : "Active"}
+              <Switch
+                checked={!paused}
+                onCheckedChange={(active) =>
+                  patchUser.mutate({
+                    id: user.id,
+                    patch: { prefs: { paused: !active } },
+                  })
+                }
+                aria-label={`Pause or resume ${user.username}`}
+              />
+            </label>
+          )}
           <Button
             variant="secondary"
             onClick={() => startRun.mutate({ user_ids: [user.id] })}

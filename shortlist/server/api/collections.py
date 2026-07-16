@@ -261,6 +261,16 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             if new_effective != old_template:
                 new_row_template = new_effective
         result = _serialize(session, collection)
+    build_changed = "build" in sent and body.build != build
+
+    # A build flip (per-person ↔ shared) makes the OLD build's collections stale — a shared collection,
+    # or every user's per-person one, under a label the new build won't touch. Remove them so the next
+    # run rebuilds the row cleanly under its new build; otherwise both live on Home at once. This is a
+    # removal (gate-exempt), and it supersedes the audience/rename reconciles (which act on the old
+    # build that's being fully removed). Best-effort + audited.
+    if build_changed:
+        await _run_reconcile(state, slug=slug, build=build, dry_run=False, scope="collection.build")
+        return result
     # Removing a dropped user's row is a removal (gate-exempt); a newly-ADDED user's row is a create,
     # so it's left for the next run's gated delivery. Best-effort + audited.
     if dropped_user_ids:

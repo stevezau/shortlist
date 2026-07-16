@@ -1,3 +1,6 @@
+import { useRef, useState } from "react";
+
+import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
 import { Card, CardContent } from "@/components/ui/card";
 import { useSaveSettings } from "@/lib/queries";
@@ -11,6 +14,8 @@ const CONCURRENCY = [1, 2, 4, 8] as const;
 /** Power-user knobs: log verbosity + run concurrency. Both auto-save and apply live — no restart. */
 export function AdvancedSection({ settings }: { settings: Settings }) {
   const saveSettings = useSaveSettings();
+  const [saved, setSaved] = useState(false);
+  const lastPayload = useRef<Settings | null>(null);
   const level = (
     LEVELS.includes(settings["log.level"] as Level)
       ? settings["log.level"]
@@ -19,6 +24,14 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
   const concurrency = String(
     (settings["run.concurrency"] as number | undefined) ?? 4,
   );
+
+  // Every change auto-saves — but with the same Saving…/Saved/failed feedback the other sections
+  // give, so a rejected save isn't silently swallowed (the control would otherwise just snap back).
+  const save = (payload: Settings) => {
+    lastPayload.current = payload;
+    setSaved(false);
+    saveSettings.mutate(payload, { onSuccess: () => setSaved(true) });
+  };
 
   return (
     <section aria-labelledby="advanced-heading" className="space-y-3">
@@ -41,7 +54,7 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
             value={level}
             ariaLabel="Log level"
             options={LEVELS.map((l) => ({ value: l, label: l }))}
-            onChange={(value) => saveSettings.mutate({ "log.level": value })}
+            onChange={(value) => save({ "log.level": value })}
           />
           <div className="border-t pt-4">
             <p className="font-medium">Run concurrency</p>
@@ -59,10 +72,17 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
               value: String(n),
               label: String(n),
             }))}
-            onChange={(value) =>
-              saveSettings.mutate({ "run.concurrency": Number(value) })
-            }
+            onChange={(value) => save({ "run.concurrency": Number(value) })}
           />
+          <div className="pt-1">
+            <SaveStatus
+              isPending={saveSettings.isPending}
+              isError={saveSettings.isError}
+              error={saveSettings.error}
+              saved={saved}
+              onRetry={() => lastPayload.current && save(lastPayload.current)}
+            />
+          </div>
         </CardContent>
       </Card>
     </section>

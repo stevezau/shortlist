@@ -151,6 +151,15 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               )}
             </div>
           ))}
+          {enabled.length === 0 && (
+            // Empty isn't "no discovery" — the engine floors it to its defaults, so say so out loud
+            // (the setting must never read as fully off while a run still uses two sources).
+            <p role="alert" className="text-sm text-warning">
+              Nothing enabled — Shortlist falls back to its defaults (TMDB
+              similar + discover). Turn on at least one source to choose your
+              own.
+            </p>
+          )}
         </CardContent>
       </Card>
 

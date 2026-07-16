@@ -34,7 +34,7 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
   return (
     <section aria-labelledby="defaults-heading" className="space-y-3">
       <h2 id="defaults-heading" className="text-lg font-semibold">
-        Defaults
+        Row defaults
       </h2>
       <Card>
         <CardContent className="space-y-4 pt-6">
