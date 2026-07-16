@@ -55,16 +55,12 @@ Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-starte
 
 ## Documentation
 
-|                                            |                                          |
-| ------------------------------------------ | ---------------------------------------- |
-| [Getting started](docs/getting-started.md) | Install, wizard, first run               |
-| [Guides](docs/guides.md)                   | UI tour, schedules, CLI, troubleshooting |
-| [Reference](docs/reference.md)             | Settings, API, env vars                  |
-| [FAQ](docs/faq.md)                         | Privacy model, Kometa, uninstall         |
-
-## CLI (headless / cron mode)
-
-The same engine without the web app — see [Guides → CLI](docs/guides.md#the-cli).
+|                                            |                                     |
+| ------------------------------------------ | ----------------------------------- |
+| [Getting started](docs/getting-started.md) | Install, wizard, first run          |
+| [Guides](docs/guides.md)                   | UI tour, schedules, troubleshooting |
+| [Reference](docs/reference.md)             | Settings, API, env vars             |
+| [FAQ](docs/faq.md)                         | Privacy model, Kometa, uninstall    |
 
 ## License
 

@@ -167,35 +167,20 @@ run's detail page shows how many titles it requested.
 
 Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 
-## The CLI
-
-The same engine, no web UI — useful for cron-driven setups and CI smoke tests:
-
-```bash
-shortlist --config-dir /config run --dry-run   # log every would-be change, write nothing
-shortlist --config-dir /config run             # the nightly pipeline
-shortlist --config-dir /config verify          # T1 read-back + T2 canary view
-shortlist --config-dir /config verify --probe  # full probe (throwaway collection, ~90s)
-shortlist --config-dir /config uninstall       # restore snapshots, delete shortlist collections
-```
-
-`run` refuses real writes unless a passing `verify` is on record from the last 7 days —
-that's deliberate.
-
 ## Troubleshooting
 
-- **A user says they can see someone else's row** — run `verify` immediately; if T1 fails it
-  names the user and the missing exclusion. Re-running `run` re-merges filters. Check
-  whether the share was edited by hand in plex.tv (Shortlist re-merges but never deletes
-  foreign filter conditions).
+- **A user says they can see someone else's row** — open Settings → Privacy and **Run
+  Privacy Check**; if it fails it names the user and the missing exclusion. A normal run
+  re-merges the share filters. Check whether the share was edited by hand in plex.tv
+  (Shortlist re-merges but never deletes filter conditions it didn't add).
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
 - **Tautulli shows fewer watches than expected** — Tautulli only knows sessions it observed
   live. Shortlist automatically falls back to Plex's own history per user when Tautulli's
   answer is thin.
-- **Everything broke, get me out** — `shortlist uninstall` (or Settings → Danger Zone →
-  Uninstall) restores every user's share filters from the pre-Shortlist snapshots and deletes
-  every shortlist-labeled collection. Kometa and other tools' collections are never touched.
+- **Everything broke, get me out** — Settings → Danger Zone → **Uninstall** restores every
+  user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled
+  collection. Kometa and other tools' collections are never touched.
 - **Did anything drift out of sync?** — Settings → Danger Zone → **What Shortlist has on your
   Plex** ("Check Plex") lists every shortlist-labeled collection read straight from the server (not
   the database), flagging any whose user/row no longer exists in the app. Every collection is

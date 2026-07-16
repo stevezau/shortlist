@@ -17,7 +17,7 @@ framework-agnostic; the app layer (Flask+SocketIO+Jinja in MPG) is NOT what Shor
 
 | Asset                                                                                                                                                                                | Action                                                                                                                                      |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.claude/rules/{python,testing,commenting,docker,docs,shell}.md`                                                                                                                     | Port near-verbatim; add `frontend.md` (React/TS) + `plex-safety.md` (Shortlist-specific, §8)                                                   |
+| `.claude/rules/{python,testing,commenting,docker,docs,shell}.md`                                                                                                                     | Port near-verbatim; add `frontend.md` (React/TS) + `plex-safety.md` (Shortlist-specific, §8)                                                |
 | `.claude/CLAUDE.md`                                                                                                                                                                  | Rewrite content, keep the proven section structure (Commands / Architecture / Code Style / Conventions / Security / Test Fixtures)          |
 | `.claude/agents/architecture-review.md`                                                                                                                                              | Port — pre-commit arch-review agent, blocking on HIGH findings (this caught 8 production-bug shapes in MPG; keep the discipline from day 1) |
 | `.claude/skills/release`                                                                                                                                                             | Port release skill                                                                                                                          |
@@ -32,14 +32,14 @@ framework-agnostic; the app layer (Flask+SocketIO+Jinja in MPG) is NOT what Shor
 | `DOCKERHUB_README.md`, `docker-compose.example.yml`, `unraid-templates/`                                                                                                             | Port patterns (Unraid = big homelab reach)                                                                                                  |
 | `llms.txt`                                                                                                                                                                           | Port (AI-readable repo summary)                                                                                                             |
 | `CONTRIBUTING.md`                                                                                                                                                                    | Port + adapt                                                                                                                                |
-| Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                                 |
+| Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                              |
 
 ### Deliberate deltas from MPG
 
-| MPG                                  | Shortlist                            | Why                                                                                                                   |
+| MPG                                  | Shortlist                         | Why                                                                                                                   |
 | ------------------------------------ | --------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Flask 3 + Jinja2 + Flask-SocketIO    | **FastAPI + React SPA + SSE**     | Wizard-heavy, live-progress UX is SPA-shaped; typed OpenAPI for free; SSE is simpler than SocketIO and FastAPI-native |
-| `settings.json` sole source of truth | **SQLite (SQLAlchemy + Alembic)** | Shortlist's state is relational (users×runs×picks×snapshots); settings live in a `settings` table                        |
+| `settings.json` sole source of truth | **SQLite (SQLAlchemy + Alembic)** | Shortlist's state is relational (users×runs×picks×snapshots); settings live in a `settings` table                     |
 | Auth token from container logs       | **Login with Plex (PIN)**         | Better UX; owner-only authorization comes free (account id must match server owner)                                   |
 | Gunicorn gthread                     | **uvicorn**                       | FastAPI-native, async                                                                                                 |
 
@@ -55,7 +55,7 @@ shortlist/
 │   ├── agents/architecture-review.md
 │   └── skills/release/
 ├── .github/                      # ported: ci.yml, docker-pr(+cleanup).yml, architecture-review.yml, templates
-├── shortlist/                       # Python package (backend + engine + CLI)
+├── shortlist/                       # Python package (backend + engine)
 │   ├── engine/                   # PURE library — zero FastAPI/DB imports; talks to clients only
 │   │   ├── pipeline.py           # per-user stage orchestration (history→candidates→filter→rank→curate→deliver→privacy)
 │   │   ├── models.py             # dataclasses: Seed, Candidate, Pick, UserProfile, RunReport
@@ -79,7 +79,6 @@ shortlist/
 │   │   ├── scheduler.py          # APScheduler; run rows are the durable queue (resume on restart)
 │   │   ├── services/             # run_service (engine adapter + SSE emit), snapshot_service, hit_rate, secrets (Fernet @ /config/secret.key)
 │   │   └── settings_store.py     # typed settings table access; env-var seeding on first boot (MPG pattern)
-│   ├── cli.py                    # `shortlist run [--user X] [--dry-run]` · `verify` · `uninstall` · `export-report` — same engine, used by Steve's cron in Phase 1
 │   └── logging_config.py         # loguru + Rich (ported)
 ├── web/                          # React 18 + Vite + TypeScript + Tailwind + shadcn/ui
 │   └── src/
@@ -103,9 +102,9 @@ shortlist/
 ```
 
 **The contract that keeps this honest:** `shortlist/engine/` imports nothing from `shortlist/server/`.
-Engine functions take plain config dataclasses + client instances and return report objects. The CLI
-and the FastAPI service are two thin adapters over one engine — Steve's Phase-1 cron and the shipped
-app run byte-identical logic.
+Engine functions take plain config dataclasses + client instances and return report objects. The
+FastAPI service is a thin adapter over the engine; its APScheduler fires the same engine run nightly,
+so the scheduled build and a manual "Run now" run byte-identical logic.
 
 ---
 
@@ -180,7 +179,7 @@ API), same as the *arr convention.
 | Server        | pytest + httpx AsyncClient                                    | API contract tests against the OpenAPI schema                                                                                                                                 |
 | Frontend      | vitest + testing-library                                      | wizard state machine fully unit-tested                                                                                                                                        |
 | E2E           | Playwright vs built Docker image + `tests/fakes/fake_plex.py` | full wizard → first run → dashboard, no real Plex needed; CI-shardable (MPG's e2e sharding pattern)                                                                           |
-| Live smoke    | `shortlist verify` CLI                                           | run against Steve's real server pre-release                                                                                                                                   |
+| Live smoke    | Dashboard **Run Privacy Check** + a dry-run **Run now**       | run against Steve's real server pre-release                                                                                                                                   |
 
 `fake_plex.py` is a deliberate investment (~300 lines): stubs `/identity`, `/library/sections`,
 `/status/sessions/history/all`, `/hubs`, collection CRUD, plus plex.tv `/api/v2/pins`, `/api/users`,
@@ -215,14 +214,14 @@ GitHub Release → images.
 
 ## 9. Execution phases (updated with chassis port)
 
-| Phase                                     | Scope                                                                                                                                                                    | Exit criteria                                                   |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| Phase                                     | Scope                                                                                                                                                                       | Exit criteria                                                   |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | **0 — Gate + scaffold** (~1–2 d)          | Manual privacy test on Steve's server. `gh repo create stevezau/shortlist` + port MPG chassis (.claude, .github, pre-commit, docs skeleton, Dockerfile skeleton, pyproject) | Privacy test passes; CI green on empty skeleton                 |
-| **1 — Engine + CLI pilot** (~1 wk + soak) | `engine/` + `clients/` + `cli.py` + unit suite. Cron on plex host (`error_checker.sh`). Rollout 5→15→40 users                                                            | 1–2 wks nightly runs, zero privacy incidents, hit-rate baseline |
-| **2 — Server + UI core** (~2 wks)         | FastAPI + DB + scheduler + SSE; dashboard/users/runs/settings                                                                                                            | Steve manages his instance via UI, cron retired                 |
-| **3 — Onboarding** (~1 wk)                | PIN auth, wizard 0–7, automated Privacy Check, uninstall/restore, fake_plex e2e                                                                                          | Clean-server `docker run` → rows with zero docs                 |
-| **4 — Ship-ready** (~1 wk)                | README/docs/screenshots/GIF, Unraid template, DOCKERHUB_README, issue templates, 3–5 external beta testers                                                               | Beta onboards unassisted                                        |
-| **5 — Launch**                            | r/selfhosted + r/PleX posts, Awesome-Selfhosted PR                                                                                                                       | v1.0 public                                                     |
+| **1 — Engine + CLI pilot** (~1 wk + soak) | `engine/` + `clients/` + `cli.py` + unit suite. Cron on plex host (`error_checker.sh`). Rollout 5→15→40 users                                                               | 1–2 wks nightly runs, zero privacy incidents, hit-rate baseline |
+| **2 — Server + UI core** (~2 wks)         | FastAPI + DB + scheduler + SSE; dashboard/users/runs/settings                                                                                                               | Steve manages his instance via UI, cron retired                 |
+| **3 — Onboarding** (~1 wk)                | PIN auth, wizard 0–7, automated Privacy Check, uninstall/restore, fake_plex e2e                                                                                             | Clean-server `docker run` → rows with zero docs                 |
+| **4 — Ship-ready** (~1 wk)                | README/docs/screenshots/GIF, Unraid template, DOCKERHUB_README, issue templates, 3–5 external beta testers                                                                  | Beta onboards unassisted                                        |
+| **5 — Launch**                            | r/selfhosted + r/PleX posts, Awesome-Selfhosted PR                                                                                                                          | v1.0 public                                                     |
 
 ---
 

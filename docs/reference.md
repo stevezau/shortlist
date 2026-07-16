@@ -57,11 +57,6 @@
 | `requests.auto_min_rating`                            | `8.0`                              | ...and rated ≥ this on the chosen source; rest are queued                                                                                                                                                                                                                                                                |
 | `requests.tag`                                        | `shortlist`                        | global tag on every requested title (created in the app; `""` = no tag)                                                                                                                                                                                                                                                  |
 
-## CLI config file (`<config-dir>/config.yml`)
-
-See the docstring in `shortlist/cli.py` — same knobs as above in YAML form, plus `users:`
-(list or `all`), `user_overrides:` and `canary:`.
-
 ## API
 
 Interactive docs at `/api/docs` (OpenAPI at `/api/openapi.json`). Highlights:
@@ -160,12 +155,11 @@ Shortlist refuses real (non-dry-run) writes unless **both** hold:
    recent result must pass — a stale T2 failure can't be masked by a newer T1-only pass).
 2. The linked PMS is **≥ 1.43.2.10687**.
 
-The web app records checks in the `privacy_checks` table. **Every real run runs the check itself as
-its first phase** — if the gate isn't already open, the run performs the check, records the result,
-and only then decides whether to write; the owner never runs it by hand. A manual re-check is still
-available (Settings → Re-check privacy), and the CLI records checks in `privacy_check.json` via
-`shortlist verify`. A refused run is recorded as an errored run with a plain-English reason — it
-never half-applies.
+Checks are recorded in the `privacy_checks` table. **Every real run runs the check itself as its
+first phase** — if the gate isn't already open, the run performs the check, records the result, and
+only then decides whether to write; the owner never runs it by hand. A manual re-check is available
+any time (Settings → Privacy → Run Privacy Check). A refused run is recorded as an errored run with
+a plain-English reason — it never half-applies.
 
 ## Privacy Check tiers
 
@@ -176,7 +170,7 @@ never half-applies.
 | **PROBE** | Creates a throwaway labeled collection, promotes it, confirms the canary can see it, excludes it, confirms it disappears — then restores filters byte-identically and deletes the probe (in `finally`) | ~90s, fully reversible |
 
 Each real run auto-runs PROBE (when a canary Home user exists, else T1/T2) before it writes. The
-`shortlist verify --probe` runs PROBE from the CLI.
+same full check is available on demand from Settings → Privacy → **Run full check**.
 
 **Every check refreshes every tier.** The gate reads the latest result of EACH tier across all
 history, so a tier nothing re-runs would latch it: a T1 failure would outlive the remedy pass that
@@ -185,6 +179,6 @@ a probe run records T1 and T2 alongside PROBE.
 
 ## Files under /config
 
-`shortlist.db` (SQLite) · `secret.key` (Fernet, 600) · `session.secret` · `logs/` ·
-`privacy_check.json` (CLI gate record) · `snapshots/` (CLI mode) · `slugs.json` (CLI mode: the
-durable plex-account-id → slug map a row's label is built from — never reassigned).
+`shortlist.db` (SQLite — settings, users, runs, privacy checks, restriction snapshots, and the
+durable plex-account-id → slug map a row's label is built from) · `secret.key` (Fernet, 600) ·
+`session.secret` · `logs/`.

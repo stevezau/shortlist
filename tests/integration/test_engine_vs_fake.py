@@ -16,7 +16,6 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse, Response
 
-from shortlist.cli import FileSnapshotStore
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.tmdb import TmdbClient
@@ -36,6 +35,7 @@ from tests.fakes.fake_plex import (
     make_fake_plextv,
     seed_state,
 )
+from tests.fakes.file_stores import FileSnapshotStore
 
 pytestmark = pytest.mark.integration
 
