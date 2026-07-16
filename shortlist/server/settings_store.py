@@ -41,7 +41,8 @@ DEFAULTS: dict[str, Any] = {
     "requests.min_rating": 7.0,  # rating floor on the chosen source
     "requests.min_votes": 100,  # vote-count floor on the chosen source
     "requests.min_demand": 1,  # a title must be wanted by at least this many distinct people
-    "requests.min_year": 0,  # 0 = any; else only titles released in >= this year
+    "requests.min_year": 0,  # 0 = no lower bound; else only titles from >= this year (shows: first-air year)
+    "requests.max_year": 0,  # 0 = no upper bound; else only titles from <= this year (shows: first-air year)
     "requests.max_per_run": 5,  # hard cap on titles auto-requested per run, total
     # Hybrid tier: titles clearing these higher bars auto-send; the rest queue for manual approval.
     "requests.auto_send": True,  # False = fully manual (every qualifying title waits for approval)

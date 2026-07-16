@@ -56,7 +56,7 @@ class CollectionIn(BaseModel):
     audience: str = "everyone"
     audience_user_ids: list[int] = Field(default_factory=list)
     enabled: bool = True
-    size: int = Field(default=15, ge=5, le=30)
+    size: int = Field(default=15, ge=5, le=40)
     media: str = "both"
     sort_order: int = 0
     name_template: str = ""

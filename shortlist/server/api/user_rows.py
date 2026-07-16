@@ -27,7 +27,7 @@ router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(requir
 
 class RowOverridePatch(BaseModel):
     muted: bool | None = None
-    row_size: int | None = Field(default=None, ge=5, le=30)
+    row_size: int | None = Field(default=None, ge=5, le=40)
     # Per-row curation override; empty strings inherit the row's own recipe.
     prompt_tone: str | None = None
     prompt_guidance: str | None = None

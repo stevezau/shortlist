@@ -8,8 +8,8 @@ import {
 import { MutationAlert } from "@/components/mutation-alert";
 import { PickList } from "@/components/pick-list";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
+import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
-import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,13 +18,6 @@ import { Switch } from "@/components/ui/switch";
 import { useAutosave } from "@/lib/autosave";
 import { useSetUserRowOverride, useUserRows } from "@/lib/queries";
 import type { User, UserRow } from "@/lib/types";
-
-const SIZE_OPTIONS = [
-  { value: "default", label: "Default" },
-  { value: "10", label: "10" },
-  { value: "15", label: "15" },
-  { value: "20", label: "20" },
-];
 
 /** One of a person's rows: its live picks, and a per-person customization drawer. */
 function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
@@ -153,12 +146,28 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
 
           {open && (
             <div className="mt-3 space-y-4">
-              <Segmented
-                legend="Row size"
-                value={size}
-                options={SIZE_OPTIONS}
-                onChange={setSize}
-              />
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm font-medium">
+                  <Switch
+                    checked={size !== "default"}
+                    onCheckedChange={(on) =>
+                      setSize(on ? String(row.size) : "default")
+                    }
+                  />
+                  Custom row size for this person
+                </label>
+                {size === "default" ? (
+                  <p className="text-sm text-muted-foreground">
+                    Using this row&rsquo;s size ({row.size} titles).
+                  </p>
+                ) : (
+                  <RowSizeField
+                    value={Number(size)}
+                    onChange={(next) => setSize(String(next))}
+                    label="Titles for this person"
+                  />
+                )}
+              </div>
               <div className="space-y-2">
                 <p className="text-sm font-medium">Curation style</p>
                 <p className="text-sm text-muted-foreground">

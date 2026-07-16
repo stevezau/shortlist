@@ -107,6 +107,27 @@ describe("RequestsSettings", () => {
     expect(payload).not.toHaveProperty("requests.sonarr.url");
   });
 
+  it("saves an upper year bound and warns when the range can match nothing", async () => {
+    renderPanel({ "requests.enabled": true });
+
+    const before = await screen.findByLabelText(/Released on or before/i);
+    await userEvent.clear(before);
+    await userEvent.type(before, "1990");
+    await waitFor(() =>
+      expect(putSettings.mock.calls.at(-1)?.[0]).toHaveProperty(
+        "requests.max_year",
+        1990,
+      ),
+    );
+
+    // An upper bound earlier than the lower bound can match nothing — the form says so.
+    const after = screen.getByLabelText(/Released on or after/i);
+    await userEvent.type(after, "2010");
+    expect(
+      await screen.findByText(/no titles can\s+match this range/i),
+    ).toBeTruthy();
+  });
+
   it("never saves the redacted sentinel as the OMDb key", async () => {
     renderPanel(WITH_SAVED_OMDB_KEY);
     const field = screen.getByLabelText(/OMDb API key/i);

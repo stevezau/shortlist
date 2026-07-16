@@ -120,6 +120,37 @@ export function cronFromTime(time: string, weekly = false): string {
   return `${safeMinutes} ${safeHours} * * ${weekly ? "0" : "*"}`;
 }
 
+/**
+ * Whether a cron string is one the simple Run at + Nightly/Weekly presets can round-trip losslessly.
+ * The presets ONLY ever emit nightly (`* * *` dow `*`) or Sunday-weekly (dow `0`) — cronFromTime
+ * writes `0` for weekly and timeFromCron collapses any non-`*` dow to "weekly", so `0` is the sole
+ * weekday they can represent. Every other cron (a non-Sunday weekday, steps, ranges, lists, specific
+ * months) would be silently flattened, so it must open as-is in Custom mode instead.
+ */
+export function isPresetCron(cron: string): boolean {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const [minuteField, hourField, domField, monthField, dowField] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  const minutes = Number(minuteField);
+  const hours = Number(hourField);
+  const clockOk =
+    Number.isInteger(minutes) &&
+    minutes >= 0 &&
+    minutes <= 59 &&
+    Number.isInteger(hours) &&
+    hours >= 0 &&
+    hours <= 23;
+  const dailyFields = domField === "*" && monthField === "*";
+  const dowOk = dowField === "*" || dowField === "0"; // only nightly or Sunday-weekly round-trip
+  return clockOk && dailyFields && dowOk;
+}
+
 /** Best-effort inverse of cronFromTime; falls back to 03:30 nightly. */
 export function timeFromCron(cron: string): { time: string; weekly: boolean } {
   const parts = cron.trim().split(/\s+/);

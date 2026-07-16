@@ -35,6 +35,7 @@ interface RequestsForm {
   minVotes: number;
   minDemand: number;
   minYear: number;
+  maxYear: number;
   maxPerRun: number;
   autoSend: boolean;
   autoMinDemand: number;
@@ -69,6 +70,7 @@ function readForm(settings: Settings): RequestsForm {
     minVotes: settingNumber(settings, "requests.min_votes", 100),
     minDemand: settingNumber(settings, "requests.min_demand", 1),
     minYear: settingNumber(settings, "requests.min_year", 0),
+    maxYear: settingNumber(settings, "requests.max_year", 0),
     maxPerRun: settingNumber(settings, "requests.max_per_run", 5),
     autoSend: settingBool(settings, "requests.auto_send", true),
     autoMinDemand: settingNumber(settings, "requests.auto_min_demand", 3),
@@ -214,6 +216,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const votesId = useId();
   const demandId = useId();
   const yearId = useId();
+  const yearMaxId = useId();
   const omdbId = useId();
   const autoDemandId = useId();
   const autoRatingId = useId();
@@ -252,6 +255,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.min_votes": form.minVotes,
       "requests.min_demand": form.minDemand,
       "requests.min_year": form.minYear,
+      "requests.max_year": form.maxYear,
       "requests.max_per_run": form.maxPerRun,
       "requests.auto_send": form.autoSend,
       "requests.auto_min_demand": form.autoMinDemand,
@@ -501,8 +505,35 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     className="w-28"
                   />
                   <p className="text-sm text-muted-foreground">
-                    Skip anything older than this year. Blank = any age.
+                    Skip anything older than this year. Blank = no lower limit.
                   </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={yearMaxId}>Released on or before</Label>
+                  <Input
+                    id={yearMaxId}
+                    type="number"
+                    min={0}
+                    step={1}
+                    placeholder="Any year"
+                    value={form.maxYear || ""}
+                    onChange={(e) =>
+                      set({ maxYear: Number(e.target.value) || 0 })
+                    }
+                    className="w-28"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Skip anything newer than this year. Blank = no upper limit.
+                    A show is judged by its first-air year.
+                  </p>
+                  {form.minYear > 0 &&
+                    form.maxYear > 0 &&
+                    form.maxYear < form.minYear && (
+                      <p className="text-sm text-destructive">
+                        The latest year is before the earliest — no titles can
+                        match this range.
+                      </p>
+                    )}
                 </div>
               </div>
 

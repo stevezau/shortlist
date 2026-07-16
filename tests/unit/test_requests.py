@@ -291,6 +291,42 @@ class TestRequestMissing:
         requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert [c[0] for c in fake.movie_calls] == [2]  # 1998 and unknown-year both excluded
 
+    def test_max_year_excludes_newer_titles(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(1, "classic", MediaType.MOVIE, 1975, rating=9.0, vote_count=900),
+            MissingTitle(2, "recent", MediaType.MOVIE, 2021, rating=8.0, vote_count=900),
+            MissingTitle(3, "no year", MediaType.MOVIE, None, rating=8.5, vote_count=900),
+        )
+        cfg = _cfg(radarr=RADARR, max_year=1990)
+        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        assert [c[0] for c in fake.movie_calls] == [1]  # 2021 and unknown-year both excluded
+
+    def test_year_window_keeps_only_titles_inside_both_bounds(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(1, "too old", MediaType.MOVIE, 1995, rating=9.0, vote_count=900),
+            MissingTitle(2, "in window", MediaType.MOVIE, 2010, rating=8.0, vote_count=900),
+            MissingTitle(3, "too new", MediaType.MOVIE, 2024, rating=8.5, vote_count=900),
+        )
+        cfg = _cfg(radarr=RADARR, min_year=2000, max_year=2020)
+        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        assert [c[0] for c in fake.movie_calls] == [2]  # only the 2010 title is inside [2000, 2020]
+
+    def test_impossible_year_window_requests_nothing_and_does_not_raise(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(1, "a", MediaType.MOVIE, 2005, rating=9.0, vote_count=900),
+            MissingTitle(2, "b", MediaType.MOVIE, 2015, rating=8.0, vote_count=900),
+        )
+        cfg = _cfg(radarr=RADARR, min_year=2020, max_year=2010)  # max < min -> matches nothing
+        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        assert fake.movie_calls == []  # fails safe: no request, no crash
+        assert report.considered == 0
+
     def test_imdb_source_gates_on_omdb_rating_not_tmdb(self, monkeypatch):
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)

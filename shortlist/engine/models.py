@@ -266,8 +266,9 @@ class RequestConfig:
 
     Off by default and gated on several axes so an LLM's suggestions can never balloon a library.
     A title must clear the rating/vote floors of the chosen ``rating_source`` (a high score from a
-    handful of votes is noise), be wanted by at least ``min_demand`` distinct people, be no older
-    than ``min_year``, and even then only the top ``max_per_run`` across the whole run are requested.
+    handful of votes is noise), be wanted by at least ``min_demand`` distinct people, fall inside the
+    ``min_year``..``max_year`` release window, and even then only the top ``max_per_run`` across the
+    whole run are requested.
     """
 
     enabled: bool = False
@@ -280,7 +281,9 @@ class RequestConfig:
     min_rating: float = 7.0  # rating floor, 0..10, on the chosen source
     min_votes: int = 100  # vote-count floor on the chosen source
     min_demand: int = 1  # a title must be wanted by at least this many distinct people
-    min_year: int = 0  # 0 -> any year; else request only titles released in >= this year
+    # Release-year window (a show's year is its first-air year). 0 disables that end of the range.
+    min_year: int = 0  # 0 -> no lower bound; else request only titles from >= this year
+    max_year: int = 0  # 0 -> no upper bound; else request only titles from <= this year
     max_per_run: int = 5  # hard cap on how many titles a single run may auto-request, total
     # Hybrid tier. A title that also clears these HIGHER bars (within max_per_run) is requested
     # automatically each run; every other title that still cleared the base floors above is queued

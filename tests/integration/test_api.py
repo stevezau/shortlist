@@ -236,7 +236,16 @@ class TestSettingsValidation:
         # "abc" was stored happily, then raised ValueError inside every run and 500'd two endpoints.
         assert client.put("/api/settings", json={"values": {"row.size": "abc"}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"row.size": 99}}).status_code == 422
-        assert client.put("/api/settings", json={"values": {"row.size": 20}}).status_code == 200
+        # The free number picker allows anything 5..40 (widened from 30; ceiling = pre-rank pool cap).
+        assert client.put("/api/settings", json={"values": {"row.size": 40}}).status_code == 200
+        assert client.put("/api/settings", json={"values": {"row.size": 41}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"row.size": 4}}).status_code == 422
+
+    def test_request_year_bounds_are_validated(self, client: TestClient):
+        # Both ends of the request year window share the 0..2100 bound (0 = that end disabled).
+        assert client.put("/api/settings", json={"values": {"requests.max_year": 3000}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"requests.max_year": 1990}}).status_code == 200
+        assert client.put("/api/settings", json={"values": {"requests.min_year": 2000}}).status_code == 200
 
     def test_paused_all_must_be_a_real_boolean(self, client: TestClient):
         # A non-empty string is truthy in Python, so "false" PAUSED every run while the UI read "off".

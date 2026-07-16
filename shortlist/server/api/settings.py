@@ -68,7 +68,7 @@ def _known_sources(value: object) -> str | None:
 # client reached the engine. `plextv.throttle_s: 0` silently REMOVED the <=1 write/s plex.tv throttle
 # (plex-safety rule 6); `row.size: "abc"` crashed every run and 500'd two endpoints.
 VALIDATORS = {
-    "row.size": _bounded_int(5, 30),
+    "row.size": _bounded_int(5, 40),  # ceiling = candidates_pre_rank (per-media pool cap)
     "staleness_runs": _bounded_int(0, 50),
     "plextv.throttle_s": _bounded_float(1.0, 60.0),  # never below the 1 write/s rule
     "run.concurrency": _bounded_int(1, 16),  # 1 = sequential; writes stay serial regardless
@@ -89,6 +89,7 @@ VALIDATORS = {
     "requests.min_demand": _bounded_int(1, 1000),
     "requests.auto_min_demand": _bounded_int(1, 1000),
     "requests.min_year": _bounded_int(0, 2100),
+    "requests.max_year": _bounded_int(0, 2100),
     "requests.max_per_run": _bounded_int(0, 100),
     "requests.radarr.quality_profile_id": _bounded_int(0, 1_000_000),
     "requests.sonarr.quality_profile_id": _bounded_int(0, 1_000_000),

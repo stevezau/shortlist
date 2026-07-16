@@ -16,9 +16,10 @@
 
 ## Schedules
 
-Default is nightly at 03:30 server-local. Settings → Schedules takes a full cron expression
-(`30 3 * * *`) with a human-readable preview. One schedule covers the whole server; to skip someone,
-pause them on their detail page.
+Default is nightly at 03:30 server-local. Settings → Schedule offers **Nightly** and **Weekly**
+presets (just pick a run time), or switch to **Custom (cron)** to enter any 5-field cron expression
+— e.g. `0 */6 * * *` for every six hours, or `0 4 * * 1` for Mondays at 4am. One schedule covers
+the whole server; to skip someone, pause them on their detail page.
 
 ## Hit rate
 
@@ -109,8 +110,9 @@ Set it up under **Settings → Requests**:
 3. Once connected, pick a **Quality** profile and a **Save to** folder from the dropdowns — Shortlist
    reads these straight from the app, so there are no ids to look up.
 4. Tune the **Guardrails**: a minimum rating and minimum number of reviews a title must clear, the
-   fewest people who must want it, and the most titles to auto-request per night (a hard cap across
-   both apps).
+   fewest people who must want it, an optional **release-year window** (_on or after_ / _on or
+   before_ — leave either blank for no bound; a show is judged by its first-air year), and the most
+   titles to auto-request per night (a hard cap across both apps).
 5. Set the **Auto-send vs. ask me** bar: titles wanted by enough people _and_ rated highly enough
    are requested automatically each night; everything else that clears the guardrails waits in your
    **Requests** inbox. Turn auto-send off for a fully manual queue.

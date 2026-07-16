@@ -22,9 +22,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
-import { ROW_SIZES } from "@/lib/constants";
 import { useSaveCollection } from "@/lib/queries";
 import type { Collection, CollectionInput, User } from "@/lib/types";
 
@@ -120,14 +120,9 @@ export function RowEditor({
           />
 
           {!isDefault && (
-            <Segmented
-              legend="Row size"
-              value={String(input.size)}
-              onChange={(size) => set({ size: Number(size) })}
-              options={ROW_SIZES.map((size) => ({
-                value: String(size),
-                label: String(size),
-              }))}
+            <RowSizeField
+              value={input.size}
+              onChange={(size) => set({ size })}
             />
           )}
 

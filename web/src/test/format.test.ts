@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   cronFromTime,
   formatHitRate,
+  isPresetCron,
   renderRowName,
   settingBool,
   settingNumber,
@@ -28,6 +29,24 @@ describe("cronFromTime / timeFromCron", () => {
     // Bad hours/minutes fall back per-field to 3 / 30.
     expect(cronFromTime("99:99")).toBe("30 3 * * *");
     expect(cronFromTime("not-a-time")).toBe("30 3 * * *");
+  });
+
+  it("recognises only the crons the presets truly round-trip (nightly + Sunday-weekly)", () => {
+    expect(isPresetCron("30 3 * * *")).toBe(true); // nightly
+    expect(isPresetCron("5 22 * * 0")).toBe(true); // weekly (Sunday — the only weekday presets emit)
+  });
+
+  it("treats anything the presets would flatten as a custom cron", () => {
+    // A non-Sunday weekday can't round-trip: the presets only ever write dow 0, and timeFromCron
+    // would relabel this as "weekly Sunday" and overwrite it — so it must stay Custom.
+    expect(isPresetCron("0 4 * * 1")).toBe(false); // Mondays
+    expect(isPresetCron("0 4 * * 6")).toBe(false); // Saturdays
+    expect(isPresetCron("0 */6 * * *")).toBe(false); // step hours
+    expect(isPresetCron("0 4 * * 1,3,5")).toBe(false); // day-of-week list
+    expect(isPresetCron("0 4 1 * *")).toBe(false); // specific day of month
+    expect(isPresetCron("0 4 * 6 *")).toBe(false); // specific month
+    expect(isPresetCron("30 3 * *")).toBe(false); // too few fields
+    expect(isPresetCron("")).toBe(false);
   });
 
   it("treats an empty string's hour as 0 (Number('') === 0), minute as the default", () => {

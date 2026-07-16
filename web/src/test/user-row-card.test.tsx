@@ -130,7 +130,13 @@ describe("UserRowCard", () => {
     );
     expect(screen.queryByRole("button", { name: /^Save$/ })).toBeNull();
 
-    await userEvent.click(screen.getByRole("button", { name: "20" }));
+    await userEvent.click(
+      screen.getByRole("switch", { name: /Custom row size/i }),
+    );
+    const sizeInput = screen.getByLabelText(/Titles for this person/i);
+    await userEvent.clear(sizeInput);
+    await userEvent.type(sizeInput, "20");
+    await userEvent.tab(); // blur commits the typed size
 
     // Collapsing the drawer used to throw this away; it now persists on its own.
     await waitFor(() => expect(setUserRowOverride).toHaveBeenCalled(), {
@@ -153,7 +159,13 @@ describe("UserRowCard", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: /Customize for this person/i }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "10" }));
+    await userEvent.click(
+      screen.getByRole("switch", { name: /Custom row size/i }),
+    );
+    const sizeInput = screen.getByLabelText(/Titles for this person/i);
+    await userEvent.clear(sizeInput);
+    await userEvent.type(sizeInput, "10");
+    await userEvent.tab(); // blur commits the typed size
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /Database is busy/i,

@@ -457,6 +457,7 @@ class ContextBuilder:
             min_votes=int(store.get("requests.min_votes")),
             min_demand=int(store.get("requests.min_demand")),
             min_year=int(store.get("requests.min_year")),
+            max_year=int(store.get("requests.max_year")),
             max_per_run=int(store.get("requests.max_per_run")),
             auto_send=bool(store.get("requests.auto_send")),
             auto_min_demand=int(store.get("requests.auto_min_demand")),

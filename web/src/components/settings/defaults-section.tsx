@@ -1,12 +1,12 @@
 import { useId, useState } from "react";
 
+import { RowSizeField } from "@/components/row-size-field";
 import { SaveStatus } from "@/components/save-status";
-import { Segmented } from "@/components/segmented";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAutosave } from "@/lib/autosave";
-import { ROW_SIZES } from "@/lib/constants";
+import { ROW_SIZE_DEFAULT } from "@/lib/constants";
 import { renderRowName, settingNumber, settingString } from "@/lib/format";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
@@ -18,7 +18,7 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
     settingString(settings, "row.name_template", "✨ Picked for You"),
   );
   const [rowSize, setRowSize] = useState(
-    settingNumber(settings, "row.size", 15),
+    settingNumber(settings, "row.size", ROW_SIZE_DEFAULT),
   );
   const [justSaved, setJustSaved] = useState(false);
   const rowNameId = useId();
@@ -58,15 +58,7 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
               </p>
             </div>
           </div>
-          <Segmented
-            legend="Row size"
-            value={String(rowSize)}
-            options={ROW_SIZES.map((size) => ({
-              value: String(size),
-              label: String(size),
-            }))}
-            onChange={(size) => setRowSize(Number(size))}
-          />
+          <RowSizeField value={rowSize} onChange={setRowSize} />
           <SaveStatus
             isPending={saveSettings.isPending}
             isError={saveSettings.isError}

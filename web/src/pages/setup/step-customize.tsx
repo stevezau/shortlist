@@ -3,13 +3,13 @@ import { Check, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
 
 import { FakePlexRow } from "@/components/fake-plex-row";
-import { Segmented } from "@/components/segmented";
+import { RowSizeField } from "@/components/row-size-field";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, apiErrorMessage } from "@/lib/api";
-import { ROW_SIZES } from "@/lib/constants";
+import { ROW_SIZE_DEFAULT } from "@/lib/constants";
 import { cronFromTime, renderRowName } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -28,7 +28,7 @@ type TemplateChoice = "static" | "dynamic" | "custom";
 export function StepCustomize({ update, next }: StepProps) {
   const [choice, setChoice] = useState<TemplateChoice>("static");
   const [customTpl, setCustomTpl] = useState("✨ Fresh picks");
-  const [rowSize, setRowSize] = useState(15);
+  const [rowSize, setRowSize] = useState(ROW_SIZE_DEFAULT);
   const [time, setTime] = useState("03:30");
   const customId = useId();
   const timeId = useId();
@@ -145,15 +145,7 @@ export function StepCustomize({ update, next }: StepProps) {
         </p>
       </div>
 
-      <Segmented
-        legend="Row size"
-        value={String(rowSize)}
-        options={ROW_SIZES.map((size) => ({
-          value: String(size),
-          label: String(size),
-        }))}
-        onChange={(size) => setRowSize(Number(size))}
-      />
+      <RowSizeField value={rowSize} onChange={setRowSize} />
 
       <div className="space-y-2">
         <Label htmlFor={timeId}>Refresh rows nightly at</Label>

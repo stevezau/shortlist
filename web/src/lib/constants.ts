@@ -1,5 +1,19 @@
-/** The row-size presets offered wherever a row length is chosen (settings, rows, wizard). */
-export const ROW_SIZES = [10, 15, 20] as const;
+/**
+ * Row length (title count) bounds, shared by every place a row size is chosen (settings, rows,
+ * wizard, per-user override). A free number in this range — the server enforces the same bounds
+ * (`row.size` validator, `CollectionIn.size`, `UserRowOverride.row_size`). The ceiling matches the
+ * engine's fixed per-media pre-rank cap (`EngineConfig.candidates_pre_rank`, 40), so even a
+ * single-media row at the max can actually be filled rather than silently truncated.
+ */
+export const ROW_SIZE_MIN = 5;
+export const ROW_SIZE_MAX = 40;
+export const ROW_SIZE_DEFAULT = 15;
+
+/** Clamp any typed row size into the allowed range and to a whole number. */
+export function clampRowSize(value: number): number {
+  if (!Number.isFinite(value)) return ROW_SIZE_DEFAULT;
+  return Math.max(ROW_SIZE_MIN, Math.min(ROW_SIZE_MAX, Math.round(value)));
+}
 
 /**
  * The seeded "Picked for You" row. Its name, size and curation style come from the global Settings

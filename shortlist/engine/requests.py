@@ -70,6 +70,21 @@ def accumulate(demand: DemandMap, missing: list[Candidate], tags: set[str] | Non
             existing.tags |= tags
 
 
+def _within_year_window(year: int | None, min_year: int, max_year: int) -> bool:
+    """Whether a candidate's release year falls inside the requested window.
+
+    Both bounds are inclusive; ``<= 0`` disables that end (so ``0, 0`` accepts everything). A show's
+    ``year`` is its first-air year (set at the candidate source). When a bound is active but the
+    title has no year, it is excluded — a year restriction can't be judged against an unknown date,
+    so the conservative choice is not to auto-request it.
+    """
+    if min_year <= 0 and max_year <= 0:
+        return True
+    if year is None:
+        return False
+    return (min_year <= 0 or year >= min_year) and (max_year <= 0 or year <= max_year)
+
+
 def request_missing(
     cfg: RequestConfig,
     tmdb: TmdbClient,
@@ -81,8 +96,9 @@ def request_missing(
 ) -> RequestReport:
     """Auto-request the strongest missing titles; queue the rest for the owner to approve.
 
-    Base floors first (``min_demand``, ``min_year``, then the ``rating_source`` rating/vote floors):
-    a title must clear all of them to be requestable at all. Among the survivors, those that also
+    Base floors first (``min_demand``, the ``min_year``..``max_year`` window, then the chosen
+    ``rating_source`` rating/vote floors): a title must clear all of them to be requestable at all.
+    Among the survivors, those that also
     clear the higher auto-send bar (``auto_min_demand`` and ``auto_min_rating``) are requested now —
     ranked by demand, then rating, then votes, and capped at ``max_per_run``. Everyone else, including
     auto-worthy titles that overflowed the cap, is returned in ``report.queued`` for manual review.
@@ -94,13 +110,13 @@ def request_missing(
     # slot every night and `max_per_run` starved forever on the same five titles; and a REJECTED
     # title could still be auto-sent later, so a "no" wasn't a no.
     handled = already_handled or set()
-    # Cheap, source-independent floors first: enough distinct wanters, and recent enough.
+    # Cheap, source-independent floors first: enough distinct wanters, and inside the year window.
     pool = [
         m
         for m in demand.values()
         if (m.tmdb_id, str(m.media_type)) not in handled
         and m.demand >= cfg.min_demand
-        and (cfg.min_year <= 0 or (m.year or 0) >= cfg.min_year)
+        and _within_year_window(m.year, cfg.min_year, cfg.max_year)
     ]
     # Then the rating gate, from whichever source the owner chose (it ranks the survivors too).
     if cfg.rating_source == "imdb" and cfg.omdb_api_key:
