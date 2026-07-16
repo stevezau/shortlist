@@ -37,7 +37,7 @@ def _section(title: str, kind: str, key: int) -> MagicMock:
 
 
 def test_target_sections_defaults_to_all_then_narrows_by_media_and_keys():
-    from shortlist.engine.delivery import _target_sections
+    from shortlist.engine.delivery import target_sections
     from shortlist.engine.models import RowSpec
 
     movies = _section("Movies", "movie", "1")
@@ -48,10 +48,10 @@ def test_target_sections_defaults_to_all_then_narrows_by_media_and_keys():
     def spec(**kw):
         return RowSpec(slug="p", name_template="", size=5, **kw)
 
-    assert _target_sections(secs, spec()) == [movies, shows, movies4k]  # empty -> every library
-    assert _target_sections(secs, spec(media="movie")) == [movies, movies4k]  # type filter
-    assert _target_sections(secs, spec(library_keys=["3"])) == [movies4k]  # a specific library
-    assert _target_sections(secs, spec(library_keys=["9"])) == []  # a key that no longer exists
+    assert target_sections(secs, spec()) == [movies, shows, movies4k]  # empty -> every library
+    assert target_sections(secs, spec(media="movie")) == [movies, movies4k]  # type filter
+    assert target_sections(secs, spec(library_keys=["3"])) == [movies4k]  # a specific library
+    assert target_sections(secs, spec(library_keys=["9"])) == []  # a key that no longer exists
 
 
 @pytest.fixture

@@ -20,14 +20,14 @@ from shortlist.engine import ranking
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.curator import CuratorError, NullCurator
 from shortlist.engine.delivery import (
-    _section_kind,
-    _target_sections,
     deliver_rows,
     remove_row,
     render_row_name,
     resolve_row_template,
     row_marker,
+    section_kind,
     sections_for_keys,
+    target_sections,
 )
 from shortlist.engine.history import derive_seeds
 from shortlist.engine.models import (
@@ -469,7 +469,7 @@ def _run_user(
         # collection of k, curated from that library's own contents. So a server with two movie
         # libraries (Movies + 4K) gets a full row in EACH, and a mostly-TV watcher still gets a full
         # movie row and a full show row (the "one movie in Picked for You" bug, SFLIX 2026-07-15).
-        targets = _target_sections(ctx.delivery_sections, spec)
+        targets = target_sections(ctx.delivery_sections, spec)
         if not cold:
             # The row's recipe (already the global one with the row's fields laid over it), then this
             # person's override laid over THAT. Setting only a tone for one person used to wipe the
@@ -489,7 +489,7 @@ def _run_user(
             _pipeline._emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row)})
         section_picks: dict[str, list[Pick]] = {}
         for section in targets:
-            kind = _section_kind(section)
+            kind = section_kind(section)
             # tmdb_id -> ratingKey for THIS library only; a candidate not in this library isn't a
             # valid pick for it, however well it ranks for the row overall.
             if cold:
@@ -678,11 +678,11 @@ def _shared_row(
     # Curate PER LIBRARY, exactly like a per-person row: each targeted library gets its own full k
     # from its own contents. One mixed curate over a now media-segregated pool would let a 'both'
     # shared row come back all-movies-no-shows.
-    targets = _target_sections(ctx.delivery_sections, spec)
+    targets = target_sections(ctx.delivery_sections, spec)
     section_picks: dict[str, list[Pick]] = {}
     freshness = spec.freshness if spec.freshness is not None else cfg.freshness
     for section in targets:
-        kind = _section_kind(section)
+        kind = section_kind(section)
         sec_idx = ctx.section_index.get(section.key, {})
         sub = [c for c in ranked if c.media_type is kind and c.tmdb_id in sec_idx]
         if not sub:

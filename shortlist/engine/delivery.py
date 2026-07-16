@@ -89,7 +89,7 @@ def _allowed_media(media: str) -> set[MediaType]:
     return {MediaType(media)}
 
 
-def _section_kind(section) -> MediaType:
+def section_kind(section) -> MediaType:
     return MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
 
 
@@ -104,11 +104,11 @@ def sections_for_keys(sections: list, library_keys) -> list:
     return [s for s in sections if str(s.key) in wanted]
 
 
-def _target_sections(sections: list, spec: RowSpec) -> list:
+def target_sections(sections: list, spec: RowSpec) -> list:
     """The libraries this row delivers into: the specific ones it named (``library_keys``), else
     every library of an allowed media type. A named key that no longer exists is simply skipped."""
     allowed = _allowed_media(spec.media)
-    candidates = [s for s in sections if _section_kind(s) in allowed]
+    candidates = [s for s in sections if section_kind(s) in allowed]
     return sections_for_keys(candidates, spec.library_keys) if spec.library_keys else candidates
 
 
@@ -174,7 +174,7 @@ def deliver_rows(
     # type. Fall back to sections_by_type() (one per type) for a legacy caller that passed neither.
     all_sections = sections if sections is not None else list(plex.sections_by_type().values())
     idx = section_index if section_index is not None else {}
-    targets = _target_sections(all_sections, spec)
+    targets = target_sections(all_sections, spec)
 
     by_type: dict[MediaType, list[Pick]] = {}
     for pick in picks:
@@ -185,7 +185,7 @@ def deliver_rows(
     stored: str | None = None
 
     for section in targets:
-        kind = _section_kind(section)
+        kind = section_kind(section)
         # Remap each pick to THIS library's ratingKey — a Plex collection can only hold its own
         # library's items. A pick this library doesn't have is skipped (delivered wherever it does
         # live). With no per-section index (legacy caller), fall back to the pick's existing key.

@@ -191,73 +191,77 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         return store.all_public()
 
 
+_TESTABLE_SERVICES = frozenset({"plex", "tautulli", "tmdb", "radarr", "sonarr", "omdb", "trakt", "exa", "llm"})
+
+
 @router.post("/test/{service}")
 async def test_connection(service: str, request: Request) -> dict:
     """One tiny call per service; returns plain-English ok/error (design: everything re-testable)."""
     state = request.app.state
-    with state.sessions() as session:
-        store = SettingsStore(session, state.secrets)
-        config = {key: store.get(key) for key in list(DEFAULTS) + list(SECRET_KEYS)}
+    if service not in _TESTABLE_SERVICES:
+        raise HTTPException(status_code=404, detail=f"unknown service {service!r}")
 
     def probe() -> str:
-        if service == "plex":
-            from shortlist.engine.clients.plex_pms import PlexClient
+        # Own session in the executor thread, and only the tested service's secret is decrypted — no
+        # reason to Fernet-decrypt every stored key just to ping one connection.
+        with state.sessions() as session:
+            get = SettingsStore(session, state.secrets).get
+            if service == "plex":
+                from shortlist.engine.clients.plex_pms import PlexClient
 
-            plex = PlexClient(config["plex.url"], config["plex.token"])
-            return f"Connected to {plex.server_name} (PMS {plex.version})"
-        if service == "tautulli":
-            from shortlist.engine.clients.tautulli import TautulliClient
+                plex = PlexClient(get("plex.url"), get("plex.token"))
+                return f"Connected to {plex.server_name} (PMS {plex.version})"
+            if service == "tautulli":
+                from shortlist.engine.clients.tautulli import TautulliClient
 
-            TautulliClient(config["tautulli.url"], config["tautulli.apikey"]).ping()
-            return "Tautulli responded"
-        if service == "tmdb":
-            from shortlist.engine.clients.tmdb import TmdbClient
+                TautulliClient(get("tautulli.url"), get("tautulli.apikey")).ping()
+                return "Tautulli responded"
+            if service == "tmdb":
+                from shortlist.engine.clients.tmdb import TmdbClient
 
-            if not TmdbClient(config["tmdb.apikey"]).ping():
-                raise RuntimeError("TMDB rejected the key")
-            return "TMDB key works"
-        if service in ("radarr", "sonarr"):
-            from shortlist.engine.clients.arr import make_arr_client
-            from shortlist.engine.models import ArrTarget
+                if not TmdbClient(get("tmdb.apikey")).ping():
+                    raise RuntimeError("TMDB rejected the key")
+                return "TMDB key works"
+            if service in ("radarr", "sonarr"):
+                from shortlist.engine.clients.arr import make_arr_client
+                from shortlist.engine.models import ArrTarget
 
-            prefix = f"requests.{service}"
-            url = (config[f"{prefix}.url"] or "").strip()
-            api_key = config[f"{prefix}.apikey"] or ""
-            if not url or not api_key:
-                raise RuntimeError(f"{service.title()} URL and API key are both required")
-            target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
-            return make_arr_client(service, target).ping()
-        if service == "omdb":
-            from shortlist.engine.clients.omdb import OmdbClient
+                prefix = f"requests.{service}"
+                url = (get(f"{prefix}.url") or "").strip()
+                api_key = get(f"{prefix}.apikey") or ""
+                if not url or not api_key:
+                    raise RuntimeError(f"{service.title()} URL and API key are both required")
+                target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
+                return make_arr_client(service, target).ping()
+            if service == "omdb":
+                from shortlist.engine.clients.omdb import OmdbClient
 
-            api_key = config["requests.omdb.apikey"] or ""
-            if not api_key:
-                raise RuntimeError("An OMDb API key is required for IMDb ratings")
-            return OmdbClient(api_key).ping()
-        if service == "trakt":
-            from shortlist.engine.clients.trakt import TraktClient
+                api_key = get("requests.omdb.apikey") or ""
+                if not api_key:
+                    raise RuntimeError("An OMDb API key is required for IMDb ratings")
+                return OmdbClient(api_key).ping()
+            if service == "trakt":
+                from shortlist.engine.clients.trakt import TraktClient
 
-            client_id = config["trakt.client_id"] or ""
-            if not client_id:
-                raise RuntimeError("A Trakt API key (client id) is required")
-            return TraktClient(client_id).ping()
-        if service == "exa":
-            from shortlist.engine.clients.search import ExaClient
+                client_id = get("trakt.client_id") or ""
+                if not client_id:
+                    raise RuntimeError("A Trakt API key (client id) is required")
+                return TraktClient(client_id).ping()
+            if service == "exa":
+                from shortlist.engine.clients.search import ExaClient
 
-            api_key = config["exa.apikey"] or ""
-            if not api_key:
-                raise RuntimeError("An Exa API key is required for AI web search")
-            return ExaClient(api_key).ping()
-        if service == "llm":
+                api_key = get("exa.apikey") or ""
+                if not api_key:
+                    raise RuntimeError("An Exa API key is required for AI web search")
+                return ExaClient(api_key).ping()
+            # service == "llm"
             from shortlist.engine.curator import make_curator
             from shortlist.server.services.context_builder import curator_kwargs
 
-            provider = config["curator.provider"]
-            curator = make_curator(provider, **curator_kwargs(config.__getitem__))
+            curator = make_curator(get("curator.provider"), **curator_kwargs(get))
             if hasattr(curator, "ping"):
                 return f"Curator replied: {curator.ping()!r}"
             return "Built-in picker — no AI, nothing to test, always works"
-        raise HTTPException(status_code=404, detail=f"unknown service {service!r}")
 
     try:
         message = await asyncio.get_running_loop().run_in_executor(None, probe)
