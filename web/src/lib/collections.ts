@@ -33,6 +33,7 @@ export function blankInput(): CollectionInput {
     freshness: null,
     placement: "both",
     pin_top: false,
+    hub_anchor: {},
     prompt: { tone: "", guidance: "", template: "" },
   };
 }
@@ -57,6 +58,7 @@ export function toInput(collection: Collection): CollectionInput {
     freshness: collection.freshness ?? null,
     placement: collection.placement ?? "both",
     pin_top: collection.pin_top ?? false,
+    hub_anchor: collection.hub_anchor ?? {},
     prompt: {
       tone: collection.prompt.tone ?? "",
       guidance: collection.prompt.guidance ?? "",

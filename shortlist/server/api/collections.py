@@ -50,6 +50,13 @@ class PromptIn(BaseModel):
     template: str = ""
 
 
+class HubAnchorIn(BaseModel):
+    """A per-library shelf anchor for one row: sit after (or before) a collection, by title."""
+
+    anchor: str = Field(min_length=1, max_length=255)
+    before: bool = False
+
+
 class CollectionIn(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     build: str = "per_person"
@@ -68,6 +75,9 @@ class CollectionIn(BaseModel):
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
     placement: str = "both"  # both | home | library — which surfaces the row shows on
     pin_top: bool = False  # pin to top of the library's Recommended shelf
+    # Per-library Recommended-shelf override for this row, keyed by section key. {} -> inherit the
+    # global default (settings `rows.hub_anchor`).
+    hub_anchor: dict[str, HubAnchorIn] = Field(default_factory=dict)
     prompt: PromptIn = Field(default_factory=PromptIn)
 
 
@@ -110,6 +120,7 @@ def _serialize(session, collection: Collection) -> dict:
         "freshness": collection.freshness,
         "placement": collection.placement or "both",
         "pin_top": bool(collection.pin_top),
+        "hub_anchor": collection.hub_anchor or {},
         "library_keys": [str(k) for k in (collection.library_keys or [])],
         "prompt": collection.prompt or {},
     }
@@ -176,6 +187,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             freshness=body.freshness,
             placement=body.placement,
             pin_top=body.pin_top,
+            hub_anchor={k: v.model_dump() for k, v in body.hub_anchor.items()},
             library_keys=body.library_keys,
             prompt=_prompt_for(slug, body),
         )
@@ -246,6 +258,8 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 setattr(collection, column, getattr(body, column))
         if "prompt" in sent:
             collection.prompt = _prompt_for(collection.slug, body)
+        if "hub_anchor" in sent:
+            collection.hub_anchor = {k: v.model_dump() for k, v in body.hub_anchor.items()}
         if sent & {"audience", "audience_user_ids"}:
             _set_audience(session, collection, body)
         session.commit()

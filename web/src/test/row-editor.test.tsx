@@ -47,7 +47,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     placement: "both",
     pin_top: false,
-    prompt: { tone: "", guidance: "", template: "" },
+    hub_anchor: {},    prompt: { tone: "", guidance: "", template: "" },
     ...patch,
   };
 }

@@ -31,6 +31,7 @@ from shortlist.engine.history import HistorySource
 from shortlist.engine.models import (
     CollectionDiff,
     EngineConfig,
+    HubAnchor,
     MediaType,
     RequestOutcome,
     RequestReport,
@@ -572,34 +573,69 @@ def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None) -> None:
     )
 
 
-def _order_phase(ctx: EngineContext, report: RunReport) -> None:
-    """Place each configured library's Shortlist rows in its Recommended shelf, right after/before an
-    anchor collection — so a co-managing tool (Kometa) can't leave our rows buried at the bottom.
+def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_titles: set[str] | None) -> None:
+    """One best-effort, gated reorder call + its audit. A shelf reorder is cosmetic and privacy-neutral
+    (hubs are already promoted and browse-hidden; only position changes), so a failure never fails the
+    run — next run re-applies. Only our hubs move; the anchor is read-only (Kometa coexistence)."""
+    try:
+        with ctx.write_lock:
+            result = ctx.plex.order_owned_hubs(
+                section,
+                label_prefix=ctx.config.label_prefix,
+                anchor_title=anchor.anchor_title,
+                before=anchor.before,
+                dry_run=ctx.config.dry_run,
+                only_titles=only_titles,
+            )
+        if result.get("moved") and not result.get("skipped"):
+            report.hub_orderings.append({"library": section.title, **result})
+    except Exception as e:
+        logger.warning("{}: hub ordering failed ({}: {}) — left Plex's order", section.title, type(e).__name__, e)
 
-    Best-effort: a shelf reorder is cosmetic and privacy-neutral (the hubs are already promoted and
-    browse-hidden; only their position changes), so a failure is logged and never fails the run. The
-    anchor is read-only; only Shortlist's own hubs move (Kometa coexistence). The would-be move is
-    still logged under dry-run."""
-    if not ctx.config.hub_anchors:
+
+def _row_titles_by_slug(report: RunReport) -> dict[str, set[str]]:
+    """slug -> the collection TITLES that row was delivered as this run (aggregated across users). The
+    only link from a managed hub back to its row is its title (rows share a per-user label, differ by
+    title), so this is how the per-row override knows which hubs belong to which row."""
+    out: dict[str, set[str]] = {}
+    for user_report in report.users:
+        for title, slug in user_report.placement_titles.items():
+            out.setdefault(slug, set()).add(title)
+    return out
+
+
+def _order_phase(ctx: EngineContext, report: RunReport) -> None:
+    """Place each library's Shortlist rows in its Recommended shelf per the configured anchors.
+
+    Each row's effective anchor is its own per-library override (``RowSpec.hub_anchors``) if set, else
+    the global default (``EngineConfig.hub_anchors``). When no row in a library overrides, all of that
+    library's rows move together to the default (the simple, robust path). When some rows override,
+    rows are grouped by their effective anchor and each group moved as a unit."""
+    global_anchors = ctx.config.hub_anchors
+    any_override = any(spec.hub_anchors for spec in ctx.config.rows)
+    if not global_anchors and not any_override:
         return
+    titles_by_slug = _row_titles_by_slug(report) if any_override else {}
     for section in ctx.delivery_sections:
-        anchor = ctx.config.hub_anchors.get(str(section.key))
-        if anchor is None:
+        key = str(section.key)
+        section_overridden = any(spec.hub_anchors.get(key) for spec in ctx.config.rows)
+        if not section_overridden:
+            # Global-only: move every owned row to the library default in one call (unchanged path).
+            default = global_anchors.get(key)
+            if default is not None:
+                _apply_order(ctx, report, section, default, only_titles=None)
             continue
-        try:
-            with ctx.write_lock:
-                result = ctx.plex.order_owned_hubs(
-                    section,
-                    label_prefix=ctx.config.label_prefix,
-                    anchor_title=anchor.anchor_title,
-                    before=anchor.before,
-                    dry_run=ctx.config.dry_run,
-                )
-            if result.get("moved") and not result.get("skipped"):
-                report.hub_orderings.append({"library": section.title, **result})
-        except Exception as e:
-            # A shelf reorder is cosmetic — never fail the run over it; next run re-applies.
-            logger.warning("{}: hub ordering failed ({}: {}) — left Plex's order", section.title, type(e).__name__, e)
+        # Some rows override here: group each row by its effective anchor (override, else default).
+        groups: dict[tuple[str, bool], set[str]] = {}
+        for spec in ctx.config.rows:
+            effective = spec.hub_anchors.get(key) or global_anchors.get(key)
+            if effective is None:
+                continue
+            titles = titles_by_slug.get(spec.slug, set())
+            if titles:
+                groups.setdefault((effective.anchor_title, effective.before), set()).update(titles)
+        for (anchor_title, before), titles in groups.items():
+            _apply_order(ctx, report, section, HubAnchor(anchor_title, before), only_titles=titles)
 
 
 def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.DemandMap, report: RunReport) -> None:

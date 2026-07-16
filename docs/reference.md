@@ -72,7 +72,7 @@ POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 GET  /api/users · PATCH /api/users/{id} {enabled?, request_tag?, prefs?} · POST /api/users/sync
 GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, prompt_*?}
 GET  /api/users/{id}/runs · GET /api/users/{id}/history
-GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`)
+GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`, `hub_anchor` — per-row shelf-placement override)
 GET  /api/system/libraries -> [{key, title, type}] (the server's Plex libraries, for the row editor)
 GET  /api/system/libraries/{key}/collections -> [{title}] (a library's managed collections — anchor choices for row placement, excludes Shortlist's own)
 GET  /api/runs · GET /api/runs/{id} · GET /api/runs/{id}/log (activity feed) · POST /api/runs {user_ids?, dry_run?}

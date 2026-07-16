@@ -365,10 +365,25 @@ class ContextBuilder:
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     placement=collection.placement or "both",
                     pin_top=bool(collection.pin_top),
+                    hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],
                 )
             )
         return specs
+
+    @staticmethod
+    def _row_hub_anchors(collection) -> dict[str, HubAnchor]:
+        """This row's per-library Recommended-shelf overrides (`collection.hub_anchor`). Blank anchors
+        are dropped, so a library falls back to the global default rather than trying to anchor to ''."""
+        raw = collection.hub_anchor or {}
+        anchors: dict[str, HubAnchor] = {}
+        for key, entry in raw.items():
+            if isinstance(entry, dict) and str(entry.get("anchor") or "").strip():
+                anchors[str(key)] = HubAnchor(
+                    anchor_title=str(entry["anchor"]).strip(),
+                    before=bool(entry.get("before", False)),
+                )
+        return anchors
 
     def _retired_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
         """Per-person rows that are DISABLED — their collections must be removed from Plex.

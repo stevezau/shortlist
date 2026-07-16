@@ -311,20 +311,26 @@ class PlexClient:
         anchor_title: str,
         before: bool = False,
         dry_run: bool = False,
+        only_titles: set[str] | None = None,
     ) -> dict:
         """Place this section's Shortlist rows right after/before the ``anchor_title`` collection in
         Plex's Managed Recommendations shelf, so a co-managing tool (Kometa) can't bury them.
 
-        Only OUR hubs (``label_prefix``-labelled) are moved; the anchor is read-only. Idempotent — if
-        our rows already sit contiguously in the target slot, nothing is written (no nightly churn).
-        Returns an audit dict: ``{anchor, moved: [titles], skipped: bool, reason?}``.
+        Only OUR hubs (``label_prefix``-labelled) are moved; the anchor is read-only. ``only_titles``
+        restricts the move to that subset of our rows (used when different rows anchor to different
+        collections) — ``None`` moves them all. Idempotent — if our rows already sit contiguously in
+        the target slot, nothing is written (no nightly churn). Returns an audit dict:
+        ``{anchor, moved: [titles], skipped: bool, reason?}``.
         """
         prefix = f"{label_prefix}_".lower()
-        owned_titles = {
+        owned_all = {
             c.title
             for c in self._section_collections(section)
             if any(label.tag.lower().startswith(prefix) for label in c.labels)
         }
+        # The subset to MOVE (restricted by only_titles); the anchor is never any of our OWN rows —
+        # excluded via owned_all, not the subset, so a row can't be anchored to a sibling Shortlist row.
+        owned_titles = owned_all & only_titles if only_titles is not None else set(owned_all)
         if not owned_titles:
             return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "no rows in this library"}
 
@@ -334,7 +340,11 @@ class PlexClient:
             return {"anchor": anchor_title, "moved": [], "skipped": True, "reason": "rows not promoted yet"}
 
         anchor = next(
-            (h for h in order if (getattr(h, "title", "") or "") == anchor_title and h not in ours),
+            (
+                h
+                for h in order
+                if (getattr(h, "title", "") or "") == anchor_title and (getattr(h, "title", "") or "") not in owned_all
+            ),
             None,
         )
         if anchor is None:
@@ -349,7 +359,11 @@ class PlexClient:
         # hub just before the anchor that isn't one of ours (None -> the very top of the shelf).
         if before:
             anchor_idx = order.index(anchor)
-            target = next((h for h in reversed(order[:anchor_idx]) if h not in ours), None)
+            # Skip past our OWN rows (any of them) to land the group directly before the anchor.
+            target = next(
+                (h for h in reversed(order[:anchor_idx]) if (getattr(h, "title", "") or "") not in owned_all),
+                None,
+            )
         else:
             target = anchor
 

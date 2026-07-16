@@ -53,8 +53,13 @@ export interface Collection {
   placement: "both" | "home" | "library";
   /** Pin the row to the top of its library's Recommended shelf (server-wide, not per viewer). */
   pin_top: boolean;
+  /** Per-library Recommended-shelf override for THIS row; {} inherits the global default. */
+  hub_anchor: HubAnchorMap;
   prompt: { tone?: string; guidance?: string; template?: string };
 }
+
+/** Where a row sits in a library's Recommended shelf, keyed by library (section) key. */
+export type HubAnchorMap = Record<string, { anchor: string; before: boolean }>;
 
 /** A Plex library on the server (GET /api/system/libraries). */
 export interface PlexLibrary {
@@ -82,6 +87,7 @@ export interface CollectionInput {
   freshness: number | null;
   placement: "both" | "home" | "library";
   pin_top: boolean;
+  hub_anchor: HubAnchorMap;
   prompt: { tone: string; guidance: string; template: string };
 }
 

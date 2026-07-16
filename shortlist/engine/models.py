@@ -234,6 +234,10 @@ class RowSpec:
     # Pin the row to the TOP of its library's Recommended shelf (ManagedHub.move). This is a
     # server-wide managed-recommendations order, NOT per-viewing-user — Plex exposes no per-user order.
     pin_top: bool = False
+    # Per-library override of where THIS row sits in the Recommended shelf, keyed by section key ->
+    # HubAnchor. A library absent here inherits the global default (EngineConfig.hub_anchors); empty
+    # -> inherit everywhere. Lets one row anchor differently from the rest (global default + override).
+    hub_anchors: dict[str, HubAnchor] = field(default_factory=dict)
 
     @property
     def show_home(self) -> bool:

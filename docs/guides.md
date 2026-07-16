@@ -31,6 +31,12 @@ of every run (so a co-managing tool can't re-bury them), only ever moves its own
 the anchor collection. Leave a library on "Wherever Plex puts them" to keep the default order. The order
 is server-wide, but since each person only sees their own row, moving them up lifts everyone's at once.
 
+This Settings section is the **default** every row inherits. Any individual row can override it in the
+**Row editor** ("Position in the Recommended shelf") — per library, choose "Use the default" or anchor
+that one row to its own collection. So "Picked for You" can sit right after New Series while another row
+sits somewhere else. It works whether or not you run Kometa: Kometa is only _why_ it matters (it fills
+the shelf), not _how_ it works — the anchor can be any collection, Kometa's or one of Plex's own.
+
 ## Hit rate
 
 The % of recommended items a user actually watched within 30 days, computed from the same

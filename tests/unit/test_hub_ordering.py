@@ -148,6 +148,169 @@ def test_skips_when_our_rows_are_not_promoted_yet():
     assert result["reason"] == "rows not promoted yet"
 
 
+def test_only_titles_moves_just_that_subset_and_never_a_sibling_or_foreign_hub():
+    anchor = FakeHub("New Series", "a")
+    sibling = FakeHub("Picked for You", "o1")  # ours, but NOT in the requested subset
+    target_row = FakeHub("Hidden Gems", "o2")  # ours, IN the subset
+    foreign = FakeHub("Kometa Genre", "g")
+    section = FakeSection([anchor, sibling, foreign, target_row])
+    client = _client(
+        [
+            FakeColl("Picked for You", ["shortlist_sarah"]),
+            FakeColl("Hidden Gems", ["shortlist_sarah"]),
+            FakeColl("Kometa Genre", ["kometa"]),
+        ]
+    )
+
+    result = client.order_owned_hubs(
+        section, label_prefix="shortlist", anchor_title="New Series", only_titles={"Hidden Gems"}
+    )
+
+    assert result["moved"] == ["Hidden Gems"]
+    assert target_row.moved_after is anchor  # only the requested subset moves
+    assert sibling.moved_after == _UNSET  # a sibling Shortlist row outside the subset is untouched
+    assert foreign.moved_after == _UNSET  # a foreign (Kometa) hub is never touched
+
+
+def test_only_titles_is_idempotent_when_the_subset_already_sits_after_the_anchor():
+    anchor = FakeHub("New Series", "a")
+    target_row = FakeHub("Hidden Gems", "o2")  # already directly after the anchor
+    sibling = FakeHub("Picked for You", "o1")
+    section = FakeSection([anchor, target_row, sibling])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"]), FakeColl("Hidden Gems", ["shortlist_sarah"])])
+
+    result = client.order_owned_hubs(
+        section, label_prefix="shortlist", anchor_title="New Series", only_titles={"Hidden Gems"}
+    )
+
+    assert result["skipped"] is True and result["reason"] == "already in place"
+    assert target_row.moved_after == _UNSET
+
+
+def test_a_row_can_never_be_anchored_to_a_sibling_shortlist_hub():
+    sibling = FakeHub("Picked for You", "o1")
+    target_row = FakeHub("Hidden Gems", "o2")
+    section = FakeSection([sibling, target_row])
+    client = _client([FakeColl("Picked for You", ["shortlist_sarah"]), FakeColl("Hidden Gems", ["shortlist_sarah"])])
+
+    # Naming our OWN sibling row as the anchor is refused (it's excluded from anchor candidates).
+    result = client.order_owned_hubs(
+        section, label_prefix="shortlist", anchor_title="Picked for You", only_titles={"Hidden Gems"}
+    )
+
+    assert result["skipped"] is True and result["reason"] == "anchor not found"
+    assert target_row.moved_after == _UNSET
+
+
+def _order_ctx(cfg, plex):
+    import threading
+    from types import SimpleNamespace
+
+    section = SimpleNamespace(key=2, title="TV Shows")
+    return SimpleNamespace(config=cfg, delivery_sections=[section], plex=plex, write_lock=threading.Lock())
+
+
+def _report_with_titles():
+    from datetime import UTC, datetime
+
+    from shortlist.engine.models import RunReport, UserRunReport
+
+    return RunReport(
+        started_at=datetime.now(UTC),
+        users=[
+            UserRunReport(username="a", slug="a", placement_titles={"Picked A": "picked", "Gems A": "gems"}),
+            UserRunReport(username="b", slug="b", placement_titles={"Picked B": "picked", "Gems B": "gems"}),
+        ],
+    )
+
+
+def test_order_phase_moves_all_rows_to_the_library_default_when_no_row_overrides():
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    cfg = EngineConfig(
+        hub_anchors={"2": HubAnchor("Default Anchor", False)},
+        rows=[RowSpec(slug="picked", name_template="", size=10)],
+    )
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    # One call, whole library, no title subset (the robust global path).
+    plex.order_owned_hubs.assert_called_once()
+    assert plex.order_owned_hubs.call_args.kwargs["only_titles"] is None
+    assert plex.order_owned_hubs.call_args.kwargs["anchor_title"] == "Default Anchor"
+
+
+def test_order_phase_groups_rows_by_effective_anchor_when_one_overrides():
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    cfg = EngineConfig(
+        hub_anchors={"2": HubAnchor("Default Anchor", False)},  # global default
+        rows=[
+            RowSpec(slug="picked", name_template="", size=10),  # inherits the default
+            RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor("Gems Anchor", False)}),
+        ],
+    )
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    # Two groups: the default-anchored 'picked' rows and the overridden 'gems' rows, each its own subset.
+    groups = {
+        frozenset(c.kwargs["only_titles"]): c.kwargs["anchor_title"] for c in plex.order_owned_hubs.call_args_list
+    }
+    assert groups == {
+        frozenset({"Picked A", "Picked B"}): "Default Anchor",
+        frozenset({"Gems A", "Gems B"}): "Gems Anchor",
+    }
+
+
+def test_order_phase_applies_a_before_override_with_no_global_default():
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    cfg = EngineConfig(
+        hub_anchors={},  # no global default at all
+        rows=[RowSpec(slug="gems", name_template="Gems", size=10, hub_anchors={"2": HubAnchor("Gems Anchor", True)})],
+    )
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    plex.order_owned_hubs.assert_called_once()
+    kwargs = plex.order_owned_hubs.call_args.kwargs
+    assert kwargs["before"] is True and kwargs["anchor_title"] == "Gems Anchor"
+    assert set(kwargs["only_titles"]) == {"Gems A", "Gems B"}
+
+
+def test_order_phase_skips_an_overridden_row_with_no_delivered_titles():
+    from unittest.mock import MagicMock
+
+    from shortlist.engine.models import EngineConfig, HubAnchor, RowSpec
+    from shortlist.engine.pipeline import _order_phase
+
+    plex = MagicMock()
+    plex.order_owned_hubs.return_value = {"skipped": False, "moved": ["x"]}
+    # 'ghost' overrides but delivered no titles this run (absent from placement_titles) -> no move.
+    cfg = EngineConfig(
+        hub_anchors={"2": HubAnchor("Default", False)},
+        rows=[
+            RowSpec(slug="ghost", name_template="Ghost", size=10, hub_anchors={"2": HubAnchor("Ghost Anchor", False)})
+        ],
+    )
+    _order_phase(_order_ctx(cfg, plex), _report_with_titles())
+
+    plex.order_owned_hubs.assert_not_called()  # empty title set -> nothing to move
+
+
 def test_dry_run_reports_the_move_without_writing():
     anchor = FakeHub("New Series", "a")
     r1 = FakeHub("Picked for You", "o1")

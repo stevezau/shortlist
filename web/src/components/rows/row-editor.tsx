@@ -6,6 +6,7 @@ import {
 } from "@/components/curation-style";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { LibraryPicker } from "@/components/rows/library-picker";
+import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import { RowSourcesField } from "@/components/rows/row-sources-field";
 import { Segmented } from "@/components/segmented";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
@@ -53,11 +54,19 @@ export function RowEditor({
     template: input.prompt.template,
   };
 
-  const submit = () =>
+  const submit = () => {
+    // Drop any shelf anchor whose collection hasn't been chosen yet — a half-set library inherits the
+    // global default rather than being POSTed as an empty anchor (which the API rejects).
+    const hub_anchor = Object.fromEntries(
+      Object.entries(input.hub_anchor).filter(([, entry]) =>
+        entry.anchor.trim(),
+      ),
+    );
     save.mutate(
-      { id: collection?.id ?? null, body: input },
+      { id: collection?.id ?? null, body: { ...input, hub_anchor } },
       { onSuccess: onClose },
     );
+  };
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -239,6 +248,23 @@ export function RowEditor({
                 checked={input.pin_top}
                 onCheckedChange={(pin_top) => set({ pin_top })}
                 aria-label="Pin to top of the library shelf"
+              />
+            </div>
+
+            <div className="space-y-2 pt-2">
+              <span className="text-sm font-medium">
+                Position in the Recommended shelf
+              </span>
+              <p className="text-sm text-muted-foreground">
+                Where this row lands relative to your other collections. Each
+                library can inherit the global default (Settings → Row
+                placement) or anchor to its own collection.
+              </p>
+              <RowShelfPlacement
+                value={input.hub_anchor}
+                libraryKeys={input.library_keys}
+                media={input.media}
+                onChange={(hub_anchor) => set({ hub_anchor })}
               />
             </div>
           </div>

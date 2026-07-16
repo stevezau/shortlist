@@ -46,7 +46,7 @@ const SUBSET_ROW: Collection = {
   freshness: null,
   placement: "both",
   pin_top: false,
-  prompt: { tone: "balanced", guidance: "", template: "" },
+  hub_anchor: {},  prompt: { tone: "balanced", guidance: "", template: "" },
 };
 
 function renderPage() {

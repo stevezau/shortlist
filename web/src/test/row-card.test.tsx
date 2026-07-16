@@ -40,7 +40,7 @@ function collection(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     placement: "both",
     pin_top: false,
-    prompt: { tone: "", guidance: "", template: "" }, // blank = inherit the global style
+    hub_anchor: {},    prompt: { tone: "", guidance: "", template: "" }, // blank = inherit the global style
     ...patch,
   } as Collection;
 }
