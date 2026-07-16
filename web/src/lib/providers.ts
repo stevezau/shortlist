@@ -67,7 +67,7 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     defaultModel: "",
     needsKey: false,
     needsUrl: false,
-    cost: "Free. Heuristic mode: frequency × rating × recency, with template reasons. Fully functional.",
+    cost: "Free. Built-in picker: frequency × rating × recency, with template reasons. Fully functional.",
   },
 ];
 

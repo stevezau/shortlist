@@ -215,5 +215,5 @@ class TestRuns:
 
         page.goto(f"/users/{canary_id}")
         expect(page.get_by_role("heading", name="canary")).to_be_visible(timeout=LOAD)
-        expect(page.get_by_text("cold start").first).to_be_visible()
+        expect(page.get_by_text("New viewer").first).to_be_visible()
         expect(page.get_by_text("Popular on this server").first).to_be_visible()

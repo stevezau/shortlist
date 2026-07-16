@@ -44,7 +44,7 @@ class TestConnectionCards:
 
         llm = page.get_by_test_id("connection-llm")
         llm.get_by_role("button", name="Test").click()
-        expect(llm).to_contain_text("Heuristic mode — nothing to test, always works", timeout=LOAD)
+        expect(llm).to_contain_text("Built-in picker — no AI, nothing to test, always works", timeout=LOAD)
 
         # An unconfigured connection says so plainly and never claims a connection it doesn't have —
         # and its Test is disabled until a key is on file (you can't test what isn't set up), rather

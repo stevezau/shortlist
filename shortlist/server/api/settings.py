@@ -256,7 +256,7 @@ async def test_connection(service: str, request: Request) -> dict:
             curator = make_curator(provider, **curator_kwargs(config.__getitem__))
             if hasattr(curator, "ping"):
                 return f"Curator replied: {curator.ping()!r}"
-            return "Heuristic mode — nothing to test, always works"
+            return "Built-in picker — no AI, nothing to test, always works"
         raise HTTPException(status_code=404, detail=f"unknown service {service!r}")
 
     try:
