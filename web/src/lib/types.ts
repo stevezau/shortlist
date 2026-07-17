@@ -451,6 +451,15 @@ export interface RunFinishedEvent {
   error?: string | null;
 }
 
+/** One live step streamed while a real uninstall runs (SSE `uninstall.progress`). */
+export interface UninstallProgressEvent {
+  /** Human-readable line for the live log, e.g. "Restored Sarah's share filter". */
+  label: string;
+  /** For filter-restore steps: how many done out of the total. */
+  done?: number;
+  total?: number;
+}
+
 /**
  * A server plex.tv says this account can reach, with every advertised address already tried
  * from where Shortlist actually runs — only the owner's network knows which one works.

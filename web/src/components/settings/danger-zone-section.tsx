@@ -1,24 +1,15 @@
-import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { CleanupAuditCard } from "@/components/settings/cleanup-audit-card";
-import { UninstallDialog } from "@/components/uninstall-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { api, apiErrorMessage } from "@/lib/api";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
-/** Pause every user at once, and the full uninstall (with a dry-run preview) behind a dialog. */
+/** Pause every user at once, and a link to the full uninstall (its own page, with a live log). */
 export function DangerZoneSection({ settings }: { settings: Settings }) {
   const saveSettings = useSaveSettings();
-  const [uninstallOpen, setUninstallOpen] = useState(false);
   const pausedAll = settings["paused_all"] === true;
-
-  const uninstall = useMutation({ mutationFn: () => api.uninstall(false) });
-  const uninstallPreview = useMutation({
-    mutationFn: () => api.uninstall(true),
-  });
 
   return (
     <section aria-labelledby="danger-heading" className="space-y-3">
@@ -53,67 +44,18 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
             <div>
               <p className="font-medium">Full uninstall</p>
               <p className="text-sm text-muted-foreground">
-                Removes every Shortlist collection and label, and restores all
-                share filters from the original snapshots. Preview the exact
-                changes before committing.
+                Removes every Shortlist collection and label, restores all share
+                filters from the original snapshots, and switches off every row
+                so nothing rebuilds. Opens a dedicated page with a preview and a
+                live log of every step.
               </p>
             </div>
-            <Button
-              variant="destructive"
-              onClick={() => setUninstallOpen(true)}
-            >
-              Uninstall Shortlist…
+            <Button asChild variant="destructive">
+              <Link to="/settings/uninstall">Uninstall Shortlist…</Link>
             </Button>
           </div>
-          {uninstall.isSuccess && (
-            <div
-              role="status"
-              className="space-y-1 rounded-md border border-success/40 bg-success/5 p-3 text-sm"
-            >
-              <p className="font-medium text-success">
-                Uninstall complete — your server is as Shortlist found it.
-              </p>
-              <p className="text-muted-foreground">
-                {uninstall.data.filters_restored} share filter
-                {uninstall.data.filters_restored === 1 ? "" : "s"} restored ·{" "}
-                {uninstall.data.collections_deleted.length} collection
-                {uninstall.data.collections_deleted.length === 1
-                  ? ""
-                  : "s"}{" "}
-                deleted · {uninstall.data.rows_disabled} row
-                {uninstall.data.rows_disabled === 1 ? "" : "s"} switched off, so
-                nothing rebuilds. Set Shortlist up again any time to start
-                fresh.
-              </p>
-            </div>
-          )}
-          {uninstall.isError && (
-            <p role="alert" className="text-sm text-destructive">
-              {apiErrorMessage(
-                uninstall.error,
-                "Uninstall failed. Nothing was left half-done — see the server log, then try again.",
-              )}
-            </p>
-          )}
         </CardContent>
       </Card>
-
-      <UninstallDialog
-        open={uninstallOpen}
-        onOpenChange={(open) => {
-          setUninstallOpen(open);
-          if (!open) uninstallPreview.reset();
-        }}
-        pending={uninstall.isPending}
-        onConfirm={() =>
-          uninstall.mutate(undefined, {
-            onSuccess: () => setUninstallOpen(false),
-          })
-        }
-        onPreview={() => uninstallPreview.mutate()}
-        previewPending={uninstallPreview.isPending}
-        preview={uninstallPreview.data ?? null}
-      />
     </section>
   );
 }

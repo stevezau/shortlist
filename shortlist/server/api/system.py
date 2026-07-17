@@ -147,6 +147,14 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
     if not body.dry_run and body.confirm != "UNINSTALL":
         raise HTTPException(status_code=422, detail='type "UNINSTALL" to confirm')
     state = request.app.state
+    loop = asyncio.get_running_loop()
+
+    def emit(label: str, **extra: object) -> None:
+        # Stream one live step to the SSE bus from the executor thread, so the Uninstall page shows
+        # exactly what's happening (like the run activity log). Real uninstall only — the dry-run
+        # preview is instant and needs no stream.
+        if not body.dry_run:
+            loop.call_soon_threadsafe(state.bus.publish, "uninstall.progress", {"label": label, **extra})
 
     def do_uninstall() -> tuple[dict, list[dict]]:
         from shortlist.engine.models import FilterSnapshot
@@ -158,7 +166,10 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
         restored = 0
         with state.sessions() as session:
             users = {u.id: u for u in session.query(User).all()}
-            for row in session.query(RestrictionSnapshotRow).filter_by(reason="initial").all():
+            snapshots = session.query(RestrictionSnapshotRow).filter_by(reason="initial").all()
+            total = len(snapshots)
+            emit(f"Restoring {total} user share filter{'' if total == 1 else 's'} (Plex allows ~1/sec)…")
+            for row in snapshots:
                 user = users.get(row.user_id)
                 if user is None:
                     continue
@@ -173,6 +184,7 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
                     per_user_events.append(
                         {"user": user.username, "restored_to": row.filters_before, "dry_run": body.dry_run}
                     )
+                    emit(f"Restored {user.username}'s share filter", done=restored, total=total)
         deleted = []
         for section in ctx.plex.sections():
             for collection in section.collections():
@@ -180,6 +192,7 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
                     deleted.append(collection.title)
                     if not body.dry_run:
                         ctx.plex.delete_owned_collection(collection, "shortlist")
+                        emit(f"Deleted collection “{collection.title}”")
         # Disable every row too — otherwise the next scheduled run would rebuild the collections we
         # just removed and re-apply the restrictions we just undid, silently "reinstalling" Shortlist.
         with state.sessions() as session:
@@ -189,6 +202,7 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
                 for row in enabled_rows:
                     row.enabled = False
                 session.commit()
+                emit(f"Switched off {rows_disabled} row{'' if rows_disabled == 1 else 's'} and cleared their schedules")
         return {
             "filters_restored": restored,
             "collections_deleted": deleted,

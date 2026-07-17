@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 
 import { eventsUrl } from "./api";
-import type { RunFinishedEvent, RunUserStageEvent } from "./types";
+import type {
+  RunFinishedEvent,
+  RunUserStageEvent,
+  UninstallProgressEvent,
+} from "./types";
 
 export interface SSEHandlers {
   onRunUserStage?: (event: RunUserStageEvent) => void;
   onRunFinished?: (event: RunFinishedEvent) => void;
+  onUninstallProgress?: (event: UninstallProgressEvent) => void;
 }
 
 const INITIAL_RETRY_MS = 1_000;
@@ -61,6 +66,14 @@ export function useSSE(handlers: SSEHandlers): { connected: boolean } {
         const data = parseData<RunFinishedEvent>(event.data);
         if (data) handlersRef.current.onRunFinished?.(data);
       });
+
+      source.addEventListener(
+        "uninstall.progress",
+        (event: MessageEvent<string>) => {
+          const data = parseData<UninstallProgressEvent>(event.data);
+          if (data) handlersRef.current.onUninstallProgress?.(data);
+        },
+      );
 
       source.onerror = () => {
         setConnected(false);
