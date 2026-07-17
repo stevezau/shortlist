@@ -520,8 +520,12 @@ export interface EffectivenessReport {
     watched: number;
     hit_rate: number | null;
   }[];
+  /** One line per (row × library): a row targeting >1 library is a separate Plex collection in each,
+   *  so each library gets its own hit rate. `section_key` disambiguates rows sharing a slug. */
   per_row: {
     slug: string;
+    section_key: string;
+    library: string;
     name: string;
     delivered: number;
     watched: number;
@@ -532,6 +536,7 @@ export interface EffectivenessReport {
     title: string;
     media_type: string;
     row: string;
+    library: string;
     seed_title: string;
     watched_at: string | null;
   }[];

@@ -113,6 +113,11 @@ class Pick:
     seed_tmdb_id: int | None = None
     seed_title: str | None = None
     collection_slug: str = ""  # which row produced it, so a user's picks can be grouped per row
+    # The library this pick was delivered into. A row targeting >1 library becomes one Plex collection
+    # PER library, so effectiveness is tracked per (row, library): `section_key` is the stable Plex
+    # section key, `library` its display name ("Movies") for the report label.
+    section_key: str = ""
+    library: str = ""
 
 
 @dataclass

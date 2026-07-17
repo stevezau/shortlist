@@ -373,6 +373,8 @@ class RunService:
                         rating_key=pick.rating_key,
                         rank=pick.rank,
                         collection_slug=pick.collection_slug,
+                        section_key=pick.section_key,
+                        library=pick.library,
                         title=pick.title,
                         reason=pick.reason,
                         seed_tmdb_id=pick.seed_tmdb_id,

@@ -71,10 +71,21 @@ const REPORT: EffectivenessReport = {
   per_row: [
     {
       slug: "picked",
-      name: "✨ Picked for You",
+      section_key: "10",
+      library: "Movies",
+      name: "✨ Movies Picked for You",
       delivered: 10,
       watched: 4,
       hit_rate: 0.4,
+    },
+    {
+      slug: "faves",
+      section_key: "20",
+      library: "TV Shows",
+      name: "My Faves",
+      delivered: 6,
+      watched: 3,
+      hit_rate: 0.5,
     },
   ],
   recent: [
@@ -82,7 +93,8 @@ const REPORT: EffectivenessReport = {
       username: "sarah",
       title: "Dune: Part Two",
       media_type: "movie",
-      row: "✨ Picked for You",
+      row: "✨ Movies Picked for You",
+      library: "Movies",
       seed_title: "Arrival",
       watched_at: new Date().toISOString(),
     },
@@ -105,6 +117,13 @@ describe("ImpactReport", () => {
     ).toHaveAttribute("href", "/requests?tab=sent"); // deep-links to the send-log tab
     expect(screen.getAllByText("sarah").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Dune: Part Two").length).toBeGreaterThan(0); // top titles + recent
+    // By row is split per library: a {library_name} row reads its library in the name; a plain-named
+    // row ("My Faves") carries a library badge instead.
+    expect(
+      screen.getAllByText("✨ Movies Picked for You").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText("My Faves")).toBeTruthy();
+    expect(screen.getByText("TV Shows")).toBeTruthy(); // the library badge on the plain-named row
   });
 
   it("explains the empty state before anything is delivered", async () => {

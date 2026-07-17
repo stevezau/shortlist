@@ -202,10 +202,19 @@ function ReportBody({ report }: { report: EffectivenessReport }) {
           <div className="space-y-1.5">
             {report.per_row.map((r) => (
               <div
-                key={r.slug}
+                key={`${r.slug}-${r.section_key}-${r.library}`}
                 className="flex items-center justify-between gap-3 text-sm"
               >
-                <span className="truncate">{r.name}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate">{r.name}</span>
+                  {/* A row across >1 library is one collection per library. A {library_name} name
+                      already reads "✨ Movies …"; otherwise tag which library this line is. */}
+                  {r.library && !r.name.includes(r.library) && (
+                    <Badge variant="secondary" className="shrink-0 font-normal">
+                      {r.library}
+                    </Badge>
+                  )}
+                </span>
                 <HitBar {...r} />
               </div>
             ))}

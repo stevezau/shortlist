@@ -9,15 +9,19 @@ watch is one hit (counting rows would skew both). Owner-only, read-only.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import String, cast, func
 
+from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import Collection, PickRow, RequestCandidate, Run, RunUser, User, iso_utc
+from shortlist.server.db.models import DEFAULT_SLUG, Collection, PickRow, RequestCandidate, Run, RunUser, User, iso_utc
 from shortlist.server.scheduler import WATCH_SYNC_JOB_ID
 from shortlist.server.settings_store import SettingsStore
+
+_PLACEHOLDER = re.compile(r"\{[^}]+\}")
 
 router = APIRouter(prefix="/report", tags=["report"], dependencies=[Depends(require_owner)])
 
@@ -47,19 +51,22 @@ async def effectiveness(request: Request) -> dict:
         # A title across everyone: prefix the person, so one film recommended to two people counts twice.
         person_title = cast(PickRow.user_id, String).concat("-").concat(title)
 
-        def counts(group_col, key_expr):
-            """{group value -> (delivered, watched)} distinct-title counts, in two grouped scans."""
-            delivered = dict(session.query(group_col, func.count(func.distinct(key_expr))).group_by(group_col).all())
-            watched = dict(
-                session.query(group_col, func.count(func.distinct(key_expr)))
-                .filter(PickRow.watched_at.isnot(None))
-                .group_by(group_col)
-                .all()
-            )
+        def counts(group_cols, key_expr):
+            """{group key -> (delivered, watched)} distinct-title counts, in two grouped scans. Pass one
+            column for scalar keys, or several for tuple keys (grouped by every column together)."""
+            cols = list(group_cols) if isinstance(group_cols, (list, tuple)) else [group_cols]
+
+            def scan(*extra):
+                rows = session.query(*cols, func.count(func.distinct(key_expr))).filter(*extra).group_by(*cols).all()
+                return {(r[:-1] if len(cols) > 1 else r[0]): r[-1] for r in rows}
+
+            delivered, watched = scan(), scan(PickRow.watched_at.isnot(None))
             return {k: (delivered.get(k, 0), watched.get(k, 0)) for k in delivered}
 
         per_user_raw = counts(PickRow.user_id, title)
-        per_row_raw = counts(PickRow.collection_slug, person_title)
+        # A row that targets >1 library is one Plex collection PER library, so it's tracked per
+        # (row, library) — each library gets its own delivered/watched line, keyed (slug, section, library).
+        per_row_raw = counts([PickRow.collection_slug, PickRow.section_key, PickRow.library], person_title)
 
         delivered_total = sum(d for d, _ in per_user_raw.values())
         watched_total = sum(w for _, w in per_user_raw.values())
@@ -95,9 +102,24 @@ async def effectiveness(request: Request) -> dict:
             .all()
         )
 
-        last_watch_sync = SettingsStore(session).get("report.watch_synced_at")  # when the daily job last ran
+        store = SettingsStore(session)
+        last_watch_sync = store.get("report.watch_synced_at")  # when the daily job last ran
         users = {u.id: u for u in session.query(User).all()}
-        row_names = {c.slug: c.name for c in session.query(Collection).all()}
+        # The name template per row: the row's own template, the default row falling back to the global
+        # one (the per-user override tier of engine `resolve_row_template` is dropped for this aggregate
+        # label, and a custom row uses its stored name). Rendered per library below.
+        default_template = store.get("row.name_template") or DEFAULT_ROW_TEMPLATE
+        row_templates = {
+            c.slug: (c.name_template or (default_template if c.slug == DEFAULT_SLUG else c.name))
+            for c in session.query(Collection).all()
+        }
+
+        def row_label(slug: str, library: str) -> str:
+            """The row's display name for THIS library: `{library_name}` becomes the library ("Movies"),
+            and any other placeholder (e.g. `{top_seed}`, which is per-person) is dropped for the aggregate."""
+            template = row_templates.get(slug, DEFAULT_ROW_TEMPLATE)
+            name = _PLACEHOLDER.sub(lambda m: library if m.group(0) == "{library_name}" else "", template)
+            return " ".join(name.split()) or "Picked for You"
 
         # Reach: who's actually covered.
         users_enabled = sum(1 for u in users.values() if u.enabled)
@@ -162,7 +184,12 @@ async def effectiveness(request: Request) -> dict:
         )
         per_row = _breakdown(
             per_row_raw,
-            lambda slug: {"slug": slug or "picked", "name": row_names.get(slug, slug or "Picked for You")},
+            lambda key: {
+                "slug": key[0] or "picked",
+                "section_key": key[1],
+                "library": key[2],
+                "name": row_label(key[0], key[2]),
+            },
         )
 
         recent = [
@@ -170,7 +197,8 @@ async def effectiveness(request: Request) -> dict:
                 "username": users[p.user_id].username if p.user_id in users else "unknown",
                 "title": p.title,
                 "media_type": p.media_type,
-                "row": row_names.get(p.collection_slug, p.collection_slug or "Picked for You"),
+                "row": row_label(p.collection_slug, p.library),
+                "library": p.library,
                 "seed_title": p.seed_title or "",
                 "watched_at": iso_utc(p.watched_at),
             }

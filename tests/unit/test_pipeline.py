@@ -265,6 +265,9 @@ class TestPerRowOverrides:
 
         picks = report.users[0].picks
         assert picks and all(p.collection_slug == "picked" for p in picks)  # the default row's slug
+        # Each pick also carries the library it was delivered into, so the report can split a
+        # multi-library row per library. section_key is the Plex key; library its display name.
+        assert all(p.section_key and p.library for p in picks)
 
     def test_muting_the_only_row_delivers_nothing(self, ctx: EngineContext, mock_plextv):
         sarah = make_profile("sarah", account_id=100, row_overrides={"picked": RowOverride(muted=True)})

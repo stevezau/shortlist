@@ -314,6 +314,132 @@ class TestRunsApi:
         assert {t["title"] for t in body["top_titles"]} == {"A", "B"}  # the two watched titles
         assert body["runs"]["total"] >= 1
 
+    def test_report_splits_a_multi_library_row_per_library(self, client: TestClient):
+        """A row targeting >1 library is one Plex collection PER library, so the report tracks each
+        library as its own line — with its own hit rate and the library's own {library_name} name."""
+        from datetime import UTC, datetime
+
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).filter_by(slug="sarah").first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            session.add_all(
+                [
+                    # The "picked" row delivered a movie into Movies (watched) and a show into TV (not).
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=1,
+                        media_type="movie",
+                        rating_key=1,
+                        rank=1,
+                        collection_slug="picked",
+                        section_key="10",
+                        library="Movies",
+                        title="Dune",
+                        watched_at=now,
+                    ),
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=2,
+                        media_type="show",
+                        rating_key=2,
+                        rank=1,
+                        collection_slug="picked",
+                        section_key="20",
+                        library="TV",
+                        title="Shogun",
+                    ),
+                ]
+            )
+            session.commit()
+
+        body = client.get("/api/report").json()
+        by_library = {r["library"]: r for r in body["per_row"]}
+        assert by_library["Movies"]["delivered"] == 1 and by_library["Movies"]["watched"] == 1
+        assert by_library["TV"]["delivered"] == 1 and by_library["TV"]["watched"] == 0
+        # The {library_name} template renders each library's own name.
+        assert by_library["Movies"]["name"] == "✨ Movies Picked for You"
+        assert by_library["TV"]["name"] == "✨ TV Picked for You"
+        # Overall still dedupes to distinct (user, title): two titles, one watched — not skewed by the split.
+        assert body["overall"]["delivered"] == 2 and body["overall"]["watched"] == 1
+
+    def test_report_tracks_a_title_moving_rows_and_a_second_watcher(self, client: TestClient):
+        """The full lifecycle: a title watched in one row, later moved to another row (no re-credit,
+        the watch predates it), then watched by a DIFFERENT person in that other row. Overall must not
+        double-count; each row is credited only for the watches that happened while the title was in it."""
+        from datetime import UTC, datetime
+
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with client.app.state.sessions() as session:
+            x = session.query(User).filter_by(slug="sarah").first().id
+            y = session.query(User).filter_by(slug="mike").first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            session.add_all(
+                [
+                    # X got Dune in row A and watched it there.
+                    PickRow(
+                        run_id=run.id,
+                        user_id=x,
+                        tmdb_id=1,
+                        media_type="movie",
+                        rating_key=1,
+                        rank=1,
+                        collection_slug="rowA",
+                        section_key="10",
+                        library="Movies",
+                        title="Dune",
+                        watched_at=now,
+                    ),
+                    # Dune later moved to row B for X — but X already watched it, so row B gets no credit.
+                    PickRow(
+                        run_id=run.id,
+                        user_id=x,
+                        tmdb_id=1,
+                        media_type="movie",
+                        rating_key=1,
+                        rank=1,
+                        collection_slug="rowB",
+                        section_key="10",
+                        library="Movies",
+                        title="Dune",
+                    ),
+                    # Y got Dune in row B and watched it there.
+                    PickRow(
+                        run_id=run.id,
+                        user_id=y,
+                        tmdb_id=1,
+                        media_type="movie",
+                        rating_key=1,
+                        rank=1,
+                        collection_slug="rowB",
+                        section_key="10",
+                        library="Movies",
+                        title="Dune",
+                        watched_at=now,
+                    ),
+                ]
+            )
+            session.commit()
+
+        body = client.get("/api/report").json()
+        # Distinct (user, title): (X, Dune) + (Y, Dune) = 2 delivered; both watched = 2. The move is not
+        # a third recommendation.
+        assert body["overall"]["delivered"] == 2 and body["overall"]["watched"] == 2
+        by_slug = {r["slug"]: r for r in body["per_row"]}
+        assert by_slug["rowA"]["delivered"] == 1 and by_slug["rowA"]["watched"] == 1  # X only
+        # Row B holds both people's copies; only Y's was watched while the title lived there.
+        assert by_slug["rowB"]["delivered"] == 2 and by_slug["rowB"]["watched"] == 1
+
     def test_unknown_run_404(self, client: TestClient):
         assert client.get("/api/runs/424242").status_code == 404
 

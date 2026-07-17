@@ -555,15 +555,21 @@ def _run_user(
                 # rest from its fresh candidates. (At pct == 0 the pool already dropped finished ones.)
                 sec_picks = _apply_watched_cap(sec_picks, sub + held, watched_titles, k, pct)
             section_picks[section.key] = sec_picks
-        # Stamp each pick with the row it belongs to, so the user page can group picks per row.
-        section_picks = {key: [replace(p, collection_slug=spec.slug) for p in sp] for key, sp in section_picks.items()}
+        # Stamp each pick with the row AND the library it belongs to, so the user page can group picks
+        # per row and the effectiveness report can split a multi-library row into one line per library.
+        library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
+        section_picks = {
+            key: [
+                replace(p, collection_slug=spec.slug, section_key=key, library=library_names.get(key, "")) for p in sp
+            ]
+            for key, sp in section_picks.items()
+        }
         # Record the exact title delivery will write for EACH library, so the promote phase can apply
         # this row's placement/pin. Per library, because a {top_seed} OR {library_name} title differs
         # library to library. Must match delivery's `render_row_name(..., library_name) + marker` — same
         # section title in, or promote would look for a row delivery never wrote (it'd stay unhidden).
         title_template = resolve_row_template(spec, user, cfg)
         marker = row_marker(user.plex_account_id)
-        library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
         for section_key, sp in section_picks.items():
             if sp:
                 title = render_row_name(title_template, user, sp, library_name=library_names.get(section_key, ""))
@@ -738,9 +744,19 @@ def _shared_row(
         section_picks[section.key] = sec_picks
     # Force aggregate framing regardless of curator: a shared row is nobody's "because you watched",
     # and the seed is dropped so a {top_seed} name template can never surface one person's title.
+    # Stamp the library too, so a shared row spanning >1 library splits per library in the report.
+    library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
     section_picks = {
         key: [
-            replace(p, reason="Popular on this server", seed_title=None, seed_tmdb_id=None, collection_slug=spec.slug)
+            replace(
+                p,
+                reason="Popular on this server",
+                seed_title=None,
+                seed_tmdb_id=None,
+                collection_slug=spec.slug,
+                section_key=key,
+                library=library_names.get(key, ""),
+            )
             for p in sp
         ]
         for key, sp in section_picks.items()

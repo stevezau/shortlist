@@ -196,6 +196,11 @@ class PickRow(Base):
     # Which row this pick belongs to (Collection.slug). Blank on pre-0004 rows and legacy single-row
     # runs; the user page groups a person's picks by this so each row shows its own titles.
     collection_slug: Mapped[str] = mapped_column(String(255), default="", index=True)
+    # The library this pick was delivered into: `section_key` is the stable Plex section key,
+    # `library` its display name ("Movies"). A row spanning >1 library is one Plex collection PER
+    # library, so the effectiveness report splits it into one line per library. Blank on pre-0020 rows.
+    section_key: Mapped[str] = mapped_column(String(64), default="")
+    library: Mapped[str] = mapped_column(String(255), default="")
     title: Mapped[str] = mapped_column(String(512), default="")
     reason: Mapped[str] = mapped_column(String(255), default="")
     seed_tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
