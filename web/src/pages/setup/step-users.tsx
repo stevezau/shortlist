@@ -17,8 +17,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
-import { queryKeys, usePatchUser, useUsers } from "@/lib/queries";
-import type { User } from "@/lib/types";
+import {
+  queryKeys,
+  usePatchUser,
+  useSetAllUsersEnabled,
+  useUsers,
+} from "@/lib/queries";
 
 /**
  * Step 4 — pick users. Syncs the user list from plex.tv on entry, then a
@@ -47,23 +51,9 @@ export function StepUsers() {
     }
   }, [syncMutate]);
 
-  const setAll = useMutation({
-    mutationFn: async ({
-      users,
-      enabled,
-    }: {
-      users: User[];
-      enabled: boolean;
-    }) => {
-      for (const user of users) {
-        if (user.enabled !== enabled) {
-          await api.patchUser(user.id, { enabled });
-        }
-      }
-    },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.users }),
-  });
+  // One bulk write flips everyone in a single transaction (and optimistically in the cache), so the
+  // switches respond to the click instead of to 48 sequential per-user round-trips.
+  const setAll = useSetAllUsersEnabled();
 
   // Users are created disabled, so a default click-through would build zero rows. Pre-select everyone
   // once, after the first sync — but only when NOBODY is enabled yet, so a returning owner who
@@ -80,7 +70,7 @@ export function StepUsers() {
     )
       return;
     autoSelectedRef.current = true;
-    if (!users.some((u) => u.enabled)) setAllMutate({ users, enabled: true });
+    if (!users.some((u) => u.enabled)) setAllMutate(true);
   }, [sync.isSuccess, users, setAllMutate]);
 
   return (
@@ -103,7 +93,7 @@ export function StepUsers() {
             const one = patchUser.variables;
             const all = setAll.variables;
             if (patchUser.isError && one) patchUser.mutate(one);
-            if (setAll.isError && all) setAll.mutate(all);
+            if (setAll.isError && all !== undefined) setAll.mutate(all);
           }}
         />
       )}
@@ -144,7 +134,7 @@ export function StepUsers() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setAll.mutate({ users, enabled: true })}
+                onClick={() => setAll.mutate(true)}
                 disabled={setAll.isPending}
               >
                 Select all
@@ -152,7 +142,7 @@ export function StepUsers() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setAll.mutate({ users, enabled: false })}
+                onClick={() => setAll.mutate(false)}
                 disabled={setAll.isPending}
               >
                 Select none

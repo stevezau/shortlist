@@ -6,6 +6,7 @@ import type {
   RowOverridePatch,
   RunRequest,
   Settings,
+  User,
   UserPatch,
 } from "./types";
 
@@ -67,7 +68,24 @@ export function usePatchUser() {
   return useMutation({
     mutationFn: ({ id, patch }: { id: number; patch: UserPatch }) =>
       api.patchUser(id, patch),
-    onSuccess: () =>
+    // Flip the switch in the cache immediately so the toggle responds to the click, not to the
+    // round-trip. Only `enabled` drives the users-list UI; other patches settle via the refetch.
+    onMutate: async ({ id, patch }) => {
+      if (patch.enabled === undefined) return { previous: undefined };
+      await queryClient.cancelQueries({ queryKey: queryKeys.users });
+      const previous = queryClient.getQueryData<User[]>(queryKeys.users);
+      queryClient.setQueryData<User[]>(queryKeys.users, (old) =>
+        old?.map((u) =>
+          u.id === id ? { ...u, enabled: patch.enabled ?? u.enabled } : u,
+        ),
+      );
+      return { previous };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous)
+        queryClient.setQueryData(queryKeys.users, context.previous);
+    },
+    onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.users }),
   });
 }
@@ -76,7 +94,22 @@ export function useSetAllUsersEnabled() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (enabled: boolean) => api.setAllUsersEnabled(enabled),
-    onSuccess: () =>
+    // Select all / none flips every row at once. Without this the switches don't move until every
+    // write settles, so the click reads as "nothing happened" then everything jumps. Flip the cache
+    // up front (one bulk request still runs in the background), and reconcile / roll back on settle.
+    onMutate: async (enabled) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.users });
+      const previous = queryClient.getQueryData<User[]>(queryKeys.users);
+      queryClient.setQueryData<User[]>(queryKeys.users, (old) =>
+        old?.map((u) => ({ ...u, enabled })),
+      );
+      return { previous };
+    },
+    onError: (_err, _enabled, context) => {
+      if (context?.previous)
+        queryClient.setQueryData(queryKeys.users, context.previous);
+    },
+    onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.users }),
   });
 }
