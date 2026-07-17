@@ -168,6 +168,39 @@ describe("RequestsPage", () => {
     expect(screen.queryByText(/because they watched/i)).toBeNull();
   });
 
+  it("links each request out to TMDB, IMDb, and Trakt by the right media type", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Dune", tmdb_id: 438631, media_type: "movie" }),
+      candidate({
+        id: 2,
+        title: "Shogun",
+        tmdb_id: 202484,
+        media_type: "show",
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Dune");
+
+    const links = screen.getAllByRole("link");
+    const href = (name: RegExp, path: string) =>
+      links.find(
+        (l) =>
+          name.test(l.textContent ?? "") &&
+          (l as HTMLAnchorElement).href.includes(path),
+      );
+    // A movie links to /movie/ on TMDB and id_type=movie on Trakt; a show to /tv/ and id_type=show.
+    expect(href(/TMDB/, "themoviedb.org/movie/438631")).toBeTruthy();
+    expect(
+      href(/Trakt/, "trakt.tv/search/tmdb/438631?id_type=movie"),
+    ).toBeTruthy();
+    expect(href(/TMDB/, "themoviedb.org/tv/202484")).toBeTruthy();
+    expect(
+      href(/Trakt/, "trakt.tv/search/tmdb/202484?id_type=show"),
+    ).toBeTruthy();
+    // IMDb is a title search (no stored IMDb id).
+    expect(href(/IMDb/, "imdb.com/find")).toBeTruthy();
+  });
+
   it("names who wanted a title, and falls back to the count when none were recorded", async () => {
     listRequests.mockResolvedValue([
       candidate({ id: 1, title: "With Names", wanters: ["Sarah", "Mike"] }),

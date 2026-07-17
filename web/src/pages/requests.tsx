@@ -1,4 +1,4 @@
-import { Clapperboard, Inbox, Send, Star, X } from "lucide-react";
+import { Clapperboard, ExternalLink, Inbox, Send, Star, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
@@ -51,6 +51,43 @@ function wantedByLabel(item: RequestCandidate): string {
   }
   if (names.length <= 3) return `Wanted by ${names.join(", ")}`;
   return `Wanted by ${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
+}
+
+/** Quick look-it-up links: TMDB and Trakt jump straight to the title by its TMDB id; IMDb is a
+ *  title search (Shortlist doesn't store an IMDb id). All open in a new tab. */
+function ExternalLinks({ item }: { item: RequestCandidate }) {
+  const tmdbPath = item.media_type === "movie" ? "movie" : "tv";
+  const traktType = item.media_type === "movie" ? "movie" : "show";
+  const links = [
+    {
+      label: "TMDB",
+      href: `https://www.themoviedb.org/${tmdbPath}/${item.tmdb_id}`,
+    },
+    {
+      label: "IMDb",
+      href: `https://www.imdb.com/find/?q=${encodeURIComponent(item.title)}&s=tt`,
+    },
+    {
+      label: "Trakt",
+      href: `https://trakt.tv/search/tmdb/${item.tmdb_id}?id_type=${traktType}`,
+    },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+      {links.map((link) => (
+        <a
+          key={link.label}
+          href={link.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline focus-visible:text-foreground"
+        >
+          {link.label}
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -159,6 +196,7 @@ function PendingRow({
         <p className="font-medium">{item.title}</p>
         <TitleMeta item={item} globalTag={globalTag} />
         <WhyBreakdown why={item.why} />
+        <ExternalLinks item={item} />
         {item.detail ? (
           <p className="text-xs text-muted-foreground">
             Last attempt: {item.detail}
@@ -187,6 +225,7 @@ function SentRow({ item }: { item: RequestCandidate }) {
         {item.detail ? <span>· {item.detail}</span> : null}
       </div>
       <WhyBreakdown why={item.why} />
+      <ExternalLinks item={item} />
     </div>
   );
 }
