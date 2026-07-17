@@ -52,10 +52,14 @@ function DefaultRowCuration({ settings }: { settings: Settings }) {
   return (
     <>
       <p className="text-sm text-muted-foreground">
-        This is the global style (Settings → Curation style). The default row
-        uses it, so edits here apply everywhere — and save automatically.
+        The default row uses the global style (Settings → Curation style), so
+        edits here apply everywhere — and save automatically.
       </p>
-      <CurationStyleFields value={curation} onChange={setCuration} />
+      <CurationStyleFields
+        value={curation}
+        onChange={setCuration}
+        scope="global"
+      />
       <SaveStatus
         isPending={save.isPending}
         isError={save.isError}
@@ -314,26 +318,21 @@ export function RowEditor({
               // same settings Settings → Curation style writes, once they've loaded.
               settings.data && <DefaultRowCuration settings={settings.data} />
             ) : (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  How the AI picks and writes up this row. Leave a field on
-                  Inherit/blank to follow Settings → Curation style; set one to
-                  give this row a voice of its own.
-                </p>
-                <CurationStyleFields
-                  allowInherit
-                  value={curation}
-                  onChange={(next) =>
-                    set({
-                      prompt: {
-                        tone: next.tone,
-                        guidance: next.guidance,
-                        template: next.template,
-                      },
-                    })
-                  }
-                />
-              </>
+              <CurationStyleFields
+                allowInherit
+                scope="row"
+                shared={input.build === "shared"}
+                value={curation}
+                onChange={(next) =>
+                  set({
+                    prompt: {
+                      tone: next.tone,
+                      guidance: next.guidance,
+                      template: next.template,
+                    },
+                  })
+                }
+              />
             )}
           </div>
 

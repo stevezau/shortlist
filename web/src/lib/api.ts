@@ -277,6 +277,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  /** The built-in prompt as an editable template, to pre-fill the "write the whole prompt" box. */
+  getPromptDefault: (shared: boolean): Promise<{ template: string }> =>
+    request(`/api/settings/prompt-default?shared=${shared}`),
+
   // --- Requests (Sonarr/Radarr approval inbox) ---
   listRequests: (): Promise<RequestCandidate[]> => request("/api/requests"),
 

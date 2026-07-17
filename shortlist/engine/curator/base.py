@@ -70,6 +70,33 @@ _SHARED_SKELETON = (
     "this row is not personal to one viewer.{tone}{guidance}"
 )
 
+# The built-in skeletons rendered as EDITABLE full prompts: $-style variables (matching the custom
+# `template` renderer in build_prompts, which uses string.Template), and NO {tone}/{guidance} injection
+# points (an owner writing the whole prompt supplies the wording themselves). Offered as the starting
+# point in the "write the whole prompt" UI; build_prompts still appends _CONTRACT, so the safety rules
+# can't be edited away.
+_PERSONAL_TEMPLATE = (
+    "You curate a personal movie/TV recommendation row for one user of a private media server. "
+    "From the candidate list, pick the $k titles this user is most likely to watch next, ranked "
+    "best first. Every candidate is already verified to be available. For each pick give one natural, "
+    "specific reason under $max_reason_len characters, phrased like 'Because you watched X'."
+)
+_SHARED_TEMPLATE = (
+    "You curate a 'popular on this server' movie/TV row shown to everyone on a private media server. "
+    "From the candidate list, pick the $k titles most worth surfacing to the whole group, ranked best "
+    "first. Every candidate is already verified to be available. For each pick give one short reason "
+    "under $max_reason_len characters framed around broad, shared appeal (e.g. 'A lot of people here "
+    "are watching this') — never 'because you watched', since this row is not personal to one viewer."
+)
+
+
+def default_prompt_template(shared: bool = False) -> str:
+    """The built-in curation prompt as an editable ``$``-style template — the starting point offered to
+    an owner who wants to write the whole prompt themselves. Variables: ``$k`` (row size), ``$username``,
+    ``$max_reason_len``. The safety contract (``_CONTRACT``) is still appended at render time, so it can
+    never be edited out."""
+    return _SHARED_TEMPLATE if shared else _PERSONAL_TEMPLATE
+
 
 def log_curate_request(provider: str, model: str, system: str, user: str, n_candidates: int, k: int) -> None:
     """Observe one outgoing curate call. Prompts are titles+years only (no PII, no secrets — the

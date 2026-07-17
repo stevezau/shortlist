@@ -312,6 +312,14 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"curator.provider": "bogus"}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"curator.provider": "none"}}).status_code == 200
 
+    def test_prompt_default_returns_the_editable_builtin_template(self, client: TestClient):
+        personal = client.get("/api/settings/prompt-default").json()["template"]
+        shared = client.get("/api/settings/prompt-default?shared=true").json()["template"]
+        # $-style variables (matching the custom-template renderer), scoped per row kind.
+        assert "$k" in personal and "personal" in personal
+        assert "$k" in shared and "everyone" in shared
+        assert personal != shared
+
     def test_curator_models_is_empty_for_the_built_in_picker(self, client: TestClient):
         client.put("/api/settings", json={"values": {"curator.provider": "none"}})
         assert client.get("/api/settings/curator/models").json() == {"provider": "none", "models": []}

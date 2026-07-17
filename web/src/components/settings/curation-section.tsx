@@ -32,11 +32,13 @@ export function CurationSection({ settings }: { settings: Settings }) {
       <Card>
         <CardContent className="space-y-4 pt-6">
           <p className="text-sm text-muted-foreground">
-            How the AI writes everyone&rsquo;s rows. Set a tone and a few plain
-            notes, or write the whole prompt yourself. You can override this per
-            person on their page.
+            How the AI writes everyone&rsquo;s rows — edit the prompt directly.
           </p>
-          <CurationStyleFields value={curation} onChange={setCuration} />
+          <CurationStyleFields
+            value={curation}
+            onChange={setCuration}
+            scope="global"
+          />
           <SaveStatus
             isPending={save.isPending}
             isError={save.isError}

@@ -155,6 +155,15 @@ async def prompt_preview(body: PromptPreviewRequest, request: Request) -> dict:
     return {"system": system, "user": user}
 
 
+@router.get("/prompt-default")
+async def prompt_default(shared: bool = False) -> dict:
+    """The built-in curation prompt as an editable template, so the 'write the whole prompt yourself'
+    box can start from the default rather than a blank slate. ``shared`` picks the group-row wording."""
+    from shortlist.engine.curator.base import default_prompt_template
+
+    return {"template": default_prompt_template(shared)}
+
+
 @router.get("")
 async def get_settings(request: Request) -> dict:
     with request.app.state.sessions() as session:

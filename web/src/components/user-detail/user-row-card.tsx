@@ -170,14 +170,11 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
               </div>
               <div className="space-y-2">
                 <p className="text-sm font-medium">Curation style</p>
-                <p className="text-sm text-muted-foreground">
-                  Leave a field blank to use this row&rsquo;s own style. Changes
-                  save on their own.
-                </p>
                 <CurationStyleFields
                   value={curation}
                   onChange={setCuration}
                   allowInherit
+                  scope="user"
                 />
               </div>
             </div>
