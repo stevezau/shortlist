@@ -36,6 +36,7 @@ class RequestCandidateOut(BaseModel):
     media_type: str
     title: str
     year: int | None
+    imdb_id: str = ""  # "tt…" for a direct IMDb link; "" -> the UI falls back to an IMDb search
     rating: float
     vote_count: int
     demand: int
@@ -65,6 +66,7 @@ def list_requests(request: Request) -> list[RequestCandidateOut]:
             media_type=r.media_type,
             title=r.title,
             year=r.year,
+            imdb_id=r.imdb_id or "",
             rating=r.rating,
             vote_count=r.vote_count,
             demand=r.demand,

@@ -39,6 +39,7 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         media_type=m.media_type.value,
         title=m.title,
         year=m.year,
+        imdb_id=m.imdb_id,
         rating=m.rating,
         vote_count=m.vote_count,
         demand=m.demand,
@@ -461,9 +462,20 @@ class RunService:
             if row is None:
                 session.add(_candidate_row(m, run_id, status="pending"))
             elif row.status == "pending":
-                row.title, row.year, row.rating, row.vote_count, row.demand, row.tags, row.wanters, row.why = (
+                (
+                    row.title,
+                    row.year,
+                    row.imdb_id,
+                    row.rating,
+                    row.vote_count,
+                    row.demand,
+                    row.tags,
+                    row.wanters,
+                    row.why,
+                ) = (
                     m.title,
                     m.year,
+                    m.imdb_id or row.imdb_id,  # keep a known id if a later run couldn't re-fetch it
                     m.rating,
                     m.vote_count,
                     m.demand,

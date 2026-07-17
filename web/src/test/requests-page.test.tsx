@@ -38,6 +38,7 @@ function candidate(
     media_type: "movie",
     title: "Dune: Part Two",
     year: 2024,
+    imdb_id: "",
     rating: 8.3,
     vote_count: 5000,
     demand: 4,

@@ -145,6 +145,16 @@ def request_missing(
         qualifying = _gate_by_tmdb(cfg, pool)
     report.considered = len(qualifying)
 
+    # Attach each surviving title's IMDb id (one TMDB call, cached) so the inbox can deep-link to the
+    # title page instead of an IMDb search. Only the gated shortlist is looked up, and best-effort — a
+    # miss just leaves the search fallback. (The IMDb rating gate already fetched it for its titles.)
+    for m in qualifying:
+        if not m.imdb_id:
+            try:
+                m.imdb_id = tmdb.imdb_id(m.tmdb_id, m.media_type) or ""
+            except Exception as e:  # never fail the run for a link nicety
+                logger.debug("imdb id lookup for {!r} failed: {}", m.title, e)
+
     # Hybrid split: the strongest clear the auto-send bar and go now (capped); the rest wait for the
     # owner. Auto-worthy titles beyond the cap fall through to the queue rather than being lost.
     cap = max(0, cfg.max_per_run)
@@ -228,6 +238,7 @@ def _gate_by_imdb(cfg: RequestConfig, tmdb: TmdbClient, pool: list[MissingTitle]
     for title in shortlist:
         try:
             imdb_id = tmdb.imdb_id(title.tmdb_id, title.media_type)
+            title.imdb_id = imdb_id or ""  # reuse it for the inbox's IMDb deep-link (already fetched here)
             score = omdb.rating(imdb_id) if imdb_id else None
         except Exception as e:  # a TMDB/OMDb hiccup drops this title, never the whole gate
             logger.warning("IMDb lookup for {!r} failed: {}", title.title, e)

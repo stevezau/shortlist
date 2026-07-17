@@ -250,6 +250,7 @@ class RequestCandidate(Base):
     media_type: Mapped[str] = mapped_column(String(16))  # movie | show
     title: Mapped[str] = mapped_column(String(512))
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    imdb_id: Mapped[str] = mapped_column(String(16), default="")  # "tt…" -> inbox deep-links to IMDb
     rating: Mapped[float] = mapped_column(Float, default=0.0)  # on the chosen source (TMDB, or IMDb)
     vote_count: Mapped[int] = mapped_column(Integer, default=0)  # vote count on that same source
     demand: Mapped[int] = mapped_column(Integer, default=1)  # distinct users whose picks wanted it

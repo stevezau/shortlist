@@ -65,7 +65,10 @@ function ExternalLinks({ item }: { item: RequestCandidate }) {
     },
     {
       label: "IMDb",
-      href: `https://www.imdb.com/find/?q=${encodeURIComponent(item.title)}&s=tt`,
+      // Deep-link straight to the title when we resolved its id; otherwise fall back to a search.
+      href: item.imdb_id
+        ? `https://www.imdb.com/title/${item.imdb_id}/`
+        : `https://www.imdb.com/find/?q=${encodeURIComponent(item.title)}&s=tt`,
     },
     {
       label: "Trakt",

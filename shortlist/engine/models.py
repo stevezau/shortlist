@@ -324,6 +324,7 @@ class MissingTitle:
     rating: float  # rating on the chosen source: TMDB vote_average, or the IMDb rating when rating_source="imdb"
     vote_count: int  # vote count on that same source
     demand: int = 1  # distinct users whose candidate pool contained it (multi-person demand ranks higher)
+    imdb_id: str = ""  # "tt…" when TMDB has one — lets the inbox deep-link to IMDb instead of a search
     # Per-user + per-row tags to apply on request, layered on top of the target's global tag. Unioned
     # across every user who wanted the title and every row it surfaced in (deduplication merges them).
     tags: set[str] = field(default_factory=set)
