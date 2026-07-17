@@ -85,6 +85,7 @@ describe("UninstallDialog", () => {
       preview: {
         filters_restored: 48,
         collections_deleted: ["a", "b"],
+        rows_disabled: 1,
         dry_run: true,
         message: "Preview only — nothing was changed.",
       },
@@ -103,6 +104,7 @@ describe("UninstallDialog", () => {
       preview: {
         filters_restored: 3,
         collections_deleted: ["✨ Picked for You (sarah)"],
+        rows_disabled: 2,
         dry_run: true,
         message: "Preview only — nothing was changed.",
       },

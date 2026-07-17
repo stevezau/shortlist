@@ -323,6 +323,8 @@ export interface ArrOptions {
 export interface UninstallResult {
   filters_restored: number;
   collections_deleted: string[];
+  /** Rows switched off so the next scheduled run can't rebuild what uninstall removed. */
+  rows_disabled: number;
   dry_run: boolean;
   message: string;
 }

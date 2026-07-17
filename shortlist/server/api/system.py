@@ -11,7 +11,8 @@ from pydantic import BaseModel
 
 import shortlist
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import Event, RestrictionSnapshotRow, User
+from shortlist.server.db.models import Collection, Event, RestrictionSnapshotRow, User
+from shortlist.server.scheduler import rebuild_schedule
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -137,7 +138,8 @@ class UninstallRequest(BaseModel):
 
 @router.post("/uninstall", dependencies=[Depends(require_owner)])
 async def uninstall(body: UninstallRequest, request: Request) -> dict:
-    """Trust feature: restore every snapshot, delete every shortlist collection, report.
+    """Trust feature: restore every snapshot, delete every shortlist collection, disable every row
+    and clear its schedule so nothing rebuilds, and report.
 
     dry_run=true previews the plan; the real thing requires the literal confirmation
     string UNINSTALL — this is the one deliberately scary button in the product.
@@ -178,9 +180,27 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
                     deleted.append(collection.title)
                     if not body.dry_run:
                         ctx.plex.delete_owned_collection(collection, "shortlist")
-        return {"filters_restored": restored, "collections_deleted": deleted, "dry_run": body.dry_run}, per_user_events
+        # Disable every row too — otherwise the next scheduled run would rebuild the collections we
+        # just removed and re-apply the restrictions we just undid, silently "reinstalling" Shortlist.
+        with state.sessions() as session:
+            enabled_rows = session.query(Collection).filter_by(enabled=True).all()
+            rows_disabled = len(enabled_rows)
+            if not body.dry_run:
+                for row in enabled_rows:
+                    row.enabled = False
+                session.commit()
+        return {
+            "filters_restored": restored,
+            "collections_deleted": deleted,
+            "rows_disabled": rows_disabled,
+            "dry_run": body.dry_run,
+        }, per_user_events
 
     result, per_user = await asyncio.get_running_loop().run_in_executor(None, do_uninstall)
+    if not body.dry_run:
+        # Rows are now all disabled, so this clears every per-row cron job — no run fires again until
+        # Shortlist is set up afresh.
+        rebuild_schedule(request.app)
     with state.sessions() as session:
         for entry in per_user:
             session.add(Event(scope="uninstall.user", level="warn", message=entry))

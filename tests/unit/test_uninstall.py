@@ -121,6 +121,36 @@ class TestUninstall:
         deleted = plex.delete_owned_collection.call_args.args[0]
         assert deleted.title == "✨ Picked for You"
 
+    def test_disables_every_row_and_clears_its_schedule_so_nothing_rebuilds(self, client, monkeypatch):
+        """Uninstall must switch every row off AND clear its cron jobs — otherwise the next scheduled
+        run rebuilds the collections it just deleted and re-applies the restrictions it just undid."""
+        from shortlist.server.db.models import Collection
+        from shortlist.server.scheduler import rebuild_schedule
+
+        fake_context(monkeypatch, client)
+        # A scheduled row → a live APScheduler cron job.
+        with client.app.state.sessions() as session:
+            session.add(Collection(slug="nightly", name="Nightly", enabled=True, schedule="30 3 * * *"))
+            session.commit()
+            enabled_before = session.query(Collection).filter_by(enabled=True).count()
+        rebuild_schedule(client.app)
+        jobs = [j for j in client.app.state.scheduler.get_jobs() if j.id.startswith("row-schedule::")]
+        assert jobs, "the scheduled row should have a cron job before uninstall"
+
+        # Dry-run counts what WOULD be switched off, and changes nothing.
+        preview = client.post("/api/system/uninstall", json={"dry_run": True}).json()
+        assert preview["rows_disabled"] == enabled_before
+        with client.app.state.sessions() as session:
+            assert session.query(Collection).filter_by(enabled=True).count() == enabled_before
+
+        # The real thing switches every row off AND clears every cron job — nothing can rebuild.
+        result = client.post("/api/system/uninstall", json={"confirm": "UNINSTALL"}).json()
+        assert result["rows_disabled"] == enabled_before
+        with client.app.state.sessions() as session:
+            assert session.query(Collection).filter_by(enabled=True).count() == 0
+        remaining = [j for j in client.app.state.scheduler.get_jobs() if j.id.startswith("row-schedule::")]
+        assert remaining == [], "every row cron job must be gone after uninstall"
+
     def test_per_user_audit_events_recorded(self, client: TestClient, monkeypatch):
         fake_context(monkeypatch, client)
         client.post("/api/system/uninstall", json={"confirm": "UNINSTALL"})

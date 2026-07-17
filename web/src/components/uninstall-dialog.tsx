@@ -101,7 +101,9 @@ export function UninstallDialog({
                 {preview.filters_restored} share filter
                 {preview.filters_restored === 1 ? "" : "s"} restored ·{" "}
                 {preview.collections_deleted.length} collection
-                {preview.collections_deleted.length === 1 ? "" : "s"} deleted
+                {preview.collections_deleted.length === 1 ? "" : "s"} deleted ·{" "}
+                {preview.rows_disabled} row
+                {preview.rows_disabled === 1 ? "" : "s"} switched off
               </p>
               {preview.collections_deleted.length > 0 && (
                 <p className="mt-1 text-muted-foreground">

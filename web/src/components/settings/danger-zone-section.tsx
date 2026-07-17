@@ -66,10 +66,26 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
             </Button>
           </div>
           {uninstall.isSuccess && (
-            <p role="status" className="text-sm text-success">
-              {uninstall.data.message ||
-                "Uninstall complete. Your server is as Shortlist found it."}
-            </p>
+            <div
+              role="status"
+              className="space-y-1 rounded-md border border-success/40 bg-success/5 p-3 text-sm"
+            >
+              <p className="font-medium text-success">
+                Uninstall complete — your server is as Shortlist found it.
+              </p>
+              <p className="text-muted-foreground">
+                {uninstall.data.filters_restored} share filter
+                {uninstall.data.filters_restored === 1 ? "" : "s"} restored ·{" "}
+                {uninstall.data.collections_deleted.length} collection
+                {uninstall.data.collections_deleted.length === 1
+                  ? ""
+                  : "s"}{" "}
+                deleted · {uninstall.data.rows_disabled} row
+                {uninstall.data.rows_disabled === 1 ? "" : "s"} switched off, so
+                nothing rebuilds. Set Shortlist up again any time to start
+                fresh.
+              </p>
+            </div>
           )}
           {uninstall.isError && (
             <p role="alert" className="text-sm text-destructive">
