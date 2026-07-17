@@ -510,6 +510,25 @@ class TestCollectionsSeed:
                 True,
             )
 
+    def test_default_rows_serialized_name_is_the_global_template_not_the_stale_column(self, client: TestClient):
+        """The Rows UI must show the ACTUAL default title (the global template it delivers), not the
+        seeded 'name' column — so the {library_name} default is visible in the editor and list."""
+        client.put("/api/settings", json={"values": {"row.name_template": "✨ {library_name} Picked for You"}})
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        assert picked["name"] == "✨ {library_name} Picked for You"
+
+    def test_saving_the_default_row_never_overwrites_its_name_column(self, client: TestClient):
+        """The editor sends the serialized name (now the template) back on save; the default row's name
+        column must NOT be clobbered by it — it follows Settings, not this PATCH."""
+        client.put("/api/settings", json={"values": {"row.name_template": "✨ {library_name} Picked for You"}})
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        r = client.patch(f"/api/collections/{picked['id']}", json={"name": "✨ {library_name} Picked for You"})
+        assert r.status_code == 200
+        with client.app.state.sessions() as session:
+            from shortlist.server.db.models import Collection
+
+            assert session.query(Collection).filter_by(slug="picked").one().name == "✨ Picked for You"
+
     def test_default_row_size_and_name_follow_the_global_setting(self, client: TestClient, tmp_path):
         """The wizard/Settings set row.size and row.name_template; the default 'picked' row must
         deliver at those values, not a size frozen into the collection at migration time."""

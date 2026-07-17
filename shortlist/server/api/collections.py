@@ -15,6 +15,7 @@ from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, User
 from shortlist.server.scheduler import rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
+from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/collections", tags=["collections"], dependencies=[Depends(require_owner)])
 
@@ -105,10 +106,16 @@ def _serialize(session, collection: Collection) -> dict:
     audience_ids = [
         row.user_id for row in session.query(CollectionAudience).filter_by(collection_id=collection.id).all()
     ]
+    # The default row's real title is the global template (Settings → Defaults), which the engine
+    # renders per library — not its stale seeded `name` column. Surface the template so the Rows UI
+    # shows the actual default ("✨ {library_name} Picked for You"), consistent with what delivers.
+    name = collection.name
+    if collection.slug == DEFAULT_SLUG:
+        name = SettingsStore(session).get("row.name_template") or collection.name
     return {
         "id": collection.id,
         "slug": collection.slug,
-        "name": collection.name,
+        "name": name,
         "build": collection.build,
         "audience": collection.audience,
         "audience_user_ids": audience_ids,
@@ -259,7 +266,10 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         # the title actually changed — delivery renders from `name_template or name`.
         touching_name = build == "per_person" and not is_default and bool(sent & {"name", "name_template"})
         old_template = (collection.name_template or collection.name) if touching_name else None
-        if "name" in sent:
+        # The default row's name follows the global Settings → Defaults template, never this column, so
+        # a save of it is ignored here (the editor now shows the template as its name, and would
+        # otherwise round-trip that value back into the column).
+        if "name" in sent and not is_default:
             _reject_duplicate_name(session, body.name, exclude_id=collection_id)
             collection.name = body.name
         for column in _PATCHABLE_COLUMNS:
