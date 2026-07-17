@@ -29,6 +29,7 @@ export function AudiencePicker({
 }) {
   const [expanded, setExpanded] = useState(false);
   const chosen = audienceUserIds.length;
+  const enabledCount = users.filter((user) => user.enabled).length;
 
   return (
     <div className="space-y-2">
@@ -44,6 +45,23 @@ export function AudiencePicker({
           { value: "subset", label: "Choose people" },
         ]}
       />
+      {/* "Everyone" means every ENABLED user, not every Plex account — spell out the real reach so a
+          mostly-disabled roster doesn't look like the row is broken. */}
+      {audience === "everyone" && users.length > 0 && (
+        <p
+          className={cn(
+            "text-xs",
+            enabledCount === 0 ? "text-warning" : "text-muted-foreground",
+          )}
+        >
+          {enabledCount === 0
+            ? "No users are enabled, so this reaches nobody yet — enable people on the Users page."
+            : `Reaches everyone with Shortlist enabled — ${enabledCount} of ${users.length} ${users.length === 1 ? "user is" : "users are"} enabled right now.`}
+          {enabledCount > 0 &&
+            enabledCount < users.length &&
+            " Enable more on the Users page."}
+        </p>
+      )}
       {audience === "subset" && (
         <div className="mt-2 rounded-lg border bg-elevated">
           <button
