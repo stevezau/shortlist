@@ -1,7 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  Bug,
   Gauge,
   Inbox,
+  LifeBuoy,
   ListChecks,
   LogOut,
   Menu,
@@ -18,7 +20,8 @@ import { ActivityPill } from "@/components/layout/activity-pill";
 import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
-import { useSession } from "@/lib/queries";
+import { useSession, useVersion } from "@/lib/queries";
+import { GITHUB_REPO, newBugReportUrl } from "@/lib/support";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -30,9 +33,40 @@ const NAV_ITEMS = [
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },
 ];
 
+/** Help + Report-a-bug — both open the project's GitHub in a new tab; the bug link pre-fills the
+ *  version + browser so a report always carries the two facts people forget to include. */
+function HelpLinks() {
+  const version = useVersion();
+  const linkClass =
+    "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
+  return (
+    <div className="space-y-1 px-3">
+      <a
+        href={`${GITHUB_REPO}#readme`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={linkClass}
+      >
+        <LifeBuoy className="h-4 w-4 shrink-0" aria-hidden="true" />
+        Help &amp; docs
+      </a>
+      <a
+        href={newBugReportUrl(version.data?.version ?? "")}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={linkClass}
+      >
+        <Bug className="h-4 w-4 shrink-0" aria-hidden="true" />
+        Report a bug
+      </a>
+    </div>
+  );
+}
+
 /** Signed-in owner + a sign-out button, pinned to the bottom of the nav. */
 function SessionFooter() {
   const session = useSession();
+  const version = useVersion();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const logout = useMutation({
@@ -63,7 +97,10 @@ function SessionFooter() {
         {!logout.isPending && <LogOut aria-hidden="true" />}
         Sign out
       </Button>
-      <p className="px-1 text-xs text-muted-foreground">Shortlist · beta</p>
+      <p className="px-1 text-xs text-muted-foreground">
+        Shortlist · beta
+        {version.data?.version ? ` · ${version.data.version}` : ""}
+      </p>
     </div>
   );
 }
@@ -112,6 +149,7 @@ function NavBody() {
         ))}
       </nav>
       <ActivityPill />
+      <HelpLinks />
       <SessionFooter />
     </>
   );

@@ -275,6 +275,14 @@ export function useRequests() {
   return useQuery({ queryKey: queryKeys.requests, queryFn: api.listRequests });
 }
 
+export function useVersion() {
+  return useQuery({
+    queryKey: ["version"],
+    queryFn: api.getVersion,
+    staleTime: Infinity, // the running build doesn't change under the user's feet
+  });
+}
+
 export function useReport() {
   return useQuery({
     queryKey: ["report"],

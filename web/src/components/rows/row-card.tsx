@@ -1,5 +1,11 @@
 import { useMutation } from "@tanstack/react-query";
-import { Eraser, Trash2, UserCheck, Users as UsersIcon } from "lucide-react";
+import {
+  Eraser,
+  ListChecks,
+  Trash2,
+  UserCheck,
+  Users as UsersIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -92,24 +98,6 @@ export function RowCard({
             {collection.media === "both"
               ? "movies & shows"
               : `${collection.media}s`}
-            {collection.last_run_id !== null && (
-              <>
-                {" · "}
-                <Link
-                  to={`/runs/${collection.last_run_id}`}
-                  className="text-primary underline-offset-4 hover:underline"
-                >
-                  last run
-                </Link>
-              </>
-            )}
-            {" · "}
-            <Link
-              to={`/runs?row=${encodeURIComponent(collection.slug)}`}
-              className="text-primary underline-offset-4 hover:underline"
-            >
-              all runs
-            </Link>
           </p>
           {overrides.length > 0 && (
             <div className="flex flex-wrap gap-1 pt-0.5">
@@ -132,6 +120,18 @@ export function RowCard({
             }
             aria-label={`Enable ${collection.name}`}
           />
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            title="See the runs that built this row"
+          >
+            <Link to={`/runs?row=${encodeURIComponent(collection.slug)}`}>
+              <ListChecks aria-hidden="true" />
+              Runs
+            </Link>
+          </Button>
           <Button variant="outline" size="sm" onClick={onEdit}>
             Edit
           </Button>

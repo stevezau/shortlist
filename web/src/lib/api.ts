@@ -255,6 +255,10 @@ export const api = {
   /** The server's Plex libraries, for the Rows editor's per-row delivery-target picker. */
   getLibraries: (): Promise<PlexLibrary[]> => request("/api/system/libraries"),
 
+  /** The running app version (for the footer + prefilled bug reports). */
+  getVersion: (): Promise<{ version: string }> =>
+    request("/api/system/version"),
+
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
   getReport: (): Promise<EffectivenessReport> => request("/api/report"),
 
