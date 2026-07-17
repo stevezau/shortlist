@@ -653,3 +653,54 @@ class TestTraktClient:
         with pytest.raises(TraktError):
             client.related(550, MediaType.MOVIE)
         assert client._cache.get("trakt:related:movie:550:20") is None
+
+
+class TestPmsPromoteRetry:
+    """A promote is idempotent, so a PMS read-timeout must be retried, not fail the user (the shape
+    of the SFLIX 48-user rollout, where 42 users died on one un-retried promote timeout)."""
+
+    def test_retries_a_timeout_then_succeeds(self, monkeypatch):
+        import requests
+
+        from shortlist.engine.clients import plex_pms
+
+        monkeypatch.setattr(plex_pms.time, "sleep", lambda _s: None)  # no real backoff waits
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise requests.exceptions.ReadTimeout("slow PMS")
+
+        plex_pms._retry_idempotent(flaky, label="row")
+        assert calls["n"] == 3  # failed twice, third try landed
+
+    def test_gives_up_after_the_last_attempt(self, monkeypatch):
+        import requests
+
+        from shortlist.engine.clients import plex_pms
+
+        monkeypatch.setattr(plex_pms.time, "sleep", lambda _s: None)
+        calls = {"n": 0}
+
+        def always_times_out():
+            calls["n"] += 1
+            raise requests.exceptions.ConnectTimeout("dead PMS")
+
+        with pytest.raises(requests.exceptions.ConnectTimeout):
+            plex_pms._retry_idempotent(always_times_out, label="row", attempts=4)
+        assert calls["n"] == 4  # tried the full budget, then re-raised
+
+    def test_a_non_timeout_error_is_not_retried(self, monkeypatch):
+        from shortlist.engine.clients import plex_pms
+
+        monkeypatch.setattr(plex_pms.time, "sleep", lambda _s: None)
+        calls = {"n": 0}
+
+        def boom():
+            calls["n"] += 1
+            raise ValueError("a real bug, not a timeout")
+
+        with pytest.raises(ValueError):
+            plex_pms._retry_idempotent(boom, label="row")
+        assert calls["n"] == 1  # surfaced immediately, no retry

@@ -10,6 +10,7 @@ Plex quirks encoded here (all live-verified in Phase 0, 2026-07-12):
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 
 import requests
 from loguru import logger
@@ -63,6 +64,40 @@ def _retrying_session() -> requests.Session:
     session.mount("http://", adapter)
     session.mount("https://", adapter)
     return session
+
+
+_PMS_TIMEOUTS = (
+    requests.exceptions.ReadTimeout,
+    requests.exceptions.ConnectTimeout,
+    requests.exceptions.ConnectionError,
+)
+
+
+def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: int = 4) -> None:
+    """Retry an IDEMPOTENT PMS mutation on a read/connect timeout, backing off between tries.
+
+    The requests-level ``Retry`` only covers GETs (a create/label must never be blindly repeated), but
+    promotion — hide + set hub visibility — is safe to repeat: re-hiding or re-showing is a no-op. At
+    scale the promote phase can push a busy PMS into read timeouts, and one un-retried timeout used to
+    fail the whole user (SFLIX 48-user rollout, 2026-07-18). The backoff also gives the server air.
+    """
+    for attempt in range(attempts):
+        try:
+            operation()
+            return
+        except _PMS_TIMEOUTS as error:
+            if attempt == attempts - 1:
+                raise
+            delay = 2.0 * (2**attempt)  # 2s, 4s, 8s
+            logger.warning(
+                "{}: PMS {} on promote — retry {}/{} in {:.0f}s",
+                label,
+                type(error).__name__,
+                attempt + 1,
+                attempts - 1,
+                delay,
+            )
+            time.sleep(delay)
 
 
 class PlexClient:
@@ -310,12 +345,18 @@ class PlexClient:
         the top of the library's Recommended shelf (server-wide order, not per viewing-user).
         """
         start = time.monotonic()
-        collection.modeUpdate(mode="hide")
-        hub = collection.visibility()
-        hub.updateVisibility(recommended=recommended, home=home, shared=shared)
-        if pin_top:
-            # after=None -> first position in this library's Managed Recommendations.
-            hub.reload().move(after=None)
+
+        def _apply() -> None:
+            collection.modeUpdate(mode="hide")
+            hub = collection.visibility()
+            hub.updateVisibility(recommended=recommended, home=home, shared=shared)
+            if pin_top:
+                # after=None -> first position in this library's Managed Recommendations.
+                hub.reload().move(after=None)
+
+        # Retry the whole promote on a PMS timeout — it's idempotent, and a busy server can time out a
+        # single mutation that a retry (with the server given room to breathe) then completes.
+        _retry_idempotent(_apply, label=collection.title)
         logger.info(
             "{}: promoted (home={} library={} pin={}) in {:.1f}s",
             collection.title,
