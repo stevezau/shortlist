@@ -302,9 +302,13 @@ def _run_user(
     user_report.diff = CollectionDiff()
     _remove_muted_and_retired(ctx, user, cfg, user_report.diff)
 
-    specs = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec) and not _is_muted(user, spec)]
+    specs = [
+        spec
+        for spec in cfg.per_person_rows()
+        if _in_audience(user, spec) and not _is_muted(user, spec) and cfg.should_build(spec)
+    ]
     if not specs:
-        return False  # this user is in no per-person row (none in audience, or all muted)
+        return False  # nothing to build for this user this run (not in audience, muted, or out of scope)
     # The adapter puts the Phase-A global+per-user recipe on the profile; a row with its own recipe
     # overrides it for that row only.
     base_prompt = user.prompt

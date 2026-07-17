@@ -161,7 +161,6 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     size_field.fill("10")
     size_field.blur()  # the free number field commits on blur
     expect(size_field).to_have_value("10")
-    page.get_by_label("Refresh rows nightly at").fill("02:15")
     page.get_by_role("button", name="Save & continue").click()
 
     # --- Step 7: the first real run -------------------------------------------------------
@@ -190,7 +189,6 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     settings = app.api("GET", "/api/settings").json()
     assert settings["row.size"] == 10
     assert settings["row.name_template"] == "Because you watched {top_seed}"
-    assert settings["schedule.cron"] == "15 2 * * *"
 
     # A user gets one row per library they have picks in, so a label can map to several rows.
     rows: dict[str, list] = {}

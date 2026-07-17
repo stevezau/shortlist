@@ -94,6 +94,7 @@ class ContextBuilder:
         loop: asyncio.AbstractEventLoop | None = None,
         run_id: int | None = None,
         log_sink: Callable[[dict], None] | None = None,
+        collection_ids: list[int] | None = None,
     ) -> EngineContext:
         with self._sessions() as session:
             store = SettingsStore(session, self._secrets)
@@ -134,8 +135,12 @@ class ContextBuilder:
                 # being resurrected behind a Rows page that shows it switched off.
                 rows_defined=True,
                 # ...and a row switched off has its already-built collection removed from its owner's
-                # Home on this run, so "off" means gone, not merely "not refreshed".
+                # Home on this run, so "off" means gone, not merely "not refreshed". Runs stay full
+                # here even when scoped: retiring a DISABLED row on any run is always correct.
                 retired_rows=self._retired_rows(session, store),
+                # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
+                # delivery only — classification/sync/sweep/promotion above still see the full list.
+                build_only=self._build_only_slugs(session, collection_ids),
                 requests=self._build_requests(store),
             )
             recent = self._recent_picks(session, config)
@@ -328,6 +333,15 @@ class ContextBuilder:
             account_by_user[uid] for uid in audience_by_collection.get(collection.id, set()) if uid in account_by_user
         }
 
+    @staticmethod
+    def _build_only_slugs(session: Session, collection_ids: list[int] | None) -> frozenset[str] | None:
+        """The row slugs a scoped (per-row scheduled) run rebuilds; None = a full run builds every row.
+        Intersected with ``enabled=True`` so a stale schedule for a since-disabled row rebuilds nothing."""
+        if collection_ids is None:
+            return None
+        rows = session.query(Collection).filter(Collection.id.in_(collection_ids), Collection.enabled).all()
+        return frozenset(row.slug for row in rows)
+
     def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
         """Build the engine's row specs from the enabled collections.
 
@@ -335,6 +349,10 @@ class ContextBuilder:
         row-name and Phase-A prompt on the profile still apply to it; other rows carry their own
         name and recipe. A subset audience is resolved from user ids to plex account ids (what the
         engine matches on).
+
+        Always ALL enabled rows — never scoped. A per-row scheduled run limits which rows actually
+        rebuild via ``EngineConfig.build_only``, not by hiding rows from this list, so privacy
+        classification, the share-filter sync, the sweep, and promotion all still see every row.
         """
         account_by_user, audience_by_collection = self._audience_maps(session)
 

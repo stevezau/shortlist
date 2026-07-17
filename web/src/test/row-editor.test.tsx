@@ -35,6 +35,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     audience: "everyone",
     audience_user_ids: [],
     enabled: true,
+    schedule: "30 3 * * *",
     size: 15,
     media: "both",
     sort_order: 0,

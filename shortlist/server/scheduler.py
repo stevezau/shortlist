@@ -1,44 +1,76 @@
-"""APScheduler wiring — the runs table is the durable queue; the scheduler only enqueues."""
+"""APScheduler wiring — one job per distinct per-row cron; the runs table is the durable queue.
+
+Every enabled row carries its own cron (``Collection.schedule``); rows that share a cron fire together
+as one run scoped to just them. A row with no schedule never fires here. There is no global schedule —
+the whole "when does this run" question is answered per row.
+"""
 
 from __future__ import annotations
+
+from collections import defaultdict
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
 
-from shortlist.server.settings_store import SettingsStore
+from shortlist.server.db.models import Collection
 
-DEFAULT_CRON = "30 3 * * *"
+_JOB_PREFIX = "row-schedule::"
 
 
-def _make_nightly(app):
-    """The one nightly job body, so build_scheduler and reschedule enqueue identically."""
+def _job_id(cron: str) -> str:
+    return f"{_JOB_PREFIX}{cron}"
 
-    async def nightly() -> None:
-        logger.info("scheduled run firing")
-        await app.state.run_service.start_run(trigger="schedule", dry_run=False)
 
-    return nightly
+def schedule_groups(app) -> dict[str, list[int]]:
+    """cron -> ids of the enabled rows that run on it. Blank or invalid crons are skipped (never fire)."""
+    groups: dict[str, list[int]] = defaultdict(list)
+    with app.state.sessions() as session:
+        for row in session.query(Collection).filter_by(enabled=True).all():
+            cron = (row.schedule or "").strip()
+            if not cron:
+                continue
+            try:
+                CronTrigger.from_crontab(cron)
+            except ValueError:
+                # A bad cron must never crash-loop the container; it just means that row won't fire.
+                logger.error("row {!r} has an invalid cron {!r} — skipping its schedule", row.slug, cron)
+                continue
+            groups[cron].append(row.id)
+    return dict(groups)
+
+
+def _make_job(app, cron: str, collection_ids: list[int]):
+    async def fire() -> None:
+        logger.info("scheduled run firing: cron '{}' for {} row(s)", cron, len(collection_ids))
+        await app.state.run_service.start_run(trigger="schedule", dry_run=False, collection_ids=collection_ids)
+
+    return fire
+
+
+def _register(scheduler: AsyncIOScheduler, app, groups: dict[str, list[int]]) -> None:
+    for cron, ids in groups.items():
+        scheduler.add_job(
+            _make_job(app, cron, ids), CronTrigger.from_crontab(cron), id=_job_id(cron), replace_existing=True
+        )
 
 
 def build_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
-    with app.state.sessions() as session:
-        cron = SettingsStore(session).get("schedule.cron")
-    try:
-        trigger = CronTrigger.from_crontab(cron)
-    except ValueError:
-        # A bad persisted value must never crash-loop the container out of its own fix.
-        logger.error("invalid schedule.cron {!r} — falling back to default {!r}", cron, DEFAULT_CRON)
-        trigger = CronTrigger.from_crontab(DEFAULT_CRON)
-    scheduler.add_job(_make_nightly(app), trigger, id="nightly-run", replace_existing=True)
-    logger.info("scheduled nightly run: cron '{}'", cron)
+    groups = schedule_groups(app)
+    _register(scheduler, app, groups)
+    logger.info("scheduled {} row cron group(s)", len(groups))
     return scheduler
 
 
-def reschedule(app, cron: str) -> None:
-    """Apply a new cron expression immediately (Settings → Schedules)."""
-    app.state.scheduler.add_job(
-        _make_nightly(app), CronTrigger.from_crontab(cron), id="nightly-run", replace_existing=True
-    )
-    logger.info("rescheduled nightly run: cron '{}'", cron)
+def rebuild_schedule(app) -> None:
+    """Re-derive every per-row cron job from the DB. Call after any row's schedule changes (create,
+    edit, enable/disable, delete) so the live scheduler matches the rows exactly."""
+    scheduler = app.state.scheduler
+    groups = schedule_groups(app)
+    wanted = {_job_id(cron) for cron in groups}
+    for job in scheduler.get_jobs():
+        if job.id.startswith(_JOB_PREFIX) and job.id not in wanted:
+            job.remove()  # a cron that no longer has any row
+    _register(scheduler, app, groups)
+    logger.info("rebuilt schedule: {} row cron group(s)", len(groups))

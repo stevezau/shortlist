@@ -18,12 +18,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserCard } from "@/components/user-card";
 import { dashboardStats } from "@/lib/dashboard-stats";
-import { settingString, timeFromCron } from "@/lib/format";
 import {
   queryKeys,
   usePatchUser,
   useRuns,
-  useSettings,
   useStartRun,
   useUsers,
 } from "@/lib/queries";
@@ -52,7 +50,6 @@ function DashboardSkeleton() {
 export function DashboardPage() {
   const usersQuery = useUsers();
   const runsQuery = useRuns();
-  const settingsQuery = useSettings();
   const startRun = useStartRun();
   const patchUser = usePatchUser();
   const queryClient = useQueryClient();
@@ -76,16 +73,9 @@ export function DashboardPage() {
     },
   });
 
-  const scheduleCron = settingsQuery.data
-    ? settingString(settingsQuery.data, "schedule.cron")
-    : "";
-  const schedule = scheduleCron ? timeFromCron(scheduleCron) : null;
-  // Name the cadence honestly — a weekly schedule isn't "tonight" (it runs Sundays).
-  const scheduleSubtitle = schedule
-    ? schedule.weekly
-      ? `Rows refresh every Sunday at ${schedule.time}`
-      : `Rows refresh nightly at ${schedule.time}`
-    : "No schedule set yet";
+  // Schedules are per-row now (each row's editor), so there's no single cadence to name here.
+  const scheduleSubtitle =
+    "Private “Picked for You” rows — each refreshes on its own schedule.";
 
   const handleRunNow = (user: User) => {
     setPendingRunUserIds((ids) => new Set(ids).add(user.id));

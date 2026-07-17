@@ -34,6 +34,8 @@ export interface Collection {
   audience: "everyone" | "subset";
   audience_user_ids: number[];
   enabled: boolean;
+  /** This row's own run schedule as a cron string; "" = never runs on a schedule (manual only). */
+  schedule: string;
   size: number;
   media: "movie" | "show" | "both";
   sort_order: number;
@@ -98,6 +100,8 @@ export interface CollectionInput {
   audience: "everyone" | "subset";
   audience_user_ids: number[];
   enabled: boolean;
+  /** This row's own run schedule as a cron string; "" = never runs on a schedule (manual only). */
+  schedule: string;
   size: number;
   media: "movie" | "show" | "both";
   sort_order: number;

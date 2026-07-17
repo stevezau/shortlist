@@ -388,7 +388,8 @@ def _deliver_phase(
     # Shared "popular on this server" rows: built once from aggregate history, delivered UNPROMOTED
     # like the per-person rows so promotion still happens only after the filters are merged.
     shared_to_promote: list[tuple[RowSpec, UserProfile]] = []
-    for spec in ctx.config.shared_rows() if users else []:
+    shared_specs = [s for s in ctx.config.shared_rows() if ctx.config.should_build(s)] if users else []
+    for spec in shared_specs:
         _shared_report, agg = rows._run_shared(ctx, spec, users, seed_index, library_index, stored_labels, report)
         if agg is not None:
             shared_to_promote.append((spec, agg))

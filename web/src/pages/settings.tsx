@@ -11,7 +11,6 @@ import { DefaultsSection } from "@/components/settings/defaults-section";
 import { RecommendationsSection } from "@/components/settings/recommendations-section";
 import { RequestsSection } from "@/components/settings/requests-section";
 import { RowPlacementSection } from "@/components/settings/row-placement-section";
-import { ScheduleSection } from "@/components/settings/schedule-section";
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSettings } from "@/lib/queries";
@@ -25,7 +24,6 @@ function sectionContent(settings: Settings): Record<string, ReactNode> {
     curation: <CurationSection settings={settings} />,
     defaults: <DefaultsSection settings={settings} />,
     placement: <RowPlacementSection settings={settings} />,
-    schedule: <ScheduleSection settings={settings} />,
     requests: <RequestsSection settings={settings} />,
     advanced: <AdvancedSection settings={settings} />,
     danger: <DangerZoneSection settings={settings} />,
@@ -40,7 +38,7 @@ export function SettingsPage() {
       <PageHeader
         icon={SettingsIcon}
         title="Settings"
-        subtitle="Connections, recommendations, curation style, row defaults, schedule, requests, and uninstall."
+        subtitle="Connections, recommendations, curation style, row defaults, requests, and uninstall. Schedules are per row."
       />
 
       <QueryBoundary

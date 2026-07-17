@@ -34,6 +34,7 @@ const SUBSET_ROW: Collection = {
   audience: "subset",
   audience_user_ids: [4],
   enabled: true,
+  schedule: "30 3 * * *",
   size: 15,
   media: "both",
   sort_order: 0,
@@ -46,7 +47,8 @@ const SUBSET_ROW: Collection = {
   freshness: null,
   placement: "both",
   pin_top: false,
-  hub_anchor: {},  prompt: { tone: "balanced", guidance: "", template: "" },
+  hub_anchor: {},
+  prompt: { tone: "balanced", guidance: "", template: "" },
 };
 
 function renderPage() {

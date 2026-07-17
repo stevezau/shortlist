@@ -21,6 +21,7 @@ export function blankInput(): CollectionInput {
     audience: "everyone",
     audience_user_ids: [],
     enabled: true,
+    schedule: "30 3 * * *", // new rows run nightly by default; clear to "Off"
     size: 15,
     media: "both",
     sort_order: 0,
@@ -46,6 +47,7 @@ export function toInput(collection: Collection): CollectionInput {
     audience: collection.audience,
     audience_user_ids: collection.audience_user_ids,
     enabled: collection.enabled,
+    schedule: collection.schedule ?? "",
     size: collection.size,
     media: collection.media,
     sort_order: collection.sort_order,

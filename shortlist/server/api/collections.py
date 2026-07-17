@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -12,6 +13,7 @@ from shortlist.engine.curator.base import TONE_PRESETS
 from shortlist.engine.models import dedupe_slug, slugify
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, User
+from shortlist.server.scheduler import rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
 
 router = APIRouter(prefix="/collections", tags=["collections"], dependencies=[Depends(require_owner)])
@@ -54,6 +56,9 @@ class CollectionIn(BaseModel):
     audience: str = "everyone"
     audience_user_ids: list[int] = Field(default_factory=list)
     enabled: bool = True
+    # This row's own run schedule (5-field cron); "" = never runs on a schedule. New rows default to
+    # a nightly 03:30 so they work out of the box; there is no global schedule.
+    schedule: str = Field(default="30 3 * * *", max_length=64)
     size: int = Field(default=15, ge=5, le=40)
     media: str = "both"
     sort_order: int = 0
@@ -86,6 +91,11 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(422, f"unknown tone {body.prompt.tone!r}; valid: {sorted(TONE_PRESETS)} (or blank)")
     if body.placement not in PLACEMENTS:
         raise HTTPException(422, f"placement must be one of {sorted(PLACEMENTS)}")
+    if body.schedule.strip():
+        try:
+            CronTrigger.from_crontab(body.schedule.strip())
+        except ValueError as e:
+            raise HTTPException(422, f"invalid schedule — needs a 5-field cron (e.g. '30 3 * * *'): {e}") from e
     for lib, anchor in body.hub_anchor.items():
         if not anchor.top and not anchor.anchor.strip():
             raise HTTPException(422, f"hub_anchor[{lib}]: needs 'top' or a non-empty 'anchor'")
@@ -103,6 +113,7 @@ def _serialize(session, collection: Collection) -> dict:
         "audience": collection.audience,
         "audience_user_ids": audience_ids,
         "enabled": collection.enabled,
+        "schedule": collection.schedule or "",
         "size": collection.size,
         "media": collection.media,
         "sort_order": collection.sort_order,
@@ -170,6 +181,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             build=body.build,
             audience=body.audience,
             enabled=body.enabled,
+            schedule=body.schedule.strip(),
             size=body.size,
             media=body.media,
             sort_order=body.sort_order,
@@ -189,7 +201,9 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
         session.flush()
         _set_audience(session, collection, body)
         session.commit()
-        return _serialize(session, collection)
+        result = _serialize(session, collection)
+    rebuild_schedule(request.app)  # a new row may carry a schedule — register its cron job now
+    return result
 
 
 # Columns a PATCH may set directly, name (needs a dup check) and audience/prompt (need shaping)
@@ -198,6 +212,7 @@ _PATCHABLE_COLUMNS = (
     "build",
     "audience",
     "enabled",
+    "schedule",
     "size",
     "media",
     "sort_order",
@@ -250,6 +265,8 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         for column in _PATCHABLE_COLUMNS:
             if column in sent:
                 setattr(collection, column, getattr(body, column))
+        if "schedule" in sent:
+            collection.schedule = body.schedule.strip()  # a whitespace-only cron means "no schedule"
         if "prompt" in sent:
             collection.prompt = _prompt_for(collection.slug, body)
         if "hub_anchor" in sent:
@@ -269,6 +286,9 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             if new_effective != old_template:
                 new_row_template = new_effective
         result = _serialize(session, collection)
+    # A schedule or enable/disable change alters which cron jobs should exist — re-derive them.
+    if sent & {"schedule", "enabled"}:
+        rebuild_schedule(request.app)
     build_changed = "build" in sent and body.build != build
 
     # A build flip (per-person ↔ shared) makes the OLD build's collections stale — a shared collection,
@@ -316,6 +336,7 @@ async def delete_collection(collection_id: int, request: Request) -> None:
             session.query(CollectionAudience).filter_by(collection_id=collection.id).delete()
             session.delete(collection)
             session.commit()
+    rebuild_schedule(request.app)  # the deleted row's cron job (if any) must stop firing
 
 
 class CleanupRequest(BaseModel):

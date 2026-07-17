@@ -90,6 +90,9 @@ class Collection(Base):
     build: Mapped[str] = mapped_column(String(16), default="per_person")  # per_person | shared
     audience: Mapped[str] = mapped_column(String(16), default="everyone")  # everyone | subset
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # This row's own run schedule as a 5-field cron string; "" = never runs on a schedule (only
+    # manual "run now"). There is NO global schedule — each row runs on its own cron, or not at all.
+    schedule: Mapped[str] = mapped_column(String(64), default="")
     size: Mapped[int] = mapped_column(Integer, default=15)
     media: Mapped[str] = mapped_column(String(16), default="both")  # movie | show | both
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

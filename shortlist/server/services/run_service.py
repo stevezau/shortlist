@@ -87,8 +87,11 @@ class RunService:
         loop: asyncio.AbstractEventLoop | None = None,
         run_id: int | None = None,
         log_sink: Callable[[dict], None] | None = None,
+        collection_ids: list[int] | None = None,
     ) -> EngineContext:
-        return self._ctx.build(dry_run=dry_run, loop=loop, run_id=run_id, log_sink=log_sink)
+        return self._ctx.build(
+            dry_run=dry_run, loop=loop, run_id=run_id, log_sink=log_sink, collection_ids=collection_ids
+        )
 
     def build_requests_context(self):
         """Requests config + TMDB client for the approval inbox's manual send — no Plex/LLM I/O."""
@@ -102,19 +105,33 @@ class RunService:
 
     # -- execution -----------------------------------------------------------------------
 
-    async def start_run(self, *, trigger: str, dry_run: bool, user_ids: list[int] | None = None) -> int:
-        """Insert the runs row and launch execution as a background task; returns run id."""
+    async def start_run(
+        self,
+        *,
+        trigger: str,
+        dry_run: bool,
+        user_ids: list[int] | None = None,
+        collection_ids: list[int] | None = None,
+    ) -> int:
+        """Insert the runs row and launch execution as a background task; returns run id.
+
+        ``collection_ids`` scopes the run to specific rows (a per-row scheduled run builds only its
+        own rows); ``None`` builds every enabled row. The leak-safe privacy sync always covers every
+        account regardless, so rows not built this run stay hidden.
+        """
         with self._sessions() as session:
             run = Run(trigger=trigger, dry_run=dry_run, status="queued", stats={})
             session.add(run)
             session.commit()
             run_id = run.id
-        task = asyncio.create_task(self._execute(run_id, dry_run, user_ids))
+        task = asyncio.create_task(self._execute(run_id, dry_run, user_ids, collection_ids))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return run_id
 
-    async def _execute(self, run_id: int, dry_run: bool, user_ids: list[int] | None) -> None:
+    async def _execute(
+        self, run_id: int, dry_run: bool, user_ids: list[int] | None, collection_ids: list[int] | None = None
+    ) -> None:
         loop = asyncio.get_running_loop()
         async with self._lock:
             self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
@@ -124,7 +141,13 @@ class RunService:
                 session.commit()
                 profiles = self.enabled_profiles(session, user_ids)
             try:
-                ctx = self.build_context(dry_run=dry_run, loop=loop, run_id=run_id, log_sink=self._new_run_log(run_id))
+                ctx = self.build_context(
+                    dry_run=dry_run,
+                    loop=loop,
+                    run_id=run_id,
+                    log_sink=self._new_run_log(run_id),
+                    collection_ids=collection_ids,
+                )
                 report = await loop.run_in_executor(None, engine_run, ctx, profiles)
                 self._persist_report(run_id, report)
                 # The engine filled each profile's history in place, so this is the one moment we hold

@@ -17,15 +17,17 @@
 - **Requests** — the approval inbox for titles your picks wanted but the library doesn't have
   yet. Approve to send to Radarr/Sonarr, or reject so they never come back (see "Requests" below).
 - **Settings** — every connection re-testable in place; **Recommendations** (which candidate
-  sources to pool); curation style; row defaults; schedule editor (cron for power users); the
-  Danger Zone.
+  sources to pool); curation style; row defaults; the Danger Zone. (Each row's run schedule lives
+  in that row's editor, not here — see Schedules below.)
 
 ## Schedules
 
-Default is nightly at 03:30 server-local. Settings → Schedule offers **Nightly** and **Weekly**
-presets (just pick a run time), or switch to **Custom (cron)** to enter any 5-field cron expression
-— e.g. `0 */6 * * *` for every six hours, or `0 4 * * 1` for Mondays at 4am. One schedule covers
-the whole server; to skip someone, pause them on their detail page.
+**Every row runs on its own schedule** — there is no single server-wide one. Open a row (Rows → edit)
+and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom (cron)**
+for any 5-field expression (e.g. `0 */6 * * *` for every six hours, or `0 4 * * 1` for Mondays at
+4am), or **Off** to only run that row by hand. New rows default to nightly at 03:30 server-local;
+on upgrade, existing rows keep whatever your old global schedule was. Rows that share a cron run
+together. To skip a person entirely, pause them on their detail page.
 
 ## Naming a row
 

@@ -432,6 +432,15 @@ class EngineConfig:
     # Sonarr/Radarr requests for picks the library lacks. None -> the feature is entirely off, so
     # no missing-title bookkeeping happens at all (the common case pays nothing for it).
     requests: RequestConfig | None = None
+    # Row slugs to actually (re)build this run — a per-row scheduled run only rebuilds its own rows.
+    # None = build every row (a full run). Only the DELIVERY loop is scoped: privacy classification,
+    # the leak-safe share-filter sync, the unhidable-row sweep, and shelf promotion all still see the
+    # FULL `rows` set, so a row not built this run keeps its excludes, its placement, and its privacy.
+    build_only: frozenset[str] | None = None
+
+    def should_build(self, spec: RowSpec) -> bool:
+        """Whether this run rebuilds ``spec`` (scoped run) or every row (full run)."""
+        return self.build_only is None or spec.slug in self.build_only
 
     def default_row_spec(self) -> RowSpec:
         """The single default per-person row, synthesized when no rows are configured.

@@ -6,6 +6,7 @@ import {
 } from "@/components/curation-style";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { LibraryPicker } from "@/components/rows/library-picker";
+import { RowScheduleField } from "@/components/rows/row-schedule-field";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import { RowSourcesField } from "@/components/rows/row-sources-field";
 import { Segmented } from "@/components/segmented";
@@ -133,6 +134,11 @@ export function RowEditor({
             audienceUserIds={input.audience_user_ids}
             users={users}
             onChange={set}
+          />
+
+          <RowScheduleField
+            value={input.schedule}
+            onChange={(schedule) => set({ schedule })}
           />
 
           {!isDefault && (

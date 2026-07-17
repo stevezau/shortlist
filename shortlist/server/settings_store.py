@@ -49,7 +49,8 @@ DEFAULTS: dict[str, Any] = {
     "requests.auto_min_demand": 3,  # auto-send only titles wanted by at least this many people
     "requests.auto_min_rating": 8.0,  # ...and rated at least this high on the chosen source
     "requests.tag": "shortlist",  # tag applied to every title Shortlist adds ("" = no tag)
-    "schedule.cron": "30 3 * * *",
+    # (per-row schedules replaced the old global `schedule.cron` — each row carries its own cron on
+    # the collections table; see Collection.schedule and shortlist/server/scheduler.py)
     # Where Shortlist's rows sit in each library's Plex "Recommended" shelf, keyed by library (section)
     # key: {"anchor": "<collection title>", "before": false}. Empty = leave Plex's default order (rows
     # land last, under any co-managing tool like Kometa). Re-applied at end of each run; anchor is

@@ -82,13 +82,13 @@ describe("api", () => {
   it("wraps settings writes in a values envelope", async () => {
     fetchMock.mockResolvedValue(jsonResponse({}));
 
-    await api.putSettings({ "row.size": 15, "schedule.cron": "30 3 * * *" });
+    await api.putSettings({ "row.size": 15, "row.name_template": "✨ Picks" });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/settings");
     expect(init.method).toBe("PUT");
     expect(JSON.parse(init.body as string)).toEqual({
-      values: { "row.size": 15, "schedule.cron": "30 3 * * *" },
+      values: { "row.size": 15, "row.name_template": "✨ Picks" },
     });
   });
 

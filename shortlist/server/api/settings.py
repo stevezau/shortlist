@@ -9,7 +9,6 @@ from pydantic import BaseModel
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.server.auth import require_owner
-from shortlist.server.scheduler import reschedule
 from shortlist.server.settings_store import DEFAULTS, SECRET_KEYS, SettingsStore
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_owner)])
@@ -167,21 +166,12 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown settings: {sorted(unknown)}")
     _validate_values(update.values)
-    if "schedule.cron" in update.values:
-        from apscheduler.triggers.cron import CronTrigger
-
-        try:
-            CronTrigger.from_crontab(str(update.values["schedule.cron"]))
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=f"invalid cron expression: {e}") from e
     with request.app.state.sessions() as session:
         store = SettingsStore(session, request.app.state.secrets)
         for key, value in update.values.items():
             if key in SECRET_KEYS and value == "•••••":
                 continue  # redacted placeholder round-tripped from the UI — no change
             store.set(key, value)
-        if "schedule.cron" in update.values:
-            reschedule(request.app, str(update.values["schedule.cron"]))
         if "log.level" in update.values:
             # Apply immediately so a live "turn on DEBUG to watch this run" takes effect without a
             # container restart. The file sink is preserved from boot.

@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, apiErrorMessage } from "@/lib/api";
 import { ROW_SIZE_DEFAULT } from "@/lib/constants";
-import { cronFromTime, renderRowName } from "@/lib/format";
+import { renderRowName } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import type { StepProps } from "./step-props";
@@ -29,9 +29,7 @@ export function StepCustomize({ update, next }: StepProps) {
   const [choice, setChoice] = useState<TemplateChoice>("static");
   const [customTpl, setCustomTpl] = useState("✨ Fresh picks");
   const [rowSize, setRowSize] = useState(ROW_SIZE_DEFAULT);
-  const [time, setTime] = useState("03:30");
   const customId = useId();
-  const timeId = useId();
 
   const template =
     choice === "static"
@@ -45,7 +43,6 @@ export function StepCustomize({ update, next }: StepProps) {
       api.putSettings({
         "row.name_template": template,
         "row.size": rowSize,
-        "schedule.cron": cronFromTime(time),
       }),
     onSuccess: () => {
       update({ customized: true });
@@ -148,20 +145,11 @@ export function StepCustomize({ update, next }: StepProps) {
 
       <RowSizeField value={rowSize} onChange={setRowSize} />
 
-      <div className="space-y-2">
-        <Label htmlFor={timeId}>Refresh rows nightly at</Label>
-        <Input
-          id={timeId}
-          type="time"
-          value={time}
-          onChange={(event) => setTime(event.target.value)}
-          className="w-32"
-        />
-        <p className="text-sm text-muted-foreground">
-          Server-local time. Weekly cadence, cron expressions, and per-user
-          schedules live in Settings → Schedules once you're set up.
-        </p>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        This row refreshes nightly to start. Every row runs on its own schedule
+        — change the cadence, or turn it off, in the row&rsquo;s editor once
+        you&rsquo;re set up.
+      </p>
 
       <div className="flex flex-wrap items-center gap-3">
         <Button onClick={() => save.mutate()} disabled={save.isPending}>

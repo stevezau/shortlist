@@ -7,8 +7,6 @@ worse than no button at all.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 from playwright.sync_api import Page, expect
 
@@ -102,65 +100,6 @@ class TestDefaults:
         assert run["stats"].get("users_ok", 0) == 0
         assert run["stats"].get("users_error", 0) == 0
         assert all(u["enabled"] for u in app.api("GET", "/api/users").json())
-
-
-class TestSchedule:
-    def test_saving_the_schedule_persists_a_valid_cron(self, page: Page, app: ShortlistApp):
-        _open_settings(page)
-
-        page.get_by_label("Run at").fill("04:45")
-        page.get_by_role("button", name="Weekly", exact=True).click()
-        expect(page.get_by_text(re.compile(r"Rows refresh every Sunday at 04:45"))).to_be_visible()
-
-        # No Save button — the section auto-saves (debounced). Poll until it reaches the database.
-        for _ in range(24):
-            if app.api("GET", "/api/settings").json().get("schedule.cron") == "45 4 * * 0":
-                break
-            page.wait_for_timeout(250)
-        assert app.api("GET", "/api/settings").json()["schedule.cron"] == "45 4 * * 0"
-
-        page.reload()
-        expect(page.get_by_label("Run at")).to_have_value("04:45", timeout=LOAD)
-
-    def test_a_custom_cron_persists_and_reloads_in_custom_mode(self, page: Page, app: ShortlistApp):
-        """The Custom (cron) mode round-trips a non-preset schedule the presets can't represent."""
-        _open_settings(page)
-
-        page.get_by_role("button", name="Custom (cron)", exact=True).click()
-        cron_field = page.get_by_label("Cron expression")
-        cron_field.fill("0 4 * * 1")  # Mondays at 4am — not a nightly/weekly preset
-
-        for _ in range(24):
-            if app.api("GET", "/api/settings").json().get("schedule.cron") == "0 4 * * 1":
-                break
-            page.wait_for_timeout(250)
-        assert app.api("GET", "/api/settings").json()["schedule.cron"] == "0 4 * * 1"
-
-        # A non-Sunday weekday must come back in Custom mode, not be flattened onto the weekly preset.
-        page.reload()
-        expect(page.get_by_label("Cron expression")).to_have_value("0 4 * * 1", timeout=LOAD)
-
-    def test_an_invalid_cron_is_rejected_with_a_readable_message(self, page: Page, app: ShortlistApp):
-        """The backend must never accept a cron that would silently kill the nightly run. A well-formed
-        five-field expression clears the client gate and reaches the API, which rejects bad values.
-        """
-        _open_settings(page)
-
-        result = page.evaluate(
-            """async () => {
-                const response = await fetch('/api/settings', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', 'x-shortlist-csrf': '1' },
-                    body: JSON.stringify({ values: { 'schedule.cron': '99 99 * * *' } }),
-                });
-                return { status: response.status, body: await response.json() };
-            }"""
-        )
-
-        assert result["status"] == 422
-        assert "invalid cron expression" in result["body"]["detail"]
-        # And the good schedule is still in place — a rejected write changes nothing.
-        assert app.api("GET", "/api/settings").json()["schedule.cron"] == "30 3 * * *"
 
 
 class TestDangerZone:
