@@ -225,4 +225,46 @@ describe("RunDetailPage — grouped by library", () => {
 
     expect(await screen.findByText("Old Title")).toBeInTheDocument();
   });
+
+  it("shows a legend and explains rotated-out titles instead of a bare 'removed'", async () => {
+    getRun.mockResolvedValue(
+      run([
+        {
+          row_slug: "picked",
+          row_title: "✨ Picked for You",
+          library_key: "1",
+          library_title: "Movies",
+          added: ["Fresh One"],
+          removed: ["Old One", "Older One"],
+          kept: [],
+          deleted: [],
+          created: false,
+          picks: [
+            {
+              rank: 1,
+              title: "Fresh One",
+              reason: "new pick",
+              seed_title: "X",
+            },
+          ],
+        },
+      ]),
+    );
+
+    renderDetail();
+    await screen.findByText("Fresh One");
+
+    // The key explains every visual cue the results use, so nothing needs a hover to decode.
+    expect(screen.getByText(/What changed/i)).toBeInTheDocument();
+    expect(screen.getByText("New this run")).toBeInTheDocument();
+    expect(screen.getByText("Kept from last run")).toBeInTheDocument();
+    expect(screen.getByText("Rotated out for variety")).toBeInTheDocument();
+    expect(screen.getByText("Top picks")).toBeInTheDocument();
+
+    // "removed" now reads as rotation with the reason, not a bare scary count.
+    expect(screen.getByText(/2 rotated out/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/made room for the new picks above/i),
+    ).toBeInTheDocument();
+  });
 });

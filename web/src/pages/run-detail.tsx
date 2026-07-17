@@ -204,15 +204,17 @@ function LibraryPicks({ entry }: { entry: RunLibraryBreakdown }) {
       )}
       {entry.removed.length > 0 && (
         <p className="pt-1 text-xs text-muted-foreground">
-          <span className="font-medium text-destructive/80">
-            −{entry.removed.length} removed:
+          <span className="font-medium text-foreground/70">
+            −{entry.removed.length} rotated out
           </span>{" "}
+          — the row keeps its size, so these made room for the new picks above:{" "}
           <span className="line-through">{entry.removed.join(", ")}</span>
         </p>
       )}
       {entry.deleted.length > 0 && (
         <p className="text-xs font-medium text-destructive">
-          Row deleted: {entry.deleted.join(", ")}
+          Row deleted (this person no longer gets this row):{" "}
+          {entry.deleted.join(", ")}
         </p>
       )}
     </div>
@@ -249,6 +251,35 @@ function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
   );
 }
 
+/** A key for the run results — what the dots and the strikethrough mean — so the view reads without
+ *  hovering to guess. Shown once above a person's rows. */
+function ResultsLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground/70">What changed:</span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-2 w-2 rounded-full bg-success" aria-hidden="true" />
+        New this run
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className="h-2 w-2 rounded-full bg-muted-foreground/30"
+          aria-hidden="true"
+        />
+        Kept from last run
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="line-through">Title</span>
+        Rotated out for variety
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="font-semibold tabular-nums text-amber-400">#1–3</span>
+        Top picks
+      </span>
+    </div>
+  );
+}
+
 /** The selected user's result: an error, or their rows grouped from the per-(row, library) breakdown. */
 function UserPanel({ run, result }: { run: RunDetail; result: RunUserResult }) {
   if (result.error !== null) {
@@ -281,6 +312,7 @@ function UserPanel({ run, result }: { run: RunDetail; result: RunUserResult }) {
   }
   return (
     <div className="space-y-6">
+      <ResultsLegend />
       {[...rows.values()].map((entries) => (
         <RowSection key={entries[0]?.row_slug} entries={entries} />
       ))}

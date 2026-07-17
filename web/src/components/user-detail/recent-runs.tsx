@@ -66,7 +66,7 @@ export function RecentRuns({ userId }: { userId: number }) {
                   </div>
                 ) : (
                   <p className="mt-1 text-xs text-muted-foreground">
-                    +{added} added · −{removed} removed · {run.picks.length}{" "}
+                    +{added} new · −{removed} rotated out · {run.picks.length}{" "}
                     picks
                   </p>
                 )}
