@@ -74,7 +74,27 @@ describe("UninstallDialog", () => {
     expect(
       screen.getByRole("button", { name: /uninstall and restore server/i }),
     ).toBeDisabled();
-    expect(screen.getByRole("button", { name: /keep shortlist/i })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /keep shortlist/i }),
+    ).toBeDisabled();
+  });
+
+  it("shows live progress while running so a long wait doesn't read as frozen", () => {
+    renderDialog({
+      pending: true,
+      preview: {
+        filters_restored: 48,
+        collections_deleted: ["a", "b"],
+        dry_run: true,
+        message: "Preview only — nothing was changed.",
+      },
+    });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(/Restoring share filters/i);
+    expect(status).toHaveTextContent(/48 user share filters/i);
+    expect(status).toHaveTextContent(/about one per second/i); // sets the expectation of a wait
+    expect(status).toHaveTextContent(/elapsed/i); // the live timer
   });
 
   it("requests a dry-run preview and renders what would change", async () => {

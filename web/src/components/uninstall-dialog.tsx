@@ -1,5 +1,5 @@
 import { Eye, Loader2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -46,7 +46,24 @@ export function UninstallDialog({
   const inputId = useId();
   const confirmed = typed.trim().toLowerCase() === UNINSTALL_CONFIRM_PHRASE;
 
+  // A live "…s elapsed" counter while the uninstall runs — the write loop is Plex-rate-limited to
+  // ~1/sec, so it can run a while, and a bare spinner reads as frozen. This makes the wait honest.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!pending) {
+      setElapsed(0);
+      return;
+    }
+    const started = Date.now();
+    const id = window.setInterval(
+      () => setElapsed(Math.floor((Date.now() - started) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(id);
+  }, [pending]);
+
   const handleOpenChange = (next: boolean) => {
+    if (pending) return; // never close mid-uninstall — the write loop keeps running regardless
     if (!next) setTyped("");
     onOpenChange(next);
   };
@@ -95,6 +112,37 @@ export function UninstallDialog({
             </div>
           )}
         </div>
+
+        {pending && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="space-y-2 rounded-md border border-primary/30 bg-primary/5 p-3 text-sm"
+          >
+            <p className="flex items-center gap-2 font-medium">
+              <Loader2
+                className="h-4 w-4 shrink-0 animate-spin"
+                aria-hidden="true"
+              />
+              Restoring share filters and deleting collections…
+            </p>
+            <p className="text-muted-foreground">
+              {preview
+                ? `Putting back ${preview.filters_restored} user share filter${
+                    preview.filters_restored === 1 ? "" : "s"
+                  } and removing ${preview.collections_deleted.length} collection${
+                    preview.collections_deleted.length === 1 ? "" : "s"
+                  }. `
+                : ""}
+              Plex rate-limits these writes to about one per second, so this can
+              take a minute or two. Keep this window open — don&rsquo;t refresh
+              or close it.
+            </p>
+            <p className="text-xs tabular-nums text-muted-foreground">
+              {elapsed}s elapsed
+            </p>
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label htmlFor={inputId}>
