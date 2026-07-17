@@ -208,3 +208,54 @@ class TestAutoUserTag:
         tags = self._users(sessions, tmp_path, auto=False)
         assert tags["MooHouse"] == ""
         assert tags["Sarah"] == "vip"
+
+
+class TestSyncWatched:
+    """Daily watch-sync: refresh watched_at from current history without rebuilding rows."""
+
+    def test_marks_a_pick_watched_from_current_history(self, service, sessions, monkeypatch):
+        import asyncio
+        from datetime import UTC, datetime, timedelta
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with sessions() as s:
+            user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
+            s.add(user)
+            s.flush()
+            run = Run(trigger="manual", status="ok", started_at=datetime.now(UTC) - timedelta(days=1))
+            s.add(run)
+            s.flush()
+            s.add(
+                PickRow(
+                    run_id=run.id, user_id=user.id, tmdb_id=42, media_type="movie", rating_key=1, rank=1, title="Dune"
+                )
+            )
+            s.commit()
+
+        # This person has since watched the recommended title — the sync must credit it, no run needed.
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        watch = WatchedItem(title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42)
+        fake_ctx = SimpleNamespace(
+            history_source=SimpleNamespace(fetch=lambda p, **k: [watch]),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+        monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: [profile])
+
+        asyncio.run(service.sync_watched())
+
+        with sessions() as s:
+            assert s.query(PickRow).filter_by(tmdb_id=42).one().watched_at is not None
+
+
+def test_build_scheduler_registers_the_daily_watch_sync(sessions):
+    from types import SimpleNamespace
+
+    from shortlist.server.scheduler import _WATCH_SYNC_JOB_ID, build_scheduler
+
+    app = SimpleNamespace(state=SimpleNamespace(sessions=sessions, run_service=None))
+    scheduler = build_scheduler(app)
+    assert scheduler.get_job(_WATCH_SYNC_JOB_ID) is not None  # daily, independent of any row's cron

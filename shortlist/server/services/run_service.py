@@ -104,6 +104,35 @@ class RunService:
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         return self._ctx.user_history(user_id, limit=limit)
 
+    async def sync_watched(self) -> None:
+        """Refresh every enabled user's ``watched_at`` from their current watch history WITHOUT
+        rebuilding rows or writing to Plex — a read-only reconcile so the effectiveness report stays
+        fresh daily even when a row's own cron is weekly (or a user has no scheduled row at all).
+
+        Skips quietly if Plex isn't configured (build_context raises), and a per-user history-fetch
+        failure is logged and skipped rather than aborting the sweep. Serialized against runs by the
+        same lock, so it never overlaps a live run's per-user writes."""
+        loop = asyncio.get_running_loop()
+
+        def work() -> int:
+            ctx = self.build_context(dry_run=True)  # dry: builds clients, writes nothing to Plex
+            with self._sessions() as session:
+                profiles = self.enabled_profiles(session)
+            for profile in profiles:
+                try:
+                    profile.history = ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
+                except Exception as e:
+                    logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
+            self._reconcile_watched(profiles)
+            return len(profiles)
+
+        async with self._lock:
+            try:
+                count = await loop.run_in_executor(None, work)
+                logger.info("watch-sync: refreshed watch status for {} user(s)", count)
+            except Exception as e:  # e.g. Plex not configured yet — never crash the scheduler
+                logger.info("watch-sync skipped: {}", type(e).__name__)
+
     # -- execution -----------------------------------------------------------------------
 
     async def start_run(
