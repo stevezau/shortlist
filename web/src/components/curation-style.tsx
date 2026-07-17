@@ -36,13 +36,16 @@ export function CurationStyleFields({
 }) {
   const instructionsId = useId();
 
-  // Everything the user types lives in `guidance`; tone/template stay empty so the one box is the
-  // whole story (the built-in prompt + its safety rules are always applied underneath it).
+  // Everything the user types lives in `guidance`; tone stays "balanced" (the neutral preset — it
+  // adds no tone text, and is the ONLY valid value for the curator.prompt_tone setting, which rejects
+  // an empty string) and template stays empty, so the one box is the whole story.
   const setInstructions = (guidance: string) =>
-    onChange({ tone: "", template: "", guidance });
+    onChange({ tone: "balanced", template: "", guidance });
 
   const isCustomized = Boolean(
-    value.tone || value.guidance.trim() || value.template,
+    value.guidance.trim() ||
+    value.template ||
+    (value.tone && value.tone !== "balanced"),
   );
 
   // Debounce the live preview so typing doesn't fire a request per keystroke. It always runs (even
@@ -111,7 +114,9 @@ export function CurationStyleFields({
             variant="ghost"
             size="sm"
             disabled={!isCustomized}
-            onClick={() => onChange({ tone: "", guidance: "", template: "" })}
+            onClick={() =>
+              onChange({ tone: "balanced", guidance: "", template: "" })
+            }
           >
             {allowInherit ? "Clear override" : "Reset to default"}
           </Button>
