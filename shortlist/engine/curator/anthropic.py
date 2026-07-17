@@ -45,6 +45,10 @@ class AnthropicCurator:
         )
         return next((b.text for b in response.content if b.type == "text"), "")
 
+    def list_models(self) -> list[str]:
+        """Model ids this key can use, newest first — populates the setup model picker."""
+        return [m.id for m in self._client.models.list(limit=100).data]
+
     def curate(self, profile: UserProfile, candidates: list[Candidate], k: int) -> list[Pick]:
         import anthropic
 

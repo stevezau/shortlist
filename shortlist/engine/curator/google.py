@@ -42,6 +42,19 @@ class GoogleCurator:
         r = self._client.models.generate_content(model=self._model, contents="Reply with the single word: ready")
         return r.text or ""
 
+    def list_models(self) -> list[str]:
+        """Gemini model ids that support content generation, for the setup picker. Names come back
+        prefixed ('models/gemini-2.5-flash'); strip it so the id matches what the SDK is called with."""
+        out: list[str] = []
+        for m in self._client.models.list():
+            actions = getattr(m, "supported_actions", None) or []
+            if actions and "generateContent" not in actions:
+                continue
+            name = (getattr(m, "name", "") or "").removeprefix("models/")
+            if name:
+                out.append(name)
+        return sorted(out)
+
     def curate(self, profile: UserProfile, candidates: list[Candidate], k: int) -> list[Pick]:
         system, user = build_prompts(profile, candidates, k)
         log_curate_request(self.name, self._model, system, user, len(candidates), k)

@@ -19,6 +19,7 @@ export const queryKeys = {
   requests: ["requests"] as const,
   arrOptions: (service: "radarr" | "sonarr") =>
     ["arr-options", service] as const,
+  curatorModels: (provider: string) => ["curator-models", provider] as const,
   userRows: (id: number) => ["users", id, "rows"] as const,
   userRuns: (id: number) => ["users", id, "runs"] as const,
   userHistory: (id: number) => ["users", id, "history"] as const,
@@ -163,6 +164,18 @@ export function useArrOptions(service: "radarr" | "sonarr", enabled: boolean) {
   return useQuery({
     queryKey: queryKeys.arrOptions(service),
     queryFn: () => api.getArrOptions(service),
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** Model ids the saved AI provider offers, for the setup picker — only fetched once a key is on file.
+ * Keyed by provider so switching providers refetches; the query reads the saved key server-side. */
+export function useCuratorModels(provider: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.curatorModels(provider),
+    queryFn: api.getCuratorModels,
     enabled,
     staleTime: 60_000,
     retry: false,

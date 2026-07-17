@@ -39,6 +39,12 @@ class OllamaCurator:
         r.raise_for_status()
         return f"{len(r.json().get('models', []))} models available"
 
+    def list_models(self) -> list[str]:
+        """The models pulled on this Ollama server (its /api/tags), for the setup picker."""
+        r = httpx.get(f"{self._base_url}/api/tags", timeout=10)
+        r.raise_for_status()
+        return sorted(m["name"] for m in r.json().get("models", []) if m.get("name"))
+
     def curate(self, profile: UserProfile, candidates: list[Candidate], k: int) -> list[Pick]:
         system, user = build_prompts(profile, candidates, k)
         log_curate_request(self.name, self._model, system, user, len(candidates), k)

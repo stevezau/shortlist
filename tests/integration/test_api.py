@@ -312,6 +312,43 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"curator.provider": "bogus"}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"curator.provider": "none"}}).status_code == 200
 
+    def test_curator_models_is_empty_for_the_built_in_picker(self, client: TestClient):
+        client.put("/api/settings", json={"values": {"curator.provider": "none"}})
+        assert client.get("/api/settings/curator/models").json() == {"provider": "none", "models": []}
+
+    def test_curator_models_lists_the_saved_providers_models(self, client: TestClient, monkeypatch):
+        from types import SimpleNamespace
+
+        import shortlist.engine.curator as curator_mod
+
+        client.put("/api/settings", json={"values": {"curator.provider": "anthropic", "curator.api_key": "sk-secret"}})
+        captured: dict = {}
+
+        def fake_make(provider, **kw):
+            captured["provider"] = provider
+            captured.update(kw)
+            return SimpleNamespace(list_models=lambda: ["claude-a", "claude-b"])
+
+        monkeypatch.setattr(curator_mod, "make_curator", fake_make)
+        body = client.get("/api/settings/curator/models").json()
+        assert body == {"provider": "anthropic", "models": ["claude-a", "claude-b"]}
+        # The contract this feature owns: read the SAVED key server-side and forward it to the provider
+        # (never from the request). Assert BOTH reached make_curator, or a regression would pass silently.
+        assert captured["provider"] == "anthropic"
+        assert captured["api_key"] == "sk-secret"
+
+    def test_curator_models_degrades_to_empty_when_listing_fails(self, client: TestClient, monkeypatch):
+        import shortlist.engine.curator as curator_mod
+
+        client.put("/api/settings", json={"values": {"curator.provider": "anthropic"}})
+
+        def boom(provider, **kw):  # a bad/absent key or an offline provider must never 500 the picker
+            raise RuntimeError("unauthorized at http://api?X-Plex-Token=SEKRET")
+
+        monkeypatch.setattr(curator_mod, "make_curator", boom)
+        body = client.get("/api/settings/curator/models").json()
+        assert body == {"provider": "anthropic", "models": []}
+
     def test_web_search_provider_is_validated(self, client: TestClient):
         assert client.put("/api/settings", json={"values": {"llm_web.search_provider": "bogus"}}).status_code == 422
         for mode in ("auto", "native", "exa"):

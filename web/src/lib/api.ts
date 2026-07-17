@@ -233,6 +233,10 @@ export const api = {
   getArrOptions: (service: "radarr" | "sonarr"): Promise<ArrOptions> =>
     request(`/api/settings/arr/${service}/options`),
 
+  /** Model ids the saved AI provider offers, for the setup model picker (empty = free-text fallback). */
+  getCuratorModels: (): Promise<{ provider: string; models: string[] }> =>
+    request("/api/settings/curator/models"),
+
   /** The server's Plex libraries, for the Rows editor's per-row delivery-target picker. */
   getLibraries: (): Promise<PlexLibrary[]> => request("/api/system/libraries"),
 

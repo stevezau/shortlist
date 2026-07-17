@@ -1,4 +1,4 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 import { settingString } from "@/lib/format";
 import { CURATOR_PROVIDERS, type CuratorProviderInfo } from "@/lib/providers";
-import { useSettings } from "@/lib/queries";
+import { queryKeys, useCuratorModels, useSettings } from "@/lib/queries";
 import { cn } from "@/lib/utils";
 
 import type { StepProps } from "./step-props";
@@ -35,7 +35,9 @@ export function StepCurator({ data, update }: StepProps) {
   const [model, setModel] = useState(selected?.defaultModel ?? "");
   const keyId = useId();
   const modelId = useId();
+  const modelListId = useId();
   const ollamaId = useId();
+  const queryClient = useQueryClient();
 
   // Coming back to this step (Back/Next) remounts it — seed the fields from what's already saved so
   // the key (redacted "•••••"), model, and Ollama URL survive the round trip. Only overrides the
@@ -53,6 +55,20 @@ export function StepCurator({ data, update }: StepProps) {
     const savedModel = settingString(saved, "curator.model");
     if (savedModel) setModel(savedModel);
   }, [settings.data]);
+
+  // Fetch the provider's models once a key is on file (Ollama lists from its URL, no key). The backend
+  // reads the SAVED key server-side, so the list reflects the last Save & test; an empty list (no key
+  // yet, or a provider that can't list) just leaves the free-text field.
+  const hasSavedKey = !!(
+    settings.data && settingString(settings.data, "curator.api_key")
+  );
+  const models = useCuratorModels(
+    selected?.id ?? "none",
+    Boolean(
+      selected && selected.id !== "none" && (selected.needsUrl || hasSavedKey),
+    ),
+  );
+  const modelOptions = models.data?.models ?? [];
 
   const saveAndTest = useMutation({
     mutationFn: async (provider: CuratorProviderInfo) => {
@@ -74,6 +90,10 @@ export function StepCurator({ data, update }: StepProps) {
       // Only a passing test opens the Next gate. testConnection resolves even when the key is
       // wrong (ok: false) — so gate on result.ok, not merely on the call succeeding.
       if (provider.id !== "none") update({ curator_ready: result.ok === true });
+      // The key is now on file, so refetch this provider's model list to populate the picker.
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.curatorModels(provider.id),
+      });
     },
   });
 
@@ -172,10 +192,22 @@ export function StepCurator({ data, update }: StepProps) {
                 value={model}
                 onChange={(event) => setModel(event.target.value)}
                 autoComplete="off"
+                list={modelOptions.length > 0 ? modelListId : undefined}
+                placeholder={selected.defaultModel}
               />
+              {modelOptions.length > 0 && (
+                <datalist id={modelListId}>
+                  {modelOptions.map((id) => (
+                    <option key={id} value={id} />
+                  ))}
+                </datalist>
+              )}
               <p className="text-sm text-muted-foreground">
-                The cheap tier is plenty — the curator only re-ranks ~40 titles
-                you already own.
+                {models.isFetching
+                  ? "Loading available models…"
+                  : modelOptions.length > 0
+                    ? `${modelOptions.length} models available — start typing to choose, or keep the recommended ${selected.defaultModel}.`
+                    : "The cheap tier is plenty — the curator only re-ranks ~40 titles you already own."}
               </p>
             </div>
             <Button

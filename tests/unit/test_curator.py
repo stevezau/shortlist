@@ -193,6 +193,21 @@ class TestAnthropicCurator:
         assert call.kwargs["output_config"]["format"]["schema"] == picks_schema()
         assert "temperature" not in call.kwargs  # sampling params 400 on newer tiers
 
+    def test_list_models_returns_the_accounts_model_ids(self, monkeypatch):
+        mod = _fake_anthropic_module()
+        monkeypatch.setitem(sys.modules, "anthropic", mod)
+        from shortlist.engine.curator.anthropic import AnthropicCurator
+
+        client = MagicMock()
+        mod.Anthropic.return_value = client
+        client.models.list.return_value = SimpleNamespace(
+            data=[SimpleNamespace(id="claude-opus-4-8"), SimpleNamespace(id="claude-haiku-4-5-20251001")]
+        )
+        curator = AnthropicCurator(api_key="k")
+
+        assert curator.list_models() == ["claude-opus-4-8", "claude-haiku-4-5-20251001"]
+        assert client.models.list.call_args.kwargs["limit"] == 100
+
     def test_api_error_becomes_curator_error(self, monkeypatch):
         mod = _fake_anthropic_module()
         monkeypatch.setitem(sys.modules, "anthropic", mod)
@@ -286,6 +301,24 @@ class TestOpenAICurator:
         call = client.chat.completions.create.call_args
         assert call.kwargs["response_format"]["json_schema"]["strict"] is True
 
+    def test_list_models_keeps_chat_families_sorted(self, monkeypatch):
+        curator, client, _mod = self._client(monkeypatch)
+        client.models.list.return_value = SimpleNamespace(
+            data=[
+                SimpleNamespace(id="gpt-5-mini"),
+                SimpleNamespace(id="text-embedding-3-large"),
+                SimpleNamespace(id="o3"),
+            ]
+        )
+        assert curator.list_models() == ["gpt-5-mini", "o3"]  # embeddings dropped, chat families sorted
+
+    def test_list_models_falls_back_to_all_when_nothing_looks_like_chat(self, monkeypatch):
+        curator, client, _mod = self._client(monkeypatch)
+        client.models.list.return_value = SimpleNamespace(
+            data=[SimpleNamespace(id="whisper-1"), SimpleNamespace(id="dall-e-3")]
+        )
+        assert curator.list_models() == ["dall-e-3", "whisper-1"]  # no chat family matched -> the full sorted list
+
     def _client(self, monkeypatch):
         mod = ModuleType("openai")
         mod.OpenAIError = type("OpenAIError", (Exception,), {})
@@ -364,6 +397,25 @@ class TestGoogleCurator:
         assert [p.tmdb_id for p in picks] == [1]
         call = client.models.generate_content.call_args
         assert call.kwargs["config"]["response_json_schema"] == picks_schema()
+
+    def test_list_models_strips_prefix_and_keeps_content_generators(self, monkeypatch):
+        google_pkg = ModuleType("google")
+        genai = ModuleType("google.genai")
+        genai.Client = MagicMock()
+        google_pkg.genai = genai
+        monkeypatch.setitem(sys.modules, "google", google_pkg)
+        monkeypatch.setitem(sys.modules, "google.genai", genai)
+        from shortlist.engine.curator.google import GoogleCurator
+
+        client = MagicMock()
+        genai.Client.return_value = client
+        client.models.list.return_value = [
+            SimpleNamespace(name="models/gemini-2.5-pro", supported_actions=["generateContent"]),
+            SimpleNamespace(name="models/embedding-001", supported_actions=["embedContent"]),  # dropped
+            SimpleNamespace(name="models/gemini-2.5-flash", supported_actions=["generateContent"]),
+        ]
+        # 'models/' prefix stripped so the id matches what the SDK is called with; sorted; embed-only gone.
+        assert GoogleCurator(api_key="k").list_models() == ["gemini-2.5-flash", "gemini-2.5-pro"]
 
     def test_applies_the_timeout_to_the_client_in_milliseconds(self, monkeypatch):
         # Regression: the ctor accepted `timeout` but never passed it, so a stalled Gemini call was
@@ -450,6 +502,13 @@ class TestGoogleCurator:
 
 
 class TestOllamaCurator:
+    @respx.mock
+    def test_list_models_reads_the_pulled_models_from_api_tags(self):
+        respx.get("http://ollama.test/api/tags").mock(
+            return_value=httpx.Response(200, json={"models": [{"name": "qwen2.5"}, {"name": "llama3.3:latest"}]})
+        )
+        assert OllamaCurator(base_url="http://ollama.test").list_models() == ["llama3.3:latest", "qwen2.5"]
+
     @respx.mock
     def test_posts_schema_as_format_field(self):
         route = respx.post("http://ollama.test/api/chat").mock(

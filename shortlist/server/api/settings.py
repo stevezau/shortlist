@@ -291,3 +291,41 @@ async def arr_options(service: str, request: Request) -> dict:
         return await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
         raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
+
+
+@router.get("/curator/models")
+async def curator_models(request: Request) -> dict:
+    """Model ids the configured AI provider offers, for the setup model picker.
+
+    Reads the SAVED provider + key server-side (a key is never accepted in the request). Best-effort:
+    a provider that can't list — no key on file yet, an offline Ollama, or a provider/proxy without a
+    models endpoint — returns an empty list, and the UI falls back to the free-text model field.
+    """
+    from loguru import logger
+
+    from shortlist.server.services.context_builder import curator_kwargs
+
+    state = request.app.state
+    with state.sessions() as session:
+        get = SettingsStore(session, state.secrets).get
+        provider = (get("curator.provider") or "none").lower()
+        kwargs = curator_kwargs(get)
+    if provider in ("none", "null", ""):
+        return {"provider": provider, "models": []}
+
+    def fetch() -> list[str]:
+        from shortlist.engine.curator import make_curator
+
+        lister = getattr(make_curator(provider, **kwargs), "list_models", None)
+        return list(lister()) if callable(lister) else []
+
+    try:
+        models = await asyncio.get_running_loop().run_in_executor(None, fetch)
+    except Exception as e:
+        # A failed listing is expected (bad/absent key, offline server) — never fatal. Log ONLY the
+        # exception class, never its message: an LLM SDK can embed the api_key in the error text in a
+        # shape redact() doesn't cover (e.g. Google's `?key=AIza…`), so the safe move is to not render
+        # it at all (rule 9). The UI just shows the free-text field.
+        logger.info("curator model list unavailable ({})", type(e).__name__)
+        models = []
+    return {"provider": provider, "models": models}

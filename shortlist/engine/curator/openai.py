@@ -44,6 +44,14 @@ class OpenAICurator:
         )
         return r.choices[0].message.content or ""
 
+    def list_models(self) -> list[str]:
+        """Chat-capable model ids for the setup picker. The account's model list also carries
+        embeddings/tts/whisper/image models, so keep only the chat/reasoning families — falling back
+        to the full list if that filter finds nothing (the free-text field still accepts anything)."""
+        ids = sorted(m.id for m in self._client.models.list().data)
+        chat = [m for m in ids if m.startswith(("gpt-", "chatgpt", "o1", "o3", "o4"))]
+        return chat or ids
+
     def curate(self, profile: UserProfile, candidates: list[Candidate], k: int) -> list[Pick]:
         import openai
 
