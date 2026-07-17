@@ -1188,6 +1188,63 @@ class _DictCache:
         self.store[key] = value
 
 
+class TestLibraryScoping:
+    """Only the libraries a row targets are read — an unselected/off-type library is never scanned."""
+
+    def test_reads_only_libraries_a_row_targets(self, ctx: EngineContext):
+        from shortlist.engine.models import RowSpec
+
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        sports = MagicMock(type="movie", key="2", title="Sports")  # unselected by the row below
+        shows = MagicMock(type="show", key="3", title="TV Shows")  # wrong media for a movie row
+        ctx.config.rows = [RowSpec(slug="m", name_template="Movies", size=5, media="movie", library_keys=["1"])]
+        ctx.config.rows_defined = True
+        ctx.plex.section_signature.return_value = None  # force a scan (no cache)
+        scanned: list[str] = []
+        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: scanned.append(str(sec.key)) or ({}, {})
+
+        pipeline_mod._build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, sports, shows])
+
+        assert scanned == ["1"]  # Movies only — Sports and TV Shows never read
+        assert [str(s.key) for s in ctx.delivery_sections] == ["1"]
+
+    def test_unconfigured_run_still_reads_every_library(self, ctx: EngineContext):
+        """No rows configured -> the synthesized default row targets everything, so all libraries read."""
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        shows = MagicMock(type="show", key="2", title="TV Shows")
+        ctx.config.rows = []
+        ctx.config.rows_defined = False
+        ctx.plex.section_signature.return_value = None
+        scanned: list[str] = []
+        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: scanned.append(str(sec.key)) or ({}, {})
+
+        pipeline_mod._build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, shows])
+
+        assert sorted(scanned) == ["1", "2"]
+
+    def test_muted_row_cleanup_scans_a_library_the_run_scoped_out(self, ctx: EngineContext):
+        """A muted row whose stale copy lives in a de-targeted library is still removed — cleanup scans
+        EVERY library, not the run's (targeting-scoped) delivery_sections."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.engine.models import CollectionDiff, RowOverride, RowSpec
+        from shortlist.engine.rows import _remove_muted_and_retired
+
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        old_lib = MagicMock(type="movie", key="2", title="4K Movies")  # row no longer targets this
+        ctx.plex.sections.return_value = [movies, old_lib]
+        ctx.delivery_sections = [movies]  # this run only scoped in Movies
+        ctx.config.rows = [RowSpec(slug="gems", name_template="Hidden Gems", size=5, media="movie", library_keys=["1"])]
+        ctx.config.rows_defined = True
+        ctx.config.dry_run = False
+        sarah = make_profile("sarah", account_id=100, row_overrides={"gems": RowOverride(muted=True)})
+        stale = MagicMock(title="Hidden Gems" + row_marker(100))
+        ctx.plex.find_owned_collections.side_effect = lambda s, label: [stale] if s is old_lib else []
+
+        _remove_muted_and_retired(ctx, sarah, ctx.config, CollectionDiff())
+
+        ctx.plex.delete_owned_collection.assert_called_once()  # removed from 4K Movies despite the scope
+
+
 class TestLibraryIndexCache:
     """The cross-run tmdb_id -> ratingKey index cache in _library_index."""
 

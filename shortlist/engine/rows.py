@@ -278,7 +278,10 @@ def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: Engine
         # write_lock: a Plex mutation (and the collections-cache read/invalidate inside it) must be
         # serialized when users run concurrently — only reads + LLM overlap (Stage 3).
         with ctx.write_lock:
-            remove_row(ctx.plex, user, cfg, spec, dry_run=cfg.dry_run, diff=diff, sections=ctx.delivery_sections)
+            # Scan EVERY library, not the run's (now targeting-scoped) delivery_sections: a muted row
+            # whose library_keys later dropped a library can still have a stale copy there, and a
+            # muted row must leave them all. plex.sections() is cached, so this is cheap.
+            remove_row(ctx.plex, user, cfg, spec, dry_run=cfg.dry_run, diff=diff, sections=ctx.plex.sections())
 
 
 def _run_user(

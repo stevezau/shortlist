@@ -24,7 +24,7 @@ import {
 import { githubIssueSnippet } from "@/lib/github";
 import { queryKeys, useRun, useUsers } from "@/lib/queries";
 import { mergeRunLog } from "@/lib/run-log";
-import { STAGE_LABELS } from "@/lib/run-stages";
+import { countLabel, STAGE_LABELS } from "@/lib/run-stages";
 import { useSSE } from "@/lib/sse";
 import type {
   Pick,
@@ -91,8 +91,8 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
   const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
   const label = STAGE_LABELS[entry.stage] ?? entry.stage;
   const detail = Object.entries(entry.counts ?? {})
-    .map(([k, v]) => `${v} ${k}`)
-    .join(", ");
+    .map(([k, v]) => countLabel(k, Number(v)))
+    .join(" · ");
   return (
     <div className="flex gap-2">
       {time && <span className="shrink-0 text-muted-foreground">{time}</span>}

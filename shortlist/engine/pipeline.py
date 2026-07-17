@@ -231,12 +231,18 @@ def _build_indexes(
 
     Three indexes, because they answer different questions.
 
-    `seed_index` (ratingKey -> tmdb_id, across EVERY library) turns what a user WATCHED into a TMDB
-    id, and people watch films in "4K Movies" too. It is keyed by ratingKey, not by tmdb_id, because
-    that is the direction it is READ in: the same film in two movie libraries is ONE tmdb id and TWO
-    ratingKeys, so a tmdb-keyed index would keep only the last library scanned — and every watch in
-    the other library would resolve to nothing, leaving that user seedless with an empty row and a
-    run that still reported success.
+    Only the libraries the rows actually TARGET are read (their media type + ``library_keys``), so a
+    library no row uses — a Sports library, a music library mis-typed as a show — is never scanned or
+    shown in the activity log. The privacy sweep walks EVERY library independently (it deletes leaking
+    rows regardless of targeting), so narrowing here never weakens hiding.
+
+    `seed_index` (ratingKey -> tmdb_id, across every TARGETED library) turns what a user WATCHED into a
+    TMDB id, and people watch films in "4K Movies" too. It is keyed by ratingKey, not by tmdb_id,
+    because that is the direction it is READ in: the same film in two movie libraries is ONE tmdb id
+    and TWO ratingKeys, so a tmdb-keyed index would keep only the last library scanned — and every
+    watch in the other library would resolve to nothing, leaving that user seedless with an empty row
+    and a run that still reported success. A watch in a library no row targets simply doesn't seed
+    (nothing could be recommended from it anyway).
 
     `library_index` (per media type) decides what may be RECOMMENDED: a title is deliverable if it
     lives in ANY library of its type, since a row can target any of them. A pick in no delivery
@@ -251,11 +257,27 @@ def _build_indexes(
     section_index: dict[str, dict[int, int]] = {}
     section_catalog: dict[str, list[dict]] = {}
     episode_counts: dict[int, int] = {}
-    # Only when there is someone to recommend to. The indexes walk every item in every library, and
-    # are read only inside _run_user — so with no users this is thousands of PMS reads thrown away,
-    # in front of the sweep, on the one path (a closed gate) where the sweep is the entire point and
-    # must not be preceded by anything that can fail.
-    for section in sections if users else []:
+    # Only when there is someone to recommend to. The indexes walk every item in every TARGETED
+    # library, and are read only inside _run_user — so with no users this is thousands of PMS reads
+    # thrown away, in front of the sweep, on the one path (a closed gate) where the sweep is the entire
+    # point and must not be preceded by anything that can fail.
+    #
+    # Read only the libraries some row targets (media type + library_keys). Retired rows are included
+    # so a disabled row is still curated/indexed where it lives; the mute/retire CLEANUP scans every
+    # library independently (rows._remove_muted_and_retired), and the leak sweep covers everything else
+    # independently too. A library no row uses (e.g. a Sports library) is skipped entirely.
+    if users:
+        # The EFFECTIVE specs — per_person_rows() synthesizes the legacy default row when rows aren't
+        # managed, so an unconfigured run still reads every library (it targets them all).
+        wanted_keys = {
+            str(section.key)
+            for spec in (*ctx.config.per_person_rows(), *ctx.config.shared_rows(), *ctx.config.retired_rows)
+            for section in target_sections(sections, spec)
+        }
+        index_sections = [section for section in sections if str(section.key) in wanted_keys]
+    else:
+        index_sections = []
+    for section in index_sections:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
         index, episodes = _library_index(ctx, section)
         episode_counts.update(episodes)
@@ -266,15 +288,15 @@ def _build_indexes(
         section_index[section.key] = index
     ctx.section_index = section_index
     ctx.episode_counts = episode_counts
-    ctx.delivery_sections = list(sections) if users else []
+    ctx.delivery_sections = index_sections
     # The AI-from-library source needs titles/genres. Built when ANY row wants it — not just the
     # global setting: a row overriding its sources to llm_library found an empty catalog and
-    # produced nothing, forever, while reporting ok. And built from EVERY library, not one
+    # produced nothing, forever, while reporting ok. And built from every TARGETED library, not one
     # representative per type, or a row pinned to "4K Movies" would be offered the "Movies" catalog.
     if users and _wants_library_catalog(ctx.config):
         catalog: dict[MediaType, list[dict]] = {MediaType.MOVIE: [], MediaType.SHOW: []}
         seen: dict[MediaType, set[int]] = {MediaType.MOVIE: set(), MediaType.SHOW: set()}
-        for section in sections:
+        for section in index_sections:
             kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
             _emit(ctx, section.title, "cataloguing", {})
             items = ctx.plex.build_library_catalog(section)
