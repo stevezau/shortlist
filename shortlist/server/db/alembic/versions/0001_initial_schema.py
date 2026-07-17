@@ -112,15 +112,6 @@ def upgrade() -> None:
     )
     _create_if_missing(
         existing,
-        "privacy_checks",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("ran_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("tier", sa.String(8), nullable=False),
-        sa.Column("passed", sa.Boolean(), nullable=False),
-        sa.Column("detail", sa.JSON(), nullable=False),
-    )
-    _create_if_missing(
-        existing,
         "caches",
         sa.Column("kind", sa.String(32), primary_key=True),
         sa.Column("key", sa.String(512), primary_key=True),
@@ -142,7 +133,6 @@ def downgrade() -> None:
     for table in (
         "events",
         "caches",
-        "privacy_checks",
         "restriction_snapshots",
         "picks",
         "run_users",

@@ -37,7 +37,6 @@ class TestMigrations:
             "run_users",
             "picks",
             "restriction_snapshots",
-            "privacy_checks",
             "caches",
             "events",
         } <= tables

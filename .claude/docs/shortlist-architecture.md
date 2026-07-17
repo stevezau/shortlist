@@ -121,7 +121,6 @@ run_users             run_id FK · user_id FK · status · error · duration_ms 
 picks                 id · run_id FK · user_id FK · tmdb_id · rating_key · rank · reason · seed_tmdb_id · seed_title
                       · created_at · watched_at NULL          ← watched_at backfilled nightly = hit-rate
 restriction_snapshots id · user_id FK · taken_at · reason(initial|sync|uninstall_restore) · filters_before JSON · filters_after JSON
-privacy_checks        id · ran_at · tier(T1|T2|T3) · passed BOOL · detail JSON
 caches                kind(tmdb|library_index) · key · value JSON · expires_at
 events                id · ts · level · scope · message JSON   ← audit trail surfaced in UI
 ```
