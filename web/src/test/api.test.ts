@@ -140,7 +140,7 @@ describe("api", () => {
   it("normalizes network failures into a status-0 ApiError with plain-English copy", async () => {
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
 
-    const error = await api.getHealth().catch((caught: unknown) => caught);
+    const error = await api.getRuns().catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).status).toBe(0);

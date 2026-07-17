@@ -1,10 +1,10 @@
-"""Loguru configuration shared by the CLI and the server."""
+"""Loguru configuration for the server."""
 
 import sys
 
 from loguru import logger
 
-# The levels the UI/CLI/API accept, quietest → loudest. TRACE adds full AI prompts + responses;
+# The levels the UI/API accept, quietest → loudest. TRACE adds full AI prompts + responses;
 # DEBUG adds per-source candidate counts, cache hits, throttle waits, and per-row/per-user timing.
 LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "WARNING", "ERROR")
 
@@ -24,7 +24,7 @@ def configure_logging(level: str = "INFO", log_file: str | None = None) -> None:
 
     Args:
         level: Minimum level for the stderr sink (console / `docker logs`).
-        log_file: Optional rotating file sink path (used by the CLI and server under /config/logs/).
+        log_file: Optional rotating file sink path (the server writes under /config/logs/).
             The file sink always captures DEBUG so the on-disk log stays useful even when the
             console is quiet. Passing None keeps the file sink from the previous call.
     """

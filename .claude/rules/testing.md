@@ -66,7 +66,6 @@ variables, each of which needs its full matrix:
 - `user_type`: shared / managed / owner
 - history source: tautulli / plex
 - curator provider: anthropic / openai / google / ollama / null
-- privacy tier: T1 / T2 / PROBE
 - filter state: empty / shortlist-only / pre-existing-foreign-filters / mixed
 
 If a row would just duplicate another, add a one-liner explaining _why_ they collapse — otherwise

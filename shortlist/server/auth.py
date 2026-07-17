@@ -61,6 +61,24 @@ def _rate_limit_pin(request: Request) -> None:
             del _PIN_HITS[stale]
 
 
+# poll_pin proxies to plex.tv on every call and cannot require auth (it IS the login handshake), so a
+# GLOBAL-only cap bounds total plex.tv amplification if someone spams it with random pin ids.
+# Deliberately NOT per-IP and set generously: the legit client polls the PIN every ~1.5s while the
+# owner authorizes in Plex, and a tight per-IP cap would break a normal login. A single owner (even a
+# few concurrent devices) never comes near this; it only ever trips under abuse.
+_POLL_ALL: deque[float] = deque()
+_POLL_MAX_GLOBAL = 600
+
+
+def _rate_limit_poll() -> None:
+    now = time.monotonic()
+    while _POLL_ALL and now - _POLL_ALL[0] > _PIN_WINDOW_S:
+        _POLL_ALL.popleft()
+    if len(_POLL_ALL) >= _POLL_MAX_GLOBAL:
+        raise HTTPException(status_code=429, detail=_PIN_BUSY)
+    _POLL_ALL.append(now)
+
+
 def _client_headers(client_id: str) -> dict[str, str]:
     return {
         "X-Plex-Product": PRODUCT,
@@ -158,6 +176,7 @@ async def create_pin(request: Request) -> dict:
 @router.get("/pin/{pin_id}")
 async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
     """Poll the PIN; once linked, verify the account is the server owner and set the session."""
+    _rate_limit_poll()
     state = request.app.state
     async with httpx.AsyncClient() as client:
         r = await client.get(f"{PLEXTV}/api/v2/pins/{pin_id}", headers=_client_headers(state.client_id), timeout=15)

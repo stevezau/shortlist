@@ -315,12 +315,6 @@ export interface ArrOptions {
   root_folders: { id: number; path: string }[];
 }
 
-/** GET /api/system/health. */
-export interface Health {
-  status: string;
-  version: string;
-}
-
 /** POST /api/system/uninstall response (also returned for dry-run previews). */
 export interface UninstallResult {
   filters_restored: number;

@@ -34,8 +34,10 @@ violate them.
    error). Managed users' restriction _profiles_ (parental controls) are never modified by Shortlist.
 6. **Throttle plex.tv.** ≤1 write/s with exponential backoff on 429; runs must be resume-safe
    (per-user transactionality — a crash mid-run never leaves a half-applied user).
-7. **Probes clean up in `finally`.** Privacy Check artifacts (probe collection, canary filter
-   change) are removed/restored even when the check fails or raises.
+7. **Scaffolding cleans up in `finally`.** If a code path ever creates a temporary artifact on a
+   real server as scaffolding (a probe collection, a canary filter change), it must be
+   removed/restored in a `finally`, even when the operation fails or raises — never leave
+   scaffolding behind on someone's server.
 8. **Dry-run everywhere.** Every write path takes `dry_run` and logs the would-be diff instead.
 9. **Secrets.** Plex tokens and LLM keys: encrypted at rest (Fernet, `/config/secret.key`), never
    logged, never in exception messages, redacted in the UI after save.

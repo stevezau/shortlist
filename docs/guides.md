@@ -2,8 +2,8 @@
 
 ## The web interface
 
-- **Dashboard** — privacy badge (last verified), next scheduled run, per-user cards with
-  their current row, hit rate, and a Run now button. Live-updates during runs.
+- **Dashboard** — next scheduled run, per-user cards with their current row, hit rate, and a
+  Run now button. Live-updates during runs.
 - **Rows** — create, edit, and reorder your rows. Each card shows who sees it and how it
   differs from the defaults (sources, libraries, curation style, placement). This is where
   the whole multi-row feature lives — see "Naming a row" and "Row placement" below.

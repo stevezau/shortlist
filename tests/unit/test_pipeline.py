@@ -563,9 +563,9 @@ class TestPerRowOverrides:
         ctx.plex.create_collection.assert_not_called()
         ctx.plex.promote.assert_not_called()
 
-    def test_the_cli_still_gets_a_default_row_when_none_are_configured(self, ctx: EngineContext, mock_plextv):
-        """The CLI does not manage rows (rows_defined=False), so an empty list means 'unconfigured' —
-        synthesize the legacy default so a bare `shortlist run` still builds a row."""
+    def test_an_unconfigured_run_still_gets_a_default_row(self, ctx: EngineContext, mock_plextv):
+        """A caller that doesn't manage rows (rows_defined=False) passing an empty list means
+        'unconfigured' — synthesize the legacy default so a bare engine run still builds a row."""
         ctx.config.rows = []
         ctx.config.rows_defined = False
         sarah = make_profile("sarah", account_id=100)

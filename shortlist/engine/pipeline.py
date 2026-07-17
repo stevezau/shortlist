@@ -45,7 +45,7 @@ from shortlist.engine.privacy import SnapshotStore, shared_label_audiences, sync
 
 @dataclass
 class EngineContext:
-    """Everything one run needs; adapters (CLI/server) build this once."""
+    """Everything one run needs; the server adapter builds this once."""
 
     config: EngineConfig
     plex: PlexClient
@@ -84,7 +84,7 @@ class EngineContext:
     known_slugs: dict[int, str] = field(default_factory=dict)
     # (tmdb_id, media_type) the owner has already actioned in the Requests inbox — sent or rejected.
     # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
-    # by a later auto-send. Empty for the CLI, which has no inbox.
+    # by a later auto-send. Empty for direct engine runs, which have no inbox.
     handled_requests: set[tuple[int, str]] = field(default_factory=set)
     progress: Callable[[str, str, dict], None] | None = None  # (user_slug, stage, counts) -> None
     # Cross-run cache for the per-library tmdb_id -> ratingKey index, keyed by a cheap change signal
@@ -94,7 +94,7 @@ class EngineContext:
     # Day number of this run (date.toordinal()), the phase for freshness rotation so a row shifts
     # day to day but is reproducible within a day. Set at the start of run(); 0 disables rotation.
     run_day: int = 0
-    # How many users to process concurrently. 1 = fully sequential (the safe engine/CLI/test default).
+    # How many users to process concurrently. 1 = fully sequential (the safe engine/test default).
     # The server sets this from `run.concurrency`. Only the READ + LLM work overlaps; every Plex and
     # plex.tv write is serialized by ``write_lock``, so the leak-safe ordering is preserved exactly.
     concurrency: int = 1
@@ -675,7 +675,7 @@ def _server_audience(processed: list[UserProfile], roster: dict, known_slugs: di
     never heard of still sees every row whose label their filter doesn't exclude.
 
     Accounts are matched by plex ACCOUNT ID, never by name. `known_slugs` is the adapter's durable
-    account -> slug map (the server's users table; the CLI's slugs.json), so a user who renames
+    account -> slug map (the server's users table), so a user who renames
     themselves keeps the slug their row's label was built from. Rebuilding the profile from their
     current username instead would hand them a different slug, and `desired_excludes` would then
     decide their own row belonged to someone else and hide it from them.

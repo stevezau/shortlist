@@ -93,6 +93,19 @@ class TestRedact:
         assert "X-Plex-Token=REDACTED" in out
         assert "foo=1" in out  # only the token is scrubbed
 
+    def test_strips_service_api_keys_from_error_text(self):
+        from shortlist.engine.clients.http_retry import redact
+
+        # Tautulli/OMDb carry `apikey=` in the URL; TMDB carries `api_key=` — both must be scrubbed,
+        # not just the Plex token, or a client that doesn't suppress raise_for_status could leak one.
+        tautulli = redact("HTTPError for http://tautulli:8181/api/v2?apikey=DEADBEEFsecret&cmd=x")
+        assert "DEADBEEFsecret" not in tautulli
+        assert "apikey=REDACTED" in tautulli
+        assert "cmd=x" in tautulli
+        tmdb = redact("500 for https://api.themoviedb.org/3/movie/1?api_key=TMDBsecretKEY")
+        assert "TMDBsecretKEY" not in tmdb
+        assert "api_key=REDACTED" in tmdb
+
     def test_leaves_token_free_text_unchanged(self):
         from shortlist.engine.clients.http_retry import redact
 

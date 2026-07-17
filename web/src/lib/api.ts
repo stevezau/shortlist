@@ -3,7 +3,6 @@ import type {
   OwnedCollectionsAudit,
   PlexLibrary,
   ConnectionTestResult,
-  Health,
   LinkRequest,
   PinCreated,
   CleanupResult,
@@ -290,8 +289,6 @@ export const api = {
     }),
 
   // --- System ---
-  getHealth: (): Promise<Health> => request("/api/system/health"),
-
   /**
    * Full uninstall (or a dry-run preview of it). The backend requires the
    * literal confirm string; the typed-phrase gate in the dialog is UX only.

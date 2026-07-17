@@ -79,7 +79,6 @@ GET  /api/system/owned-collections -> {collections:[{library,title,label,rating_
 GET  /api/runs · GET /api/runs/{id} · GET /api/runs/{id}/log (activity feed) · POST /api/runs {user_ids?, dry_run?}
 GET  /api/requests · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids}
 GET  /api/events (SSE) · GET /api/events/log (audit feed)
-GET  /api/privacy/status · POST /api/privacy/check {probe?} · GET /api/privacy/snapshots
 GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm|radarr|sonarr|omdb|trakt|exa}
 GET  /api/settings/arr/{radarr|sonarr}/options -> {quality_profiles, root_folders}
 POST /api/settings/prompt-preview {tone?, guidance?, template?, shared?} -> {system, user}

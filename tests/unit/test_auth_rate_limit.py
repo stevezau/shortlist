@@ -70,3 +70,32 @@ class TestPinRateLimit:
         assert auth._PIN_HITS is same_dict  # never reassigned — still the module dict
         assert len(auth._PIN_HITS) < 5000  # stale entries pruned
         assert "live" in auth._PIN_HITS  # the active IP survives
+
+
+class TestPollRateLimit:
+    """poll_pin is the login handshake (can't require auth) and proxies to plex.tv on every call,
+    so a GLOBAL-only ceiling bounds total amplification without a per-IP cap that would break the
+    legit client's ~1.5s polling."""
+
+    def setup_method(self):
+        auth._POLL_ALL.clear()
+
+    def teardown_method(self):
+        auth._POLL_ALL.clear()
+
+    def test_global_cap_bounds_poll_amplification(self):
+        for _ in range(auth._POLL_MAX_GLOBAL):
+            auth._rate_limit_poll()  # the first N in the window are fine
+        with pytest.raises(HTTPException) as exc:
+            auth._rate_limit_poll()  # the (N+1)th trips the global ceiling
+        assert exc.value.status_code == 429
+
+    def test_poll_budget_recovers_after_the_window(self, monkeypatch):
+        clock = {"now": 1000.0}
+        monkeypatch.setattr(auth.time, "monotonic", lambda: clock["now"])
+        for _ in range(auth._POLL_MAX_GLOBAL):
+            auth._rate_limit_poll()
+        with pytest.raises(HTTPException):
+            auth._rate_limit_poll()
+        clock["now"] += auth._PIN_WINDOW_S + 1  # window elapses
+        auth._rate_limit_poll()  # allowed again

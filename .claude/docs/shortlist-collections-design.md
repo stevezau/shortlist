@@ -107,13 +107,13 @@ or any provider.**
 
 ## 4. Delivery & labels
 
-|              | per‑person Row                                                                     | shared Row                                                 |
-| ------------ | ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Plex label   | `shortlist_<userslug>` (today; **one per user**, shared by all their per‑person rows) | `shortlist_shared_<rowslug>` (**one per shared Row**)         |
-| how many     | 1 per audience‑member per library                                                  | 1 per library, server‑wide                                 |
-| title marker | `row_marker(account_id)` (`delivery.py:138`) — unique per person                   | fixed `row_marker(0)` — one stable membership              |
-| promoted     | `promote(shared=True)` after filters merged                                        | `promote(shared=True)`                                     |
-| hidden from  | everyone except that person                                                        | everyone **not** in the audience (none, if audience = all) |
+|              | per‑person Row                                                                        | shared Row                                                 |
+| ------------ | ------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Plex label   | `shortlist_<userslug>` (today; **one per user**, shared by all their per‑person rows) | `shortlist_shared_<rowslug>` (**one per shared Row**)      |
+| how many     | 1 per audience‑member per library                                                     | 1 per library, server‑wide                                 |
+| title marker | `row_marker(account_id)` (`delivery.py:138`) — unique per person                      | fixed `row_marker(0)` — one stable membership              |
+| promoted     | `promote(shared=True)` after filters merged                                           | `promote(shared=True)`                                     |
+| hidden from  | everyone except that person                                                           | everyone **not** in the audience (none, if audience = all) |
 
 A person's multiple per‑person rows all carry the **same** `shortlist_<userslug>` label (the label is the
 privacy primitive — all of a person's private rows must be hidden from others as one set); they're told
@@ -158,7 +158,7 @@ The audience of each label:
 
 Everything else in the privacy path is untouched: per‑slug targeting, the read‑modify‑write merge that
 byte‑preserves foreign filter conditions (`merge_label_excludes`, `privacy.py:70-87`), snapshots
-(`privacy.py:190-201`), and the write gate.
+(`privacy.py:190-201`), and the leak‑safe write ordering.
 
 ### 6.1 Aggregate source with a watcher threshold (shared rows)
 
@@ -180,8 +180,9 @@ and guidance still apply; `validate_picks` still caps length and drops hallucina
 
 ### 6.4 Checked against the plex‑safety rules
 
-- **Rule 1 (gate):** shared delivery is a create+promote → behind the write gate. The remedy pass
-  (`_remedy_only`, `run_service.py:278-292`) still only removes/merges excludes, never creates a row.
+- **Rule 1 (leak‑safe ordering):** shared delivery is a create+promote → delivered UNPROMOTED, then
+  promoted only after the excludes are merged. The remedy pass (`_remedy_only`,
+  `run_service.py:278-292`) still only removes/merges excludes, never creates a row.
 - **Rule 2 (snapshot):** shared‑to‑all writes no share filters (nothing hidden) → no snapshot needed.
   Shared‑to‑subset _does_ write excludes onto non‑audience users → snapshots first, like any user.
 - **Rule 3 (merge, never rebuild):** unchanged — still union/remove single labels in place.
@@ -189,9 +190,9 @@ and guidance still apply; `validate_picks` still caps length and drops hallucina
 - **Rule 5 (owner/managed):** the shared row is promoted to all with library access; owner sees it like
   anyone; managed users get excludes written exactly like shared users (no special branch today,
   `privacy.py:169-171` only special‑cases the owner).
-- **Rule 7 (probe cleanup):** the Privacy Probe gains a **shared‑visibility assertion** — a throwaway
-  shared‑labelled row IS visible to a canary in the audience and NOT to one outside it — cleaned up in
-  `finally`.
+- **Rule 7 (clean up test artifacts):** the shared‑visibility check is a fake_plex e2e assertion — a
+  throwaway shared‑labelled row IS visible to a canary in the audience and NOT to one outside it —
+  with all test artifacts torn down afterward.
 
 ## 7. Data model & migration
 
@@ -242,8 +243,8 @@ collection_audience(collection_id FK, user_id FK)   -- only rows for audience = 
   reasons never contain "Because you watched".
 - **Delivery:** shared row created once with fixed marker; not swept; audience members resolve it as
   visible, non‑members as hidden.
-- **Privacy Probe extension:** shared‑visibility assertion (visible to in‑audience canary, hidden from
-  out‑of‑audience), cleaned up in `finally`.
+- **Shared‑visibility test (fake_plex):** a throwaway shared‑labelled row is visible to an in‑audience
+  canary and hidden from an out‑of‑audience one; test artifacts torn down afterward.
 - **e2e (fake_plex):** create each Row type; a run delivers them; the fake canary sees the right rows
   and not the wrong ones. **Migration:** `0002`→`0003` yields one `picked` row and identical delivery.
 

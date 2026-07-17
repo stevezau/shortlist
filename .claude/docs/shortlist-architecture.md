@@ -66,8 +66,7 @@ shortlist/
 │   │   │   ├── base.py           # curate(profile, candidates, k) -> [Pick]; strict JSON schema; validates output ⊆ input
 │   │   │   ├── anthropic.py · openai.py · google.py · ollama.py · null.py (heuristic+template reasons)
 │   │   ├── delivery.py           # collection upsert, custom sort, label, poster, visibility promote
-│   │   ├── privacy.py            # filter parse/merge/serialize, snapshot, diff, throttled apply, read-back verify
-│   │   ├── verify.py             # Privacy Check tiers T1 (read-back) / T2 (managed-canary hub fetch) / T3 (guided manual)
+│   │   ├── privacy.py            # filter parse/merge/serialize, snapshot, diff, throttled apply
 │   │   ├── acquire.py            # Radarr/Sonarr/Seerr, capped
 │   │   ├── posters.py            # PIL branded collection posters (3 templates)
 │   │   └── clients/              # plex.py (plexapi + raw plex.tv: pins, users, filters, home-switch), tautulli.py, tmdb.py, arr.py
@@ -75,7 +74,7 @@ shortlist/
 │   │   ├── main.py               # app factory; serves web/dist; /api mount; healthz
 │   │   ├── auth.py               # PIN flow, owner-only session, signed httpOnly cookie
 │   │   ├── db/                   # SQLAlchemy models, session, alembic/
-│   │   ├── api/                  # routers: auth, setup, users, runs, privacy, settings, system, events (SSE)
+│   │   ├── api/                  # routers: auth, setup, users, runs, settings, system, events (SSE)
 │   │   ├── scheduler.py          # APScheduler; run rows are the durable queue (resume on restart)
 │   │   ├── services/             # run_service (engine adapter + SSE emit), snapshot_service, hit_rate, secrets (Fernet @ /config/secret.key)
 │   │   └── settings_store.py     # typed settings table access; env-var seeding on first boot (MPG pattern)
@@ -140,8 +139,7 @@ GET/PUT /setup/state           wizard progress (resumable)
 GET  /users                    list + badges (history depth, cold-start, managed-flag)
 PATCH /users/{id}              enable/prefs
 GET  /runs · GET /runs/{id}    list/detail (diffs, errors)      POST /runs {user_ids?, dry_run?} → run_id
-GET  /events                   SSE stream: run.progress, run.user.stage, privacy.status, version.update
-POST /privacy/check {tier}     run Privacy Check                GET /privacy/status · GET /privacy/snapshots
+GET  /events                   SSE stream: run.progress, run.user.stage, version.update
 GET/PUT /settings              typed settings                   POST /settings/test/{plex|tautulli|llm|radarr|sonarr|seerr}
 GET  /system/health · /system/version (+ GitHub release check)
 POST /system/uninstall {confirm} → restore snapshots, delete collections/labels, report
@@ -171,14 +169,14 @@ API), same as the *arr convention.
 
 ## 6. Testing strategy (MPG discipline, adapted)
 
-| Layer         | Tooling                                                       | Rules                                                                                                                                                                         |
-| ------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Engine unit   | pytest, `-n auto`, cov ≥ 80%                                  | ALL external I/O mocked via conftest fixtures; recorded real plex.tv/PMS XML+JSON as fixture files                                                                            |
-| Privacy logic | dedicated suite                                               | filter parse/merge round-trips property-tested (hypothesis); snapshot/restore invariants; **the merge code is the highest-consequence code in the repo — test it like money** |
-| Server        | pytest + httpx AsyncClient                                    | API contract tests against the OpenAPI schema                                                                                                                                 |
-| Frontend      | vitest + testing-library                                      | wizard state machine fully unit-tested                                                                                                                                        |
-| E2E           | Playwright vs built Docker image + `tests/fakes/fake_plex.py` | full wizard → first run → dashboard, no real Plex needed; CI-shardable (MPG's e2e sharding pattern)                                                                           |
-| Live smoke    | Dashboard **Run Privacy Check** + a dry-run **Run now**       | run against Steve's real server pre-release                                                                                                                                   |
+| Layer         | Tooling                                                                                      | Rules                                                                                                                                                                         |
+| ------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Engine unit   | pytest, `-n auto`, cov ≥ 80%                                                                 | ALL external I/O mocked via conftest fixtures; recorded real plex.tv/PMS XML+JSON as fixture files                                                                            |
+| Privacy logic | dedicated suite                                                                              | filter parse/merge round-trips property-tested (hypothesis); snapshot/restore invariants; **the merge code is the highest-consequence code in the repo — test it like money** |
+| Server        | pytest + httpx AsyncClient                                                                   | API contract tests against the OpenAPI schema                                                                                                                                 |
+| Frontend      | vitest + testing-library                                                                     | wizard state machine fully unit-tested                                                                                                                                        |
+| E2E           | Playwright vs built Docker image + `tests/fakes/fake_plex.py`                                | full wizard → first run → dashboard, no real Plex needed; CI-shardable (MPG's e2e sharding pattern)                                                                           |
+| Live smoke    | A dry-run **Run now**, then a manual view-check from a non-owner account (rows stay private) | run against Steve's real server pre-release                                                                                                                                   |
 
 `fake_plex.py` is a deliberate investment (~300 lines): stubs `/identity`, `/library/sections`,
 `/status/sessions/history/all`, `/hubs`, collection CRUD, plus plex.tv `/api/v2/pins`, `/api/users`,
@@ -200,7 +198,8 @@ GitHub Release → images.
 ## 8. `.claude/rules/plex-safety.md` (new, Shortlist-specific — the rule that matters)
 
 1. Any code path that WRITES to Plex or plex.tv (collections, labels, visibility, share filters)
-   must: (a) be behind the privacy-gate check, (b) snapshot before first mutation per user,
+   must: (a) follow the leak-safe write ordering (deliver rows unpromoted → merge `label!=` excludes
+   into other accounts → promote last), (b) snapshot before first mutation per user,
    (c) support `--dry-run`, (d) log a structured diff to `events`.
 2. Share-filter writes are READ-MODIFY-WRITE merges. Never construct a filter string from scratch.
    Never touch conditions Shortlist didn't add.
@@ -213,14 +212,14 @@ GitHub Release → images.
 
 ## 9. Execution phases (updated with chassis port)
 
-| Phase                                     | Scope                                                                                                                                                                       | Exit criteria                                                   |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| **0 — Gate + scaffold** (~1–2 d)          | Manual privacy test on Steve's server. `gh repo create stevezau/shortlist` + port MPG chassis (.claude, .github, pre-commit, docs skeleton, Dockerfile skeleton, pyproject) | Privacy test passes; CI green on empty skeleton                 |
-| **1 — Engine + CLI pilot** (~1 wk + soak) | `engine/` + `clients/` + `cli.py` + unit suite. Cron on plex host (`error_checker.sh`). Rollout 5→15→40 users                                                               | 1–2 wks nightly runs, zero privacy incidents, hit-rate baseline |
-| **2 — Server + UI core** (~2 wks)         | FastAPI + DB + scheduler + SSE; dashboard/users/runs/settings                                                                                                               | Steve manages his instance via UI, cron retired                 |
-| **3 — Onboarding** (~1 wk)                | PIN auth, wizard 0–7, automated Privacy Check, uninstall/restore, fake_plex e2e                                                                                             | Clean-server `docker run` → rows with zero docs                 |
-| **4 — Ship-ready** (~1 wk)                | README/docs/screenshots/GIF, Unraid template, DOCKERHUB_README, issue templates, 3–5 external beta testers                                                                  | Beta onboards unassisted                                        |
-| **5 — Launch**                            | r/selfhosted + r/PleX posts, Awesome-Selfhosted PR                                                                                                                          | v1.0 public                                                     |
+| Phase                                 | Scope                                                                                                                                                                       | Exit criteria                                                   |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| **0 — Gate + scaffold** (~1–2 d)      | Manual privacy test on Steve's server. `gh repo create stevezau/shortlist` + port MPG chassis (.claude, .github, pre-commit, docs skeleton, Dockerfile skeleton, pyproject) | Privacy test passes; CI green on empty skeleton                 |
+| **1 — Engine + pilot** (~1 wk + soak) | `engine/` + `clients/` + unit suite. Runs nightly on plex host (`error_checker.sh`). Rollout 5→15→40 users                                                                  | 1–2 wks nightly runs, zero privacy incidents, hit-rate baseline |
+| **2 — Server + UI core** (~2 wks)     | FastAPI + DB + scheduler + SSE; dashboard/users/runs/settings                                                                                                               | Steve manages his instance via UI, cron retired                 |
+| **3 — Onboarding** (~1 wk)            | PIN auth, wizard 0–7, uninstall/restore, fake_plex e2e                                                                                                                      | Clean-server `docker run` → rows with zero docs                 |
+| **4 — Ship-ready** (~1 wk)            | README/docs/screenshots/GIF, Unraid template, DOCKERHUB_README, issue templates, 3–5 external beta testers                                                                  | Beta onboards unassisted                                        |
+| **5 — Launch**                        | r/selfhosted + r/PleX posts, Awesome-Selfhosted PR                                                                                                                          | v1.0 public                                                     |
 
 ---
 

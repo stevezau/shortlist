@@ -70,8 +70,8 @@ class PlexClient:
 
     def __init__(self, base_url: str, token: str, *, timeout: int = 30):
         self._server = PlexServer(base_url, token, session=_retrying_session(), timeout=timeout)
-        # Per-run read caches. A PlexClient is built fresh for each run (the server/CLI adapters
-        # construct one per run), so these live exactly one run — no cross-run staleness. Library
+        # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
+        # constructs one per run), so these live exactly one run — no cross-run staleness. Library
         # sections don't change mid-run; a section's collection LIST changes only when WE create or
         # delete one, so it is busted on exactly those two operations. Item edits, label adds and
         # promotes mutate the cached Collection objects in place, so they need no busting.

@@ -130,7 +130,7 @@ def deliver_rows(
 ) -> tuple[CollectionDiff, str | None]:
     """Deliver one row's picks as one collection per targeted library. Returns (diff, stored label).
 
-    `spec` is the row being delivered; when omitted (the CLI and legacy callers) it defaults to the
+    `spec` is the row being delivered; when omitted (legacy callers) it defaults to the
     single per-person row, whose name falls through to the profile's / config's template.
 
     `stored_labels` and `diff` are caller-owned accumulators, written the moment the PMS confirms
@@ -191,7 +191,7 @@ def deliver_rows(
         # live). With no per-section index (legacy caller), fall back to the pick's existing key.
         keys = idx.get(section.key)
         # When the caller curated PER LIBRARY (section_picks), deliver this library its own list;
-        # otherwise fall back to splitting the one pick list by media type (legacy/shared/CLI).
+        # otherwise fall back to splitting the one pick list by media type (legacy/shared callers).
         source_picks = section_picks.get(section.key, []) if section_picks is not None else by_type.get(kind, [])
         this_section = [
             (replace(p, rating_key=keys[p.tmdb_id]) if keys is not None else p)

@@ -16,7 +16,7 @@ CACHE_TTL_S = 7 * 24 * 3600  # design: (tmdb_id, endpoint) cached 7 days
 
 
 class Cache(Protocol):
-    """Minimal cache the adapters provide (JSON-file for the CLI, DB table for the server)."""
+    """Minimal cache the adapter provides (a DB table for the server)."""
 
     def get(self, key: str) -> str | None: ...
 

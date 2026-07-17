@@ -21,7 +21,6 @@ export const queryKeys = {
   userRows: (id: number) => ["users", id, "rows"] as const,
   userRuns: (id: number) => ["users", id, "runs"] as const,
   userHistory: (id: number) => ["users", id, "history"] as const,
-  health: ["health"] as const,
   session: ["auth", "session"] as const,
   setupState: ["setup", "state"] as const,
 };
@@ -61,10 +60,6 @@ export function useRun(id: number, enabled = true) {
 
 export function useSettings() {
   return useQuery({ queryKey: queryKeys.settings, queryFn: api.getSettings });
-}
-
-export function useHealth() {
-  return useQuery({ queryKey: queryKeys.health, queryFn: api.getHealth });
 }
 
 export function usePatchUser() {

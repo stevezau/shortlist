@@ -397,9 +397,9 @@ class EngineConfig:
     hub_anchors: dict[str, HubAnchor] = field(default_factory=dict)
     dry_run: bool = False
     # The curated rows to deliver. Empty -> a single default per-person row synthesized from
-    # row_name_template/row_size, so the CLI and existing callers behave exactly as before.
+    # row_name_template/row_size, so existing callers behave exactly as before.
     rows: list[RowSpec] = field(default_factory=list)
-    # Whether the caller MANAGES rows (the server does; the CLI doesn't). It is the difference
+    # Whether the caller MANAGES rows (the server does; direct/legacy engine callers may not). It is the difference
     # between "no rows configured" — synthesize the legacy default — and "every row is switched
     # OFF", which must deliver nothing. Without it, disabling every row in the UI silently rebuilt
     # "✨ Picked for You" for everyone: the Rows page said off, Plex said on.

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
-from shortlist.engine.models import FilterSnapshot, OwnedRow, UserProfile, UserType
+from shortlist.engine.models import FilterSnapshot, UserProfile, UserType
 
 if TYPE_CHECKING:
     from shortlist.engine.clients.plextv import PlexTvClient, PlexTvUser
@@ -113,7 +113,7 @@ def shortlist_labels_in(raw: str, label_prefix: str) -> set[str]:
 
 
 class SnapshotStore(Protocol):
-    """Persistence for pre-mutation snapshots; the CLI and server provide implementations."""
+    """Persistence for pre-mutation snapshots; the server (and tests) provide implementations."""
 
     def get(self, plex_account_id: int) -> FilterSnapshot | None: ...
 
@@ -131,28 +131,6 @@ def shared_label_audiences(config) -> dict[str, set[int] | None]:
     label is NOT excluded on anyone).
     """
     return {spec.label.lower(): spec.audience for spec in config.shared_rows() if spec.label}
-
-
-def visible_shared_slugs(
-    collections: dict[str, OwnedRow],
-    shared_labels: dict[str, set[int] | None] | None,
-    account_id: int,
-) -> set[str]:
-    """Slugs of the shared rows this account is ALLOWED to see — T2's counterpart to the excludes.
-
-    Keyed off each collection's stored LABEL, not its slug: `owned_collections` derives a shared
-    row's slug from the label (`_shared_x`) while delivery files it as `shared_x`, so matching on
-    slug would silently miss every shared row.
-    """
-    shared_labels = shared_labels or {}
-    visible: set[str] = set()
-    for slug, row in collections.items():
-        audience = shared_labels.get(row.label.lower(), _UNSHARED)
-        if audience is _UNSHARED:
-            continue
-        if audience is None or account_id in audience:
-            visible.add(slug)
-    return visible
 
 
 def desired_excludes(

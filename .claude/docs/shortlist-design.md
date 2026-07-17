@@ -37,7 +37,8 @@ screen — privately, automatically, every night."_
 1. **Ten minutes to magic.** `docker run` → Plex PIN login → wizard → first rows exist. Every wizard
    step must justify its existence; anything skippable is skipped by default.
 2. **Trust is the product.** This app modifies _other people's_ Plex views and touches share
-   restrictions. So: nothing writes to Plex until the built-in **Privacy Check** passes; every
+   restrictions. So: rows are hidden by leak-safe write ordering (a row is never promoted onto
+   shared Home until the label exclusions that hide it from other users are merged in first); every
    restriction write is snapshotted and reversible; **Uninstall** is a first-class feature that
    provably restores the server to its prior state.
 3. **AI that can't hallucinate.** The LLM only ever re-ranks titles verified to exist in the
@@ -108,29 +109,27 @@ Animated mock of a Plex Home screen gaining a "✨ Picked for You" row. One butt
 - **Admin caveat surfaced here**, not buried: _"Plex cannot hide collections from the server owner —
   your own Home will show every user's row. Tip: watch on a non-owner account."_
 
-### Privacy Check ★ (the feature nobody else has)
+### Per-user private rows ★ (the feature nobody else has)
 
-**No longer a manual wizard step.** It runs automatically as the first phase of every real run (and
-the weekly scheduled check): the owner never triggers it, and the write gate simply refuses to build
-rows until a fresh passing result is on record. It only surfaces if it fails (the run pauses and says
-why). Settings still exposes a manual re-check. The mechanism, ~60 seconds with a live log:
+The differentiator: every enabled user gets their _own_ row, hidden from every other shared user —
+genuine per-user privacy, which no maintained tool in this space does. It is _made_ private (not
+verified after the fact — the app makes no "your server is provably private" claim) by two
+mechanisms working together:
 
-1. Create throwaway collection `Shortlist Privacy Probe` with one item, label `shortlist_probe`,
-   promote to shared Home.
-2. Write an exclude-restriction for `shortlist_probe` to a **canary user** (owner picks from a
-   dropdown; a managed/Home user is auto-suggested when one exists).
-3. **Verify in tiers:**
-   - **T1 (always):** read the share filters back from plex.tv and assert the exclusion persisted.
-   - **T2 (managed canary):** switch into the Home user server-side (Plex Home user switch yields a
-     scoped token), fetch _their_ Home hubs, assert the probe collection is **absent** for them and
-     **present** for a non-excluded view.
-   - **T3 (invited-only servers):** guided manual check — QR code / short URL opens Plex as the
-     canary on the owner's phone; two screenshots-style prompts ("Do you see a row called…? Yes/No").
-4. Delete probe collection, restore canary's filters from snapshot. Server untouched.
+- **Per-account label restrictions.** Each user's row collection carries `shortlist_<userslug>`. For
+  every _other_ account, `label!=shortlist_<userslug>` is merged into their `filterMovies`/
+  `filterTelevision` share filter (read-modify-write MERGE — §6), so Plex refuses to show them that
+  row.
+- **Leak-safe write ordering.** A row is never visible to the wrong person before the exclusion that
+  hides it exists. Every run: (a) sweeps rows Plex cannot hide first, (b) delivers all rows
+  UNPROMOTED, (c) merges every account's `label!=` excludes, and only THEN (d) promotes rows onto
+  shared Home. Get the order wrong and a row could be briefly visible with nothing to catch it — so
+  the ordering is the load-bearing guarantee.
 
-- Pass → big green "Your server keeps rows private ✅". Fail → **Shared Mode** offer (§9) with a
-  clear explanation of what leaked. Either way the user knows the truth about their server in one
-  minute — no other tool in this space verifies anything.
+**Requires PMS ≥ 1.43.2.10687** — older builds silently ignore the label exclusion (the leak Plex
+fixed). Servers that can't hide rows (old PMS, no Plex Pass) fall back to **Shared Mode** (§9), which
+makes no privacy claims. The owner is a Plex limitation: their own Home shows every user's row (the
+§3 Step-4 caveat) — QA privacy from a non-owner account.
 
 ### Step 6 — Make it yours (customization)
 
@@ -164,7 +163,7 @@ Plex-adjacent accent color, responsive (phone-usable — owners administer from 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ Shortlist        ● Privacy: verified 2026-07-12   Next run: tonight 3:30│
+│ Shortlist        Rows: per-user private           Next run: tonight 3:30│
 │──────────────────────────────────────────────────────────────────────│
 │  40 users enabled · last run 6h ago · 0 errors · hit rate 31% ▲      │
 │                                                                      │
@@ -294,9 +293,11 @@ for each enabled user U:
   ~40s throttled — fine).
 - Admin/owner is skipped (Plex cannot restrict the owner) and surfaced in UI.
 
-**Continuous verification:** weekly scheduled re-run of Privacy Check T1 (filter read-back for all
-users) + T2 when a managed canary exists; dashboard badge flips red with a notification if drift is
-detected (e.g. owner manually edited a share).
+**No runtime verification:** the app does not read back or re-check hiding after a write (the
+automatic Privacy Check was removed, 2026-07-16). Correctness rests entirely on the leak-safe write
+ordering: rows are delivered UNPROMOTED and promoted onto shared Home only after every other
+account's `label!=shortlist_<slug>` exclude is merged in, so a row is never visible before the
+exclusion that hides it exists.
 
 ---
 
@@ -309,7 +310,7 @@ snapshots, posters). Multi-arch (amd64/arm64) on GHCR + Docker Hub.
 | ----------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | API/backend | **FastAPI**                                                                        | Python shop; async; OpenAPI for free (public API = community integrations) |
 | Jobs        | **APScheduler** (in-process) + job rows in SQLite                                  | one container, no broker; runs are resumable/idempotent                    |
-| DB          | **SQLite + SQLAlchemy**                                                            | homelab-right; `/config/shortlist.db`; Alembic migrations                     |
+| DB          | **SQLite + SQLAlchemy**                                                            | homelab-right; `/config/shortlist.db`; Alembic migrations                  |
 | Frontend    | **React + Vite + Tailwind**                                                        | SPA served by FastAPI; SSE for live run progress                           |
 | Plex        | **plexapi** + thin raw client for plex.tv (pins, users, filters, home-user switch) | plexapi lacks some plex.tv surfaces                                        |
 | LLM         | provider interface: `curate(profile, candidates) → ranked picks`                   | Anthropic/OpenAI/Google SDKs + Ollama HTTP + Null provider                 |
@@ -322,11 +323,11 @@ shortlist/
   engine/        # pure library: pipeline stages, providers, plex/tautulli/tmdb clients — no FastAPI imports
   server/        # FastAPI app, auth, SSE, scheduler wiring, DB models
   web/           # React SPA
-  cli.py         # `shortlist run --user X --dry-run` — same engine; this is what Steve's cron uses
 ```
 
-The engine/app split is contractual: **Steve's server runs `cli.py` from week 1** (Phase 1), the app
-wraps the identical engine later. No throwaway code.
+The engine/app split is contractual: the FastAPI server is the **only** adapter over the engine —
+its APScheduler fires the same engine run nightly, so a scheduled build and a manual "Run now" run
+byte-identical logic. No throwaway code.
 
 **Data model (core tables):** `settings` · `plex_server` · `users` (plex_id, slug, enabled,
 prefs JSON, label) · `runs` · `picks` (run_id, user, tmdb_id, rank, reason, seed, watched_at →
@@ -371,7 +372,7 @@ managed-user profile constraint; no competing maintained OSS tool (July 2026 swe
 **Phase 0 must prove (the one assumption left):** on a real 1.43.3 server, a promoted labeled
 collection is invisible on Home/Recommended/**Related** for an excluded _invited_ user and visible
 for others. 30 minutes, reversible, on Steve's server with a test account. **This is the go/no-go
-for everything above** — and it doubles as the manual dry-run of the Step-5 Privacy Check design.
+for everything above** — the same label-restriction behaviour every real run then relies on.
 
 ---
 
@@ -380,17 +381,17 @@ for everything above** — and it doubles as the manual dry-run of the Step-5 Pr
 | Phase                  | Scope                                                                                                                                                                           | Exit criteria                                                                                         | Effort         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | -------------- |
 | **0 — Validate**       | Manual privacy test on Steve's server (probe collection + one invited test account + a non-owner viewing account). Scaffold repo (engine/server/web skeleton, CI, ruff/pytest). | Privacy test passes on Home/Recommended/Related; repo builds                                          | ~1 day         |
-| **1 — Engine + pilot** | `shortlist/engine` + `cli.py` complete (history→TMDB→LLM→collections→privacy sync w/ snapshots). Cron on plex host via `error_checker.sh`. Roll out 5 → 15 → 40 of Steve's users.  | 40 users have private rows nightly for 1–2 weeks; zero privacy incidents; hit-rate baseline collected | ~1 week + soak |
+| **1 — Engine + pilot** | `shortlist/engine` complete (history→TMDB→LLM→collections→privacy sync w/ snapshots), run nightly on the plex host. Roll out 5 → 15 → 40 of Steve's users.                      | 40 users have private rows nightly for 1–2 weeks; zero privacy incidents; hit-rate baseline collected | ~1 week + soak |
 | **2 — App core**       | FastAPI + DB + scheduler + API; React shell; Dashboard, Users, Runs, Settings on the live engine                                                                                | Steve administers his own server through the UI instead of cron                                       | ~2 weeks       |
-| **3 — Onboarding**     | PIN auth, capability probes, wizard steps 0–6, automatic pre-write Privacy Check (T1/T2/T3), uninstall/rollback flow                                                            | Fresh `docker run` on a clean test server → rows, no docs needed                                      | ~1 week        |
+| **3 — Onboarding**     | PIN auth, capability probes, wizard steps 0–6, uninstall/rollback flow                                                                                                          | Fresh `docker run` on a clean test server → rows, no docs needed                                      | ~1 week        |
 | **4 — Ship-ready**     | GHCR/Docker Hub images, README + docs site, screenshots/GIF, issue templates, 3–5 external beta testers recruited from r/PleX                                                   | Beta testers onboard unassisted; blockers fixed                                                       | ~1 week        |
-| **5 — Launch**         | r/selfhosted + r/PleX posts (lead with the Privacy Check + "works without AI"), Awesome-Selfhosted PR                                                                           | Public v1.0                                                                                           | —              |
+| **5 — Launch**         | r/selfhosted + r/PleX posts (lead with per-user private rows + "works without AI"), Awesome-Selfhosted PR                                                                       | Public v1.0                                                                                           | —              |
 
 Total: **~5–6 weeks** to public v1, with real user value landing at end of Phase 1. Phases 2–4 can
 flex around life; the engine keeps running regardless.
 
-**Risks & honest mitigations:** Plex re-breaks label restrictions in an update (weekly verification
-catches it; version-pin advisories in README) · LLM cost anxiety (None-mode + spend estimates
+**Risks & honest mitigations:** Plex re-breaks label restrictions in an update (the setup-time
+PMS-version gate + version-pin advisories in README; no automated re-check) · LLM cost anxiety (None-mode + spend estimates
 up-front) · community AI-skepticism (hallucination-proof design + heuristic mode, messaged loudly) ·
 solo-maintainer burnout (small surface, engine/app split keeps core ~1.5k lines, CI does the
 drudgery) · a competitor ships first (Phase 1 gives us a working private beta within a week; launch

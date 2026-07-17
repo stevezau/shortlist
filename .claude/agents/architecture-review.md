@@ -42,11 +42,12 @@ fixture (`tests/fixtures/`) or fake_plex instead.
 
 ### 3. Plex-safety violations (Shortlist's highest severity)
 
-Any write to Plex/plex.tv that: skips the privacy gate; mutates restrictions without a prior
-snapshot; **rebuilds a share-filter string instead of merging**; touches a collection/label without
-the `shortlist_*` ownership check; restricts the owner or edits a managed user's restriction profile;
-lacks `dry_run` support; or logs a token. See `.claude/rules/plex-safety.md`.
-**Flag when:** the diff touches `privacy.py`, `delivery.py`, `verify.py`, or `clients/plex*.py` and
+Any write to Plex/plex.tv that: promotes a row before its `label!=` excludes are merged (breaks the
+leak-safe write ordering that is now the load-bearing privacy guarantee); mutates restrictions
+without a prior snapshot; **rebuilds a share-filter string instead of merging**; touches a
+collection/label without the `shortlist_*` ownership check; restricts the owner or edits a managed
+user's restriction profile; lacks `dry_run` support; or logs a token. See `.claude/rules/plex-safety.md`.
+**Flag when:** the diff touches `privacy.py`, `delivery.py`, `pipeline.py`, or `clients/plex*.py` and
 any of the eleven plex-safety rules is not observably satisfied. Always HIGH.
 
 ### 4. Lazy init without lock
@@ -74,14 +75,14 @@ boundary (HTTP client, fake_plex) instead.
 ### 8. Cover-the-matrix gaps
 
 New branching code with only one or two matrix cells tested. Shortlist's recurring branch variables:
-`user_type` (shared/managed/owner), history source, curator provider, privacy tier, filter state
+`user_type` (shared/managed/owner), history source, curator provider, filter state
 (empty / shortlist-only / foreign / mixed).
 **Flag when:** a new branching variable has fewer test rows than distinct values.
 
 ### 9. Engine/server layering breach
 
 `shortlist/engine/` importing from `shortlist/server/` (or engine code reaching into the DB/FastAPI). The
-engine must stay a pure library — the CLI and server are its only adapters.
+engine must stay a pure library — the FastAPI server is its only adapter.
 **Flag when:** the diff adds such an import or DB access inside `engine/`.
 
 ## Output format

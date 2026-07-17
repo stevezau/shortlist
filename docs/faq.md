@@ -49,5 +49,7 @@ Supported as canaries and recommendation targets. Their _restriction profiles_ (
 controls) are never modified — Shortlist only merges label filters on shares.
 
 **What happens if Plex breaks label restrictions in an update?**
-The next run re-verifies (every run re-checks all three tiers when the gate is stale or shut), which flips the dashboard privacy badge red
-with a notification. The README carries version advisories.
+Shortlist merges the label exclusions on every run, but it doesn't watch for Plex regressing that
+behaviour — a broken update wouldn't be caught automatically. That's why the label-based hiding
+needs PMS **≥ 1.43.2.10687**; older builds ignore the exclusion. Stay on that build or newer, and
+watch the README for version advisories.

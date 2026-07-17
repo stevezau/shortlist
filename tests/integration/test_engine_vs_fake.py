@@ -989,7 +989,7 @@ def test_every_account_that_shares_the_server_gets_the_excludes_not_just_the_man
     filters, so all three rows showed up on their Home screen. A row is visible to anyone whose
     filter does not exclude it; Plex does not care whether we call its owner "enabled".
 
-    This also covers the documented rollout path (`shortlist run --user <slug>`, 5 -> 15 -> 40
+    This also covers the documented rollout path (processing one user at a time, 5 -> 15 -> 40
     users): a run that processes ONE user must still hide that user's new row from everyone.
     """
     state, pms_url, _tmdb_app = fakes

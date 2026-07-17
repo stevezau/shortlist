@@ -1,4 +1,4 @@
-"""RunService.build_context branch matrix + the server-side privacy gate."""
+"""RunService.build_context branch matrix."""
 
 from __future__ import annotations
 
