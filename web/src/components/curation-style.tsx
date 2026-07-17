@@ -1,6 +1,5 @@
-import { useMutation } from "@tanstack/react-query";
-import { ScanEye } from "lucide-react";
-import { useId } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -21,6 +20,9 @@ export interface CurationStyleValue {
  * single "Instructions" box (stored as `guidance`, which is layered on top of the built-in prompt so
  * the safety rules always survive), and the tone buttons are quick-fills that drop editable starter
  * text into it. `tone`/`template` are no longer set from here (always sent empty).
+ *
+ * The exact prompt the AI receives is shown live below (the built-in default when nothing's set, so
+ * you can always see what's in effect), with a one-click reset back to that default.
  */
 export function CurationStyleFields({
   value,
@@ -33,12 +35,33 @@ export function CurationStyleFields({
   allowInherit?: boolean;
 }) {
   const instructionsId = useId();
-  const preview = useMutation({ mutationFn: () => api.previewPrompt(value) });
 
   // Everything the user types lives in `guidance`; tone/template stay empty so the one box is the
   // whole story (the built-in prompt + its safety rules are always applied underneath it).
   const setInstructions = (guidance: string) =>
     onChange({ tone: "", template: "", guidance });
+
+  const isCustomized = Boolean(
+    value.tone || value.guidance.trim() || value.template,
+  );
+
+  // Debounce the live preview so typing doesn't fire a request per keystroke. It always runs (even
+  // with a blank recipe) so the built-in default prompt is visible, not hidden behind a button.
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), 400);
+    return () => clearTimeout(id);
+  }, [value.tone, value.guidance, value.template]);
+  const preview = useQuery({
+    queryKey: [
+      "prompt-preview",
+      debounced.tone,
+      debounced.guidance,
+      debounced.template,
+    ],
+    queryFn: () => api.previewPrompt(debounced),
+    staleTime: 60_000,
+  });
 
   return (
     <div className="space-y-4">
@@ -80,28 +103,36 @@ export function CurationStyleFields({
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          loading={preview.isPending}
-          onClick={() => preview.mutate()}
-        >
-          {!preview.isPending && <ScanEye aria-hidden="true" />}
-          Preview prompt
-        </Button>
-      </div>
-      {preview.isSuccess && (
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border bg-card p-3 text-xs text-muted-foreground">
-          {preview.data.system}
-        </pre>
-      )}
-      {preview.isError && (
-        <p role="alert" className="text-sm text-destructive">
-          Couldn’t build the preview. Check the instructions and try again.
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <Label>The prompt the AI receives</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={!isCustomized}
+            onClick={() => onChange({ tone: "", guidance: "", template: "" })}
+          >
+            {allowInherit ? "Clear override" : "Reset to default"}
+          </Button>
+        </div>
+        {preview.isSuccess ? (
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border bg-card p-3 text-xs text-muted-foreground">
+            {preview.data.system}
+          </pre>
+        ) : preview.isError ? (
+          <p role="alert" className="text-sm text-destructive">
+            Couldn’t build the preview. Check the instructions and try again.
+          </p>
+        ) : (
+          <div className="h-24 animate-pulse rounded-md border bg-card" />
+        )}
+        <p className="text-xs text-muted-foreground">
+          {isCustomized
+            ? "This is exactly what the AI receives — your instructions are folded into the built-in prompt."
+            : "The built-in default. Add instructions above to tailor it."}
         </p>
-      )}
+      </div>
     </div>
   );
 }
