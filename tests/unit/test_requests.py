@@ -136,6 +136,21 @@ class TestAccumulate:
         assert demand[(2, MediaType.MOVIE)].demand == len(demand[(2, MediaType.MOVIE)].wanters)
         assert demand[(3, MediaType.SHOW)].wanters == {"Sarah"}
 
+    def test_why_collects_per_row_provenance_and_dedupes(self):
+        from shortlist.engine.models import RequestWhy
+
+        demand: requests_mod.DemandMap = {}
+        sarah_comedy = RequestWhy(user="Sarah", row="Comedy Classics", seed="Fawlty Towers", source="tmdb_similar")
+        mike_scifi = RequestWhy(user="Mike", row="Sci-Fi Night", seed="Dune", source="trakt")
+        # Sarah wants it from one row; Mike from another; Sarah's SAME (row, seed) re-surfaces next run.
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE)], wanter="Sarah", why=[sarah_comedy])
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE)], wanter="Mike", why=[mike_scifi])
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE)], wanter="Sarah", why=[sarah_comedy])
+        why = demand[(2, MediaType.MOVIE)].why
+        assert why == [sarah_comedy, mike_scifi]  # both rows kept, the duplicate merged away
+        # The provenance is the fuller answer behind the wanters set — same people, more detail.
+        assert {w.user for w in why} == demand[(2, MediaType.MOVIE)].wanters
+
 
 class TestRequestMissing:
     def _demand(self, *titles: MissingTitle) -> requests_mod.DemandMap:

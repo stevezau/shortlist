@@ -298,6 +298,21 @@ class RequestConfig:
     auto_min_rating: float = 8.0  # ...and rated at least this high on the chosen source
 
 
+@dataclass(frozen=True)
+class RequestWhy:
+    """One reason a missing title is in the inbox: a person, the row that surfaced it, and what
+    suggested it — so the owner can see exactly how a request got here, not just a bare count.
+
+    ``seed`` is the history title behind it ("because you watched …"); empty for seedless sources
+    (tmdb_discover / llm_library / llm_web). ``source`` is the candidate source that produced it.
+    """
+
+    user: str
+    row: str
+    seed: str = ""
+    source: str = ""
+
+
 @dataclass
 class MissingTitle:
     """A candidate the curator's pool surfaced that no delivery library actually holds yet."""
@@ -316,6 +331,11 @@ class MissingTitle:
     # shows the names so an owner sees WHY a title is being requested. len(wanters) <= demand, equal
     # when every wanting user has a distinct, non-empty username (the real run always passes one).
     wanters: set[str] = field(default_factory=set)
+    # The full provenance: one entry per (person, row) that wanted this title, with the seed/source
+    # behind it. Richer than `wanters` (which is just the distinct names) — this answers "which row,
+    # and why". Accumulated across every user and row, deduplicated so one (person, row, seed) is
+    # listed once.
+    why: list[RequestWhy] = field(default_factory=list)
 
 
 @dataclass

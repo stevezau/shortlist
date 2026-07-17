@@ -21,6 +21,7 @@ from shortlist.engine.models import (
     RequestConfig,
     RequestOutcome,
     RequestReport,
+    RequestWhy,
 )
 
 # When gating on IMDb, only this many top-by-demand candidates are looked up on OMDb per run, so a
@@ -44,7 +45,11 @@ def collect_missing(pool: list[Candidate], library_index: dict[MediaType, dict[i
 
 
 def accumulate(
-    demand: DemandMap, missing: list[Candidate], tags: set[str] | None = None, wanter: str | None = None
+    demand: DemandMap,
+    missing: list[Candidate],
+    tags: set[str] | None = None,
+    wanter: str | None = None,
+    why: list[RequestWhy] | None = None,
 ) -> None:
     """Fold one user's missing candidates into the run-wide demand map, counting distinct wanters.
 
@@ -53,10 +58,13 @@ def accumulate(
     want carries the union of all three users' (and their rows') tags when it's finally requested.
 
     ``wanter`` is the username whose taste surfaced these titles; it's collected into each title's
-    ``wanters`` so the inbox can show WHO drove the demand, not just the count.
+    ``wanters`` so the inbox can show WHO drove the demand, not just the count. ``why`` is the fuller
+    provenance for the same batch (one entry per row that surfaced it, with the seed/source), merged
+    and de-duplicated so the inbox can explain which row each request came from and why.
     """
     tags = {t for t in (tags or set()) if t}
     who = {wanter} if wanter else set()
+    reasons = list(why or [])
     for c in missing:
         key = (c.tmdb_id, c.media_type)
         existing = demand.get(key)
@@ -71,11 +79,15 @@ def accumulate(
                 demand=1,
                 tags=set(tags),
                 wanters=set(who),
+                why=list(reasons),
             )
         else:
             existing.demand += 1
             existing.tags |= tags
             existing.wanters |= who
+            for reason in reasons:
+                if reason not in existing.why:
+                    existing.why.append(reason)
 
 
 def _within_year_window(year: int | None, min_year: int, max_year: int) -> bool:

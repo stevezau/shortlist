@@ -278,21 +278,22 @@ class TestRunExecution:
         """The starvation bug, end to end. An auto-sent title used to leave NO ledger row — only
         titles the owner sent by hand did — so tomorrow it was 'missing' again, out-ranked everything
         by demand, re-consumed one of max_per_run, and the queue starved on the same few titles."""
-        from shortlist.engine.models import MissingTitle, RequestOutcome, RequestReport
+        from shortlist.engine.models import MissingTitle, RequestOutcome, RequestReport, RequestWhy
         from shortlist.server.db.models import RequestCandidate
 
         bus = EventBus()
         service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
         monkeypatch.setattr(service, "build_context", lambda **kw: SimpleNamespace())
 
-        sent = MissingTitle(42, "Dune", MediaType.MOVIE, 2021, rating=8.5, vote_count=900, demand=4)
+        why = RequestWhy(user="Sarah", row="Sarah's Picks", seed="Blade Runner", source="tmdb_similar")
+        sent = MissingTitle(42, "Dune", MediaType.MOVIE, 2021, rating=8.5, vote_count=900, demand=4, why=[why])
         report = RunReport(
             started_at=datetime.now(UTC),
             finished_at=datetime.now(UTC),
             users=[],
             requests=RequestReport(
                 considered=1,
-                outcomes=[RequestOutcome(42, "Dune", MediaType.MOVIE, "requested")],
+                outcomes=[RequestOutcome(42, "Dune", MediaType.MOVIE, "requested", detail="added to Radarr")],
                 sent=[sent],
             ),
         )
@@ -307,6 +308,12 @@ class TestRunExecution:
         with sessions() as session:
             row = session.query(RequestCandidate).filter_by(tmdb_id=42).one()
             assert row.status == "sent", "an auto-sent title left no ledger row, so it would be re-sent"
+            # The send log needs the Arr's own answer, not just "sent" — assert the outcome landed.
+            assert row.detail == "added to Radarr"
+            # ...and the provenance persisted, so the log can say which row/person wanted it and why.
+            assert row.why == [
+                {"user": "Sarah", "row": "Sarah's Picks", "seed": "Blade Runner", "source": "tmdb_similar"}
+            ]
             # ...and the next run's engine context therefore excludes it.
             handled = ContextBuilder._handled_requests(session)
             assert (42, "movie") in handled

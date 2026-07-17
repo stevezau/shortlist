@@ -252,6 +252,9 @@ class RequestCandidate(Base):
     demand: Mapped[int] = mapped_column(Integer, default=1)  # distinct users whose picks wanted it
     tags: Mapped[list] = mapped_column(JSON, default=list)  # per-user/per-row tags to apply when sent
     wanters: Mapped[list] = mapped_column(JSON, default=list)  # usernames whose picks wanted it (the "who")
+    # Full provenance: [{user, row, seed, source}] — which person, in which row, and why (the seed
+    # "because you watched …") each request got here. Richer than `wanters`; drives the inbox detail.
+    why: Mapped[list] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending | sent | rejected
     detail: Mapped[str] = mapped_column(String(512), default="")  # send outcome, or why it's queued
     first_seen_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # which run first surfaced it

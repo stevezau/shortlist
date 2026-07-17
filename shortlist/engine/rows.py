@@ -38,6 +38,7 @@ from shortlist.engine.models import (
     MediaType,
     Pick,
     PromptConfig,
+    RequestWhy,
     RowSpec,
     UserProfile,
     UserRunReport,
@@ -429,10 +430,14 @@ def _run_user(
             user_tag = {user.request_tag} if user.request_tag else set()
             first_seen: dict[tuple[int, MediaType], Candidate] = {}
             title_tags: dict[tuple[int, MediaType], set[str]] = {}
+            title_why: dict[tuple[int, MediaType], list[RequestWhy]] = {}
             for spec in specs:
                 pools = pools_for(spec)
                 if pools is None:
                     continue
+                # The row's own name (the same one the user sees), so the inbox can say WHICH row a
+                # request came from. Fill the placeholders the template may carry.
+                row_template = resolve_row_template(spec, user, cfg)
                 for c in requests_mod.collect_missing(pools[0], library_index):
                     key = (c.tmdb_id, c.media_type)
                     first_seen.setdefault(key, c)
@@ -442,11 +447,28 @@ def _run_user(
                     # shows-only row never tags a missing movie (its pool holds both until delivery).
                     if spec.request_tag and spec.media in ("both", c.media_type.value):
                         tags.add(spec.request_tag)
+                    # Provenance for the inbox: this row surfaced it for this user, seeded by the
+                    # strongest history title behind the candidate ("because you watched …").
+                    seed_title = c.top_seed.title if c.top_seed else ""
+                    row_name = row_template.replace("{user}", user.username).replace(
+                        "{top_seed}", seed_title or "your favourites"
+                    )
+                    entry = RequestWhy(
+                        user=user.username,
+                        row=row_name,
+                        seed=seed_title,
+                        source=(sorted(c.sources)[0] if c.sources else ""),
+                    )
+                    why = title_why.setdefault(key, [])
+                    if entry not in why:
+                        why.append(entry)
             # `demand` is the run-wide shared map; the per-user tally above is local, so only this
             # merge needs the lock (Stage 3 parallel runs).
             with ctx.write_lock:
                 for key, cand in first_seen.items():
-                    requests_mod.accumulate(demand, [cand], tags=title_tags[key], wanter=user.username)
+                    requests_mod.accumulate(
+                        demand, [cand], tags=title_tags[key], wanter=user.username, why=title_why[key]
+                    )
         user_report.status = "ok"
 
     if not ctx.plex.sections_by_type():

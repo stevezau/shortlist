@@ -22,6 +22,10 @@ All notable changes to this project are documented here. This project follows
   dashboard, users, runs with per-user diffs, settings, and a first-run onboarding wizard.
 - **Login with Plex** — PIN flow, owner-only sessions, CSRF-protected mutations, tokens
   encrypted at rest and redacted in the UI.
+- **Requests** — an approval inbox for wanted-but-missing titles, optionally auto-sent to
+  Sonarr/Radarr. Each entry shows its full provenance — which person and row wanted it and why (the
+  seed behind it, "because they watched …") — and a **Sent** log records what went out, when, and the
+  app's answer. Rejected titles are never re-queued; per-user + per-row tags apply on send.
 - **Uninstall** — restores every user's share filters from the snapshot taken before Shortlist's
   first restriction write and deletes only shortlist-labeled collections; dry-run preview included.
 - **Packaging** — multi-arch Docker image (GHCR), compose example, Unraid template,

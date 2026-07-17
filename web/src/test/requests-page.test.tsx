@@ -43,8 +43,10 @@ function candidate(
     demand: 4,
     tags: [],
     wanters: [],
+    why: [],
     status: "pending",
     detail: "",
+    updated_at: null,
     ...overrides,
   };
 }
@@ -87,7 +89,7 @@ describe("RequestsPage", () => {
     expect(screen.getByText(/Enable in Settings/i)).toBeTruthy();
   });
 
-  it("lists pending titles and files handled ones under Already handled", async () => {
+  it("files a sent title under the Sonarr/Radarr send log with its outcome and when", async () => {
     listRequests.mockResolvedValue([
       candidate({ id: 1, title: "Dune: Part Two", status: "pending" }),
       candidate({
@@ -96,13 +98,74 @@ describe("RequestsPage", () => {
         title: "Shogun",
         media_type: "show",
         status: "sent",
+        detail: "added to Sonarr",
+        updated_at: "2026-07-17T03:31:00Z",
       }),
     ]);
     renderPage();
     expect(await screen.findByText("Dune: Part Two")).toBeTruthy();
     expect(screen.getByText("Shogun")).toBeTruthy();
-    expect(screen.getByText(/Already handled/i)).toBeTruthy();
-    expect(screen.getByText(/sent to Sonarr\/Radarr/i)).toBeTruthy();
+    // The send log is its own section, and each entry carries the app's answer (the "reason why").
+    expect(
+      screen.getByRole("heading", { name: "Sent to Sonarr/Radarr" }),
+    ).toBeTruthy();
+    expect(screen.getByText(/added to Sonarr/i)).toBeTruthy();
+  });
+
+  it("explains where a request came from: which person, which row, and why", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        title: "El Chavo del Ocho",
+        wanters: ["Sarah", "Mike"],
+        why: [
+          {
+            user: "Sarah",
+            row: "Comedy Classics",
+            seed: "Fawlty Towers",
+            source: "tmdb_similar",
+          },
+          {
+            user: "Mike",
+            row: "Sci-Fi Night",
+            seed: "Futurama",
+            source: "trakt",
+          },
+        ],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("El Chavo del Ocho");
+    // Each (person, row) is spelled out with the reason, not just a bare "wanted by 2 people".
+    expect(screen.getByText("Comedy Classics")).toBeTruthy();
+    expect(
+      screen.getByText(/because they watched Fawlty Towers/i),
+    ).toBeTruthy();
+    expect(screen.getByText("Sci-Fi Night")).toBeTruthy();
+    expect(screen.getByText(/because they watched Futurama/i)).toBeTruthy();
+  });
+
+  it("shows how a seedless pick was suggested when there is no seed", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        title: "Trending Thing",
+        why: [
+          {
+            user: "Sarah",
+            row: "Fresh Picks",
+            seed: "",
+            source: "tmdb_discover",
+          },
+        ],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Trending Thing");
+    // With no seed there is no "because they watched"; the row still explains how it was suggested.
+    expect(screen.getByText("Fresh Picks")).toBeTruthy();
+    expect(screen.getByText(/via /i)).toBeTruthy();
+    expect(screen.queryByText(/because they watched/i)).toBeNull();
   });
 
   it("names who wanted a title, and falls back to the count when none were recorded", async () => {

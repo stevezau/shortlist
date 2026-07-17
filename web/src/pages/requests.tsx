@@ -9,13 +9,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "react-router-dom";
 
 import { apiErrorMessage } from "@/lib/api";
-import { settingBool, settingString } from "@/lib/format";
+import { formatDate, settingBool, settingString } from "@/lib/format";
 import {
   useRejectRequests,
   useRequests,
   useSendRequests,
   useSettings,
 } from "@/lib/queries";
+import { sourceShortLabel } from "@/lib/sources";
 import type { RequestCandidate } from "@/lib/types";
 
 function RequestsSkeleton() {
@@ -50,6 +51,30 @@ function wantedByLabel(item: RequestCandidate): string {
   }
   if (names.length <= 3) return `Wanted by ${names.join(", ")}`;
   return `Wanted by ${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
+}
+
+/**
+ * The provenance behind a request: one line per (person, row) that wanted it, with the reason —
+ * the seed ("because they watched …") or, for a seedless source, how it was suggested. This is the
+ * answer to "where did this come from and why", not just a count.
+ */
+function WhyBreakdown({ why }: { why: RequestCandidate["why"] }) {
+  if (!why || why.length === 0) return null;
+  return (
+    <ul className="space-y-0.5 border-l-2 border-muted pl-3 text-xs text-muted-foreground">
+      {why.map((w, i) => (
+        <li key={`${w.user}-${w.row}-${i}`}>
+          <span className="font-medium text-foreground/80">{w.user}</span> ·{" "}
+          <span>{w.row}</span>
+          {w.seed ? (
+            <span> · because they watched {w.seed}</span>
+          ) : w.source ? (
+            <span> · via {sourceShortLabel(w.source)}</span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 /** The facts that let the owner judge a title at a glance: type, rating, and who wanted it. */
@@ -130,9 +155,10 @@ function PendingRow({
         onChange={() => onToggle(item.id)}
         className="mt-1 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <div className="min-w-0 space-y-1">
+      <div className="min-w-0 space-y-1.5">
         <p className="font-medium">{item.title}</p>
         <TitleMeta item={item} globalTag={globalTag} />
+        <WhyBreakdown why={item.why} />
         {item.detail ? (
           <p className="text-xs text-muted-foreground">
             Last attempt: {item.detail}
@@ -143,7 +169,30 @@ function PendingRow({
   );
 }
 
-function HandledRow({ item }: { item: RequestCandidate }) {
+/** The send log: a title that went to Sonarr/Radarr — when it went, the app's answer, and why it
+ *  was wanted in the first place. */
+function SentRow({ item }: { item: RequestCandidate }) {
+  return (
+    <div className="space-y-1.5 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-medium">{item.title}</p>
+        <Badge variant="success">Sent to Sonarr/Radarr</Badge>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        <TypeBadge mediaType={item.media_type} />
+        {item.year ? <span>{item.year}</span> : null}
+        {item.updated_at ? (
+          <span>Sent {formatDate(item.updated_at)}</span>
+        ) : null}
+        {item.detail ? <span>· {item.detail}</span> : null}
+      </div>
+      <WhyBreakdown why={item.why} />
+    </div>
+  );
+}
+
+/** A dismissed title — kept on file so a later run never re-queues it. */
+function DismissedRow({ item }: { item: RequestCandidate }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2 text-sm">
       <div className="min-w-0">
@@ -152,9 +201,7 @@ function HandledRow({ item }: { item: RequestCandidate }) {
           {item.year ? `· ${item.year} ` : ""}· wanted by {item.demand}
         </span>
       </div>
-      <Badge variant={item.status === "sent" ? "success" : "secondary"}>
-        {item.status === "sent" ? "sent to Sonarr/Radarr" : "dismissed"}
-      </Badge>
+      <Badge variant="secondary">dismissed</Badge>
     </div>
   );
 }
@@ -181,8 +228,9 @@ export function RequestsPage() {
     () => rows.filter((r) => r.status === "pending"),
     [rows],
   );
-  const handled = useMemo(
-    () => rows.filter((r) => r.status !== "pending"),
+  const sent = useMemo(() => rows.filter((r) => r.status === "sent"), [rows]);
+  const dismissed = useMemo(
+    () => rows.filter((r) => r.status === "rejected"),
     [rows],
   );
 
@@ -329,14 +377,27 @@ export function RequestsPage() {
                     />
                   )}
 
-                  {handled.length > 0 && (
+                  {sent.length > 0 && (
                     <section className="space-y-3">
                       <h2 className="text-sm font-medium text-muted-foreground">
-                        Already handled
+                        Sent to Sonarr/Radarr
                       </h2>
                       <div className="space-y-2">
-                        {handled.map((item) => (
-                          <HandledRow key={item.id} item={item} />
+                        {sent.map((item) => (
+                          <SentRow key={item.id} item={item} />
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {dismissed.length > 0 && (
+                    <section className="space-y-3">
+                      <h2 className="text-sm font-medium text-muted-foreground">
+                        Dismissed
+                      </h2>
+                      <div className="space-y-2">
+                        {dismissed.map((item) => (
+                          <DismissedRow key={item.id} item={item} />
                         ))}
                       </div>
                     </section>

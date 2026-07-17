@@ -15,12 +15,19 @@ from pydantic import BaseModel
 from shortlist.engine.models import MediaType, MissingTitle
 from shortlist.engine.requests import request_titles
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import Event, RequestCandidate
+from shortlist.server.db.models import Event, RequestCandidate, iso_utc
 
 router = APIRouter(prefix="/requests", tags=["requests"], dependencies=[Depends(require_owner)])
 
 # Pending first (the owner's to-do list), then sent, then rejected — so the inbox opens on what needs a decision.
 _STATUS_ORDER = {"pending": 0, "sent": 1, "rejected": 2}
+
+
+class RequestWhyOut(BaseModel):
+    user: str  # whose taste surfaced it
+    row: str  # the row that wanted it (the name the user sees)
+    seed: str  # the history title behind it ("because you watched …"); "" for seedless sources
+    source: str  # the candidate source that produced it
 
 
 class RequestCandidateOut(BaseModel):
@@ -34,8 +41,10 @@ class RequestCandidateOut(BaseModel):
     demand: int
     tags: list[str]
     wanters: list[str]
+    why: list[RequestWhyOut]  # per (person, row) provenance — which row, and why it got here
     status: str
     detail: str
+    updated_at: str | None  # when this row last changed state (the "sent at" for a sent item)
 
 
 class RequestAction(BaseModel):
@@ -61,8 +70,10 @@ def list_requests(request: Request) -> list[RequestCandidateOut]:
             demand=r.demand,
             tags=list(r.tags or []),
             wanters=list(r.wanters or []),
+            why=[RequestWhyOut(**w) for w in (r.why or [])],
             status=r.status,
             detail=r.detail,
+            updated_at=iso_utc(r.updated_at),
         )
         for r in rows
     ]

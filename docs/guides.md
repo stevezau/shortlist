@@ -176,13 +176,15 @@ like the global one.
 ### The Requests inbox
 
 The **Requests** tab (in the sidebar) is your approval queue. Each run adds the wanted-but-missing
-titles it didn't auto-send — with the title, year, rating, and **who wanted it** (the names of the
-people whose picks surfaced it, e.g. "Wanted by Sarah, Mike"; older entries just show the count).
+titles it didn't auto-send — with the title, year, rating, and a full **why it's here** breakdown:
+one line per person and row that wanted it, with the reason (e.g. "Sarah · Comedy Classics · because
+they watched Fawlty Towers"). That answers where a request came from and why, not just a count.
 Tick the ones you want and click **Send to Sonarr/Radarr**, or **Reject** the rest. A rejected title is never
 re-queued AND never auto-sent by a later run — a "no" is a no. A title already in the library stops
 appearing on its own, and one that's already been sent (still downloading, say) never re-consumes an
-auto-request slot, so a slow grab can't starve the queue. Sent and dismissed titles
-move to **Already handled** so you can see what you've actioned.
+auto-request slot, so a slow grab can't starve the queue. Dismissed titles move to **Dismissed**, and
+everything sent to Sonarr/Radarr moves to the **Sent to Sonarr/Radarr** log — each entry keeping when
+it went, the app's answer (e.g. "added to Radarr"), and the same why-it-was-wanted breakdown.
 
 It stays cautious on purpose. Missing titles are deduplicated across all your users — three people
 wanting the same one is a single entry, and multi-person demand ranks it higher and can push it over

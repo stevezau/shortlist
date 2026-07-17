@@ -478,9 +478,23 @@ export interface RequestCandidate {
   tags: string[];
   /** The usernames whose picks wanted it — the "who" behind the demand count. */
   wanters: string[];
+  /** Per (person, row) provenance: which row wanted it and why (the seed behind it). */
+  why: RequestWhy[];
   status: "pending" | "sent" | "rejected";
   /** Send outcome, or why it's queued. */
   detail: string;
+  /** When this row last changed state — the "sent at" for a sent item. */
+  updated_at: string | null;
+}
+
+/** One reason a missing title is in the inbox: a person, the row that wanted it, and what suggested it. */
+export interface RequestWhy {
+  user: string;
+  row: string;
+  /** The history title behind it ("because you watched …"); "" for seedless sources. */
+  seed: string;
+  /** The candidate source that produced it (tmdb_similar, trakt, llm_web, …). */
+  source: string;
 }
 
 /** One title's result from POST /api/requests/send. */

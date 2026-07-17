@@ -27,6 +27,11 @@ from shortlist.server.services.sse import EventBus
 HIT_WINDOW_DAYS = 30  # a pick counts as a hit if it is watched within 30 days of being recommended
 
 
+def _why_json(why) -> list[dict]:
+    """Serialize a missing title's provenance for storage + the API: [{user, row, seed, source}]."""
+    return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source} for w in why]
+
+
 def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
     """One inbox row for a missing title, in whichever state the run left it."""
     return RequestCandidate(
@@ -39,6 +44,7 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         demand=m.demand,
         tags=sorted(m.tags),
         wanters=sorted(m.wanters),
+        why=_why_json(m.why),
         status=status,
         first_seen_run_id=run_id,
     )
@@ -432,7 +438,7 @@ class RunService:
             if row is None:
                 session.add(_candidate_row(m, run_id, status="pending"))
             elif row.status == "pending":
-                row.title, row.year, row.rating, row.vote_count, row.demand, row.tags, row.wanters = (
+                row.title, row.year, row.rating, row.vote_count, row.demand, row.tags, row.wanters, row.why = (
                     m.title,
                     m.year,
                     m.rating,
@@ -440,18 +446,28 @@ class RunService:
                     m.demand,
                     sorted(m.tags),
                     sorted(m.wanters),
+                    _why_json(m.why),
                 )
 
         # The titles this run AUTO-SENT are filed as `sent` too. Without this the ledger only knew
         # about titles the owner sent by hand, so an auto-sent title still downloading was "missing"
         # again tomorrow: it out-ranked everything by demand, re-consumed one of `max_per_run` every
         # single night, and the queue starved on the same few titles forever.
+        # The Arr's answer per auto-sent title, so the sent log records the outcome ("requested",
+        # "already in Radarr", …), not just that it went.
+        auto_outcomes = {(o.tmdb_id, o.media_type.value): o for o in report.requests.outcomes}
         for m in report.requests.sent:
             row = existing.get((m.tmdb_id, m.media_type.value))
+            outcome = auto_outcomes.get((m.tmdb_id, m.media_type.value))
             if row is None:
-                session.add(_candidate_row(m, run_id, status="sent"))
+                new_row = _candidate_row(m, run_id, status="sent")
+                if outcome is not None:
+                    new_row.detail = outcome.detail
+                session.add(new_row)
             else:
                 row.status = "sent"
+                if outcome is not None:
+                    row.detail = outcome.detail
 
     @staticmethod
     def _finalize_run(run: Run, report, status: str | None, error: str | None, ok: int, errors: int) -> None:
