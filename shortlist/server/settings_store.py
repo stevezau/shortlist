@@ -64,9 +64,9 @@ DEFAULTS: dict[str, Any] = {
     # count — but a run is never pruned while it's still inside the 30-day watch-credit window, so a
     # low value can't cost the report a hit. 0 = keep everything.
     "runs.retention": 100,
-    # The app version whose "update available" notification the owner dismissed (a newer release
-    # re-surfaces on its own). "" = nothing dismissed.
-    "notifications.dismissed_update": "",
+    # Notification ids the owner dismissed. Each id encodes its state (run id / version), so the same
+    # alert stays hidden but a new failure or a newer release surfaces again. Capped to the newest 100.
+    "notifications.dismissed": [],
     # Which candidate sources feed recommendations (engine/candidates.py). More = wider recall.
     "candidates.sources": ["tmdb_similar", "tmdb_discover"],
     # How the "AI — web search" (llm_web) source searches the web: 'native' (the curator provider's

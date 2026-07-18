@@ -264,11 +264,11 @@ export const api = {
   getNotifications: (): Promise<{ notifications: AppNotification[] }> =>
     request("/api/notifications"),
 
-  /** Dismiss the "update available" note for a version (a newer release re-surfaces). */
-  dismissUpdate: (version: string): Promise<{ ok: boolean }> =>
-    request("/api/notifications/dismiss-update", {
+  /** Dismiss a notification by id (a new failure / newer release re-surfaces on its own). */
+  dismissNotification: (id: string): Promise<{ ok: boolean }> =>
+    request("/api/notifications/dismiss", {
       method: "POST",
-      body: JSON.stringify({ version }),
+      body: JSON.stringify({ id }),
     }),
 
   /** The plain-text diagnostics bundle for bug reports (secrets-free). */

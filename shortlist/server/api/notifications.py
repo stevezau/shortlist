@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 import shortlist
 from shortlist.server.auth import require_owner
-from shortlist.server.notifications import build_notifications
+from shortlist.server.notifications import DISMISSED_KEY, build_notifications
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/notifications", tags=["notifications"], dependencies=[Depends(require_owner)])
@@ -21,14 +21,19 @@ async def list_notifications(request: Request) -> dict:
     return {"notifications": items}
 
 
-class DismissUpdate(BaseModel):
-    version: str
+class Dismiss(BaseModel):
+    id: str
 
 
-@router.post("/dismiss-update")
-async def dismiss_update(body: DismissUpdate, request: Request) -> dict:
-    """Hide the update note for this version. A newer release will surface again on its own."""
+@router.post("/dismiss")
+async def dismiss(body: Dismiss, request: Request) -> dict:
+    """Hide a notification by id. The id encodes its state (run id / version), so the SAME condition
+    stays hidden but a new failure or a newer release surfaces again on its own."""
     with request.app.state.sessions() as session:
-        SettingsStore(session).set("notifications.dismissed_update", body.version)
-        session.commit()
+        store = SettingsStore(session)
+        current = list(store.get(DISMISSED_KEY) or [])
+        if body.id not in current:
+            # Cap the list so a long-lived install can't grow it unbounded (keep the newest 100).
+            store.set(DISMISSED_KEY, [*current, body.id][-100:])
+            session.commit()
     return {"ok": True}

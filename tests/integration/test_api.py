@@ -1799,9 +1799,9 @@ class TestNotifications:
         first = client.get("/api/notifications").json()["notifications"]
         assert any(n["id"] == "update-9.9.9" and n["dismissable"] for n in first)
 
-        assert client.post("/api/notifications/dismiss-update", json={"version": "9.9.9"}).json() == {"ok": True}
+        assert client.post("/api/notifications/dismiss", json={"id": "update-9.9.9"}).json() == {"ok": True}
         after = client.get("/api/notifications").json()["notifications"]
-        assert not any(n["id"] == "update-9.9.9" for n in after)  # dismissed for this version
+        assert not any(n["id"] == "update-9.9.9" for n in after)  # dismissed by id
 
     def test_debug_bundle_reports_facts_but_never_a_secret(self, client: TestClient):
         from shortlist.server.settings_store import SettingsStore

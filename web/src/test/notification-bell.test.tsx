@@ -7,15 +7,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import type { AppNotification } from "@/lib/types";
 
-const { getNotifications, dismissUpdate } = vi.hoisted(() => ({
+const { getNotifications, dismissNotification } = vi.hoisted(() => ({
   getNotifications: vi.fn(),
-  dismissUpdate: vi.fn((_version: string) => Promise.resolve({ ok: true })),
+  dismissNotification: vi.fn((_id: string) => Promise.resolve({ ok: true })),
 }));
 
 vi.mock("@/lib/api", () => ({
   api: {
     getNotifications: () => getNotifications(),
-    dismissUpdate: (version: string) => dismissUpdate(version),
+    dismissNotification: (id: string) => dismissNotification(id),
   },
 }));
 
@@ -49,13 +49,13 @@ const FAILED: AppNotification = {
   body: "The most recent run ended in an error.",
   action_url: "/runs/3",
   action_label: "See the run",
-  dismissable: false,
+  dismissable: true,
 };
 
 describe("NotificationBell", () => {
   beforeEach(() => {
     getNotifications.mockReset();
-    dismissUpdate.mockClear();
+    dismissNotification.mockClear();
   });
 
   it("badges the count and lists the notifications when opened", async () => {
@@ -88,13 +88,15 @@ describe("NotificationBell", () => {
     expect(screen.getByText(/all caught up/i)).toBeTruthy();
   });
 
-  it("dismisses the update note by its version", async () => {
+  it("dismisses a notification by its id", async () => {
     getNotifications.mockResolvedValue({ notifications: [UPDATE] });
     renderBell();
     await userEvent.click(
       await screen.findByRole("button", { name: /Notifications/ }),
     );
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    await waitFor(() => expect(dismissUpdate).toHaveBeenCalledWith("9.9.9"));
+    await waitFor(() =>
+      expect(dismissNotification).toHaveBeenCalledWith("update-9.9.9"),
+    );
   });
 });

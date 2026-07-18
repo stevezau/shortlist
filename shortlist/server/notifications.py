@@ -20,12 +20,12 @@ from shortlist.server.db.models import Event, Run
 from shortlist.server.settings_store import SettingsStore
 from shortlist.server.version_check import check_for_update
 
-_DISMISSED_UPDATE_KEY = "notifications.dismissed_update"
+DISMISSED_KEY = "notifications.dismissed"  # list of dismissed notification ids (each id encodes its state)
 
 
 def _update_available(store: SettingsStore, current_version: str) -> dict | None:
     update = check_for_update(current_version)
-    if not update or store.get(_DISMISSED_UPDATE_KEY) == update["latest"]:
+    if not update:
         return None
     return {
         "id": f"update-{update['latest']}",
@@ -65,7 +65,7 @@ def _last_run_problem(session: Session) -> dict | None:
             "body": "The most recent run ended in an error — open it to see what went wrong.",
             "action_url": f"/runs/{last.id}",
             "action_label": "See the run",
-            "dismissable": False,
+            "dismissable": True,  # id is per-run, so a NEW failed run re-surfaces
         }
     failed = (last.stats or {}).get("users_error", 0)
     if failed:
@@ -76,7 +76,7 @@ def _last_run_problem(session: Session) -> dict | None:
             "body": "Some people didn't rebuild in the most recent run. The rest finished fine.",
             "action_url": f"/runs/{last.id}",
             "action_label": "See the run",
-            "dismissable": False,
+            "dismissable": True,
         }
     return None
 
@@ -102,12 +102,18 @@ def _recent_service_errors(session: Session) -> dict | None:
 
 
 def build_notifications(session: Session, store: SettingsStore, current_version: str) -> list[dict]:
-    """Every currently-firing notification, most severe first."""
+    """Every currently-firing notification the owner hasn't dismissed, most severe first. Dismissal is
+    by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
+    newer release surfaces again rather than staying hidden forever."""
     candidates = [
         _update_available(store, current_version),
         _runs_paused(store),
         _last_run_problem(session),
         _recent_service_errors(session),
     ]
+    dismissed = set(store.get(DISMISSED_KEY) or [])
     order = {"error": 0, "warning": 1, "info": 2}
-    return sorted((n for n in candidates if n), key=lambda n: order.get(n["severity"], 3))
+    return sorted(
+        (n for n in candidates if n and n["id"] not in dismissed),
+        key=lambda n: order.get(n["severity"], 3),
+    )

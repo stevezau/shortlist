@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
-import { useDismissUpdate, useNotifications } from "@/lib/queries";
+import { useDismissNotification, useNotifications } from "@/lib/queries";
 import type { AppNotification } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -19,7 +19,7 @@ function NotificationRow({
   onNavigate,
 }: {
   item: AppNotification;
-  onDismiss: (version: string) => void;
+  onDismiss: (id: string) => void;
   onNavigate: () => void;
 }) {
   const { icon: Icon, className } = SEVERITY[item.severity] ?? SEVERITY.info;
@@ -53,11 +53,10 @@ function NotificationRow({
                 {item.action_label}
               </Link>
             ))}
-          {/* Only the "update available" note is dismissable; its id carries the version. */}
-          {item.dismissable && item.id.startsWith("update-") && (
+          {item.dismissable && (
             <button
               type="button"
-              onClick={() => onDismiss(item.id.slice("update-".length))}
+              onClick={() => onDismiss(item.id)}
               className="text-xs text-muted-foreground hover:text-foreground"
             >
               Dismiss
@@ -80,7 +79,7 @@ export function NotificationBell({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const notifications = useNotifications();
-  const dismiss = useDismissUpdate();
+  const dismiss = useDismissNotification();
   const items = notifications.data?.notifications ?? [];
   const count = items.length;
   const hasError = items.some((n) => n.severity === "error");
@@ -155,7 +154,7 @@ export function NotificationBell({
                 <NotificationRow
                   key={item.id}
                   item={item}
-                  onDismiss={(version) => dismiss.mutate(version)}
+                  onDismiss={(id) => dismiss.mutate(id)}
                   onNavigate={() => setOpen(false)}
                 />
               ))}

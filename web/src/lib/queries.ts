@@ -285,10 +285,10 @@ export function useNotifications() {
   });
 }
 
-export function useDismissUpdate() {
+export function useDismissNotification() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (version: string) => api.dismissUpdate(version),
+    mutationFn: (id: string) => api.dismissNotification(id),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["notifications"] }),
   });
