@@ -1458,46 +1458,61 @@ class TestEffectiveRowSources:
         assert srcs == ("tmdb_discover",)
 
 
-class TestPerUserTimeoutRetry:
-    """A transient PMS read timeout retries the whole user once before failing (rule 6 resume-safety)."""
+class TestPerDeliveryTimeoutRetry:
+    """A PMS timeout retries JUST the idempotent delivery write, NOT the whole user — so a Plex hiccup
+    never re-runs the expensive gather + LLM curate (the amplifier that made SFLIX run 3 catastrophic).
+    A delivery that keeps timing out still fails only that user (rule 6 resume-safety)."""
 
-    def test_a_transient_timeout_retries_the_user_once(self, ctx: EngineContext, mock_plextv, monkeypatch):
+    def test_a_transient_delivery_timeout_retries_only_the_write_not_curation(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
         import requests
 
-        from shortlist.engine import rows as rows_mod
+        from shortlist.engine.clients import plex_pms
 
+        monkeypatch.setattr(plex_pms.time, "sleep", lambda _s: None)  # no real backoff waits
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        calls = {"n": 0}
+        ctx.curator.curate.side_effect = curated_picks
 
-        def flaky(*args, **kwargs):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise requests.exceptions.ReadTimeout("busy PMS")
-            return True  # second attempt succeeds
+        # Inject the timeout at the actual PMS WRITE (create_collection), NOT at our deliver_rows
+        # helper — so real deliver_rows (and its idempotent re-read) runs on BOTH attempts.
+        create_calls = {"n": 0}
 
-        monkeypatch.setattr(rows_mod, "_run_user", flaky)
+        def flaky_create(section, title, items):
+            create_calls["n"] += 1
+            if create_calls["n"] == 1:
+                raise requests.exceptions.ReadTimeout("busy PMS on the write")
+            return MagicMock()
+
+        ctx.plex.create_collection.side_effect = flaky_create
+
         report = pipeline_mod.run(ctx, [sarah])
-        assert calls["n"] == 2  # retried exactly once
-        assert next(u for u in report.users if u.slug == "sarah").status != "error"
 
-    def test_a_persistent_timeout_still_fails_after_the_retry(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        assert create_calls["n"] == 2  # the write was retried once, against real deliver_rows
+        # Curation ran ONCE — the retry did not re-run the LLM (the whole point of the change).
+        assert ctx.curator.curate.call_count == 1
+        user = next(u for u in report.users if u.slug == "sarah")
+        assert user.status != "error"
+        # The retry did not double-count the per-library audit breakdown (idempotent report state).
+        assert len(user.breakdown) == 1
+
+    def test_a_persistent_delivery_timeout_fails_only_that_user(self, ctx: EngineContext, mock_plextv, monkeypatch):
         import requests
 
-        from shortlist.engine import rows as rows_mod
+        from shortlist.engine.clients import plex_pms
 
+        monkeypatch.setattr(plex_pms.time, "sleep", lambda _s: None)
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        calls = {"n": 0}
+        ctx.curator.curate.side_effect = curated_picks
+        ctx.plex.create_collection.side_effect = requests.exceptions.ReadTimeout("down")
 
-        def always_timeout(*args, **kwargs):
-            calls["n"] += 1
-            raise requests.exceptions.ReadTimeout("down")
-
-        monkeypatch.setattr(rows_mod, "_run_user", always_timeout)
         report = pipeline_mod.run(ctx, [sarah])
-        assert calls["n"] == 2  # one retry, then give up
+
         assert next(u for u in report.users if u.slug == "sarah").status == "error"
+        assert ctx.curator.curate.call_count == 1  # curation ran once, was not re-run on the failures
+        ctx.plex.promote.assert_not_called()  # nothing delivered -> nothing promoted
 
 
 class TestCollectionOrderPhase:

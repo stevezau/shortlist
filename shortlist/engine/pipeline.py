@@ -20,7 +20,7 @@ from loguru import logger
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
-from shortlist.engine.clients.plex_pms import _PMS_TIMEOUTS, PlexClient
+from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.poster import PosterArtist
 from shortlist.engine.clients.search import WebSearchProvider
@@ -412,18 +412,13 @@ def _deliver_phase(
         started = time.monotonic()
         delivered = False
         try:
-            try:
-                delivered = rows._run_user(
-                    ctx, user, seed_index, library_index, stored_labels, user_report, demand, order_work
-                )
-            except _PMS_TIMEOUTS:
-                # A single slow PMS read (busy server under the add/remove write load) shouldn't sink a whole
-                # user. Delivery is upsert/idempotent, so retry the user once before giving up. A
-                # persistent outage still fails after the retry.
-                logger.warning("{}: PMS timed out — retrying this user once", user.username)
-                delivered = rows._run_user(
-                    ctx, user, seed_index, library_index, stored_labels, user_report, demand, order_work
-                )
+            # PMS timeouts are retried at the DELIVERY write (idempotent) inside _run_user, so a Plex
+            # hiccup no longer re-runs the whole user's gather + LLM curate (which is what made a slow
+            # night catastrophic — SFLIX run 3, 2026-07-19). A timeout that exhausts the delivery
+            # retries, or one from a non-delivery PMS read, falls through here and fails just this user.
+            delivered = rows._run_user(
+                ctx, user, seed_index, library_index, stored_labels, user_report, demand, order_work
+            )
         except Exception as e:
             user_report.status = "error"
             user_report.error = f"{type(e).__name__}: {e}"

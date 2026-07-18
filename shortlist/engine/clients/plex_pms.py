@@ -113,12 +113,14 @@ _REORDER_TOP_N = 15
 
 
 def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: int = 4) -> None:
-    """Retry an IDEMPOTENT PMS mutation on a read/connect timeout, backing off between tries.
+    """Retry an IDEMPOTENT PMS mutation (promotion, or a delivery collection upsert) on a read/connect
+    timeout, backing off between tries.
 
     The requests-level ``Retry`` only covers GETs (a create/label must never be blindly repeated), but
-    promotion — hide + set hub visibility — is safe to repeat: re-hiding or re-showing is a no-op. At
-    scale the promote phase can push a busy PMS into read timeouts, and one un-retried timeout used to
-    fail the whole user (SFLIX 48-user rollout, 2026-07-18). The backoff also gives the server air.
+    both callers here are safe to repeat: promotion (hide + set hub visibility) is a no-op re-applied,
+    and delivery re-reads current membership and re-applies only the delta. At scale a busy PMS pushes
+    these into read timeouts, and one un-retried timeout used to fail the whole user (SFLIX 48-user
+    rollout, 2026-07-18). The backoff also gives the server air.
     """
     for attempt in range(attempts):
         try:
@@ -129,7 +131,7 @@ def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: in
                 raise
             delay = 2.0 * (2**attempt)  # 2s, 4s, 8s
             logger.warning(
-                "{}: PMS {} on promote — retry {}/{} in {:.0f}s",
+                "{}: PMS {} — retry {}/{} in {:.0f}s",
                 label,
                 type(error).__name__,
                 attempt + 1,
@@ -142,10 +144,13 @@ def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: in
 class PlexClient:
     """PMS operations, restricted to collections Shortlist owns (label-gated)."""
 
-    def __init__(self, base_url: str, token: str, *, timeout: int = 60):
-        # 60s (up from 30): under a big rollout the serial reorder keeps the PMS busy, and a single
-        # read that takes 30-45s shouldn't fail the read. The retrying session + per-user retry handle
-        # genuine transients; this only raises the ceiling before one slow read is called a timeout.
+    def __init__(self, base_url: str, token: str, *, timeout: int = 20):
+        # 20s (down from 60): on a LAN PMS a single call taking >20s means the server is stalled, not
+        # working, and waiting the full 60s just multiplied the damage (a stuck GET retried 4x = ~240s,
+        # serialized behind the write-lock; SFLIX run 3, 2026-07-19). 20s fails a genuinely stalled call
+        # fast; the retrying session's backoff still covers real transients, and the reorder no longer
+        # holds the write-lock (it's deferred, best-effort) so the old "keep the ceiling high for the
+        # busy reorder" reason is gone.
         self._server = PlexServer(base_url, token, session=_retrying_session(), timeout=timeout)
         # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
         # constructs one per run), so these live exactly one run — no cross-run staleness. Library

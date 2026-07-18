@@ -18,6 +18,7 @@ import shortlist.engine.pipeline as _pipeline
 from shortlist.engine import candidates as candidates_mod
 from shortlist.engine import ranking
 from shortlist.engine import requests as requests_mod
+from shortlist.engine.clients.plex_pms import _retry_idempotent
 from shortlist.engine.curator import CuratorError, NullCurator
 from shortlist.engine.delivery import (
     deliver_rows,
@@ -602,39 +603,59 @@ def _run_user(
         picks = [pick for sp in section_picks.values() for pick in sp]
         all_picks.extend(picks)
         _pipeline._emit(ctx, user.slug, "delivering", {"picks": len(picks)})
+
         # write_lock: the Plex collection writes AND the shared stored_labels mutation inside
         # deliver_rows must be serial across users — the leak-safe half of Stage 3 parallelism.
         # Timed on both sides so a slow run can be split into lock-CONTENTION (waiting behind another
         # user's write) vs real WORK (this user's own PMS calls) — the two look identical in wall-clock
         # otherwise, and only the second is fixable by making the writes cheaper (perf diag 2026-07-19).
-        _lock_wait_start = time.monotonic()
-        with ctx.write_lock:
-            _work_start = time.monotonic()
-            deliver_rows(
-                ctx.plex,
-                user,
-                picks,
-                cfg,
-                spec,
-                sole_row=len(specs) == 1,
-                dry_run=cfg.dry_run,
-                stored_labels=stored_labels,
-                diff=user_report.diff,
-                sections=ctx.delivery_sections,
-                section_index=ctx.section_index,
-                section_picks=section_picks,
-                breakdown=user_report.breakdown,
-                poster_artist=ctx.poster_artist,
-                order_work=order_work,
-            )
-            logger.debug(
-                "{}: row '{}' delivery — waited {:.1f}s for write-lock, wrote {} librar(ies) in {:.1f}s",
-                user.username,
-                spec.slug,
-                _work_start - _lock_wait_start,
-                len(section_picks),
-                time.monotonic() - _work_start,
-            )
+        #
+        # Delivery is upsert-idempotent (re-reads current membership, re-applies only the delta), so a
+        # PMS timeout retries JUST this write, NOT the expensive gather+curate above. Each attempt
+        # re-acquires the write-lock and the backoff sleep happens OUTSIDE it, so a stalled user never
+        # holds the lock while waiting. This replaced a whole-user retry that re-ran the LLM and a full
+        # re-gather on a single Plex hiccup (SFLIX run 3: ~2795s for danvex before it failed, 2026-07-19).
+        # A delivery RETRY re-runs deliver_rows for the whole row, which appends one breakdown entry
+        # per library — so a mid-row timeout (library 1 delivered, library 2 stalls) would record
+        # library 1 twice on the retry. Reset the per-row breakdown to its pre-attempt length on each
+        # attempt so the audit stays idempotent too, not just the Plex writes (rule 10). user_report.diff
+        # needs no reset: it is None during delivery (only populated from swept rows after _run_user).
+        breakdown_mark = len(user_report.breakdown)
+
+        # Default args bind the loop-varying values at definition time (the function is called
+        # synchronously by _retry_idempotent, but binding makes that explicit and satisfies B023).
+        def _deliver_locked(picks=picks, spec=spec, section_picks=section_picks, mark=breakdown_mark) -> None:
+            del user_report.breakdown[mark:]  # drop any entries a prior failed attempt appended
+            lock_wait_start = time.monotonic()
+            with ctx.write_lock:
+                work_start = time.monotonic()
+                deliver_rows(
+                    ctx.plex,
+                    user,
+                    picks,
+                    cfg,
+                    spec,
+                    sole_row=len(specs) == 1,
+                    dry_run=cfg.dry_run,
+                    stored_labels=stored_labels,
+                    diff=user_report.diff,
+                    sections=ctx.delivery_sections,
+                    section_index=ctx.section_index,
+                    section_picks=section_picks,
+                    breakdown=user_report.breakdown,
+                    poster_artist=ctx.poster_artist,
+                    order_work=order_work,
+                )
+                logger.debug(
+                    "{}: row '{}' delivery — waited {:.1f}s for write-lock, wrote {} librar(ies) in {:.1f}s",
+                    user.username,
+                    spec.slug,
+                    work_start - lock_wait_start,
+                    len(section_picks),
+                    time.monotonic() - work_start,
+                )
+
+        _retry_idempotent(_deliver_locked, label=f"{user.username} delivery of {spec.slug!r}")
         delivered_any = delivered_any or bool(picks)
 
     user_report.picks = all_picks
