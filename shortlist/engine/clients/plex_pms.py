@@ -72,6 +72,10 @@ _PMS_TIMEOUTS = (
     requests.exceptions.ConnectionError,
 )
 
+# Order only the head of a row — what a viewer sees on the Home shelf before "see all". Each move is a
+# serial PMS round-trip, so this caps the dominant cost of delivering a large row.
+_REORDER_TOP_N = 15
+
 
 def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: int = 4) -> None:
     """Retry an IDEMPOTENT PMS mutation on a read/connect timeout, backing off between tries.
@@ -465,6 +469,11 @@ class PlexClient:
         "move every item every time" cost N calls per row per library on every run. Here we move ONLY
         the items that are actually out of place (simulating the live order as we go), so a steady
         re-run — where most titles keep their rank — costs a handful of calls instead of ~20.
+
+        We also only bother ordering the TOP ``_REORDER_TOP_N`` — the part of the row a viewer actually
+        sees on the Home shelf before "see all". On a first delivery (every item out of place) that's
+        the difference between ~15 move calls and ~30+, and since these writes are strictly serial for
+        privacy it's the dominant cost of a big rollout (SFLIX 48-user rollout, 2026-07-18).
         """
         start = time.monotonic()
         existing = collection.items()  # one fetch; reused for the diff below
@@ -482,7 +491,8 @@ class PlexClient:
         now = collection.items()  # one fetch of the post-add/remove membership
         by_key = {i.ratingKey: i for i in now}
         order = [i.ratingKey for i in now]  # our model of the live order, kept in sync as we move
-        target = [k for k in wanted_keys if k in by_key]
+        # Only order the visible head of the row; the tail keeps its position (below the fold anyway).
+        target = [k for k in wanted_keys if k in by_key][:_REORDER_TOP_N]
         moves = 0
         previous: int | None = None  # the ratingKey the current target item must sit right after
         for key in target:
