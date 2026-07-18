@@ -716,6 +716,25 @@ def _deliver_one(
 
     if collection.title != title:
         collection.editTitle(title)
+
+    if not to_add_keys and to_remove_count == 0:
+        # Membership already IS the wanted set — skip the add/remove/sortUpdate writes entirely. An
+        # unchanged row used to fire a sortUpdate every run (a real write on a slow library, for
+        # nothing). The deferred order pass still runs via order_work, so a freshness re-rank is still
+        # applied and the collection keeps its custom sort from prior runs. (perf: SFLIX 2026-07-19)
+        if order_work is not None:
+            order_work.append((collection, wanted_keys))
+        apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
+        stored = plex.stored_label(collection, label)
+        logger.info(
+            "{}: '{}' in '{}' unchanged ({} items) — no membership write",
+            profile.username,
+            display,
+            section.title,
+            len(picks),
+        )
+        return diff, stored
+
     # Fetch ONLY the items being added (the delta), not all N picks — most are already in the
     # collection on a steady run, so this is a handful of items instead of the whole row. Skip the
     # fetch entirely when nothing is new (fetch_items([]) raises NotFound on a real PMS).

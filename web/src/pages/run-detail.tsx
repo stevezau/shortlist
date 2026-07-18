@@ -380,6 +380,14 @@ function UserTabs({
   const ok = shown.filter((r) => r.error === null);
   const failedTotal = results.filter((r) => r.error !== null).length;
   const many = results.length > 10;
+  // Past ~2 rows of chips a flat grid walls the page (48 users, mostly failed). Cap the group and let
+  // it scroll; a small (or search-narrowed) group stays a plain wrap with no box.
+  const gridCls = (count: number) =>
+    cn(
+      "flex flex-wrap gap-2",
+      count > 14 &&
+        "max-h-56 overflow-y-auto rounded-md border bg-muted/20 p-2.5",
+    );
 
   return (
     <div className="space-y-3" role="tablist" aria-label="Users in this run">
@@ -406,7 +414,7 @@ function UserTabs({
       </div>
 
       {failed.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className={gridCls(failed.length)}>
           {failed.map((result) => (
             <UserChip
               key={result.slug}
@@ -429,7 +437,7 @@ function UserTabs({
               {showOk ? "Hide" : `Show ${ok.length} that succeeded`}
             </button>
             {showOk && (
-              <div className="flex flex-wrap gap-2 pt-2">
+              <div className={cn(gridCls(ok.length), "mt-2")}>
                 {ok.map((result) => (
                   <UserChip
                     key={result.slug}
@@ -442,7 +450,7 @@ function UserTabs({
             )}
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
+          <div className={gridCls(ok.length)}>
             {ok.map((result) => (
               <UserChip
                 key={result.slug}

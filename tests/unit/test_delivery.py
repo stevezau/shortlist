@@ -258,6 +258,31 @@ class TestDeliverRows:
         )
         existing.items.assert_called_once()  # membership read exactly once, not twice
 
+    def test_unchanged_row_makes_no_membership_write(self, engine_config, movies, shows):
+        """A row already holding exactly the wanted picks writes NOTHING — no add/remove/sortUpdate.
+        It used to fire a sortUpdate every run (a real write on a slow library, for nothing)."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = MagicMock()
+        existing.title = "✨ Movies Picked for You" + row_marker(profile.plex_account_id)
+        # Membership already IS the wanted set (picks() = 1001, 1002).
+        existing.items.return_value = [
+            MagicMock(title="Movie 1", ratingKey=1001),
+            MagicMock(title="Movie 2", ratingKey=1002),
+        ]
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+        order_work: list = []
+
+        diff, stored = deliver_rows(plex, profile, picks(), engine_config, order_work=order_work)
+
+        plex.set_items.assert_not_called()  # no add / remove / sortUpdate
+        plex.fetch_items.assert_not_called()  # nothing new to fetch
+        existing.editTitle.assert_not_called()  # title already matches
+        plex.delete_owned_collection.assert_not_called()  # not a rebuild
+        assert (existing, [1001, 1002]) in order_work  # still queued so a freshness re-rank applies
+        assert diff.added == [] and diff.removed == []
+        assert stored == "Shortlist_sarah"
+
     def _existing_with_stale(self, profile, n_stale: int) -> MagicMock:
         existing = MagicMock()
         existing.title = "✨ Movies Picked for You" + row_marker(profile.plex_account_id)
