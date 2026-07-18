@@ -50,6 +50,23 @@ from shortlist.engine.models import (
 if TYPE_CHECKING:
     from shortlist.engine.pipeline import EngineContext
 
+# A live web search + an LLM call PER PERSON — the dominant read-phase cost at scale, and little
+# benefit to one person's row. Kept only for shared rows (one broad "what's good now" pool for
+# everyone); dropped from per-person gathering.
+_PER_PERSON_EXCLUDED_SOURCES = ("llm_web",)
+
+
+def effective_row_sources(spec: RowSpec, default_sources: list[str]) -> tuple[str, ...]:
+    """The candidate sources a row actually gathers from, sorted (so identical sets share one pool).
+
+    A row uses its own ``candidate_sources`` or the global default, minus the sources too expensive to
+    run per person (``llm_web``) — which only shared rows keep.
+    """
+    srcs = list(spec.candidate_sources or default_sources)
+    if not spec.shared:
+        srcs = [s for s in srcs if s not in _PER_PERSON_EXCLUDED_SOURCES]
+    return tuple(sorted(srcs))
+
 
 def _media_filter(items: list, media: str) -> list:
     """Keep only items of the row's media type ('both' keeps everything)."""
@@ -347,7 +364,7 @@ def _run_user(
         # Sorted so two rows with the same sources in a different order share ONE pool (gather is
         # set-based) — otherwise they'd each rebuild it, re-hitting rate-limited/LLM sources and, for
         # the non-deterministic llm_* sources, possibly diverging despite identical configuration.
-        return tuple(sorted(spec.candidate_sources or cfg.candidate_sources))
+        return effective_row_sources(spec, cfg.candidate_sources)
 
     def pool_key(spec: RowSpec) -> tuple:
         # Sources alone is not enough. A row's media and its libraries both change which candidates

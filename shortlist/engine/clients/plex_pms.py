@@ -110,7 +110,10 @@ def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: in
 class PlexClient:
     """PMS operations, restricted to collections Shortlist owns (label-gated)."""
 
-    def __init__(self, base_url: str, token: str, *, timeout: int = 30):
+    def __init__(self, base_url: str, token: str, *, timeout: int = 60):
+        # 60s (up from 30): under a big rollout the serial reorder keeps the PMS busy, and a single
+        # read that takes 30-45s shouldn't fail the read. The retrying session + per-user retry handle
+        # genuine transients; this only raises the ceiling before one slow read is called a timeout.
         self._server = PlexServer(base_url, token, session=_retrying_session(), timeout=timeout)
         # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
         # constructs one per run), so these live exactly one run — no cross-run staleness. Library

@@ -20,7 +20,7 @@ from loguru import logger
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
-from shortlist.engine.clients.plex_pms import PlexClient
+from shortlist.engine.clients.plex_pms import _PMS_TIMEOUTS, PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.poster import PosterArtist
 from shortlist.engine.clients.search import WebSearchProvider
@@ -376,7 +376,14 @@ def _deliver_phase(
         started = time.monotonic()
         delivered = False
         try:
-            delivered = rows._run_user(ctx, user, seed_index, library_index, stored_labels, user_report, demand)
+            try:
+                delivered = rows._run_user(ctx, user, seed_index, library_index, stored_labels, user_report, demand)
+            except _PMS_TIMEOUTS:
+                # A single slow PMS read (busy server under the reorder load) shouldn't sink a whole
+                # user. Delivery is upsert/idempotent, so retry the user once before giving up. A
+                # persistent outage still fails after the retry.
+                logger.warning("{}: PMS timed out — retrying this user once", user.username)
+                delivered = rows._run_user(ctx, user, seed_index, library_index, stored_labels, user_report, demand)
         except Exception as e:
             user_report.status = "error"
             user_report.error = f"{type(e).__name__}: {e}"

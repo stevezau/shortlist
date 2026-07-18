@@ -1366,3 +1366,71 @@ class TestParallelRuns:
         assert "Shortlist_mike" in sarah_filters["filterMovies"]
         assert "Shortlist_canary" in sarah_filters["filterMovies"]
         assert "Shortlist_sarah" not in sarah_filters["filterMovies"]
+
+
+class TestEffectiveRowSources:
+    """llm_web is a per-person cost — dropped from per-person rows, kept for shared."""
+
+    def _spec(self, *, shared: bool, sources=None) -> RowSpec:
+        return RowSpec(slug="r", name_template="", size=10, shared=shared, candidate_sources=sources or [])
+
+    def test_llm_web_is_dropped_for_a_per_person_row(self):
+        from shortlist.engine.rows import effective_row_sources
+
+        srcs = effective_row_sources(self._spec(shared=False), ["tmdb_similar", "llm_web", "llm_library"])
+        assert "llm_web" not in srcs
+        assert set(srcs) == {"tmdb_similar", "llm_library"}
+
+    def test_llm_web_is_kept_for_a_shared_row(self):
+        from shortlist.engine.rows import effective_row_sources
+
+        srcs = effective_row_sources(self._spec(shared=True), ["tmdb_similar", "llm_web"])
+        assert "llm_web" in srcs
+
+    def test_a_rows_own_sources_win_over_the_default(self):
+        from shortlist.engine.rows import effective_row_sources
+
+        srcs = effective_row_sources(self._spec(shared=False, sources=["tmdb_discover"]), ["tmdb_similar", "llm_web"])
+        assert srcs == ("tmdb_discover",)
+
+
+class TestPerUserTimeoutRetry:
+    """A transient PMS read timeout retries the whole user once before failing (rule 6 resume-safety)."""
+
+    def test_a_transient_timeout_retries_the_user_once(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        import requests
+
+        from shortlist.engine import rows as rows_mod
+
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        calls = {"n": 0}
+
+        def flaky(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise requests.exceptions.ReadTimeout("busy PMS")
+            return True  # second attempt succeeds
+
+        monkeypatch.setattr(rows_mod, "_run_user", flaky)
+        report = pipeline_mod.run(ctx, [sarah])
+        assert calls["n"] == 2  # retried exactly once
+        assert next(u for u in report.users if u.slug == "sarah").status != "error"
+
+    def test_a_persistent_timeout_still_fails_after_the_retry(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        import requests
+
+        from shortlist.engine import rows as rows_mod
+
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        calls = {"n": 0}
+
+        def always_timeout(*args, **kwargs):
+            calls["n"] += 1
+            raise requests.exceptions.ReadTimeout("down")
+
+        monkeypatch.setattr(rows_mod, "_run_user", always_timeout)
+        report = pipeline_mod.run(ctx, [sarah])
+        assert calls["n"] == 2  # one retry, then give up
+        assert next(u for u in report.users if u.slug == "sarah").status == "error"
