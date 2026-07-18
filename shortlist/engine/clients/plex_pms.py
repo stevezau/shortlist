@@ -152,9 +152,17 @@ class PlexClient:
         return self._collections_cache[section.key]
 
     def _invalidate_collections(self) -> None:
-        """Drop the collection-list cache after a create/delete, so the next read is authoritative.
-        Wholesale (not per-section) so the privacy sync and sweep can never act on a stale list."""
+        """Drop the collection-list cache so the next read re-fetches from the PMS. Delete uses this
+        (a removed collection must vanish from the list); create instead APPENDS to keep the cache warm
+        (see ``create_collection``) — so the cache is a complete mirror of the server's shortlist rows
+        WITHIN a single (single-flight) run, but the privacy sync still forces a fresh read of its own
+        (``invalidate_collections_cache`` before its enumeration) rather than trusting that."""
         self._collections_cache.clear()
+
+    def invalidate_collections_cache(self) -> None:
+        """Public: force the next collection read to hit the PMS. The privacy sync calls this so its
+        row enumeration is a genuine fresh server read, never the in-process (warm) cache."""
+        self._invalidate_collections()
 
     def sections_by_type(self) -> dict[MediaType, LibrarySection]:
         """One representative library per media type — used for cold-start discovery and the

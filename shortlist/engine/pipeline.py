@@ -461,9 +461,14 @@ def _privacy_sync_phase(
     # share filter. Whatever happened above — a delivery that failed half-way, a crash, a row left
     # by an older version — every row that EXISTS must be excluded on every other user's share.
     # A row missing from this map is a row nobody's filter hides.
+    #
+    # Delivery keeps the collections cache warm (append-on-create) for speed, so force a FRESH PMS
+    # read here: this privacy-critical enumeration must not depend on the in-process cache being a
+    # complete mirror of the server — it reads the server itself, unconditionally.
     sync_failed = False
     if not ctx.config.dry_run:
         try:
+            ctx.plex.invalidate_collections_cache()
             stored_labels.update(
                 {slug: row.label for slug, row in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
             )
