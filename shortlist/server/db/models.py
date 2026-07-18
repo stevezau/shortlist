@@ -118,7 +118,8 @@ class Collection(Base):
     hub_anchor: Mapped[dict] = mapped_column(JSON, default=dict)
     prompt: Mapped[dict] = mapped_column(JSON, default=dict)  # PromptConfig recipe
     # Custom collection poster for this row. {} -> Plex's own artwork. Shape:
-    # {"mode": "upload"|"generate", "image": <filename under /config/posters>, "title", "subtitle", "style"}.
+    # {"mode": "upload"|"generate", "title", "subtitle", "style"}. No image bytes live here — an
+    # uploaded/generated image is stored in the `poster_assets` table, keyed by collection id / prompt.
     poster: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

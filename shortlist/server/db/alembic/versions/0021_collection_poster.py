@@ -2,9 +2,9 @@
 
 Adds ``poster`` (JSON) to ``collections``: how a row's Plex collection poster is produced —
 ``{}`` (the default) means leave Plex's own artwork alone; otherwise
-``{"mode": "upload"|"generate", "image", "title", "subtitle", "style"}``. Existing rows stay ``{}``
-(no custom poster), so the upgrade is behaviour-neutral. Also adds ``poster_assets`` for the binary
-image storage (uploaded originals + cached generated images). Idempotent.
+``{"mode": "upload"|"generate", "title", "subtitle", "style"}``. Existing rows stay ``{}``
+(no custom poster), so the upgrade is behaviour-neutral. The image bytes live in the ``poster_assets``
+table this also creates (uploaded originals + cached generated images), not in the JSON. Idempotent.
 """
 
 import sqlalchemy as sa

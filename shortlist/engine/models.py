@@ -211,7 +211,7 @@ class PosterSpec:
     """
 
     mode: str = ""
-    image: bytes | None = None  # upload mode: the raw image bytes (the adapter reads the stored file)
+    image: bytes | None = None  # upload mode: the raw image bytes (the adapter loads them from poster_assets)
     title: str = ""  # generate mode: the headline text
     subtitle: str = ""  # generate mode: secondary text
     style: str = ""  # generate mode: art-style guidance

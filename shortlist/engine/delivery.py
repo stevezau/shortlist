@@ -157,7 +157,8 @@ def apply_poster(
         plex.upload_poster(collection, image)
         logger.info("{}: set a {} poster on this row in '{}'", profile.username, poster.mode, library_name)
     except Exception as exc:  # cosmetic: a poster must never break delivery
-        logger.warning("{}: couldn't set the poster ({}: {})", profile.username, type(exc).__name__, exc)
+        # Log only the exception TYPE, not its message — a provider auth error can carry a key fragment.
+        logger.warning("{}: couldn't set the poster ({})", profile.username, type(exc).__name__)
 
 
 def resolve_row_template(spec: RowSpec, profile: UserProfile, config: EngineConfig) -> str:

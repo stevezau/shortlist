@@ -172,6 +172,11 @@ class TestImageProviderStatus:
         assert status["capable"] is False
         assert "API key" in status["reason"]
 
+    def test_google_needs_a_key(self):
+        status = image_provider_status(self._Store({"curator.provider": "google", "curator.api_key": ""}))
+        assert status["capable"] is False
+        assert "API key" in status["reason"]
+
     def test_openai_with_key_is_capable(self):
         assert image_provider_status(self._Store({"curator.provider": "openai", "curator.api_key": "k"}))["capable"]
 
@@ -264,3 +269,81 @@ class TestNormalizeUpload:
 
         with pytest.raises(ValueError):
             normalize_upload(b"this is not an image")
+
+
+class TestProviderArtists:
+    """The real render clients (SDKs mocked): assert the request kwargs the SUT controls and that the
+    provider-specific response shape is decoded to bytes — the cell that would otherwise ship silently
+    broken on a model/size/shape regression."""
+
+    def test_openai_artist_sends_the_right_request_and_decodes_b64(self, monkeypatch):
+        import base64
+        import sys
+
+        from shortlist.server.services.poster_service import OPENAI_IMAGE_MODEL, _OpenAIArtist
+
+        fake_openai = MagicMock()
+        client = fake_openai.OpenAI.return_value
+        client.images.generate.return_value = MagicMock(
+            data=[MagicMock(b64_json=base64.b64encode(b"IMGBYTES").decode())]
+        )
+        monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+        out = _OpenAIArtist("sk-test").render("a poster prompt")
+
+        assert out == b"IMGBYTES"
+        assert fake_openai.OpenAI.call_args.kwargs["api_key"] == "sk-test"
+        call = client.images.generate.call_args
+        assert call.kwargs["model"] == OPENAI_IMAGE_MODEL
+        assert call.kwargs["size"] == "1024x1536"  # portrait 2:3
+        assert call.kwargs["n"] == 1
+        assert call.kwargs["prompt"] == "a poster prompt"
+
+    def test_openai_artist_returns_none_when_no_data(self, monkeypatch):
+        import sys
+
+        from shortlist.server.services.poster_service import _OpenAIArtist
+
+        fake_openai = MagicMock()
+        fake_openai.OpenAI.return_value.images.generate.return_value = MagicMock(data=[])
+        monkeypatch.setitem(sys.modules, "openai", fake_openai)
+        assert _OpenAIArtist("sk").render("p") is None
+
+    def test_google_artist_sends_the_right_request_and_reads_bytes(self, monkeypatch):
+        import sys
+
+        from shortlist.server.services.poster_service import GOOGLE_IMAGE_MODEL, _GoogleArtist
+
+        fake_genai = MagicMock()
+        fake_genai.types = MagicMock()
+        client = fake_genai.Client.return_value
+        image = MagicMock()
+        image.image.image_bytes = b"GIMG"
+        client.models.generate_images.return_value = MagicMock(generated_images=[image])
+        google_pkg = MagicMock()
+        google_pkg.genai = fake_genai
+        monkeypatch.setitem(sys.modules, "google", google_pkg)
+        monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+
+        out = _GoogleArtist("g-key").render("a prompt")
+
+        assert out == b"GIMG"
+        assert fake_genai.Client.call_args.kwargs["api_key"] == "g-key"
+        call = client.models.generate_images.call_args
+        assert call.kwargs["model"] == GOOGLE_IMAGE_MODEL
+        assert call.kwargs["prompt"] == "a prompt"
+        assert fake_genai.types.GenerateImagesConfig.call_args.kwargs["aspect_ratio"] == "3:4"
+
+    def test_google_artist_returns_none_when_no_images(self, monkeypatch):
+        import sys
+
+        from shortlist.server.services.poster_service import _GoogleArtist
+
+        fake_genai = MagicMock()
+        fake_genai.types = MagicMock()
+        fake_genai.Client.return_value.models.generate_images.return_value = MagicMock(generated_images=[])
+        google_pkg = MagicMock()
+        google_pkg.genai = fake_genai
+        monkeypatch.setitem(sys.modules, "google", google_pkg)
+        monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+        assert _GoogleArtist("g").render("p") is None

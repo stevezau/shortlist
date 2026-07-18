@@ -519,14 +519,21 @@ class PlexClient:
     def upload_poster(self, collection: Collection, image: bytes) -> None:
         """Set a custom poster on a collection from raw image bytes (cosmetic; our own collection only).
 
+        Callers only ever pass a collection Shortlist owns (just-created + labelled, or found by our
+        label), so this doesn't re-check ownership — a freshly created collection's ``labels`` aren't
+        yet populated, and reloading purely to re-assert an invariant the caller already holds would
+        cost a PMS round-trip per poster.
+
         plexapi's ``uploadPoster`` reads from a URL or a filepath, so the in-memory bytes are written
         to a temp file, uploaded, then deleted in a ``finally`` (rule 7: no scaffolding left behind on
-        the server or the local disk, even on failure). Retried like any idempotent PMS write.
+        the server or the local disk, even if the write or upload fails). Retried like any idempotent
+        PMS write.
         """
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
-            handle.write(image)
-            path = handle.name
+        # Reserve the path first, then write INSIDE the try, so a failed write still hits the finally.
+        fd, path = tempfile.mkstemp(suffix=".png")
         try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(image)
             label = f"uploadPoster {collection.title!r}"
             _retry_idempotent(lambda: collection.uploadPoster(filepath=path), label=label)
         finally:
