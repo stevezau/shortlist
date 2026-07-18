@@ -258,6 +258,100 @@ class TestDeliverRows:
         )
         existing.items.assert_called_once()  # membership read exactly once, not twice
 
+    def _existing_with_stale(self, profile, n_stale: int) -> MagicMock:
+        existing = MagicMock()
+        existing.title = "✨ Movies Picked for You" + row_marker(profile.plex_account_id)
+        # n_stale items, none of them wanted (wanted keys are 1001/1002 from picks()), so the update
+        # would need n_stale per-item removes.
+        existing.items.return_value = [MagicMock(title=f"Stale {k}", ratingKey=2000 + k) for k in range(n_stale)]
+        return existing
+
+    def test_large_turnover_rebuilds_instead_of_firing_per_item_removes(self, engine_config, movies, shows):
+        """A big turnover (>= _REBUILD_MIN_REMOVES stale items) rebuilds the collection — one batched
+        create — instead of N slow per-item removeItems DELETEs. set_items is never called."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 6)  # 6 removes >= threshold -> rebuild
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        diff, stored = deliver_rows(plex, profile, picks(), engine_config)
+
+        plex.delete_owned_collection.assert_called_once()
+        assert plex.delete_owned_collection.call_args.args[0] is existing
+        # The ownership-guard prefix is the one the SUT threads from config (rule 4) — not a hardcode.
+        assert plex.delete_owned_collection.call_args.args[1] == engine_config.label_prefix
+        plex.create_collection.assert_called_once()  # rebuilt via one batched create
+        plex.set_items.assert_not_called()  # NOT the per-item update path
+        existing.editTitle.assert_not_called()  # nothing to rename — it's being deleted
+        plex.fetch_items.assert_called_once_with([1001, 1002])  # the fresh row holds the wanted picks
+        assert stored == "Shortlist_sarah"
+        assert diff.removed == [f"Stale {k}" for k in range(6)]
+
+    def test_rebuild_threads_the_configured_label_prefix_to_the_delete_guard(self, engine_config, movies, shows):
+        """A non-default label_prefix must reach delete_owned_collection — the rule-4 ownership guard —
+        so a broken thread can't silently pass by matching the default."""
+        from dataclasses import replace as dc_replace
+
+        cfg = dc_replace(engine_config, label_prefix="rowz")
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 6)
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        deliver_rows(plex, profile, picks(), cfg)
+
+        assert plex.delete_owned_collection.call_args.args[1] == "rowz"
+
+    def test_exactly_the_threshold_rebuilds_boundary(self, engine_config, movies, shows):
+        """Boundary: removing exactly _REBUILD_MIN_REMOVES items rebuilds (the branch is `>=`)."""
+        from shortlist.engine.delivery import _REBUILD_MIN_REMOVES
+
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, _REBUILD_MIN_REMOVES)
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        deliver_rows(plex, profile, picks(), engine_config)
+
+        plex.delete_owned_collection.assert_called_once()
+        plex.set_items.assert_not_called()
+
+    def test_rebuild_deletes_the_old_row_before_creating_the_new_one(self, engine_config, movies, shows):
+        """Leak-safe order: delete-first, then create+label. Nothing exists between the two steps
+        (nothing to leak), and it avoids a duplicate-title 409 from two live collections."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 6)
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        deliver_rows(plex, profile, picks(), engine_config)
+
+        names = [c[0] for c in plex.mock_calls]
+        assert names.index("delete_owned_collection") < names.index("create_collection")
+
+    def test_a_small_delta_still_updates_in_place_no_rebuild(self, engine_config, movies, shows):
+        """Just under the threshold stays on the cheap in-place update — no needless delete+recreate."""
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 4)  # 4 removes < threshold -> update
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        deliver_rows(plex, profile, picks(), engine_config)
+
+        plex.delete_owned_collection.assert_not_called()
+        plex.set_items.assert_called_once()
+
+    def test_dry_run_never_rebuilds(self, engine_config, movies, shows):
+        plex = self._plex(movies, shows)
+        profile = make_profile()
+        existing = self._existing_with_stale(profile, 6)
+        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
+
+        deliver_rows(plex, profile, picks(), engine_config, dry_run=True)
+
+        plex.delete_owned_collection.assert_not_called()
+        plex.create_collection.assert_not_called()
+
     def test_records_order_work_on_create_for_the_deferred_ordering_pass(
         self, engine_config: EngineConfig, movies, shows
     ):

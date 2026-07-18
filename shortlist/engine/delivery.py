@@ -22,6 +22,12 @@ from shortlist.engine.models import (
 
 DEFAULT_ROW_NAME = "✨ Picked for You"
 
+# When a row's update would remove at least this many items, rebuild the collection (delete + one
+# batched create) instead of firing that many per-item removeItems DELETEs. plexapi has no bulk
+# remove, and on a slow library each DELETE is expensive (SFLIX TV rows ~15s each), so a big turnover
+# is far cheaper as a single create. Small deltas keep the in-place update path (no needless rebuild).
+_REBUILD_MIN_REMOVES = 5
+
 # Zero-width space / zero-width non-joiner. Both render as nothing.
 _INVISIBLE = ("​", "‌")
 
@@ -302,6 +308,7 @@ def deliver_rows(
             marker,
             sole_row,
             dry_run=dry_run,
+            label_prefix=config.label_prefix,
             poster=spec.poster if spec else None,
             artist=poster_artist,
             order_work=order_work,
@@ -577,6 +584,7 @@ def _deliver_one(
     sole_row: bool,
     *,
     dry_run: bool,
+    label_prefix: str = "shortlist",
     poster: PosterSpec | None = None,
     artist: PosterArtist | None = None,
     order_work: list[tuple] | None = None,
@@ -652,10 +660,20 @@ def _deliver_one(
         kept=[t for t in wanted_titles if t in current_titles],
         collection_title=display,  # the human title: the marker is Plex's business, not the owner's
     )
+    wanted_keys = [p.rating_key for p in picks]
+    current_keys = {i.ratingKey for i in existing_items}
+    to_add_keys = [k for k in wanted_keys if k not in current_keys]
+    wanted_set = set(wanted_keys)
+    to_remove_count = sum(1 for i in existing_items if i.ratingKey not in wanted_set)
+
     if dry_run:
+        # Say what a real run WOULD do: a big turnover rebuilds (delete + recreate), not an in-place
+        # update — a dry-run reviewer should see the row would be rebuilt (rule 8).
+        verb = "would rebuild" if to_remove_count >= _REBUILD_MIN_REMOVES else "would update"
         logger.info(
-            "[dry-run] {}: would update '{}' in '{}' (+{} -{} ={})",
+            "[dry-run] {}: {} '{}' in '{}' (+{} -{} ={})",
             profile.username,
+            verb,
             display,
             section.title,
             len(diff.added),
@@ -664,14 +682,43 @@ def _deliver_one(
         )
         apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=True)
         return diff, label
+
+    # Large turnover: per-item removeItems DELETEs are the dominant delivery cost on a slow library
+    # (plexapi has no bulk remove, and SFLIX TV rows cost ~15s PER delete). Rebuilding replaces N
+    # deletes with ONE batched create. Delete the old collection FIRST, then create+label a fresh one:
+    # delete-first avoids a duplicate-title 409 (two collections can't share the marked title) and is
+    # leak-safe — nothing exists between the two steps (nothing to leak), and the brief create->label
+    # window is the same one the normal first-create path already has. (perf: SFLIX 2026-07-19)
+    if to_remove_count >= _REBUILD_MIN_REMOVES:
+        logger.info(
+            "{}: rebuilding '{}' in '{}' (+{} -{}) — avoids {} per-item removes",
+            profile.username,
+            display,
+            section.title,
+            len(to_add_keys),
+            to_remove_count,
+            to_remove_count,
+        )
+        plex.delete_owned_collection(collection, label_prefix)
+        stored = _create_labelled_collection(
+            plex,
+            section,
+            profile,
+            picks,
+            title=title,
+            label=label,
+            display=display,
+            poster=poster,
+            artist=artist,
+            order_work=order_work,
+        )
+        return diff, stored
+
     if collection.title != title:
         collection.editTitle(title)
-    wanted_keys = [p.rating_key for p in picks]
     # Fetch ONLY the items being added (the delta), not all N picks — most are already in the
     # collection on a steady run, so this is a handful of items instead of the whole row. Skip the
     # fetch entirely when nothing is new (fetch_items([]) raises NotFound on a real PMS).
-    current_keys = {i.ratingKey for i in existing_items}
-    to_add_keys = [k for k in wanted_keys if k not in current_keys]
     add_items = plex.fetch_items(to_add_keys) if to_add_keys else []
     plex.set_items(collection, existing_items, add_items, wanted_keys)
     if order_work is not None:

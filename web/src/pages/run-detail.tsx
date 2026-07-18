@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, Copy, Loader2 } from "lucide-react";
+import { AlertCircle, Check, Copy, Info, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
@@ -579,6 +579,24 @@ export function RunDetailPage() {
                     : ""}
                 </p>
               </header>
+
+              {!run.finished_at && (
+                <div className="flex gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="space-y-1">
+                    <p className="font-medium">
+                      Why a refresh can take a while
+                    </p>
+                    <p className="text-muted-foreground">
+                      Building everyone's rows means updating Plex one change at
+                      a time — Plex only accepts them one-by-one, and it's
+                      especially slow to update TV Shows. A big refresh across
+                      all users can take a while. It's much quicker after the
+                      first run, when most rows only need small tweaks.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {run.users.length === 0 ? (
                 <EmptyState
