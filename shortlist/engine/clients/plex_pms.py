@@ -321,7 +321,14 @@ class PlexClient:
 
     def create_collection(self, section: LibrarySection, title: str, items: list) -> Collection:
         collection = self._server.createCollection(title=title, section=section, items=items)
-        self._invalidate_collections()  # a new collection changes the section's list
+        # Keep the per-section cache WARM: append the new collection rather than wiping the whole
+        # cache. Wiping meant every subsequent user re-read the ENTIRE (and growing) section.collections()
+        # list to find their own row — O(N^2) PMS reads across a rollout, the dominant delivery cost on a
+        # busy server (SFLIX 48-user run, 2026-07-18). Its label is applied next (stored_label reloads
+        # this same object in place), so the cached entry becomes correctly labelled.
+        cached = self._collections_cache.get(section.key)
+        if cached is not None:
+            cached.append(collection)
         return collection
 
     def stored_label(self, collection: Collection, label: str) -> str:

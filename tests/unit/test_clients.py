@@ -435,16 +435,22 @@ class TestPlexClient:
         mock_plex.find_owned_collections(section, "Shortlist_sarah")
         assert section.collections.call_count == 1
 
-    def test_create_collection_busts_the_collections_cache(self, mock_plex: PlexClient):
-        # A new collection changes the section's list — the next read must be authoritative (this is
-        # what keeps the privacy sync's re-read from acting on a stale list).
+    def test_create_collection_keeps_the_cache_warm_and_findable(self, mock_plex: PlexClient):
+        # The rollout fix: create APPENDS to the cached list instead of wiping it, so the next user's
+        # find reuses the warm cache (one section.collections() per run, not an O(N^2) re-read per user)
+        # — and the just-created collection is still findable from the warm cache.
         section = MagicMock(type="movie")
         section.collections.return_value = []
         mock_plex._server.library.sections.return_value = [section]
-        mock_plex.find_owned_collections(section, "x")  # populates the cache
+        mock_plex.find_owned_collections(section, "x")  # populates the cache (one fetch)
+        created = MagicMock(labels=[SimpleNamespace(tag="Shortlist_sarah")])
+        mock_plex._server.createCollection.return_value = created
+
         mock_plex.create_collection(section, "New Row", [])
-        mock_plex.find_owned_collections(section, "x")  # must re-fetch
-        assert section.collections.call_count == 2
+        found = mock_plex.find_owned_collections(section, "Shortlist_sarah")
+
+        assert section.collections.call_count == 1  # NOT re-fetched — the cache stayed warm
+        assert created in found  # the new collection is served from the warm cache
 
     def test_delete_busts_the_collections_cache(self, mock_plex: PlexClient):
         section = MagicMock(type="movie")
