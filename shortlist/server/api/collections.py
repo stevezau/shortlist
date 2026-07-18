@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from apscheduler.triggers.cron import CronTrigger
@@ -15,7 +16,7 @@ from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.curator.base import TONE_PRESETS
 from shortlist.engine.models import dedupe_slug, slugify
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, PickRow, User
+from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Event, PickRow, User
 from shortlist.server.scheduler import rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import poster_service
@@ -32,7 +33,9 @@ BUILDS = {"per_person", "shared"}
 AUDIENCES = {"everyone", "subset"}
 MEDIA = {"movie", "show", "both"}
 PLACEMENTS = {"both", "home", "library"}
-POSTER_MODES = {"", "upload", "generate"}
+# "" (Plex default), "upload", "text" (built-in Pillow), "ai" (image model). "generate" is the
+# pre-text-engine name for "ai", accepted for backward compatibility.
+POSTER_MODES = {"", "upload", "text", "ai", "generate"}
 
 
 class PromptIn(BaseModel):
@@ -59,8 +62,9 @@ class HubAnchorIn(BaseModel):
 
 class PosterIn(BaseModel):
     """A row's custom-poster config. ``mode`` "" leaves Plex artwork alone; "upload" uses the image
-    stored via the upload endpoint; "generate" renders ``title``/``subtitle`` in ``style`` with the AI
-    curator provider. The text fields share the row-name placeholders ({user}/{library_name}/{top_seed})."""
+    stored via the upload endpoint; "text" renders ``title``/``subtitle`` with the built-in Pillow
+    engine (no AI); "ai" renders them with the curator provider's image model. The text fields share
+    the row-name placeholders ({user}/{library_name}/{top_seed})."""
 
     mode: str = ""
     title: str = Field(default="", max_length=120)
@@ -124,15 +128,31 @@ def _validate(body: CollectionIn) -> None:
 
 def _poster_view(session, collection: Collection) -> dict:
     """The row's poster config for the editor — never the image bytes, just what's set plus whether an
-    uploaded image exists (so the editor can show a thumbnail via the image endpoint)."""
+    image is viewable (so the editor/row card can show a thumbnail via the image endpoint).
+
+    A "text" poster is always renderable; "upload"/"ai" report an image only when one is stored/cached.
+    """
     cfg = collection.poster or {}
     mode = (cfg.get("mode") or "").strip()
+    if mode == "upload":
+        has_image = load_upload(session, collection.id) is not None
+    elif mode == "text":
+        has_image = True
+    elif mode in ("ai", "generate"):
+        has_image = (
+            poster_service.load_preview(
+                session, mode, cfg.get("title") or "", cfg.get("subtitle") or "", cfg.get("style") or ""
+            )
+            is not None
+        )
+    else:
+        has_image = False
     return {
         "mode": mode,
         "title": cfg.get("title") or "",
         "subtitle": cfg.get("subtitle") or "",
         "style": cfg.get("style") or "",
-        "has_image": mode == "upload" and load_upload(session, collection.id) is not None,
+        "has_image": has_image,
     }
 
 
@@ -284,6 +304,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
     state = request.app.state
     dropped_user_ids: set[int] = set()
     new_row_template: str | None = None  # set when a rename should be reconciled onto Plex
+    poster_reset_needed = False  # set when a row drops a custom poster back to Plex default
     slug = build = None
     with state.sessions() as session:
         collection = session.get(Collection, collection_id)
@@ -320,7 +341,22 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         if "prompt" in sent:
             collection.prompt = _prompt_for(collection.slug, body)
         if "poster" in sent:
+            old_poster_mode = (collection.poster or {}).get("mode") or ""
             collection.poster = body.poster.model_dump()
+            # Switching a row that HAD a custom poster back to Plex default must actually revert the
+            # artwork on Plex, not just stop managing it.
+            poster_reset_needed = bool(old_poster_mode) and not body.poster.mode
+            session.add(
+                Event(
+                    scope="collection.poster",
+                    level="info",
+                    message={
+                        "slug": collection.slug,
+                        "mode": body.poster.mode or "default",
+                        "at": datetime.now(UTC).isoformat(),
+                    },
+                )
+            )
         if "hub_anchor" in sent:
             collection.hub_anchor = {k: v.model_dump() for k, v in body.hub_anchor.items()}
         if sent & {"audience", "audience_user_ids"}:
@@ -361,6 +397,10 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
     # old-named copy until the next run rebuilt it). Privacy-neutral, so gate-exempt. Best-effort + audited.
     if new_row_template is not None:
         await reconcile.run_row_rename(state, slug=slug, new_template=new_row_template, scope="collection.rename")
+    # Dropping a custom poster back to Plex default reverts the artwork on Plex now, not just in config.
+    # Cosmetic + privacy-neutral, so gate-exempt. Best-effort + audited.
+    if poster_reset_needed:
+        await reconcile.run_poster_reset(state, slug=slug, build=build, scope="collection.poster")
     return result
 
 
@@ -453,13 +493,25 @@ async def upload_poster_image(collection_id: int, request: Request, file: Annota
         cfg = dict(collection.poster or {})
         cfg["mode"] = "upload"
         collection.poster = cfg
+        session.add(
+            Event(
+                scope="collection.poster",
+                level="info",
+                message={"slug": collection.slug, "mode": "upload", "at": datetime.now(UTC).isoformat()},
+            )
+        )
         session.commit()
     return {"ok": True, "mode": "upload"}
 
 
 @router.get("/{collection_id}/poster/image")
 async def get_poster_image(collection_id: int, request: Request) -> Response:
-    """Serve a row's current poster image: the uploaded original, or the last generated preview."""
+    """Serve a row's current poster image: the uploaded original, or a rendered preview.
+
+    For a built-in "text" poster the preview is cheap, so it's rendered on demand if not already
+    cached (the thumbnail always shows). For an "ai" poster only a previously-generated image is
+    served — a GET never spends money generating one.
+    """
     state = request.app.state
     with state.sessions() as session:
         collection = _require_collection(session, collection_id)
@@ -467,41 +519,54 @@ async def get_poster_image(collection_id: int, request: Request) -> Response:
         if stored is not None:
             return Response(stored[0], media_type=stored[1])
         cfg = collection.poster or {}
-        if (cfg.get("mode") or "") == "generate":
-            store = SettingsStore(session, state.secrets)
-            prompt = poster_service.sample_preview_prompt(
-                store, cfg.get("title") or "", cfg.get("subtitle") or "", cfg.get("style") or ""
+        mode = (cfg.get("mode") or "").strip()
+        if mode in ("text", "ai", "generate"):
+            cached = poster_service.load_preview(
+                session, mode, cfg.get("title") or "", cfg.get("subtitle") or "", cfg.get("style") or ""
             )
-            cached = poster_service.load_generated(session, prompt)
             if cached is not None:
                 return Response(cached, media_type="image/png")
+            if poster_service.preview_engine(mode) == "text":
+                studio = poster_service.make_studio(SettingsStore(session, state.secrets), state.sessions)
+                image = await run_in_threadpool(
+                    poster_service.preview_poster,
+                    studio,
+                    mode,
+                    cfg.get("title") or "",
+                    cfg.get("subtitle") or "",
+                    cfg.get("style") or "",
+                )
+                if image:
+                    return Response(image, media_type="image/png")
     raise HTTPException(404, "no poster image for this row")
 
 
 @router.post("/{collection_id}/poster/preview")
 async def preview_poster(collection_id: int, body: PosterIn, request: Request) -> Response:
-    """Generate a sample poster from the given generate-mode text and return the image.
+    """Render a sample poster from the given text and return the image.
 
     Uses sample placeholder values (a name + the Movies library) so the owner can see what a poster
-    will look like. The result is cached, so warming the preview also speeds the next run.
+    will look like. A "text" poster always renders (no provider needed); an "ai" poster needs an
+    image-capable provider. The result is cached, so warming the preview also speeds the next run.
     """
     state = request.app.state
     with state.sessions() as session:
         _require_collection(session, collection_id)
         store = SettingsStore(session, state.secrets)
-        status = poster_service.image_provider_status(store)
-        if not status["capable"]:
-            raise HTTPException(422, status["reason"])
-        artist = poster_service.make_artist(store, state.sessions)
-        prompt = poster_service.sample_preview_prompt(store, body.title, body.subtitle, body.style)
-    if artist is None:
-        raise HTTPException(422, "image generation isn't available with the current AI provider")
+        mode = body.mode or "text"
+        if poster_service.preview_engine(mode) == "ai":
+            status = poster_service.image_provider_status(store)
+            if not status["capable"]:
+                raise HTTPException(422, status["reason"])
+        studio = poster_service.make_studio(store, state.sessions)
     try:
-        image = await run_in_threadpool(artist.render, prompt)
+        image = await run_in_threadpool(
+            poster_service.preview_poster, studio, mode, body.title, body.subtitle, body.style
+        )
     except Exception as exc:
         raise HTTPException(502, f"couldn't generate a preview ({type(exc).__name__})") from exc
     if not image:
-        raise HTTPException(502, "the image provider returned no image")
+        raise HTTPException(502, "couldn't produce a poster image")
     return Response(image, media_type="image/png")
 
 

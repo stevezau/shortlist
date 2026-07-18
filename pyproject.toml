@@ -45,6 +45,8 @@ dev = [
     "ruff>=0.5",
     "respx>=0.21",
     "playwright>=1.45",
+    "pillow>=10.0",  # so the poster text-renderer + upload-normalization tests run in CI
+
     # Local commit guard: runs the same ruff check + ruff format CI enforces, so a format slip is
     # caught at `git commit`, not in GitHub. Activate once per clone with `pre-commit install`.
     "pre-commit>=3.7",

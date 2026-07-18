@@ -540,6 +540,28 @@ class PlexClient:
             with contextlib.suppress(OSError):
                 os.remove(path)
 
+    def reset_poster(self, collection: Collection) -> None:
+        """Revert a collection to Plex's own artwork after we set a custom poster (cosmetic, best-effort).
+
+        Selects a Plex-provided poster from the collection's options (falling back to the first that
+        isn't our upload) and unlocks the field so Plex manages it again. Wrapped best-effort: a revert
+        that can't find a default still unlocks, and any failure is swallowed by the caller.
+        """
+
+        def _op() -> None:
+            with contextlib.suppress(Exception):
+                options = collection.posters()
+                # Our uploads carry provider "upload"/"local"; prefer anything else (a Plex/agent poster).
+                default = next(
+                    (p for p in options if (getattr(p, "provider", None) or "") not in ("upload", "local", "")),
+                    None,
+                )
+                if default is not None:
+                    collection.setPoster(default)
+            collection.unlockPoster()  # hand thumb management back to Plex
+
+        _retry_idempotent(_op, label=f"resetPoster {collection.title!r}")
+
     def delete_owned_collection(self, collection: Collection, label_prefix: str) -> None:
         """Delete a collection only if it carries a shortlist label (Kometa coexistence)."""
         if not any(label.tag.lower().startswith(f"{label_prefix}_") for label in collection.labels):

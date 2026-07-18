@@ -87,33 +87,24 @@ def render_row_name(template: str, profile: UserProfile, picks: list[Pick], libr
     return rendered or DEFAULT_ROW_NAME
 
 
-def build_poster_prompt(poster: PosterSpec, profile: UserProfile, picks: list[Pick], library_name: str) -> str:
-    """Compose an image-generation prompt from a generate-mode poster spec.
+def render_poster_text(field_value: str, profile: UserProfile, picks: list[Pick], library_name: str) -> str:
+    """Fill a poster text field's placeholders (``{user}``/``{library_name}``/``{top_seed}``) for the
+    user and library it lands on, using the same helper delivery uses for titles.
 
-    The ``title``/``subtitle`` share the row-name placeholders (``{user}``/``{library_name}``/
-    ``{top_seed}``), rendered here with the same helper delivery uses for titles so a poster reads for
-    the person and library it lands in. ``render_row_name`` would substitute DEFAULT_ROW_NAME for a
-    ``{top_seed}`` template with no seed, so guard each field: an empty/whitespace field is simply
-    dropped rather than turned into "✨ Picked for You".
+    ``render_row_name`` substitutes DEFAULT_ROW_NAME for a ``{top_seed}`` template with no seed, so a
+    blank/whitespace field or an unrenderable ``{top_seed}`` collapses to "" (dropped) rather than
+    turning into "✨ Picked for You".
     """
+    field_value = field_value.strip()
+    if not field_value:
+        return ""
+    rendered = render_row_name(field_value, profile, picks, library_name=library_name)
+    return "" if rendered == DEFAULT_ROW_NAME and "{top_seed}" in field_value else rendered
 
-    def _text(field_value: str) -> str:
-        field_value = field_value.strip()
-        if not field_value:
-            return ""
-        rendered = render_row_name(field_value, profile, picks, library_name=library_name)
-        return "" if rendered == DEFAULT_ROW_NAME and "{top_seed}" in field_value else rendered
 
-    title, subtitle = _text(poster.title), _text(poster.subtitle)
-    parts = ["A vertical movie/TV streaming collection poster, 2:3 portrait aspect ratio, cinematic, high quality."]
-    if title:
-        parts.append(f'Show the title text exactly: "{title}".')
-    if subtitle:
-        parts.append(f'Show smaller subtitle text exactly: "{subtitle}".')
-    if poster.style.strip():
-        parts.append(f"Art style: {poster.style.strip()}.")
-    parts.append("Any text must be spelled correctly and clearly legible. No watermarks, no borders.")
-    return " ".join(parts)
+# Poster modes that produce an image from text (vs "upload", which carries its own bytes). Each maps
+# to a render engine the injected artist understands. "generate" is the pre-text-engine name for "ai".
+_POSTER_TEXT_ENGINES = {"text": "text", "ai": "ai", "generate": "ai"}
 
 
 def apply_poster(
@@ -131,24 +122,27 @@ def apply_poster(
 
     Only ever touches the artwork of a collection Shortlist owns, does not promote or change any
     filter, and NEVER raises into delivery: a failed poster leaves the row exactly as it was, just
-    with Plex's own artwork. Generate mode needs an image-capable artist (reuses the AI curator's
-    provider); with none configured it's quietly skipped so the row still delivers.
+    with Plex's own artwork. "text" always works (Pillow, no key); "ai" needs an image-capable
+    provider and is quietly skipped otherwise so the row still delivers.
     """
     if poster is None or not poster.mode:
         return
     try:
-        if poster.mode == "generate" and artist is None:
-            logger.debug(
-                "{}: no image-capable AI provider — skipping generated poster in '{}'", profile.username, library_name
-            )
-            return
         if dry_run:
             logger.info("[dry-run] {}: would set a {} poster on this row", profile.username, poster.mode)
             return
         if poster.mode == "upload":
             image = poster.image
-        elif poster.mode == "generate":
-            image = artist.render(build_poster_prompt(poster, profile, picks, library_name))
+        elif poster.mode in _POSTER_TEXT_ENGINES:
+            if artist is None:
+                logger.debug("{}: no poster artist available — skipping poster in '{}'", profile.username, library_name)
+                return
+            image = artist.render(
+                title=render_poster_text(poster.title, profile, picks, library_name),
+                subtitle=render_poster_text(poster.subtitle, profile, picks, library_name),
+                style=poster.style,
+                engine=_POSTER_TEXT_ENGINES[poster.mode],
+            )
         else:
             return
         if not image:
@@ -466,6 +460,37 @@ def rename_row_collections(
                 collection.editTitle(new_title)
                 logger.info("renamed '{}' → '{}' in '{}'", old_display, new_display, section.title)
     return renamed
+
+
+def reset_row_posters(
+    plex: PlexClient,
+    config: EngineConfig,
+    *,
+    label: str,
+    displays: set[str] | None,
+    dry_run: bool,
+) -> list[str]:
+    """Revert a row's collection(s) to Plex's own artwork — used when a row switches back to 'Plex
+    default' after having had a custom poster. Cosmetic and privacy-neutral (the hiding label and
+    promotion are untouched). Matches only OUR-labelled collections; ``displays`` limits to those
+    marker-stripped titles (per-person rows), or ``None`` resets every collection under ``label``
+    (a shared row's single membership). Returns the library titles reset (or that would be)."""
+    if not label.startswith(config.label_prefix):
+        logger.warning("refusing to reset posters under a non-Shortlist label {!r}", label)
+        return []
+    reset: list[str] = []
+    for section in plex.sections():
+        for collection in plex.find_owned_collections(section, label):
+            display = strip_marker(collection.title)
+            if displays is not None and display not in displays:
+                continue
+            reset.append(section.title)
+            if dry_run:
+                logger.info("[dry-run] would reset poster on '{}' in '{}'", display, section.title)
+            else:
+                plex.reset_poster(collection)
+                logger.info("reset poster on '{}' in '{}'", display, section.title)
+    return reset
 
 
 def _create_labelled_collection(

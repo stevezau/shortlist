@@ -67,6 +67,24 @@ can't re-bury the rows), only ever moves its own rows, and never touches the col
 to. It works with or without Kometa — Kometa is only _why_ this matters (it fills the shelf), not
 _how_ it works; the anchor can be any collection, Kometa's or one of Plex's own.
 
+## Row posters
+
+Each row can have its own artwork on Plex. In the **Row editor** → **Poster**, pick one of:
+
+- **Plex default** — leave Plex's own collection artwork alone (the default). Switching a row _back_
+  to this after it had a custom poster reverts the artwork on Plex on save.
+- **Upload** — upload your own image (a tall 2:3 poster looks best; up to 8 MB). It's downscaled and
+  stored, then applied to the row's collection(s) on the next run.
+- **Text** — a clean built-in poster: your **Title** and **Subtitle** over a gradient. No AI needed,
+  works on any setup. Use `{user}`, `{library_name}`, and `{top_seed}` to personalise the text.
+- **AI image** — an image generated from your text and **Art style**, using your AI provider's image
+  model. This reuses your AI curator's key, so it's available when that provider is **OpenAI** or
+  **Google** (Anthropic and Ollama can't generate images — use a Text poster or Upload instead).
+
+Hit **Preview** to see a sample before saving. Generated images are made once and reused across
+runs (they refresh when you change the text or style), so posters don't slow a run down or cost per
+user. Posters are cosmetic — a poster that can't be made never blocks a row from building.
+
 ## Hit rate
 
 The % of recommended items a user actually watched within 30 days, computed from the same

@@ -52,7 +52,11 @@ export function PosterField({
 
   const set = (patch: Partial<PosterInput>) => onChange({ ...value, ...patch });
   const showImage = hasImage || uploadedNow;
-  const capable = provider.data?.capable ?? true; // assume capable until we know, to avoid a flash
+  const aiCapable = provider.data?.capable ?? true; // assume capable until we know, to avoid a flash
+  const isTextMode = value.mode === "text";
+  const isAiMode = value.mode === "ai";
+  const previewable =
+    collectionId !== null && (isTextMode || (isAiMode && aiCapable));
 
   const onFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -114,7 +118,8 @@ export function PosterField({
         options={[
           { value: "none", label: "Plex default" },
           { value: "upload", label: "Upload" },
-          { value: "generate", label: "Generate" },
+          { value: "text", label: "Text" },
+          { value: "ai", label: "AI image" },
         ]}
       />
 
@@ -165,11 +170,17 @@ export function PosterField({
           </div>
         ))}
 
-      {value.mode === "generate" && (
+      {(isTextMode || isAiMode) && (
         <div className="space-y-3">
-          {provider.data && !provider.data.capable && (
+          <p className="text-sm text-muted-foreground">
+            {isTextMode
+              ? "A clean poster with your text over a gradient — built in, no AI needed."
+              : "An AI-generated image from your text and style, using your AI provider."}
+          </p>
+          {isAiMode && provider.data && !provider.data.capable && (
             <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
-              {provider.data.reason}
+              {provider.data.reason} You can use a <strong>Text</strong> poster
+              instead — it needs no AI provider.
             </p>
           )}
           <div className="space-y-2">
@@ -208,7 +219,7 @@ export function PosterField({
               type="button"
               variant="outline"
               loading={previewing}
-              disabled={!capable || collectionId === null}
+              disabled={!previewable}
               onClick={doPreview}
             >
               Preview

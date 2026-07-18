@@ -21,6 +21,7 @@ from shortlist.engine.delivery import (
     remove_row_collections,
     rename_row_collections,
     render_row_name,
+    reset_row_posters,
     row_marker,
 )
 from shortlist.engine.models import SHARED_LABEL_PREFIX, UserProfile, UserType
@@ -93,6 +94,48 @@ def _reconcile_row_removal(
                 ctx.plex, ctx.config, label=f"{ctx.config.label_prefix}_{user.slug}", displays=displays, dry_run=dry_run
             )
         )
+
+
+def _reconcile_poster_reset(state, *, slug: str, build: str, reset: list[str]) -> None:
+    """Revert a row's Plex collections to their default artwork after it switches to 'Plex default'.
+
+    Shared rows go by their own label (one membership, any title); per-person rows are pinned per user
+    by the exact titles the last run delivered for THIS row, scoped to that user's own label — so it
+    only ever touches OUR collections. Cosmetic + privacy-neutral, so gate-exempt. Runs in an executor."""
+    ctx = state.run_service.build_context(dry_run=False)
+    if build == "shared":
+        reset.extend(
+            reset_row_posters(ctx.plex, ctx.config, label=f"{SHARED_LABEL_PREFIX}{slug}", displays=None, dry_run=False)
+        )
+        return
+    with state.sessions() as session:
+        titles_by_user = _delivered_titles_by_user(session, slug)
+        users = session.query(User).all()
+    for user in users:
+        displays = set(titles_by_user.get(user.id, {}))
+        if not displays:
+            continue
+        reset.extend(
+            reset_row_posters(
+                ctx.plex, ctx.config, label=f"{ctx.config.label_prefix}_{user.slug}", displays=displays, dry_run=False
+            )
+        )
+
+
+async def run_poster_reset(state, *, slug: str, build: str, scope: str) -> tuple[list[str], str | None]:
+    """Run ``_reconcile_poster_reset`` in an executor and audit it (rule 10). Best-effort — a Plex
+    outage is recorded, never fatal to the PATCH. Returns ``(reset_library_titles, error)``."""
+    reset: list[str] = []
+    error: str | None = None
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            None, lambda: _reconcile_poster_reset(state, slug=slug, build=build, reset=reset)
+        )
+    except Exception as e:
+        error = redact(f"{type(e).__name__}: {e}")  # a PMS error can carry a tokened URL (rule 9)
+    _write_audit(state, scope, "info", slug=slug, poster_reset=reset, error=error)
+    logger.info("{} '{}': reset {} poster(s){}", scope, slug, len(reset), f" then FAILED: {error}" if error else "")
+    return reset, error
 
 
 async def run_reconcile(

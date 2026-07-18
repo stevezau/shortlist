@@ -68,7 +68,11 @@ export function toInput(collection: Collection): CollectionInput {
       template: collection.prompt.template ?? "",
     },
     poster: {
-      mode: collection.poster?.mode ?? "",
+      // Legacy "generate" rows edit as "ai" (the renamed engine).
+      mode:
+        collection.poster?.mode === "generate"
+          ? "ai"
+          : (collection.poster?.mode ?? ""),
       title: collection.poster?.title ?? "",
       subtitle: collection.poster?.subtitle ?? "",
       style: collection.poster?.style ?? "",

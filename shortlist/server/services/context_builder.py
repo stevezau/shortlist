@@ -50,7 +50,7 @@ from shortlist.server.db.models import (
     iso_utc,
     utcnow,
 )
-from shortlist.server.services.poster_service import load_upload, make_artist
+from shortlist.server.services.poster_service import load_upload, make_studio
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
 
@@ -119,11 +119,12 @@ class ContextBuilder:
             history = self._history_source(store, plex)
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get))
-            # Only build the image artist if a row actually wants a generated poster — otherwise a
-            # server that never uses posters never touches the (optional) image SDK. None when the
-            # curator provider can't make images; the engine then skips generate-mode posters.
-            wants_generated = any((c.poster or {}).get("mode") == "generate" for c in session.query(Collection).all())
-            poster_artist = make_artist(store, self._sessions) if wants_generated else None
+            # Build the poster studio only if a row actually renders a poster from text (built-in or
+            # AI) — a server that never uses posters never touches Pillow or the image SDK. The studio
+            # always provides the text engine; its AI engine is None when the provider can't make images.
+            render_modes = {"text", "ai", "generate"}
+            wants_studio = any((c.poster or {}).get("mode") in render_modes for c in session.query(Collection).all())
+            poster_artist = make_studio(store, self._sessions) if wants_studio else None
             config = EngineConfig(
                 row_size=int(store.get("row.size")),
                 row_name_template=store.get("row.name_template"),

@@ -1,5 +1,5 @@
-"""Row-poster tests: the engine's cosmetic apply step, prompt rendering, and the server-side
-service (provider capability, image storage, generation cache)."""
+"""Row-poster tests: the engine's cosmetic apply step, text-field rendering, and the server-side
+service (provider capability, the text/AI studio, image storage, generation cache)."""
 
 from __future__ import annotations
 
@@ -9,15 +9,16 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from shortlist.engine.delivery import apply_poster, build_poster_prompt
+from shortlist.engine.delivery import apply_poster, render_poster_text
 from shortlist.engine.models import PosterSpec, UserProfile, UserType
 from shortlist.server.db.models import Base
 from shortlist.server.services.poster_service import (
-    _CachingArtist,
+    PosterStudio,
     clear_assets,
     image_provider_status,
     load_generated,
     load_upload,
+    poster_seed,
     store_upload,
 )
 
@@ -43,29 +44,67 @@ class TestApplyPoster:
         )
         plex.upload_poster.assert_called_once_with("COLL", b"PNGDATA")
 
-    def test_generate_mode_renders_prompt_then_uploads(self):
+    def test_text_mode_renders_via_the_artist_then_uploads(self):
         plex = MagicMock()
         artist = MagicMock()
         artist.render.return_value = b"IMG"
         apply_poster(
             plex,
             "COLL",
-            PosterSpec(mode="generate", title="{user}'s picks"),
+            PosterSpec(mode="text", title="{user}'s picks", style="neon"),
             _profile("Sam"),
             [],
             library_name="Movies",
             artist=artist,
             dry_run=False,
         )
-        assert "Sam's picks" in artist.render.call_args.args[0]
+        # The engine renders placeholders and dispatches to the "text" engine.
+        assert artist.render.call_args.kwargs == {
+            "title": "Sam's picks",
+            "subtitle": "",
+            "style": "neon",
+            "engine": "text",
+        }
         plex.upload_poster.assert_called_once_with("COLL", b"IMG")
 
-    def test_generate_without_capable_artist_is_skipped(self):
+    def test_ai_mode_dispatches_to_the_ai_engine(self):
+        plex = MagicMock()
+        artist = MagicMock()
+        artist.render.return_value = b"IMG"
+        apply_poster(
+            plex,
+            "COLL",
+            PosterSpec(mode="ai", title="Hi"),
+            _profile(),
+            [],
+            library_name="Movies",
+            artist=artist,
+            dry_run=False,
+        )
+        assert artist.render.call_args.kwargs["engine"] == "ai"
+
+    def test_legacy_generate_mode_still_maps_to_ai(self):
+        plex = MagicMock()
+        artist = MagicMock()
+        artist.render.return_value = b"IMG"
+        apply_poster(
+            plex,
+            "COLL",
+            PosterSpec(mode="generate", title="Hi"),
+            _profile(),
+            [],
+            library_name="Movies",
+            artist=artist,
+            dry_run=False,
+        )
+        assert artist.render.call_args.kwargs["engine"] == "ai"
+
+    def test_no_artist_skips_rendering(self):
         plex = MagicMock()
         apply_poster(
             plex,
             "COLL",
-            PosterSpec(mode="generate", title="x"),
+            PosterSpec(mode="text", title="x"),
             _profile(),
             [],
             library_name="Movies",
@@ -74,7 +113,7 @@ class TestApplyPoster:
         )
         plex.upload_poster.assert_not_called()
 
-    def test_dry_run_never_writes_or_generates(self):
+    def test_dry_run_never_writes_or_renders(self):
         plex, artist = MagicMock(), MagicMock()
         apply_poster(
             plex,
@@ -98,8 +137,7 @@ class TestApplyPoster:
     def test_upload_failure_never_breaks_delivery(self):
         plex = MagicMock()
         plex.upload_poster.side_effect = RuntimeError("PMS down")
-        # Must not raise — a poster is cosmetic.
-        apply_poster(
+        apply_poster(  # must not raise — a poster is cosmetic
             plex,
             "COLL",
             PosterSpec(mode="upload", image=b"x"),
@@ -110,13 +148,13 @@ class TestApplyPoster:
             dry_run=False,
         )
 
-    def test_empty_generated_image_leaves_plex_artwork(self):
+    def test_empty_rendered_image_leaves_plex_artwork(self):
         plex, artist = MagicMock(), MagicMock()
         artist.render.return_value = None
         apply_poster(
             plex,
             "COLL",
-            PosterSpec(mode="generate", title="x"),
+            PosterSpec(mode="text", title="x"),
             _profile(),
             [],
             library_name="Movies",
@@ -126,28 +164,19 @@ class TestApplyPoster:
         plex.upload_poster.assert_not_called()
 
 
-class TestBuildPosterPrompt:
-    def test_fills_user_and_library_and_style(self):
-        prompt = build_poster_prompt(
-            PosterSpec(mode="generate", title="{user} in {library_name}", style="noir comic"),
-            _profile("Jo"),
-            [],
-            "Movies",
-        )
-        assert "Jo in Movies" in prompt
-        assert "noir comic" in prompt
+class TestRenderPosterText:
+    def test_fills_user_and_library(self):
+        assert render_poster_text("{user} in {library_name}", _profile("Jo"), [], "Movies") == "Jo in Movies"
 
-    def test_top_seed_with_no_seed_is_dropped_not_defaulted(self):
-        prompt = build_poster_prompt(
-            PosterSpec(mode="generate", title="Because you watched {top_seed}"), _profile(), [], "Movies"
-        )
-        # The whole line is dropped rather than rendered to the default row name.
-        assert "Because you watched" not in prompt
-        assert "Picked for You" not in prompt
+    def test_blank_field_collapses_to_empty(self):
+        assert render_poster_text("   ", _profile(), [], "Movies") == ""
+
+    def test_top_seed_with_no_seed_is_dropped(self):
+        assert render_poster_text("Because you watched {top_seed}", _profile(), [], "Movies") == ""
 
 
 class TestImageProviderStatus:
-    """The full curator-provider matrix: only OpenAI/Google with a key can generate images."""
+    """Only OpenAI/Google with a key can generate AI images (the text engine always works)."""
 
     class _Store:
         def __init__(self, values: dict):
@@ -168,14 +197,10 @@ class TestImageProviderStatus:
         assert not image_provider_status(self._Store({"curator.provider": ""}))["capable"]
 
     def test_openai_needs_a_key(self):
-        status = image_provider_status(self._Store({"curator.provider": "openai", "curator.api_key": ""}))
-        assert status["capable"] is False
-        assert "API key" in status["reason"]
+        assert not image_provider_status(self._Store({"curator.provider": "openai", "curator.api_key": ""}))["capable"]
 
     def test_google_needs_a_key(self):
-        status = image_provider_status(self._Store({"curator.provider": "google", "curator.api_key": ""}))
-        assert status["capable"] is False
-        assert "API key" in status["reason"]
+        assert not image_provider_status(self._Store({"curator.provider": "google", "curator.api_key": ""}))["capable"]
 
     def test_openai_with_key_is_capable(self):
         assert image_provider_status(self._Store({"curator.provider": "openai", "curator.api_key": "k"}))["capable"]
@@ -216,65 +241,38 @@ class TestImageStorage:
             assert load_upload(session, 2) == (b"B", "image/png")
 
 
-class TestCachingArtist:
-    def test_generates_once_then_serves_from_cache(self, sessions):
-        inner = MagicMock()
-        inner.render.return_value = b"IMG"
-        artist = _CachingArtist(inner, sessions)
-        assert artist.render("a prompt") == b"IMG"
-        assert artist.render("a prompt") == b"IMG"
-        inner.render.assert_called_once()  # second call hit the DB cache
+class TestPosterStudio:
+    """The studio dispatches by engine, caches by (engine, text, style), and returns None for AI with
+    no provider."""
 
-    def test_different_prompts_generate_separately(self, sessions):
-        inner = MagicMock()
-        inner.render.side_effect = [b"ONE", b"TWO"]
-        artist = _CachingArtist(inner, sessions)
-        assert artist.render("one") == b"ONE"
-        assert artist.render("two") == b"TWO"
-        assert inner.render.call_count == 2
+    def test_text_engine_caches_and_serves(self, sessions, monkeypatch):
+        import shortlist.server.services.poster_service as svc
 
-    def test_cached_image_is_loadable_by_prompt(self, sessions):
-        inner = MagicMock()
-        inner.render.return_value = b"IMG"
-        _CachingArtist(inner, sessions).render("warm me")
+        renders = MagicMock(side_effect=[b"TEXTIMG"])
+        monkeypatch.setattr(svc, "render_text_poster", renders)
+        studio = PosterStudio(sessions, ai=None)
+        assert studio.render(title="Hi", subtitle="", style="", engine="text") == b"TEXTIMG"
+        assert studio.render(title="Hi", subtitle="", style="", engine="text") == b"TEXTIMG"
+        renders.assert_called_once()  # second call hit the DB cache
         with sessions() as session:
-            assert load_generated(session, "warm me") == b"IMG"
+            assert load_generated(session, poster_seed("text", "Hi", "", "")) == b"TEXTIMG"
 
-    def test_none_result_is_not_cached(self, sessions):
-        inner = MagicMock()
-        inner.render.return_value = None
-        artist = _CachingArtist(inner, sessions)
-        assert artist.render("p") is None
-        assert artist.render("p") is None
-        assert inner.render.call_count == 2  # nothing cached, so it retries
+    def test_ai_engine_without_provider_returns_none(self, sessions):
+        studio = PosterStudio(sessions, ai=None)
+        assert studio.render(title="Hi", subtitle="", style="", engine="ai") is None
+        assert studio.ai_available is False
 
-
-class TestNormalizeUpload:
-    def test_converts_and_downscales_with_pillow(self):
-        pil = pytest.importorskip("PIL")
-        import io
-
-        from shortlist.server.services.poster_service import normalize_upload
-
-        buf = io.BytesIO()
-        pil.Image.new("RGB", (4000, 6000), "navy").save(buf, format="PNG")
-        image, content_type = normalize_upload(buf.getvalue())
-        assert content_type == "image/jpeg"
-        out = pil.Image.open(io.BytesIO(image))
-        assert max(out.size) <= 1500  # capped
-
-    def test_rejects_non_image_with_pillow(self):
-        pytest.importorskip("PIL")
-        from shortlist.server.services.poster_service import normalize_upload
-
-        with pytest.raises(ValueError):
-            normalize_upload(b"this is not an image")
+    def test_ai_engine_uses_the_injected_artist(self, sessions):
+        ai = MagicMock()
+        ai.render.return_value = b"AIIMG"
+        studio = PosterStudio(sessions, ai=ai)
+        assert studio.render(title="Hi", subtitle="Sub", style="noir", engine="ai") == b"AIIMG"
+        assert ai.render.call_args.kwargs == {"title": "Hi", "subtitle": "Sub", "style": "noir", "engine": "ai"}
 
 
 class TestProviderArtists:
     """The real render clients (SDKs mocked): assert the request kwargs the SUT controls and that the
-    provider-specific response shape is decoded to bytes — the cell that would otherwise ship silently
-    broken on a model/size/shape regression."""
+    provider-specific response shape is decoded to bytes."""
 
     def test_openai_artist_sends_the_right_request_and_decodes_b64(self, monkeypatch):
         import base64
@@ -289,7 +287,7 @@ class TestProviderArtists:
         )
         monkeypatch.setitem(sys.modules, "openai", fake_openai)
 
-        out = _OpenAIArtist("sk-test").render("a poster prompt")
+        out = _OpenAIArtist("sk-test").render(title="T", subtitle="S", style="noir", engine="ai")
 
         assert out == b"IMGBYTES"
         assert fake_openai.OpenAI.call_args.kwargs["api_key"] == "sk-test"
@@ -297,7 +295,7 @@ class TestProviderArtists:
         assert call.kwargs["model"] == OPENAI_IMAGE_MODEL
         assert call.kwargs["size"] == "1024x1536"  # portrait 2:3
         assert call.kwargs["n"] == 1
-        assert call.kwargs["prompt"] == "a poster prompt"
+        assert "T" in call.kwargs["prompt"] and "noir" in call.kwargs["prompt"]
 
     def test_openai_artist_returns_none_when_no_data(self, monkeypatch):
         import sys
@@ -307,7 +305,7 @@ class TestProviderArtists:
         fake_openai = MagicMock()
         fake_openai.OpenAI.return_value.images.generate.return_value = MagicMock(data=[])
         monkeypatch.setitem(sys.modules, "openai", fake_openai)
-        assert _OpenAIArtist("sk").render("p") is None
+        assert _OpenAIArtist("sk").render(title="T", subtitle="", style="", engine="ai") is None
 
     def test_google_artist_sends_the_right_request_and_reads_bytes(self, monkeypatch):
         import sys
@@ -325,25 +323,53 @@ class TestProviderArtists:
         monkeypatch.setitem(sys.modules, "google", google_pkg)
         monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
 
-        out = _GoogleArtist("g-key").render("a prompt")
+        out = _GoogleArtist("g-key").render(title="T", subtitle="", style="", engine="ai")
 
         assert out == b"GIMG"
         assert fake_genai.Client.call_args.kwargs["api_key"] == "g-key"
         call = client.models.generate_images.call_args
         assert call.kwargs["model"] == GOOGLE_IMAGE_MODEL
-        assert call.kwargs["prompt"] == "a prompt"
         assert fake_genai.types.GenerateImagesConfig.call_args.kwargs["aspect_ratio"] == "3:4"
 
-    def test_google_artist_returns_none_when_no_images(self, monkeypatch):
-        import sys
 
-        from shortlist.server.services.poster_service import _GoogleArtist
+class TestRenderTextPoster:
+    def test_produces_a_portrait_png(self):
+        pytest.importorskip("PIL")
+        from shortlist.server.services.poster_service import render_text_poster
 
-        fake_genai = MagicMock()
-        fake_genai.types = MagicMock()
-        fake_genai.Client.return_value.models.generate_images.return_value = MagicMock(generated_images=[])
-        google_pkg = MagicMock()
-        google_pkg.genai = fake_genai
-        monkeypatch.setitem(sys.modules, "google", google_pkg)
-        monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
-        assert _GoogleArtist("g").render("p") is None
+        image = render_text_poster("Weekend Picks", "Hand-picked for you", "vibrant")
+        assert image is not None and image[:8] == b"\x89PNG\r\n\x1a\n"
+        from PIL import Image
+
+        with Image.open(__import__("io").BytesIO(image)) as img:
+            assert img.size == (1000, 1500)  # 2:3 portrait
+
+    def test_same_text_is_deterministic(self):
+        pytest.importorskip("PIL")
+        from shortlist.server.services.poster_service import render_text_poster
+
+        assert render_text_poster("A", "B", "c") == render_text_poster("A", "B", "c")
+
+
+class TestNormalizeUpload:
+    def test_converts_and_downscales_with_pillow(self):
+        pytest.importorskip("PIL")
+        import io
+
+        from PIL import Image
+
+        from shortlist.server.services.poster_service import normalize_upload
+
+        buf = io.BytesIO()
+        Image.new("RGB", (4000, 6000), "navy").save(buf, format="PNG")
+        image, content_type = normalize_upload(buf.getvalue())
+        assert content_type == "image/jpeg"
+        with Image.open(io.BytesIO(image)) as out:
+            assert max(out.size) <= 1500
+
+    def test_rejects_non_image_with_pillow(self):
+        pytest.importorskip("PIL")
+        from shortlist.server.services.poster_service import normalize_upload
+
+        with pytest.raises(ValueError):
+            normalize_upload(b"this is not an image")

@@ -54,6 +54,29 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
     assert created["build"] == "shared"
 
 
+def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp):
+    _open_rows(page)
+    page.get_by_role("button", name="Add a row").click()
+    page.get_by_label("Name", exact=True).fill("Poster Row")
+    page.get_by_role("button", name="Add row").click()
+    expect(page.get_by_text("Poster Row").first).to_be_visible(timeout=LOAD)
+
+    # Re-open it and choose a built-in text poster — this needs no AI provider, so it works on any setup.
+    page.get_by_role("button", name="Edit").last.click()
+    expect(page.get_by_label("Name", exact=True)).to_have_value("Poster Row")
+    page.get_by_role("button", name="Text", exact=True).click()
+    page.get_by_label("Title text").fill("Weekend Picks")
+    page.get_by_role("button", name="Save changes").click()
+
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == "Poster Row")
+    assert created["poster"]["mode"] == "text"
+    assert created["poster"]["title"] == "Weekend Picks"
+    # The built-in renderer produces a real image with no AI provider configured.
+    image = app.api("GET", f"/api/collections/{created['id']}/poster/image")
+    assert image.status_code == 200
+    assert image.headers["content-type"].startswith("image/")
+
+
 def test_the_default_row_cannot_be_deleted(page: Page, app: ShortlistApp):
     _open_rows(page)
     picked = next(c for c in app.api("GET", "/api/collections").json() if c["slug"] == "picked")

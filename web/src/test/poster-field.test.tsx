@@ -48,17 +48,19 @@ function renderField(
 }
 
 describe("PosterField", () => {
-  it("offers the three poster sources", () => {
+  it("offers all four poster sources", () => {
     renderField({});
     expect(screen.getByText("Plex default")).toBeInTheDocument();
     expect(screen.getByText("Upload")).toBeInTheDocument();
-    expect(screen.getByText("Generate")).toBeInTheDocument();
+    expect(screen.getByText("Text")).toBeInTheDocument();
+    expect(screen.getByText("AI image")).toBeInTheDocument();
   });
 
-  it("shows the generate text fields when generating", () => {
-    renderField({ mode: "generate" });
+  it("shows the text fields for the built-in text poster (no provider gate)", () => {
+    renderField({ mode: "text" });
     expect(screen.getByLabelText("Title text")).toBeInTheDocument();
     expect(screen.getByLabelText("Art style")).toBeInTheDocument();
+    expect(screen.queryByText("no images here")).not.toBeInTheDocument();
   });
 
   it("tells a brand-new row to save first before uploading", () => {
@@ -66,8 +68,8 @@ describe("PosterField", () => {
     expect(screen.getByText(/save the row first/i)).toBeInTheDocument();
   });
 
-  it("surfaces the provider gate when the AI can't make images", async () => {
-    renderField({ mode: "generate" });
-    expect(await screen.findByText("no images here")).toBeInTheDocument();
+  it("surfaces the provider gate only for AI when it can't make images", async () => {
+    renderField({ mode: "ai" });
+    expect(await screen.findByText(/no images here/)).toBeInTheDocument();
   });
 });

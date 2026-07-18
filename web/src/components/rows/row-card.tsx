@@ -78,7 +78,15 @@ export function RowCard({
   return (
     <Card className={cn(!collection.enabled && "opacity-60")}>
       <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
-        <div className="min-w-0 space-y-1">
+        {collection.poster?.has_image && (
+          <img
+            src={`${api.posterImageUrl(collection.id)}?v=${collection.poster.mode}`}
+            alt=""
+            aria-hidden="true"
+            className="h-16 w-11 shrink-0 rounded border object-cover"
+          />
+        )}
+        <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium">{collection.name}</span>
             <Badge

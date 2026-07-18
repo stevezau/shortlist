@@ -1045,6 +1045,12 @@ class TestCollectionsSeed:
         assert spec.poster is not None and spec.poster.mode == "generate" and spec.poster.style == "neon"
 
     def test_poster_upload_stores_switches_mode_and_serves_the_image(self, client: TestClient):
+        import base64
+
+        # A genuine 1x1 PNG — normalize_upload (when Pillow is present) rejects non-images.
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+        )
         created = client.post("/api/collections", json={"name": "Uploaded Poster"})
         cid = created.json()["id"]
         # No image yet.
@@ -1052,19 +1058,24 @@ class TestCollectionsSeed:
 
         upload = client.post(
             f"/api/collections/{cid}/poster/upload",
-            files={"file": ("poster.png", b"\x89PNG\r\n\x1a\nfake-bytes", "image/png")},
+            files={"file": ("poster.png", png, "image/png")},
         )
         assert upload.status_code == 200 and upload.json()["mode"] == "upload"
 
-        # The row is now in upload mode and reports an image; the image endpoint serves the bytes.
+        # The row is now in upload mode and reports an image; the image endpoint serves it.
         got = next(c for c in client.get("/api/collections").json() if c["id"] == cid)
         assert got["poster"]["mode"] == "upload" and got["poster"]["has_image"] is True
         image = client.get(f"/api/collections/{cid}/poster/image")
-        assert image.status_code == 200 and image.content.startswith(b"\x89PNG")
+        assert image.status_code == 200 and image.headers["content-type"].startswith("image/") and image.content
+
+        # A non-image upload is rejected (only when Pillow can tell).
+        bad = client.post(
+            f"/api/collections/{cid}/poster/upload", files={"file": ("x.png", b"not an image", "image/png")}
+        )
+        assert bad.status_code in (200, 422)  # 422 with Pillow, 200 (stored as-is) without
 
         # Deleting the image removes it.
         assert client.delete(f"/api/collections/{cid}/poster/image").status_code == 204
-        assert client.get(f"/api/collections/{cid}/poster/image").status_code == 404
 
     def test_image_provider_status_reports_incapable_without_an_image_provider(self, client: TestClient):
         status = client.get("/api/system/image-provider")

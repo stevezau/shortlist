@@ -64,20 +64,24 @@ export interface Collection {
   poster: Poster;
 }
 
+/** A poster mode. "" = Plex default, "upload" = your image, "text" = built-in renderer, "ai" = image
+ *  model. "generate" is the legacy name for "ai", still returned for rows saved before the split. */
+export type PosterMode = "" | "upload" | "text" | "ai" | "generate";
+
 /** A row's custom collection poster (as returned by the API — never the image bytes). */
 export interface Poster {
-  mode: "" | "upload" | "generate";
-  /** Generate-mode text; supports {user}/{library_name}/{top_seed} placeholders. */
+  mode: PosterMode;
+  /** Text-poster fields; support {user}/{library_name}/{top_seed} placeholders. */
   title: string;
   subtitle: string;
   style: string;
-  /** True when an uploaded image is stored for this row (upload mode). */
+  /** True when an image is viewable for this row (uploaded, a text poster, or a cached AI one). */
   has_image: boolean;
 }
 
 /** Poster fields sent on save (no image bytes — those go through the upload endpoint). */
 export interface PosterInput {
-  mode: "" | "upload" | "generate";
+  mode: Exclude<PosterMode, "generate">;
   title: string;
   subtitle: string;
   style: string;
