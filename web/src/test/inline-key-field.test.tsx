@@ -15,7 +15,7 @@ vi.mock("@/lib/api", () => ({
   api: { putSettings, testConnection },
 }));
 
-function renderField(settings: Settings) {
+function renderField(settings: Settings, helpUrl?: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -26,6 +26,7 @@ function renderField(settings: Settings) {
         service="exa"
         label="Exa API key"
         settings={settings}
+        helpUrl={helpUrl}
       />
     </QueryClientProvider>,
   );
@@ -65,5 +66,19 @@ describe("InlineKeyField", () => {
     renderField({ "exa.apikey": "•••••" });
     fireEvent.click(screen.getByRole("button", { name: /test/i }));
     await waitFor(() => expect(testConnection).toHaveBeenCalledWith("exa"));
+  });
+
+  it("shows a 'Get a key' link to the provider when helpUrl is given", () => {
+    renderField({}, "https://dashboard.exa.ai/api-keys");
+    const link = screen.getByRole("link", { name: /get a key/i });
+    expect(link).toHaveAttribute("href", "https://dashboard.exa.ai/api-keys");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("omits the 'Get a key' link when no helpUrl is provided", () => {
+    renderField({});
+    expect(
+      screen.queryByRole("link", { name: /get a key/i }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { PlugZap } from "lucide-react";
+import { ExternalLink, PlugZap } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { Segmented } from "@/components/segmented";
@@ -33,6 +33,10 @@ export type ConnectionField =
       kind: "text" | "password";
       placeholder?: string;
       showIf?: (values: Record<string, string>) => boolean;
+      /** Optional "Get a key ↗" link shown by the field. A function receives the current field
+          values so a provider-specific URL can be chosen (e.g. the AI curator's key link). */
+      helpUrl?:
+        string | ((values: Record<string, string>) => string | undefined);
     }
   | {
       key: string;
@@ -186,9 +190,28 @@ export function ConnectionCard({
             {fields.map((field, i) => {
               if (field.showIf && !field.showIf(values)) return null;
               const id = `${fieldId}-${i}`;
+              const helpUrl =
+                field.kind === "select"
+                  ? undefined
+                  : typeof field.helpUrl === "function"
+                    ? field.helpUrl(values)
+                    : field.helpUrl;
               return (
                 <div key={field.key} className="space-y-1.5">
-                  <Label htmlFor={id}>{field.label}</Label>
+                  <div className="flex items-center justify-between gap-2">
+                    <Label htmlFor={id}>{field.label}</Label>
+                    {helpUrl && (
+                      <a
+                        href={helpUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                      >
+                        Get a key
+                        <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                      </a>
+                    )}
+                  </div>
                   {field.kind === "select" ? (
                     <Segmented
                       ariaLabel={field.label}

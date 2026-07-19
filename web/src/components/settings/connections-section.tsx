@@ -71,7 +71,14 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             settingString(settings, "tmdb.apikey") ? "API key saved" : ""
           }
           glyph={<TmdbGlyph />}
-          fields={[{ key: "tmdb.apikey", label: "API key", kind: "password" }]}
+          fields={[
+            {
+              key: "tmdb.apikey",
+              label: "API key",
+              kind: "password",
+              helpUrl: "https://www.themoviedb.org/settings/api",
+            },
+          ]}
         />
         <ConnectionCard
           service="llm"
@@ -111,6 +118,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               kind: "password",
               showIf: (v) =>
                 !["none", "ollama"].includes(v["curator.provider"] ?? ""),
+              // Link straight to the selected provider's key page (Anthropic/OpenAI/Google console).
+              helpUrl: (v) => findProvider(v["curator.provider"] ?? "")?.keyUrl,
             },
             {
               key: "curator.ollama_url",

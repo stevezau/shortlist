@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { PlugZap } from "lucide-react";
+import { ExternalLink, PlugZap } from "lucide-react";
 import { useId, useState } from "react";
 
 import { TestResult } from "@/components/test-result";
@@ -28,6 +28,7 @@ export function InlineKeyField({
   settings,
   placeholder,
   hint,
+  helpUrl,
 }: {
   settingKey: string;
   label: string;
@@ -36,6 +37,8 @@ export function InlineKeyField({
   settings: Settings;
   placeholder?: string;
   hint?: string;
+  /** Optional "Get a key ↗" link to the provider's key page. */
+  helpUrl?: string;
 }) {
   const save = useSaveSettings();
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
@@ -54,7 +57,20 @@ export function InlineKeyField({
 
   return (
     <div className="space-y-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3">
-      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor={id}>{label}</Label>
+        {helpUrl && (
+          <a
+            href={helpUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
+          >
+            Get a key
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
+          </a>
+        )}
+      </div>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <SecretInput

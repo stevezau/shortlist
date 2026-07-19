@@ -125,6 +125,7 @@ export function AiWebSearchCard({
                 label="Exa API key"
                 placeholder="exa-…"
                 hint="This backend searches via Exa. Paste your key from exa.ai to switch it on — no trip to Connections."
+                helpUrl="https://dashboard.exa.ai/api-keys"
                 settings={settings}
               />
             )}

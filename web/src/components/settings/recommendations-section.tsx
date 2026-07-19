@@ -56,6 +56,7 @@ function InlineFix({
         label="Trakt API key"
         placeholder="Trakt app client id"
         hint="Paste your Trakt app client id to switch this source on — no trip to Connections."
+        helpUrl="https://trakt.tv/oauth/applications"
         settings={settings}
       />
     );

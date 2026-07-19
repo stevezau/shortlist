@@ -104,6 +104,45 @@ describe("ConnectionCard", () => {
     expect(putSettings.mock.calls[0]?.[0]).toEqual({}); // the secret key is left untouched
   });
 
+  it("shows a provider-specific 'Get a key' link that follows the selected option", async () => {
+    // Mirrors the AI curator card: the key field's helpUrl is a function of the current values, so
+    // the link points at whichever provider is picked.
+    renderCard({}, [
+      {
+        key: "provider",
+        label: "Provider",
+        kind: "select",
+        options: [
+          { value: "anthropic", label: "Claude" },
+          { value: "openai", label: "OpenAI" },
+        ],
+      },
+      {
+        key: "api_key",
+        label: "API key",
+        kind: "password",
+        helpUrl: (v) =>
+          v.provider === "openai"
+            ? "https://platform.openai.com/api-keys"
+            : "https://console.anthropic.com/settings/keys",
+      },
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: /Set up/i }));
+
+    // Defaults to the first provider's key page…
+    expect(screen.getByRole("link", { name: /get a key/i })).toHaveAttribute(
+      "href",
+      "https://console.anthropic.com/settings/keys",
+    );
+
+    // …and follows the switch to the other provider.
+    await userEvent.click(screen.getByRole("button", { name: "OpenAI" }));
+    expect(screen.getByRole("link", { name: /get a key/i })).toHaveAttribute(
+      "href",
+      "https://platform.openai.com/api-keys",
+    );
+  });
+
   it("clears a configured connection", async () => {
     renderCard({ "tmdb.apikey": "•••••" }, [
       { key: "tmdb.apikey", label: "API key", kind: "password" },
