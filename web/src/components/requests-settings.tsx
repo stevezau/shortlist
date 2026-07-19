@@ -1,24 +1,18 @@
-import { useMutation } from "@tanstack/react-query";
-import { ExternalLink, Film, PlugZap, Tv } from "lucide-react";
+import { Film, Tv } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 
 import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
-import { TestResult } from "@/components/test-result";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  isSecretUnchanged,
-  REDACTED,
-  SecretInput,
-} from "@/components/ui/secret-input";
+import { REDACTED } from "@/components/ui/secret-input";
 import { Switch } from "@/components/ui/switch";
-import { api } from "@/lib/api";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
 import { useArrOptions } from "@/lib/queries";
+import { hasMdblist } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
 
 const MAX_PER_RUN = [3, 5, 10];
@@ -51,7 +45,6 @@ interface RequestsForm {
   radarr: ArrForm;
   sonarr: ArrForm;
   ratingSource: RatingSource;
-  mdblistKey: string;
   minRating: number;
   minVotes: number;
   minDemand: number;
@@ -92,7 +85,6 @@ function readForm(settings: Settings): RequestsForm {
           "tmdb",
         ) as RatingSource)
       : "tmdb",
-    mdblistKey: settingString(settings, "requests.mdblist.apikey"),
     minRating: settingNumber(settings, "requests.min_rating", 7),
     minVotes: settingNumber(settings, "requests.min_votes", 100),
     minDemand: settingNumber(settings, "requests.min_demand", 1),
@@ -231,21 +223,15 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const set = (patch: Partial<RequestsForm>) =>
     setForm((prev) => ({ ...prev, ...patch }));
 
-  const mdblistTest = useMutation({
-    mutationFn: () => api.testConnection("mdblist"),
-  });
-  // Test reads the SAVED key server-side, so it's only meaningful once a key is on file — gate it
-  // like the ConnectionCards do, so a brand-new user can't Test a key they haven't saved yet.
-  const mdblistOnFile = Boolean(
-    settingString(settings, "requests.mdblist.apikey"),
-  );
+  // The MDBList key now lives in Settings → Connections (like TMDB/Trakt). Here we only need to know
+  // whether it's set up, so a non-TMDB rating source can warn when it isn't.
+  const mdblistConnected = hasMdblist(settings);
 
   const ratingId = useId();
   const votesId = useId();
   const demandId = useId();
   const yearId = useId();
   const yearMaxId = useId();
-  const mdblistId = useId();
   const autoDemandId = useId();
   const autoRatingId = useId();
   const tagId = useId();
@@ -291,13 +277,6 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
       "requests.tag": form.tag.trim(),
       "requests.auto_user_tag": form.autoUserTag,
     };
-    // A saved key reads back as the redacted sentinel, and focusing the field blanks it. Sending
-    // either would be a write, not a no-op: the sentinel would be stored AS the key (and, with
-    // auto-save, "•••••abc" the moment anyone typed without selecting all first), and a blank would
-    // wipe the key just for clicking into the box. Same guard as ConnectionCard.commit().
-    if (!isSecretUnchanged(form.mdblistKey)) {
-      values["requests.mdblist.apikey"] = form.mdblistKey;
-    }
     return values;
   });
 
@@ -421,75 +400,44 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 <p className="text-sm text-muted-foreground">
                   {form.ratingSource === "tmdb"
                     ? "Uses TMDB scores. No extra setup needed."
-                    : `Uses ${RATING_LABELS[form.ratingSource]} scores from MDBList — needs a free MDBList API key below. Every score is shown on a 0–10 scale.`}
+                    : `Uses ${RATING_LABELS[form.ratingSource]} scores from MDBList (one lookup returns every score, cached for a week). Shown on a 0–10 scale.`}
                 </p>
-                {form.ratingSource !== "tmdb" && (
-                  <div className="space-y-2 pt-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor={mdblistId}>MDBList API key</Label>
-                      <a
-                        href="https://mdblist.com/preferences/"
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                {form.ratingSource !== "tmdb" &&
+                  (mdblistConnected ? (
+                    <p className="text-sm text-muted-foreground">
+                      Using your MDBList connection. Manage or test the key in{" "}
+                      <button
+                        type="button"
+                        onClick={goToConnections}
+                        className="font-medium text-primary underline underline-offset-2"
                       >
-                        Get a key
-                        <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                      </a>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <SecretInput
-                        id={mdblistId}
-                        placeholder="Free key from mdblist.com"
-                        value={form.mdblistKey}
-                        saved={
-                          settingString(settings, "requests.mdblist.apikey") ===
-                          REDACTED
-                        }
-                        onChange={(mdblistKey) => set({ mdblistKey })}
-                        className="max-w-xs"
-                      />
+                        Connections
+                      </button>
+                      .
+                    </p>
+                  ) : (
+                    <div
+                      role="alert"
+                      className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4"
+                    >
+                      <p className="text-sm font-medium">
+                        MDBList isn’t connected
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {RATING_LABELS[form.ratingSource]} scores come from
+                        MDBList. Add its free API key in Connections, or
+                        Shortlist falls back to TMDB scores and this choice
+                        won’t take effect.
+                      </p>
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => mdblistTest.mutate()}
-                        loading={mdblistTest.isPending}
-                        disabled={!mdblistOnFile}
-                        title={
-                          mdblistOnFile
-                            ? undefined
-                            : "Save the key first, then test it"
-                        }
+                        onClick={goToConnections}
                       >
-                        {!mdblistTest.isPending && (
-                          <PlugZap aria-hidden="true" />
-                        )}
-                        Test
+                        Set up MDBList in Connections
                       </Button>
-                      {mdblistTest.isSuccess && (
-                        <TestResult result={mdblistTest.data} as="span" />
-                      )}
-                      {mdblistTest.isError && (
-                        <TestResult error={mdblistTest.error} as="span" />
-                      )}
                     </div>
-                    {mdblistOnFile ? (
-                      <p className="text-sm text-muted-foreground">
-                        A saved key shows as dots. Type a new one to replace it;
-                        leave it blank to keep the one you have. MDBList’s free
-                        tier allows ~1,000 lookups a day; Shortlist caches
-                        ratings for a week to stay well under it, and warns you
-                        if the daily limit is ever hit.
-                      </p>
-                    ) : (
-                      <p role="alert" className="text-sm text-warning">
-                        Without a saved MDBList key, Shortlist falls back to
-                        TMDB ratings — this source won&rsquo;t actually be used.
-                        Add a key above.
-                      </p>
-                    )}
-                  </div>
-                )}
+                  ))}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">

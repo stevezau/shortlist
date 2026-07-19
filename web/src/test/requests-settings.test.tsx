@@ -31,7 +31,7 @@ vi.mock("@/lib/api", () => {
   };
 });
 
-/** Requests on, judging by IMDb, with a key already saved — the state the MDBList field is edited in. */
+/** Requests on, judging by IMDb, with an MDBList key already saved (the key lives in Connections now). */
 const WITH_SAVED_MDBLIST_KEY: Settings = {
   "requests.enabled": true,
   "requests.rating_source": "imdb",
@@ -128,40 +128,38 @@ describe("RequestsSettings", () => {
     ).toBeTruthy();
   });
 
-  it("never saves the redacted sentinel as the MDBList key", async () => {
-    renderPanel(WITH_SAVED_MDBLIST_KEY);
-    const field = screen.getByLabelText(/MDBList API key/i);
-    expect(field).toHaveValue("•••••");
+  it("warns and points to Connections when a non-TMDB source has no MDBList key", async () => {
+    // rating_source=imdb but no key on file: the key now lives in Connections, so the panel must
+    // warn that the choice won't take effect and route the owner there — never save a key itself.
+    renderPanel({ "requests.enabled": true, "requests.rating_source": "imdb" });
 
-    // Clicking in clears the dots, so typing can't append to them ("•••••abc123" used to be saved
-    // verbatim as the key).
-    await userEvent.click(field);
-    expect(field).toHaveValue("");
-    await userEvent.type(field, "abc123");
-
-    await waitFor(() =>
-      expect(putSettings.mock.calls.at(-1)?.[0]).toHaveProperty(
-        "requests.mdblist.apikey",
-        "abc123",
-      ),
-    );
-    for (const [payload] of putSettings.mock.calls) {
-      expect(payload["requests.mdblist.apikey"]).not.toBe("•••••");
-    }
-  });
-
-  it("leaves a saved MDBList key alone when the field is focused but not retyped", async () => {
-    renderPanel(WITH_SAVED_MDBLIST_KEY);
-    const field = screen.getByLabelText(/MDBList API key/i);
-
-    await userEvent.click(field); // focus blanks the dots…
-    await userEvent.tab(); // …and leaving without typing must not wipe the key
-
-    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(await screen.findByText(/MDBList isn.t connected/i)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /Set up MDBList in Connections/i }),
+    ).toBeTruthy();
+    // The key field is gone from Requests entirely — no way to type a secret here anymore.
+    expect(screen.queryByLabelText(/MDBList API key/i)).toBeNull();
     for (const [payload] of putSettings.mock.calls) {
       expect(payload).not.toHaveProperty("requests.mdblist.apikey");
     }
-    expect(field).toHaveValue("•••••");
+  });
+
+  it("shows the MDBList connection is in use when its key is saved", async () => {
+    renderPanel(WITH_SAVED_MDBLIST_KEY);
+    // Connected: a plain confirmation pointing to Connections, and no warning.
+    expect(
+      await screen.findByText(/Using your MDBList connection/i),
+    ).toBeTruthy();
+    expect(screen.queryByText(/MDBList isn.t connected/i)).toBeNull();
+  });
+
+  it("shows no MDBList messaging at all when judging by TMDB", async () => {
+    // TMDB needs no external ratings service, so neither the connected note nor the warning belongs
+    // here — a regression dropping the `!== "tmdb"` guard would wrongly show one of them.
+    renderPanel({ "requests.enabled": true, "requests.rating_source": "tmdb" });
+    expect(await screen.findByText(/Guardrails/i)).toBeTruthy();
+    expect(screen.queryByText(/Using your MDBList connection/i)).toBeNull();
+    expect(screen.queryByText(/MDBList isn.t connected/i)).toBeNull();
   });
 
   it("hides the connect prompt and shows the filing pickers once an app is connected", async () => {

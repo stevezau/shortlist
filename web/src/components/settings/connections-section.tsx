@@ -1,6 +1,7 @@
 import { Compass, Film, Globe, Sparkles, Tv } from "lucide-react";
 
 import {
+  MdblistGlyph,
   PlexGlyph,
   ProviderGlyph,
   TautulliGlyph,
@@ -186,6 +187,27 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               key: "trakt.client_id",
               label: "API key (Trakt app client ID)",
               kind: "password",
+            },
+          ]}
+        />
+        <ConnectionCard
+          service="mdblist"
+          title="MDBList"
+          purpose="Optional. Rates request candidates by IMDb, Rotten Tomatoes, Metacritic, or Trakt — one lookup returns every score. Requests uses this when you judge titles by anything other than TMDB."
+          settings={settings}
+          summary={
+            settingString(settings, "requests.mdblist.apikey")
+              ? "API key saved"
+              : ""
+          }
+          glyph={<MdblistGlyph />}
+          fields={[
+            {
+              key: "requests.mdblist.apikey",
+              label: "API key",
+              kind: "password",
+              placeholder: "Free key from mdblist.com",
+              helpUrl: "https://mdblist.com/preferences/",
             },
           ]}
         />

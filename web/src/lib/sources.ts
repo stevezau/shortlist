@@ -71,6 +71,11 @@ export function hasTrakt(settings: Settings): boolean {
   return Boolean(settingString(settings, "trakt.client_id"));
 }
 
+/** Whether an MDBList API key is on file (needed by every non-TMDB request rating source). */
+export function hasMdblist(settings: Settings): boolean {
+  return Boolean(settingString(settings, "requests.mdblist.apikey"));
+}
+
 /** How the llm_web source searches: 'native' | 'exa' | 'auto' (owner-chosen). */
 export function webSearchProvider(settings: Settings): string {
   return settingString(settings, "llm_web.search_provider") || "auto";

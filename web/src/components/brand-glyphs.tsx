@@ -96,6 +96,26 @@ export function ImdbGlyph({ className }: GlyphProps) {
   );
 }
 
+export function MdblistGlyph({ className }: GlyphProps) {
+  // MDBList's mark: white "MDB" on its signature blue, rounded rect — a ratings aggregator.
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
+      <rect x="2" y="6.5" width="20" height="11" rx="2.5" fill="#2b6cb0" />
+      <text
+        x="12"
+        y="14.6"
+        textAnchor="middle"
+        fontSize="6"
+        fontWeight="800"
+        fontFamily="Arial, sans-serif"
+        fill="#fff"
+      >
+        MDB
+      </text>
+    </svg>
+  );
+}
+
 export function TraktGlyph({ className }: GlyphProps) {
   // Trakt's mark: a red circle with a light ring — recognizable by colour at small sizes.
   return (
