@@ -201,6 +201,38 @@ class TestRun:
         assert not report.ok
         ctx.plex.promote.assert_not_called()
 
+    def test_on_user_done_fires_once_per_user(self, ctx: EngineContext, mock_plextv):
+        """The live-persist hook fires as each user finishes (so the UI fills in person by person),
+        with that user's finished report."""
+        sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        ctx.curator.curate.side_effect = curated_picks
+        seen: list[tuple[str, str]] = []
+        ctx.on_user_done = lambda profile, report: seen.append((profile.slug, report.status))
+
+        pipeline_mod.run(ctx, [sarah, mike])
+
+        assert sorted(slug for slug, _ in seen) == ["mike", "sarah"]
+        assert all(status in ("ok", "cold_start", "error") for _, status in seen)
+
+    def test_on_user_done_error_never_sinks_the_run(self, ctx: EngineContext, mock_plextv):
+        """A persistence hiccup in the hook must not fail the user or the run — the end-of-run persist
+        is the backstop."""
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.curator.curate.side_effect = curated_picks
+        ran = []
+
+        def boom(_profile, _report):
+            ran.append(True)
+            raise RuntimeError("db locked")
+
+        ctx.on_user_done = boom
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert ran  # the hook DID run (and raised)
+        assert any(u.slug == "sarah" for u in report.users)  # yet the user is still processed + reported
+
     def test_one_user_failing_never_stops_the_others(self, ctx: EngineContext, mock_plextv):
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]

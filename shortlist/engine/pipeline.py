@@ -102,6 +102,11 @@ class EngineContext:
     # by a later auto-send. Empty for direct engine runs, which have no inbox.
     handled_requests: set[tuple[int, str]] = field(default_factory=set)
     progress: Callable[[str, str, dict], None] | None = None  # (user_slug, stage, counts) -> None
+    # Called the moment one user finishes (before their terminal progress event), with their profile
+    # and finished report — so the server can persist that user's results INCREMENTALLY and the UI
+    # shows them as each person completes, instead of the whole roster appearing only at run's end.
+    # Must be resilient: it runs on the worker threads, and any error is swallowed (never sinks a run).
+    on_user_done: Callable[[UserProfile, UserRunReport], None] | None = None
     # Cross-run cache for the per-library tmdb_id -> ratingKey index, keyed by a cheap change signal
     # (item count + last-updated). An unchanged library skips its full scan next run. NullCache (the
     # default) disables it — safe, since a stale/missing entry only ever means a re-scan.
@@ -430,6 +435,14 @@ def _deliver_phase(
                 else:
                     user_report.diff.deleted = list(swept_titles) + user_report.diff.deleted
             user_report.duration_s = round(time.monotonic() - started, 2)
+            # Persist this user's results NOW (before the terminal event that makes the UI refetch), so
+            # each person appears as they finish rather than the whole roster only at run's end. Never
+            # let a persistence hiccup sink the run — the end-of-run persist is the backstop.
+            if ctx.on_user_done is not None:
+                try:
+                    ctx.on_user_done(user, user_report)
+                except Exception:
+                    logger.exception("{}: live-persist of user report failed (will persist at run end)", user.slug)
             # terminal per-user event — without it the UI can only resolve a user
             # when the whole run ends, so finished users kept spinning for minutes
             if user_report.status == "error":

@@ -153,6 +153,61 @@ class TestRunExecution:
             assert len(events) == 2
             assert any(e.level == "error" for e in events)
 
+    def _one_user_report(self, slug: str) -> UserRunReport:
+        return UserRunReport(
+            username=slug,
+            slug=slug,
+            status="ok",
+            picks=[Pick(tmdb_id=1, rating_key=10, title="Movie", rank=1, reason="r", media_type=MediaType.MOVIE)],
+            counts=StageCounts(picks=1),
+            diff=CollectionDiff(added=["Movie"]),
+            error=None,
+            duration_s=1.0,
+            privacy_synced=True,
+        )
+
+    def _new_run(self, sessions) -> int:
+        with sessions() as session:  # users 'sarah'/'mike' are already seeded by the fixture
+            run = Run(trigger="manual", status="running", stats={})
+            session.add(run)
+            session.commit()
+            return run.id
+
+    def _report(self, *reports: UserRunReport) -> RunReport:
+        return RunReport(started_at=datetime.now(UTC), finished_at=datetime.now(UTC), users=list(reports))
+
+    def test_live_persist_then_end_persist_writes_each_user_exactly_once(self, sessions, tmp_path):
+        """The live per-user persist writes a user; the end-of-run persist must NOT write them again —
+        exactly one RunUser + its picks + one run.user event, not two."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        run_id = self._new_run(sessions)
+        report = self._one_user_report("sarah")
+
+        service._persist_user_live(run_id, SimpleNamespace(slug="sarah"), report, dry_run=False)
+        with sessions() as s:
+            assert s.query(RunUser).filter_by(run_id=run_id).count() == 1
+            assert s.query(PickRow).filter_by(run_id=run_id).count() == 1
+            assert s.query(Event).filter_by(scope="run.user").count() == 1
+
+        # End-of-run persist over the same user must be a no-op for their rows (dedup guard).
+        service._persist_report(run_id, self._report(report))
+        with sessions() as s:
+            assert s.query(RunUser).filter_by(run_id=run_id).count() == 1
+            assert s.query(PickRow).filter_by(run_id=run_id).count() == 1
+            assert s.query(Event).filter_by(scope="run.user").count() == 1
+            assert s.get(Run, run_id).stats["users_ok"] == 1  # still counted for finalize stats
+
+    def test_end_persist_backstops_a_user_the_live_path_missed(self, sessions, tmp_path):
+        """If the live persist never ran for a user (hook raised / unwired), the end-of-run persist
+        still writes them exactly once."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        run_id = self._new_run(sessions)
+
+        service._persist_report(run_id, self._report(self._one_user_report("mike")))
+        with sessions() as s:
+            assert s.query(RunUser).filter_by(run_id=run_id).count() == 1
+            assert s.query(PickRow).filter_by(run_id=run_id).count() == 1
+
     def test_a_shared_rows_write_is_audited(self, sessions, tmp_path, monkeypatch):
         """A shared row files its report under `shared_<slug>`, which is nobody's user slug — so
         _persist_report's `if user is None: continue` dropped it whole. A real Plex collection was

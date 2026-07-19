@@ -9,6 +9,7 @@ config, profiles) lives in ``context_builder.ContextBuilder``; this module is on
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -59,6 +60,9 @@ class RunService:
         self._secrets = secret_box
         self._ctx = ContextBuilder(session_factory, secret_box, bus)
         self._lock = asyncio.Lock()  # one run at a time; nightly + manual runs must not overlap
+        # SQLite is single-writer, but the engine finishes users on a thread POOL — so the live
+        # per-user persist (below) must serialize its commits across those worker threads.
+        self._persist_lock = threading.Lock()
         self._tasks: set[asyncio.Task] = set()  # strong refs so in-flight runs aren't GC'd
         # run_id -> the run's stage activity log, in memory so a page reload can replay it. Bounded
         # per run and to the last few runs (the per-user RESULTS are the durable record; this is the
@@ -190,6 +194,12 @@ class RunService:
                     log_sink=self._new_run_log(run_id),
                     collection_ids=collection_ids,
                 )
+                # Persist each user's results the moment they finish, so the run page fills in person by
+                # person instead of staying empty until the whole run ends (the end-of-run persist below
+                # is the backstop + reconciler).
+                ctx.on_user_done = lambda profile, user_report: self._persist_user_live(
+                    run_id, profile, user_report, dry_run
+                )
                 report = await loop.run_in_executor(None, engine_run, ctx, profiles)
                 self._persist_report(run_id, report)
                 # The engine filled each profile's history in place, so this is the one moment we hold
@@ -281,6 +291,21 @@ class RunService:
                         pick.watched_at = watched
             session.commit()
 
+    def _persist_user_live(self, run_id: int, profile, user_report, dry_run: bool) -> None:
+        """Persist ONE user's results as they finish (called from the engine's worker threads), so the
+        run page shows each person on completion rather than the whole roster only at run's end. Its
+        commits are serialized (SQLite single-writer) and it never re-writes a user already stored, so
+        the end-of-run `_persist_report` stays a safe backstop + reconciler. A shared-row/unknown slug
+        has no user row here and is handled only at run end."""
+        with self._persist_lock, self._sessions() as session:
+            user = session.query(User).filter_by(slug=profile.slug).first()
+            if user is None:
+                return
+            if session.query(RunUser).filter_by(run_id=run_id, user_id=user.id).first() is not None:
+                return
+            self._persist_user_report(session, run_id, user, user_report, dry_run)
+            session.commit()
+
     def _persist_report(self, run_id: int, report, *, status: str | None = None, error: str | None = None) -> None:
         """Persist a run's outcome. `status`/`error` override what the report says — the gated
         path uses them so a refused run is never even momentarily written as a success."""
@@ -305,7 +330,10 @@ class RunService:
                     errors += 1
                 else:
                     ok += 1
-                self._persist_user_report(session, run_id, user, user_report, report.dry_run)
+                # Skip anyone already written by the live per-user persist — still counted above for
+                # the finalize stats. This backstops users the live path missed (e.g. it errored).
+                if session.query(RunUser).filter_by(run_id=run_id, user_id=user.id).first() is None:
+                    self._persist_user_report(session, run_id, user, user_report, report.dry_run)
             self._emit_sweep_event(session, run_id, report)
             self._emit_privacy_sync_events(session, run_id, report)
             self._emit_hub_ordering_events(session, run_id, report)
