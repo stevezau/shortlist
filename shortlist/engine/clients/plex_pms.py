@@ -29,6 +29,16 @@ from shortlist.engine.models import MediaType, OwnedRow
 # Label restrictions only apply on Home/Recommended/Related from this PMS build (PM-5174).
 MIN_PMS_VERSION = (1, 43, 2, 10687)
 
+# Shortlist's invisible per-account title marker is exactly 64 zero-width chars (see
+# delivery.row_marker). Checked locally here rather than imported to avoid a delivery↔client import
+# cycle; the two definitions must stay in lockstep.
+_MARKER_CHARS = ("​", "‌")
+
+
+def _has_shortlist_marker(title: str) -> bool:
+    suffix = title[-64:]
+    return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
+
 
 def parse_pms_version(version: str) -> tuple[int, ...]:
     """'1.43.3.10793-cd55560bb' -> (1, 43, 3, 10793)."""
@@ -629,8 +639,15 @@ class PlexClient:
         _retry_idempotent(_op, label=f"resetPoster {collection.title!r}")
 
     def delete_owned_collection(self, collection: Collection, label_prefix: str) -> None:
-        """Delete a collection only if it carries a shortlist label (Kometa coexistence)."""
-        if not any(label.tag.lower().startswith(f"{label_prefix}_") for label in collection.labels):
+        """Delete a collection only if it is provably ours (Kometa coexistence, plex-safety rule 4).
+
+        Ownership is proven by EITHER a ``{label_prefix}_*`` label OR Shortlist's invisible 64-char
+        title marker. The marker case matters for an ORPHAN — a per-user row whose label write never
+        landed after an interrupted run: with no label, no ``label!=`` share filter can hide it, so it
+        leaks to every user, and the label-only check used to refuse to clean it up. The marker (a
+        64-char zero-width suffix no other tool produces) still identifies it as ours."""
+        labelled = any(label.tag.lower().startswith(f"{label_prefix}_") for label in collection.labels)
+        if not labelled and not _has_shortlist_marker(collection.title):
             raise PermissionError(f"refusing to delete {collection.title!r}: no {label_prefix}_* label — not ours")
         collection.visibility().updateVisibility(recommended=False, home=False, shared=False)
         collection.delete()

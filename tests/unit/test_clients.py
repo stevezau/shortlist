@@ -368,6 +368,38 @@ class TestPlexClient:
             mock_plex.delete_owned_collection(foreign, "shortlist")
         foreign.delete.assert_not_called()
 
+    def test_delete_accepts_an_unlabelled_orphan_that_carries_our_marker(self, mock_plex: PlexClient):
+        # An orphan whose label write never landed still carries the invisible 64-char marker, which
+        # proves it's ours even with no label — the sweep must be able to delete it (else it leaks).
+        from shortlist.engine.delivery import row_marker
+
+        orphan = MagicMock()
+        orphan.title = "✨ Movies Picked for You" + row_marker(202)
+        orphan.labels = []
+        mock_plex.delete_owned_collection(orphan, "shortlist")
+        # Demote off every shelf BEFORE deleting, exactly as the labelled path does.
+        assert orphan.visibility.return_value.updateVisibility.call_args.kwargs == {
+            "recommended": False,
+            "home": False,
+            "shared": False,
+        }
+        orphan.delete.assert_called_once()
+
+    def test_the_marker_predicate_matches_delivery_verbatim(self):
+        # The orphan-ownership check is duplicated in plex_pms (to avoid an import cycle); if the two
+        # marker definitions ever drift, the sweep would find an orphan but delete_owned_collection
+        # would refuse it and abort the run. Pin them together so drift can't ship silently.
+        from shortlist.engine.clients.plex_pms import _has_shortlist_marker
+        from shortlist.engine.delivery import has_marker, row_marker
+
+        for title in (
+            "✨ Movies Picked for You" + row_marker(202),  # marked → ours
+            "Kometa: Best of the 90s",  # foreign → not ours
+            "x" + "​" * 63,  # 63 trailing marker chars — one short of a marker
+            "x" + "‌" * 65,  # 65 — a valid 64 marker preceded by another zero-width char
+        ):
+            assert _has_shortlist_marker(title) == has_marker(title), title
+
     def test_delete_demotes_then_deletes_owned(self, mock_plex: PlexClient):
         owned = MagicMock()
         owned.labels = [SimpleNamespace(tag="Shortlist_sarah")]

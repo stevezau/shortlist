@@ -664,6 +664,52 @@ class TestSweepBrokenRows:
         assert deleted == {"mike": ["✨ Picked for You"], "sarah": ["Because you watched Fargo"]}
         assert plex.delete_owned_collection.call_count == 2
 
+    def test_deletes_an_unlabelled_orphan_carrying_our_marker(self, engine_config: EngineConfig, movies, shows):
+        # A per-user row whose label write never landed: marker present, NO shortlist label. No
+        # `label!=` can hide a label-less collection, so it leaks to EVERY user — the SFLIX incident.
+        # It's correctly typed, so the ONLY defect is the missing label; the marker proves it's ours.
+        orphan = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, orphan)
+        plex.matches_section.return_value = True
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
+
+        assert deleted == {"mike": [orphan.title]}
+        plex.delete_owned_collection.assert_called_once_with(orphan, "shortlist")
+
+    def test_attributes_an_orphan_by_decoded_account_when_the_owner_is_unknown(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        # A departed user's orphan isn't in `markers`; the account id decoded from the marker still
+        # names it in the audit trail so "whose row did you delete" stays answerable (rule 10).
+        orphan = self._collection(shows, title="✨ TV Shows Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, orphan)
+        plex.matches_section.return_value = True
+
+        deleted = sweep_broken_rows(plex, engine_config)
+
+        assert deleted == {"orphan:202": [orphan.title]}
+        plex.delete_owned_collection.assert_called_once()
+
+    def test_leaves_an_unlabelled_collection_without_our_marker_alone(self, engine_config: EngineConfig, movies, shows):
+        # No label AND no marker → genuinely foreign (Kometa etc.). Never touched (rule 4).
+        foreign = self._collection(movies, title="Kometa: Best of the 90s")
+        plex = self._plex(movies, shows, foreign)
+        plex.matches_section.return_value = True
+
+        assert sweep_broken_rows(plex, engine_config) == {}
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_dry_run_reports_an_orphan_without_deleting_it(self, engine_config: EngineConfig, movies, shows):
+        orphan = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, orphan)
+        plex.matches_section.return_value = True
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)}, dry_run=True)
+
+        assert deleted == {"mike": [orphan.title]}
+        plex.delete_owned_collection.assert_not_called()
+
     def test_an_empty_server_is_not_an_error(self, engine_config: EngineConfig, movies, shows):
         plex = self._plex(movies, shows)
         assert sweep_broken_rows(plex, engine_config) == {}

@@ -507,9 +507,9 @@ class RunService:
             "warning",
             run_id,
             dry_run=report.dry_run,
-            reason="row was broken beyond repair-in-place — either no share filter could hide it "
-            "(wrong type for its library), or it shared a collection tag with other users' rows "
-            "and held their picks",
+            reason="row was broken beyond repair-in-place — no share filter could hide it (wrong "
+            "type for its library, or no shortlist label at all — an orphan from an interrupted "
+            "run), or it shared a collection tag with other users' rows and held their picks",
             deleted=report.swept_rows,
         )
 

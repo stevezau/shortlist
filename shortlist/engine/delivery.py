@@ -66,6 +66,22 @@ def strip_marker(title: str) -> str:
     return title
 
 
+def has_marker(title: str) -> bool:
+    """Whether a title ends with a valid 64-char Shortlist marker — proof the collection is ours even
+    when its ``shortlist_*`` label is missing (an orphan from an interrupted run). No other tool
+    produces a 64-char zero-width suffix, so this is a safe ownership test (plex-safety rule 4)."""
+    return strip_marker(title) != title
+
+
+def marker_account(title: str) -> int | None:
+    """Decode the Plex account id a marker encodes (inverse of ``row_marker``), or None if unmarked —
+    so an unlabelled orphan can still be attributed to a user in the audit trail."""
+    if not has_marker(title):
+        return None
+    suffix = title[-64:]
+    return sum((1 << bit) for bit, c in enumerate(suffix) if c == _INVISIBLE[1])
+
+
 def render_row_name(template: str, profile: UserProfile, picks: list[Pick], library_name: str = "") -> str:
     """Render the row title as a HUMAN reads it — no marker. Used for reports and the UI.
 
@@ -802,11 +818,32 @@ def sweep_broken_rows(
     """
     prefix = f"{config.label_prefix}_".lower()
     markers = markers or {}
+    slug_by_marker = {marker: slug for slug, marker in markers.items()}  # attribute an unlabelled orphan
     deleted = {} if deleted is None else deleted
     for section in plex.sections():
         for collection in section.collections():
             label = next((t.tag for t in collection.labels if t.tag.lower().startswith(prefix)), None)
-            if label is None:  # not ours — Kometa and friends are none of our business (rule 4)
+            if label is None:
+                # No shortlist label. If the title still carries our invisible marker, it's an ORPHAN —
+                # a per-user row whose label write never landed (an interrupted run). With no label, NO
+                # `label!=` share filter can hide it, so EVERY user sees it: the exact leak that stranded
+                # unlabelled "Picked for You" rows on SFLIX. The marker proves it's ours, so delete it;
+                # the next successful run rebuilds the owner's row, labelled. A collection with no marker
+                # is genuinely foreign (Kometa and friends) — leave it alone (rule 4).
+                if not has_marker(collection.title):
+                    continue
+                orphan_slug = slug_by_marker.get(collection.title[-64:]) or f"orphan:{marker_account(collection.title)}"
+                logger.warning(
+                    "{}{}: removing an UNLABELLED orphan row in '{}' — no label, so no share filter can "
+                    "hide it (visible to everyone)",
+                    "[dry-run] " if dry_run else "",
+                    orphan_slug,
+                    section.title,
+                )
+                title = collection.title
+                if not dry_run:
+                    plex.delete_owned_collection(collection, config.label_prefix)
+                deleted.setdefault(orphan_slug, []).append(title)
                 continue
             slug = label[len(prefix) :].lower()
             marker = markers.get(slug)
