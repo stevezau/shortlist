@@ -14,6 +14,7 @@ from dataclasses import replace
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
+from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.search import ExaClient
@@ -178,12 +179,24 @@ class ContextBuilder:
             curator=curator,
             snapshots=DbSnapshotStore(self._sessions),
             index_cache=DbCache(self._sessions, kind="library_index"),
+            mdblist=self._build_mdblist(store),
             concurrency=concurrency,
             recent_picks=recent,
             known_slugs=known_slugs,
             handled_requests=self._handled_requests(session),
             progress=progress,
         )
+
+    def _build_mdblist(self, store: SettingsStore) -> MdbListClient | None:
+        """A cache-backed MDBList client when the chosen rating source needs it (any non-TMDB source
+        with a key set), else None. Shares the persistent DB cache so ratings are looked up at most
+        once per title per week — the whole point of caching against MDBList's daily request cap."""
+        if (store.get("requests.rating_source") or "tmdb") == "tmdb":
+            return None
+        key = store.get("requests.mdblist.apikey")
+        if not key:
+            return None
+        return MdbListClient(key, cache=DbCache(self._sessions, kind="mdblist"))
 
     @staticmethod
     def _handled_requests(session: Session) -> set[tuple[int, str]]:
@@ -546,7 +559,7 @@ class ContextBuilder:
             radarr=target("requests.radarr"),
             sonarr=target("requests.sonarr"),
             rating_source=store.get("requests.rating_source") or "tmdb",
-            omdb_api_key=store.get("requests.omdb.apikey") or "",
+            mdblist_api_key=store.get("requests.mdblist.apikey") or "",
             min_rating=float(store.get("requests.min_rating")),
             min_votes=int(store.get("requests.min_votes")),
             min_demand=int(store.get("requests.min_demand")),

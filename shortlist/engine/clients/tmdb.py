@@ -137,6 +137,6 @@ class TmdbClient:
         return int(raw) if raw else None
 
     def imdb_id(self, tmdb_id: int, media_type: MediaType) -> str | None:
-        """The IMDb id (``tt…``) for a title, or None — used to look its IMDb rating up via OMDb."""
+        """The IMDb id (``tt…``) for a title, or None — used for the inbox's IMDb deep-link."""
         raw = self.external_ids(tmdb_id, media_type).get("imdb_id")
         return raw or None

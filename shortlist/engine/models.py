@@ -303,12 +303,13 @@ class RequestConfig:
     enabled: bool = False
     radarr: ArrTarget | None = None  # None -> movie requests are skipped
     sonarr: ArrTarget | None = None  # None -> show requests are skipped
-    # Which score gates a title: TMDB (always available, no setup) or IMDb (needs an OMDb key). The
-    # min_rating/min_votes floors read from whichever source is chosen.
-    rating_source: str = "tmdb"  # "tmdb" | "imdb"
-    omdb_api_key: str = ""  # required when rating_source == "imdb"; else IMDb gating falls back to TMDB
+    # Which score gates a title. TMDB is always available (no setup); imdb/trakt/tomatoes/metacritic
+    # come from MDBList (needs a key). The min_rating/min_votes floors read from whichever is chosen;
+    # every non-TMDB score is normalised to 0..10 so one floor works across sources.
+    rating_source: str = "tmdb"  # tmdb | imdb | trakt | tomatoes | metacritic
+    mdblist_api_key: str = ""  # required for any non-TMDB source; else rating gating falls back to TMDB
     min_rating: float = 7.0  # rating floor, 0..10, on the chosen source
-    min_votes: int = 100  # vote-count floor on the chosen source
+    min_votes: int = 100  # vote-count floor (audience-vote sources only: imdb/trakt/tmdb)
     min_demand: int = 1  # a title must be wanted by at least this many distinct people
     # Release-year window (a show's year is its first-air year). 0 disables that end of the range.
     min_year: int = 0  # 0 -> no lower bound; else request only titles from >= this year
@@ -407,6 +408,10 @@ class RequestReport:
     # it and the row would sit pending forever. Best-effort: empty when the reconcile skipped a
     # media type (none in this run's pool) or an Arr fetch failed (fail-open) — no drops that run.
     arr_present: set[tuple[int, str]] = field(default_factory=set)
+    # True when MDBList hit its daily request cap mid-run: the rating gate fell back to TMDB for the
+    # rest, and the server raises a notification so the owner knows some ratings weren't the chosen
+    # source tonight.
+    ratings_rate_limited: bool = False
 
     @property
     def requested(self) -> int:

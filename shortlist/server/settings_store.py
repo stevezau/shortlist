@@ -37,7 +37,7 @@ DEFAULTS: dict[str, Any] = {
     "requests.sonarr.url": "",
     "requests.sonarr.quality_profile_id": 0,
     "requests.sonarr.root_folder": "",
-    "requests.rating_source": "tmdb",  # "tmdb" (no setup) | "imdb" (needs an OMDb key)
+    "requests.rating_source": "tmdb",  # tmdb (no setup) | imdb | trakt | tomatoes | metacritic (via MDBList)
     "requests.min_rating": 7.0,  # rating floor on the chosen source
     "requests.min_votes": 100,  # vote-count floor on the chosen source
     "requests.min_demand": 1,  # a title must be wanted by at least this many distinct people
@@ -102,7 +102,7 @@ SECRET_KEYS = {
     "curator.api_key",
     "requests.radarr.apikey",
     "requests.sonarr.apikey",
-    "requests.omdb.apikey",
+    "requests.mdblist.apikey",  # MDBList key for IMDb/Trakt/RT/Metacritic rating gating
     "trakt.client_id",
     "exa.apikey",  # Exa web-search API key for the llm_web source
     "api.token",  # our own programmatic API token (encrypted at rest so the owner can reveal it)
@@ -118,7 +118,7 @@ SECRET_KEYS = {
 PRIVATE_KEYS = {"api.token", "api.token_created_at", "api.token_hash", "api.token_hint"}
 
 # Dropped keys purged from the settings table on boot, so stale rows don't linger.
-LEGACY_KEYS = {"api.token_hash", "api.token_hint"}
+LEGACY_KEYS = {"api.token_hash", "api.token_hint", "requests.omdb.apikey"}
 
 ENV_SEEDS = {
     "PLEX_URL": "plex.url",

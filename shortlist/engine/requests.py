@@ -12,7 +12,7 @@ from __future__ import annotations
 from loguru import logger
 
 from shortlist.engine.clients.arr import ArrError, RadarrClient, SonarrClient
-from shortlist.engine.clients.omdb import OmdbClient
+from shortlist.engine.clients.mdblist import VOTE_SOURCES, MdbListClient, MdbListRateLimitError
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.models import (
     Candidate,
@@ -24,8 +24,9 @@ from shortlist.engine.models import (
     RequestWhy,
 )
 
-# When gating on IMDb, only this many top-by-demand candidates are looked up on OMDb per run, so a
-# large missing pool can't exhaust OMDb's rate limit. A generous multiple of the request cap.
+# When gating on a non-TMDB source, only this many top-by-demand candidates are looked up on MDBList
+# per run, so a large missing pool can't blow the daily cap (each title's whole rating set is also
+# cached, so re-runs mostly hit the cache). A generous multiple of the request cap.
 _IMDB_SHORTLIST = 20
 
 # Demand accumulator: (tmdb_id, media_type) -> the missing title and how many users wanted it. The
@@ -113,6 +114,7 @@ def request_missing(
     dry_run: bool,
     min_write_interval: float = 1.0,
     already_handled: set[tuple[int, str]] | None = None,
+    mdblist: MdbListClient | None = None,
 ) -> RequestReport:
     """Auto-request the strongest missing titles; queue the rest for the owner to approve.
 
@@ -138,16 +140,18 @@ def request_missing(
         and m.demand >= cfg.min_demand
         and _within_year_window(m.year, cfg.min_year, cfg.max_year)
     ]
-    # Then the rating gate, from whichever source the owner chose (it ranks the survivors too).
-    if cfg.rating_source == "imdb" and cfg.omdb_api_key:
-        qualifying = _gate_by_imdb(cfg, tmdb, pool)
+    # Then the rating gate, from whichever source the owner chose (it ranks the survivors too). A
+    # non-TMDB source needs MDBList; if it isn't available, or its quota runs out mid-gate, we fall
+    # back to TMDB so the run still completes (and flag it so the owner is told — see _gate_by_source).
+    if cfg.rating_source != "tmdb" and mdblist is not None:
+        qualifying = _gate_by_source(cfg, mdblist, pool, report)
     else:
         qualifying = _gate_by_tmdb(cfg, pool)
     report.considered = len(qualifying)
 
     # Attach each surviving title's IMDb id (one TMDB call, cached) so the inbox can deep-link to the
     # title page instead of an IMDb search. Only the gated shortlist is looked up, and best-effort — a
-    # miss just leaves the search fallback. (The IMDb rating gate already fetched it for its titles.)
+    # miss just leaves the search fallback.
     for m in qualifying:
         if not m.imdb_id:
             try:
@@ -342,30 +346,37 @@ def _gate_by_tmdb(cfg: RequestConfig, pool: list[MissingTitle]) -> list[MissingT
     return qualifying
 
 
-def _gate_by_imdb(cfg: RequestConfig, tmdb: TmdbClient, pool: list[MissingTitle]) -> list[MissingTitle]:
-    """Keep titles clearing the IMDb rating/vote floors, ranked by demand then IMDb score.
+def _gate_by_source(
+    cfg: RequestConfig, mdblist: MdbListClient, pool: list[MissingTitle], report: RequestReport
+) -> list[MissingTitle]:
+    """Keep titles clearing the chosen MDBList source's rating/vote floors, ranked by demand then score.
 
-    Only a shortlist (top by demand, then TMDB score as a cheap proxy) is looked up on OMDb, so a
-    big missing pool can't blow OMDb's rate limit. A lookup that fails or has no IMDb data just drops
-    that title — never a failed run.
+    Only a shortlist (top by demand, then TMDB score as a cheap proxy) is looked up, so a big missing
+    pool stays well under MDBList's daily cap — and every source is cached per title, so re-runs mostly
+    hit the cache. A lookup that fails or has no score for this source just drops that title. If the
+    daily quota runs out mid-gate, we stop, flag the run, and fall back to TMDB for the WHOLE pool so
+    the run still completes (the owner is alerted from the flag).
     """
+    source = cfg.rating_source
+    enforce_votes = source in VOTE_SOURCES  # RT/Metacritic are critic scores — no audience-vote floor
     shortlist = sorted(pool, key=lambda m: (m.demand, m.rating, m.vote_count), reverse=True)[:_IMDB_SHORTLIST]
-    omdb = OmdbClient(cfg.omdb_api_key)
     scored: list[tuple[MissingTitle, float, int]] = []
     for title in shortlist:
         try:
-            imdb_id = tmdb.imdb_id(title.tmdb_id, title.media_type)
-            title.imdb_id = imdb_id or ""  # reuse it for the inbox's IMDb deep-link (already fetched here)
-            score = omdb.rating(imdb_id) if imdb_id else None
-        except Exception as e:  # a TMDB/OMDb hiccup drops this title, never the whole gate
-            logger.warning("IMDb lookup for {!r} failed: {}", title.title, e)
+            score = mdblist.rating(title.tmdb_id, title.media_type, source)
+        except MdbListRateLimitError:
+            logger.warning("MDBList daily limit reached — falling back to TMDB ratings for this run")
+            report.ratings_rate_limited = True
+            return _gate_by_tmdb(cfg, pool)
+        except Exception as e:  # a single lookup hiccup drops that title, never the whole gate
+            logger.warning("{} rating lookup for {!r} failed: {}", source, title.title, e)
             continue
         if score is None:
             continue
         rating, votes = score
-        if rating >= cfg.min_rating and votes >= cfg.min_votes:
+        if rating >= cfg.min_rating and (not enforce_votes or votes >= cfg.min_votes):
             # Carry the chosen-source score forward so the auto-send bar and the queued rows the owner
-            # reviews both reflect IMDb, not the TMDB value the title arrived with.
+            # reviews both reflect it, not the TMDB value the title arrived with.
             title.rating = rating
             title.vote_count = votes
             scored.append((title, rating, votes))

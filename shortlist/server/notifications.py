@@ -101,6 +101,32 @@ def _recent_service_errors(session: Session) -> dict | None:
     }
 
 
+def _mdblist_quota(session: Session) -> dict | None:
+    """MDBList hit its daily request cap in a recent run, so some ratings fell back to TMDB. The id
+    encodes the day so a fresh hit re-surfaces after dismissal, but the same day's stays dismissed."""
+    since = datetime.now(UTC) - timedelta(days=1)
+    event = (
+        session.query(Event)
+        .filter(Event.scope == "requests.rate_limited", Event.ts >= since)
+        .order_by(Event.ts.desc())
+        .first()
+    )
+    if event is None:
+        return None
+    return {
+        "id": f"mdblist-quota-{event.ts.date().isoformat()}",
+        "severity": "warning",
+        "title": "MDBList daily limit reached",
+        "body": (
+            "A recent run used up your MDBList request quota, so some titles were rated from TMDB "
+            "instead of your chosen source. It resets daily — or raise your MDBList plan for more."
+        ),
+        "action_url": "/settings#requests",
+        "action_label": "Requests settings",
+        "dismissable": True,
+    }
+
+
 def build_notifications(session: Session, store: SettingsStore, current_version: str) -> list[dict]:
     """Every currently-firing notification the owner hasn't dismissed, most severe first. Dismissal is
     by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
@@ -109,6 +135,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _update_available(store, current_version),
         _runs_paused(store),
         _last_run_problem(session),
+        _mdblist_quota(session),
         _recent_service_errors(session),
     ]
     dismissed = set(store.get(DISMISSED_KEY) or [])

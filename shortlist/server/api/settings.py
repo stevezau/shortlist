@@ -108,7 +108,7 @@ VALIDATORS = {
     "log.level": _one_of("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"),
     "curator.provider": _one_of("anthropic", "openai", "google", "ollama", "none"),
     "curator.prompt_tone": _one_of("balanced", "warm", "concise", "cinephile", "playful"),
-    "requests.rating_source": _one_of("tmdb", "imdb"),
+    "requests.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     "requests.min_rating": _bounded_float(0.0, 10.0),
     "requests.auto_min_rating": _bounded_float(0.0, 10.0),
     "requests.min_votes": _bounded_int(0, 1_000_000),
@@ -194,7 +194,7 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         return store.all_public()
 
 
-_TESTABLE_SERVICES = frozenset({"plex", "tautulli", "tmdb", "radarr", "sonarr", "omdb", "trakt", "exa", "llm"})
+_TESTABLE_SERVICES = frozenset({"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "llm"})
 
 
 @router.post("/test/{service}")
@@ -236,13 +236,13 @@ async def test_connection(service: str, request: Request) -> dict:
                     raise RuntimeError(f"{service.title()} URL and API key are both required")
                 target = ArrTarget(url=url, api_key=api_key, quality_profile_id=0, root_folder="")
                 return make_arr_client(service, target).ping()
-            if service == "omdb":
-                from shortlist.engine.clients.omdb import OmdbClient
+            if service == "mdblist":
+                from shortlist.engine.clients.mdblist import MdbListClient
 
-                api_key = get("requests.omdb.apikey") or ""
+                api_key = get("requests.mdblist.apikey") or ""
                 if not api_key:
-                    raise RuntimeError("An OMDb API key is required for IMDb ratings")
-                return OmdbClient(api_key).ping()
+                    raise RuntimeError("An MDBList API key is required for IMDb/Trakt/RT/Metacritic ratings")
+                return MdbListClient(api_key).ping()
             if service == "trakt":
                 from shortlist.engine.clients.trakt import TraktClient
 

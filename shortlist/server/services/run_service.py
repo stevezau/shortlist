@@ -556,6 +556,10 @@ class RunService:
         # Sonarr/Radarr requests. Adding a title to a download app is a real outward-facing
         # write (it consumes disk and bandwidth), so every request — and every skip — is audited
         # with the app's own outcome message, dry-run included (plex-safety rule 10 spirit).
+        # A separate, always-checked signal (independent of whether any title was sent): MDBList ran
+        # out of quota mid-run, so ratings fell back to TMDB. Drives the owner's quota notification.
+        if report.requests is not None and report.requests.ratings_rate_limited:
+            cls._add_event(session, "requests.rate_limited", "warning", run_id, dry_run=report.dry_run)
         if report.requests is None or not report.requests.outcomes:
             return
         cls._add_event(

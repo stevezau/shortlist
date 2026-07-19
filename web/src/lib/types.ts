@@ -376,7 +376,7 @@ export type TestableService =
   | "llm"
   | "radarr"
   | "sonarr"
-  | "omdb"
+  | "mdblist"
   | "trakt"
   | "exa";
 

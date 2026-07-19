@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients.arr import ArrError
+from shortlist.engine.clients.mdblist import MdbListRateLimitError
 from shortlist.engine.models import (
     ArrTarget,
     Candidate,
@@ -106,19 +107,32 @@ class FakeTmdb:
         return self._imdb.get(tmdb_id, f"tt{tmdb_id:07d}")  # default: every title has a synthetic IMDb id
 
 
-class FakeOmdb:
-    """Stand-in OMDb client returning preset (rating, votes) by IMDb id, counting lookups."""
+class FakeMdbList:
+    """Stand-in MDBList client returning preset (rating, votes) by TMDB id, counting lookups.
 
-    def __init__(self, ratings: dict[str, tuple[float, int] | None], *, raise_on: str | None = None):
+    ``error_on`` raises a generic error for one title (drops just that title); ``rate_limit_after``
+    raises MdbListRateLimitError once that many lookups have happened (drives the TMDB fallback).
+    """
+
+    def __init__(
+        self,
+        ratings: dict[int, tuple[float, int] | None],
+        *,
+        error_on: int | None = None,
+        rate_limit_after: int | None = None,
+    ):
         self._ratings = ratings
-        self._raise_on = raise_on
+        self._error_on = error_on
+        self._rate_limit_after = rate_limit_after
         self.calls = 0
 
-    def rating(self, imdb_id: str) -> tuple[float, int] | None:
+    def rating(self, tmdb_id: int, media_type: MediaType, source: str) -> tuple[float, int] | None:
         self.calls += 1
-        if imdb_id == self._raise_on:
-            raise RuntimeError("OMDb exploded")
-        return self._ratings.get(imdb_id, (8.0, 500))  # default: a passing score
+        if self._rate_limit_after is not None and self.calls > self._rate_limit_after:
+            raise MdbListRateLimitError("quota spent")
+        if tmdb_id == self._error_on:
+            raise RuntimeError("MDBList hiccup")
+        return self._ratings.get(tmdb_id, (8.0, 500))  # default: a passing score
 
 
 class TestCollectMissing:
@@ -458,59 +472,81 @@ class TestRequestMissing:
         assert fake.movie_calls == []  # fails safe: no request, no crash
         assert report.considered == 0
 
-    def test_imdb_source_gates_on_omdb_rating_not_tmdb(self, monkeypatch):
+    def test_source_gates_on_mdblist_rating_not_tmdb(self, monkeypatch):
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
-        # Both clear TMDB, but only title 2 clears the IMDb floor once OMDb is consulted.
-        omdb = FakeOmdb({"tt0000001": (6.2, 5000), "tt0000002": (8.3, 400000)})
-        monkeypatch.setattr(requests_mod, "OmdbClient", lambda *a, **k: omdb)
+        # Both clear TMDB, but only title 2 clears the IMDb floor once MDBList is consulted.
+        mdblist = FakeMdbList({1: (6.2, 5000), 2: (8.3, 400000)})
         demand = self._demand(
             MissingTitle(1, "tmdb-hyped", MediaType.MOVIE, 2020, rating=9.0, vote_count=900),
             MissingTitle(2, "imdb-loved", MediaType.MOVIE, 2020, rating=7.5, vote_count=900),
         )
-        cfg = _cfg(radarr=RADARR, rating_source="imdb", omdb_api_key="k")
-        tmdb = FakeTmdb(imdb={1: "tt0000001", 2: "tt0000002"})
-        report = requests_mod.request_missing(cfg, tmdb, demand, dry_run=False)
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k")
+        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert [c[0] for c in fake.movie_calls] == [2]
         assert report.considered == 1
 
-    def test_imdb_lookup_failure_drops_only_that_title(self, monkeypatch):
+    def test_mdblist_lookup_failure_drops_only_that_title(self, monkeypatch):
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
-        omdb = FakeOmdb({"tt0000002": (8.5, 900)}, raise_on="tt0000001")
-        monkeypatch.setattr(requests_mod, "OmdbClient", lambda *a, **k: omdb)
+        mdblist = FakeMdbList({2: (8.5, 900)}, error_on=1)
         demand = self._demand(
-            MissingTitle(1, "omdb boom", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=5),
+            MissingTitle(1, "mdblist boom", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=5),
             MissingTitle(2, "fine", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=1),
         )
-        cfg = _cfg(radarr=RADARR, rating_source="imdb", omdb_api_key="k")
-        tmdb = FakeTmdb(imdb={1: "tt0000001", 2: "tt0000002"})
-        requests_mod.request_missing(cfg, tmdb, demand, dry_run=False)
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k")
+        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert [c[0] for c in fake.movie_calls] == [2]  # the raising lookup is skipped, the rest survive
 
-    def test_imdb_lookups_are_bounded_to_the_shortlist(self, monkeypatch):
+    def test_mdblist_lookups_are_bounded_to_the_shortlist(self, monkeypatch):
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
-        omdb = FakeOmdb({})  # every title passes with the default score
-        monkeypatch.setattr(requests_mod, "OmdbClient", lambda *a, **k: omdb)
-        # 40 qualifying missing titles, but OMDb must be consulted at most the shortlist size.
+        mdblist = FakeMdbList({})  # every title passes with the default score
         demand = self._demand(
             *[
                 MissingTitle(i, f"t{i}", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=1)
                 for i in range(1, 41)
             ]
         )
-        cfg = _cfg(radarr=RADARR, rating_source="imdb", omdb_api_key="k", max_per_run=5)
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
-        assert omdb.calls <= requests_mod._IMDB_SHORTLIST  # rate-limit guard holds
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k", max_per_run=5)
+        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        assert mdblist.calls <= requests_mod._IMDB_SHORTLIST  # daily-cap guard holds
 
-    def test_imdb_source_without_omdb_key_falls_back_to_tmdb(self, monkeypatch):
+    def test_non_tmdb_source_without_a_client_falls_back_to_tmdb(self, monkeypatch):
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
         demand = self._demand(MissingTitle(1, "film", MediaType.MOVIE, 2020, rating=8.0, vote_count=900))
-        # rating_source imdb but no key -> gate on TMDB (never silently request nothing).
-        cfg = _cfg(radarr=RADARR, rating_source="imdb", omdb_api_key="")
-        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        # rating_source imdb but no MDBList key/client -> gate on TMDB (never silently request nothing).
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="")
+        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=None)
         assert [c[0] for c in fake.movie_calls] == [1]
+
+    def test_critic_source_skips_the_vote_floor_but_still_enforces_rating(self, monkeypatch):
+        # Rotten Tomatoes/Metacritic are critic scores, so the audience min_votes floor is skipped —
+        # but a low score is still rejected. (votes=0 here would fail the floor for imdb.)
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        mdblist = FakeMdbList({1: (9.0, 0), 2: (5.5, 0)})  # already-normalised 0..10; no votes
+        demand = self._demand(
+            MissingTitle(1, "acclaimed", MediaType.MOVIE, 2020, rating=6.0, vote_count=10),
+            MissingTitle(2, "panned", MediaType.MOVIE, 2020, rating=9.9, vote_count=10),
+        )
+        cfg = _cfg(radarr=RADARR, rating_source="tomatoes", mdblist_api_key="k", min_votes=100)
+        requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        assert [c[0] for c in fake.movie_calls] == [1]  # 9.0 clears despite 0 votes; 5.5 rejected
+
+    def test_mdblist_quota_exhaustion_falls_back_to_tmdb_and_flags(self, monkeypatch):
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        # First lookup fine, then the quota is spent — the whole pool is re-gated on TMDB and flagged.
+        mdblist = FakeMdbList({1: (8.0, 900)}, rate_limit_after=1)
+        demand = self._demand(
+            MissingTitle(1, "a", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=2),
+            MissingTitle(2, "b", MediaType.MOVIE, 2020, rating=8.0, vote_count=900, demand=1),
+        )
+        cfg = _cfg(radarr=RADARR, rating_source="imdb", mdblist_api_key="k")
+        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
+        assert report.ratings_rate_limited is True
+        assert sorted(c[0] for c in fake.movie_calls) == [1, 2]  # both requested via the TMDB fallback
 
     def test_max_per_run_zero_requests_nothing(self, monkeypatch):
         fake = FakeArr()
@@ -638,14 +674,13 @@ class TestHybridSplit:
     def test_imdb_rating_is_carried_onto_queued_titles(self, monkeypatch):
         # rating_source=imdb: a queued title must show the IMDb score it was gated on, not its TMDB one.
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
-        omdb = FakeOmdb({"tt0000001": (8.8, 250000)})
-        monkeypatch.setattr(requests_mod, "OmdbClient", lambda *a, **k: omdb)
+        mdblist = FakeMdbList({1: (8.8, 250000)})
         demand = self._demand(
             # 1 wanter -> below the auto bar -> queued (with its IMDb score, checked below)
             MissingTitle(1, "imdb-loved", MediaType.MOVIE, 2020, rating=7.1, vote_count=120, demand=1),
         )
-        cfg = self._hybrid(rating_source="imdb", omdb_api_key="k")
-        report = requests_mod.request_missing(cfg, FakeTmdb(imdb={1: "tt0000001"}), demand, dry_run=False)
+        cfg = self._hybrid(rating_source="imdb", mdblist_api_key="k")
+        report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False, mdblist=mdblist)
         assert len(report.queued) == 1
         assert report.queued[0].rating == 8.8  # IMDb, not the 7.1 TMDB value it arrived with
         assert report.queued[0].vote_count == 250000

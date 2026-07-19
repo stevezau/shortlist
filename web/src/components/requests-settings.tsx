@@ -23,6 +23,23 @@ import type { Settings } from "@/lib/types";
 
 const MAX_PER_RUN = [3, 5, 10];
 
+// Which score gates a title. TMDB needs no setup; the rest come from MDBList (one call, cached).
+type RatingSource = "tmdb" | "imdb" | "tomatoes" | "metacritic" | "trakt";
+const RATING_SOURCES: RatingSource[] = [
+  "tmdb",
+  "imdb",
+  "tomatoes",
+  "metacritic",
+  "trakt",
+];
+const RATING_LABELS: Record<RatingSource, string> = {
+  tmdb: "TMDB",
+  imdb: "IMDb",
+  tomatoes: "Rotten Tomatoes",
+  metacritic: "Metacritic",
+  trakt: "Trakt",
+};
+
 type ArrForm = {
   qualityProfileId: number;
   rootFolder: string;
@@ -33,8 +50,8 @@ interface RequestsForm {
   enabled: boolean;
   radarr: ArrForm;
   sonarr: ArrForm;
-  ratingSource: "tmdb" | "imdb";
-  omdbKey: string;
+  ratingSource: RatingSource;
+  mdblistKey: string;
   minRating: number;
   minVotes: number;
   minDemand: number;
@@ -66,11 +83,16 @@ function readForm(settings: Settings): RequestsForm {
     enabled: settingBool(settings, "requests.enabled"),
     radarr: readArr(settings, "requests.radarr"),
     sonarr: readArr(settings, "requests.sonarr"),
-    ratingSource:
-      settingString(settings, "requests.rating_source", "tmdb") === "imdb"
-        ? "imdb"
-        : "tmdb",
-    omdbKey: settingString(settings, "requests.omdb.apikey"),
+    ratingSource: RATING_SOURCES.includes(
+      settingString(settings, "requests.rating_source", "tmdb") as RatingSource,
+    )
+      ? (settingString(
+          settings,
+          "requests.rating_source",
+          "tmdb",
+        ) as RatingSource)
+      : "tmdb",
+    mdblistKey: settingString(settings, "requests.mdblist.apikey"),
     minRating: settingNumber(settings, "requests.min_rating", 7),
     minVotes: settingNumber(settings, "requests.min_votes", 100),
     minDemand: settingNumber(settings, "requests.min_demand", 1),
@@ -209,24 +231,26 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const set = (patch: Partial<RequestsForm>) =>
     setForm((prev) => ({ ...prev, ...patch }));
 
-  const omdbTest = useMutation({
-    mutationFn: () => api.testConnection("omdb"),
+  const mdblistTest = useMutation({
+    mutationFn: () => api.testConnection("mdblist"),
   });
   // Test reads the SAVED key server-side, so it's only meaningful once a key is on file — gate it
   // like the ConnectionCards do, so a brand-new user can't Test a key they haven't saved yet.
-  const omdbOnFile = Boolean(settingString(settings, "requests.omdb.apikey"));
+  const mdblistOnFile = Boolean(
+    settingString(settings, "requests.mdblist.apikey"),
+  );
 
   const ratingId = useId();
   const votesId = useId();
   const demandId = useId();
   const yearId = useId();
   const yearMaxId = useId();
-  const omdbId = useId();
+  const mdblistId = useId();
   const autoDemandId = useId();
   const autoRatingId = useId();
   const tagId = useId();
   const autoUserTagId = useId();
-  const ratingLabel = form.ratingSource === "imdb" ? "IMDb" : "TMDB";
+  const ratingLabel = RATING_LABELS[form.ratingSource];
 
   // "Connected" for the dropdown fetch means the SAVED settings already have a URL and key on file
   // (the key comes back redacted). A just-typed-but-unsaved value doesn't count — the server reads
@@ -271,8 +295,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
     // either would be a write, not a no-op: the sentinel would be stored AS the key (and, with
     // auto-save, "•••••abc" the moment anyone typed without selecting all first), and a blank would
     // wipe the key just for clicking into the box. Same guard as ConnectionCard.commit().
-    if (!isSecretUnchanged(form.omdbKey)) {
-      values["requests.omdb.apikey"] = form.omdbKey;
+    if (!isSecretUnchanged(form.mdblistKey)) {
+      values["requests.mdblist.apikey"] = form.mdblistKey;
     }
     return values;
   });
@@ -386,22 +410,25 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   legend="Judge titles by"
                   value={form.ratingSource}
                   options={[
-                    { value: "tmdb", label: "TMDB rating" },
-                    { value: "imdb", label: "IMDb rating" },
+                    { value: "tmdb", label: "TMDB" },
+                    { value: "imdb", label: "IMDb" },
+                    { value: "tomatoes", label: "Rotten Tomatoes" },
+                    { value: "metacritic", label: "Metacritic" },
+                    { value: "trakt", label: "Trakt" },
                   ]}
                   onChange={(ratingSource) => set({ ratingSource })}
                 />
                 <p className="text-sm text-muted-foreground">
-                  {form.ratingSource === "imdb"
-                    ? "Uses IMDb scores — needs a free OMDb API key below."
-                    : "Uses TMDB scores. No extra setup needed."}
+                  {form.ratingSource === "tmdb"
+                    ? "Uses TMDB scores. No extra setup needed."
+                    : `Uses ${RATING_LABELS[form.ratingSource]} scores from MDBList — needs a free MDBList API key below. Every score is shown on a 0–10 scale.`}
                 </p>
-                {form.ratingSource === "imdb" && (
+                {form.ratingSource !== "tmdb" && (
                   <div className="space-y-2 pt-1">
                     <div className="flex items-center justify-between gap-2">
-                      <Label htmlFor={omdbId}>OMDb API key</Label>
+                      <Label htmlFor={mdblistId}>MDBList API key</Label>
                       <a
-                        href="https://www.omdbapi.com/apikey.aspx"
+                        href="https://mdblist.com/preferences/"
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
@@ -412,48 +439,53 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <SecretInput
-                        id={omdbId}
-                        placeholder="Free key from omdbapi.com"
-                        value={form.omdbKey}
+                        id={mdblistId}
+                        placeholder="Free key from mdblist.com"
+                        value={form.mdblistKey}
                         saved={
-                          settingString(settings, "requests.omdb.apikey") ===
+                          settingString(settings, "requests.mdblist.apikey") ===
                           REDACTED
                         }
-                        onChange={(omdbKey) => set({ omdbKey })}
+                        onChange={(mdblistKey) => set({ mdblistKey })}
                         className="max-w-xs"
                       />
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => omdbTest.mutate()}
-                        loading={omdbTest.isPending}
-                        disabled={!omdbOnFile}
+                        onClick={() => mdblistTest.mutate()}
+                        loading={mdblistTest.isPending}
+                        disabled={!mdblistOnFile}
                         title={
-                          omdbOnFile
+                          mdblistOnFile
                             ? undefined
                             : "Save the key first, then test it"
                         }
                       >
-                        {!omdbTest.isPending && <PlugZap aria-hidden="true" />}
+                        {!mdblistTest.isPending && (
+                          <PlugZap aria-hidden="true" />
+                        )}
                         Test
                       </Button>
-                      {omdbTest.isSuccess && (
-                        <TestResult result={omdbTest.data} as="span" />
+                      {mdblistTest.isSuccess && (
+                        <TestResult result={mdblistTest.data} as="span" />
                       )}
-                      {omdbTest.isError && (
-                        <TestResult error={omdbTest.error} as="span" />
+                      {mdblistTest.isError && (
+                        <TestResult error={mdblistTest.error} as="span" />
                       )}
                     </div>
-                    {omdbOnFile ? (
+                    {mdblistOnFile ? (
                       <p className="text-sm text-muted-foreground">
                         A saved key shows as dots. Type a new one to replace it;
-                        leave it blank to keep the one you have.
+                        leave it blank to keep the one you have. MDBList’s free
+                        tier allows ~1,000 lookups a day; Shortlist caches
+                        ratings for a week to stay well under it, and warns you
+                        if the daily limit is ever hit.
                       </p>
                     ) : (
                       <p role="alert" className="text-sm text-warning">
-                        Without a saved OMDb key, Shortlist falls back to TMDB
-                        ratings — IMDb gating won&rsquo;t actually be used. Add
-                        a key above.
+                        Without a saved MDBList key, Shortlist falls back to
+                        TMDB ratings — this source won&rsquo;t actually be used.
+                        Add a key above.
                       </p>
                     )}
                   </div>

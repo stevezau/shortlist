@@ -20,6 +20,7 @@ from loguru import logger
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
+from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.poster import PosterArtist
@@ -101,6 +102,9 @@ class EngineContext:
     # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
     # by a later auto-send. Empty for direct engine runs, which have no inbox.
     handled_requests: set[tuple[int, str]] = field(default_factory=set)
+    # MDBList client (cache-backed) for the chosen non-TMDB rating source; None when requests gate on
+    # TMDB or no MDBList key is set. Built by the server adapter so it shares the persistent cache.
+    mdblist: MdbListClient | None = None
     progress: Callable[[str, str, dict], None] | None = None  # (user_slug, stage, counts) -> None
     # Called the moment one user finishes (before their terminal progress event), with their profile
     # and finished report — so the server can persist that user's results INCREMENTALLY and the UI
@@ -831,6 +835,7 @@ def _request_phase(ctx: EngineContext, requests_on: bool, demand: requests_mod.D
                 demand,
                 dry_run=ctx.config.dry_run,
                 already_handled=ctx.handled_requests,
+                mdblist=ctx.mdblist,
             )
         except Exception as e:
             # A wholesale request-pass failure (e.g. building a client) is a footnote, never a run

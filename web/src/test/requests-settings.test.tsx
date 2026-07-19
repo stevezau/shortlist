@@ -31,11 +31,11 @@ vi.mock("@/lib/api", () => {
   };
 });
 
-/** Requests on, judging by IMDb, with a key already saved — the state the OMDb field is edited in. */
-const WITH_SAVED_OMDB_KEY: Settings = {
+/** Requests on, judging by IMDb, with a key already saved — the state the MDBList field is edited in. */
+const WITH_SAVED_MDBLIST_KEY: Settings = {
   "requests.enabled": true,
   "requests.rating_source": "imdb",
-  "requests.omdb.apikey": "•••••", // a saved secret always reads back redacted
+  "requests.mdblist.apikey": "•••••", // a saved secret always reads back redacted
 };
 
 function renderPanel(settings: Settings = {}) {
@@ -128,9 +128,9 @@ describe("RequestsSettings", () => {
     ).toBeTruthy();
   });
 
-  it("never saves the redacted sentinel as the OMDb key", async () => {
-    renderPanel(WITH_SAVED_OMDB_KEY);
-    const field = screen.getByLabelText(/OMDb API key/i);
+  it("never saves the redacted sentinel as the MDBList key", async () => {
+    renderPanel(WITH_SAVED_MDBLIST_KEY);
+    const field = screen.getByLabelText(/MDBList API key/i);
     expect(field).toHaveValue("•••••");
 
     // Clicking in clears the dots, so typing can't append to them ("•••••abc123" used to be saved
@@ -141,25 +141,25 @@ describe("RequestsSettings", () => {
 
     await waitFor(() =>
       expect(putSettings.mock.calls.at(-1)?.[0]).toHaveProperty(
-        "requests.omdb.apikey",
+        "requests.mdblist.apikey",
         "abc123",
       ),
     );
     for (const [payload] of putSettings.mock.calls) {
-      expect(payload["requests.omdb.apikey"]).not.toBe("•••••");
+      expect(payload["requests.mdblist.apikey"]).not.toBe("•••••");
     }
   });
 
-  it("leaves a saved OMDb key alone when the field is focused but not retyped", async () => {
-    renderPanel(WITH_SAVED_OMDB_KEY);
-    const field = screen.getByLabelText(/OMDb API key/i);
+  it("leaves a saved MDBList key alone when the field is focused but not retyped", async () => {
+    renderPanel(WITH_SAVED_MDBLIST_KEY);
+    const field = screen.getByLabelText(/MDBList API key/i);
 
     await userEvent.click(field); // focus blanks the dots…
     await userEvent.tab(); // …and leaving without typing must not wipe the key
 
     await waitFor(() => expect(putSettings).toHaveBeenCalled());
     for (const [payload] of putSettings.mock.calls) {
-      expect(payload).not.toHaveProperty("requests.omdb.apikey");
+      expect(payload).not.toHaveProperty("requests.mdblist.apikey");
     }
     expect(field).toHaveValue("•••••");
   });

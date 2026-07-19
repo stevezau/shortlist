@@ -270,33 +270,9 @@ class TestTmdbClient:
         assert "500" in str(excinfo.value)
 
 
-class TestOmdbClient:
-    @respx.mock
-    def test_rating_parses_score_and_comma_separated_votes(self):
-        respx.get("https://www.omdbapi.com/").mock(
-            return_value=httpx.Response(200, json={"Response": "True", "imdbRating": "8.3", "imdbVotes": "2,754,113"})
-        )
-        from shortlist.engine.clients.omdb import OmdbClient
-
-        assert OmdbClient("k").rating("tt0111161") == (8.3, 2754113)
-
-    @respx.mock
-    def test_rating_is_none_when_omdb_has_no_data(self):
-        respx.get("https://www.omdbapi.com/").mock(
-            return_value=httpx.Response(200, json={"Response": "True", "imdbRating": "N/A", "imdbVotes": "N/A"})
-        )
-        from shortlist.engine.clients.omdb import OmdbClient
-
-        assert OmdbClient("k").rating("tt0111161") is None
-
-    @respx.mock
-    def test_rating_is_none_on_error_response(self):
-        respx.get("https://www.omdbapi.com/").mock(
-            return_value=httpx.Response(200, json={"Response": "False", "Error": "Incorrect IMDb ID."})
-        )
-        from shortlist.engine.clients.omdb import OmdbClient
-
-        assert OmdbClient("k").rating("ttbad") is None
+class TestRemovedOmdbClient:
+    """OMDb was replaced by MDBList (one call returns IMDb/Trakt/RT/Metacritic, cached). See
+    tests/unit/test_mdblist.py."""
 
 
 class TestTautulliClient:
