@@ -200,6 +200,10 @@ export type RunTrigger = "schedule" | "manual" | "wizard";
 export interface RunStats {
   users_ok: number;
   users_error: number;
+  /** Titles added to rows across all users this run. */
+  titles_added?: number;
+  /** Titles rotated out of rows across all users this run. */
+  titles_removed?: number;
   /** Titles requested from Sonarr/Radarr this run (0 when requests are off). */
   titles_requested?: number;
   /** Total AI tokens this run cost (curate + the AI candidate sources). Absent on legacy runs. */

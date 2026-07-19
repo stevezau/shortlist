@@ -630,7 +630,7 @@ export function RunDetailPage() {
                   )}
                   {!run.finished_at && (
                     <Button
-                      variant="outline"
+                      variant="destructive"
                       size="sm"
                       className="ml-auto"
                       loading={cancel.isPending}
@@ -654,6 +654,10 @@ export function RunDetailPage() {
                           : ""
                       }`
                     : " · still running"}
+                  {(run.stats.titles_added ?? 0) > 0 ||
+                  (run.stats.titles_removed ?? 0) > 0
+                    ? ` · +${run.stats.titles_added ?? 0}/−${run.stats.titles_removed ?? 0} titles`
+                    : ""}
                   {run.stats.titles_requested
                     ? ` · ${run.stats.titles_requested} title${
                         run.stats.titles_requested === 1 ? "" : "s"

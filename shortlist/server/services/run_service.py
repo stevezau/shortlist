@@ -656,12 +656,18 @@ class RunService:
         for user_report in report.users:
             for step, n in user_report.llm_tokens_by_step.items():
                 tokens_by_step[step] = tokens_by_step.get(step, 0) + n
+        # Titles added to / rotated out of everyone's rows this run (summed across users' diffs), so
+        # the runs list can show at a glance how much actually changed on Plex.
+        titles_added = sum(len(u.diff.added) for u in report.users if u.diff)
+        titles_removed = sum(len(u.diff.removed) for u in report.users if u.diff)
         run.stats = {
             "users_ok": ok,
             "users_error": errors,
             "dry_run": report.dry_run,
             "rows_swept": sum(len(titles) for titles in report.swept_rows.values()),
             "shares_updated": len(report.filter_writes),
+            "titles_added": titles_added,
+            "titles_removed": titles_removed,
             "titles_requested": report.requests.requested if report.requests else 0,
             "llm_tokens": sum(u.llm_tokens for u in report.users),
             "llm_tokens_by_step": tokens_by_step,

@@ -97,7 +97,7 @@ function RunRow({ run }: { run: Run }) {
           )}
           {!run.finished_at && (
             <Button
-              variant="ghost"
+              variant="destructive"
               size="sm"
               className="h-6 px-2 text-xs"
               loading={cancel.isPending}
@@ -112,19 +112,37 @@ function RunRow({ run }: { run: Run }) {
         </div>
       </TableCell>
       <TableCell className="text-muted-foreground">
-        {run.stats.users_ok} ok
-        {run.stats.users_error > 0 && (
-          <span className="text-destructive">
-            {" "}
-            · {run.stats.users_error} failed
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <span>
+            {run.stats.users_ok} ok
+            {run.stats.users_error > 0 && (
+              <span className="text-destructive">
+                {" "}
+                · {run.stats.users_error} failed
+              </span>
+            )}
           </span>
-        )}
-        {(run.stats.llm_tokens ?? 0) > 0 && (
-          <span title="AI tokens this run cost">
-            {" "}
-            · {run.stats.llm_tokens!.toLocaleString()} AI tokens
-          </span>
-        )}
+          {((run.stats.titles_added ?? 0) > 0 ||
+            (run.stats.titles_removed ?? 0) > 0) && (
+            <span title="Titles added to / rotated out of rows this run">
+              ·{" "}
+              <span className="text-success">
+                +{run.stats.titles_added ?? 0}
+              </span>
+              /−{run.stats.titles_removed ?? 0}
+            </span>
+          )}
+          {(run.stats.titles_requested ?? 0) > 0 && (
+            <span title="Titles requested from Sonarr/Radarr">
+              · {run.stats.titles_requested} requested
+            </span>
+          )}
+          {(run.stats.llm_tokens ?? 0) > 0 && (
+            <span title="AI tokens this run cost">
+              · {run.stats.llm_tokens!.toLocaleString()} tokens
+            </span>
+          )}
+        </div>
       </TableCell>
     </TableRow>
   );

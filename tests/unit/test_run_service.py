@@ -150,6 +150,8 @@ class TestRunExecution:
             "dry_run": False,
             "rows_swept": 0,
             "shares_updated": 0,
+            "titles_added": 2,  # the fake_report's ok user has a 2-title diff.added
+            "titles_removed": 0,
             "titles_requested": 0,
             "llm_tokens": 0,
             "llm_tokens_by_step": {},
