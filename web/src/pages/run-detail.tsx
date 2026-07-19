@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Copy, Info, Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
@@ -320,7 +321,9 @@ function UserPanel({ run, result }: { run: RunDetail; result: RunUserResult }) {
   );
 }
 
-function UserChip({
+/** One person as a full-width list row — far more scannable at 48 users than a wall of pills:
+ *  name on the left, status/duration on the right, selected row highlighted. */
+function UserRow({
   result,
   selected,
   onSelect,
@@ -338,22 +341,24 @@ function UserChip({
       aria-selected={isSelected}
       onClick={() => onSelect(result.slug)}
       className={cn(
-        "flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        isSelected
-          ? "border-primary bg-primary/10"
-          : "border-border hover:bg-muted",
-        failed && !isSelected && "border-destructive/40",
+        "flex w-full items-center gap-3 px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        isSelected ? "bg-primary/10" : "hover:bg-muted/60",
       )}
     >
       <UserAvatar name={result.username} size="sm" />
-      <span className="font-medium">{result.username}</span>
+      <span className="min-w-0 flex-1 truncate font-medium">
+        {result.username}
+      </span>
       {failed ? (
-        <AlertCircle
-          className="h-3.5 w-3.5 text-destructive"
-          aria-hidden="true"
-        />
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive">
+          <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+          Failed
+        </span>
       ) : (
-        <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          {formatDuration(result.duration_ms)}
+          <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+        </span>
       )}
     </button>
   );
@@ -371,7 +376,6 @@ function UserTabs({
   onSelect: (slug: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [showOk, setShowOk] = useState(false);
   const q = query.trim().toLowerCase();
   const shown = q
     ? results.filter((r) => r.username.toLowerCase().includes(q))
@@ -380,14 +384,8 @@ function UserTabs({
   const ok = shown.filter((r) => r.error === null);
   const failedTotal = results.filter((r) => r.error !== null).length;
   const many = results.length > 10;
-  // Past ~2 rows of chips a flat grid walls the page (48 users, mostly failed). Cap the group and let
-  // it scroll; a small (or search-narrowed) group stays a plain wrap with no box.
-  const gridCls = (count: number) =>
-    cn(
-      "flex flex-wrap gap-2",
-      count > 14 &&
-        "max-h-56 overflow-y-auto rounded-md border bg-muted/20 p-2.5",
-    );
+  // Show a group label only when both groups are on screen — otherwise the summary line already says it.
+  const bothGroups = failed.length > 0 && ok.length > 0;
 
   return (
     <div className="space-y-3" role="tablist" aria-label="Users in this run">
@@ -407,67 +405,51 @@ function UserTabs({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Find a person…"
-            className="h-8 w-44 rounded-md border bg-background px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-8 w-48 rounded-md border bg-background px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Search users in this run"
           />
         )}
       </div>
 
-      {failed.length > 0 && (
-        <div className={gridCls(failed.length)}>
+      {/* One scannable, scrollable list — failures first, so a partly-failed run opens on what you
+          came for. A vertical list reads far better than a wrapped grid of 48 near-identical pills. */}
+      <div className="overflow-hidden rounded-lg border">
+        <div className="max-h-96 divide-y divide-border/50 overflow-y-auto">
+          {bothGroups && <GroupLabel>Failed · {failed.length}</GroupLabel>}
           {failed.map((result) => (
-            <UserChip
+            <UserRow
               key={result.slug}
               result={result}
               selected={selected}
               onSelect={onSelect}
             />
           ))}
+          {bothGroups && <GroupLabel>Succeeded · {ok.length}</GroupLabel>}
+          {ok.map((result) => (
+            <UserRow
+              key={result.slug}
+              result={result}
+              selected={selected}
+              onSelect={onSelect}
+            />
+          ))}
+          {shown.length === 0 && (
+            <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+              No one matches “{query}”.
+            </p>
+          )}
         </div>
-      )}
-
-      {ok.length > 0 &&
-        (many && !q ? (
-          <div>
-            <button
-              type="button"
-              onClick={() => setShowOk((value) => !value)}
-              className="text-sm text-primary underline-offset-4 hover:underline"
-            >
-              {showOk ? "Hide" : `Show ${ok.length} that succeeded`}
-            </button>
-            {showOk && (
-              <div className={cn(gridCls(ok.length), "mt-2")}>
-                {ok.map((result) => (
-                  <UserChip
-                    key={result.slug}
-                    result={result}
-                    selected={selected}
-                    onSelect={onSelect}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className={gridCls(ok.length)}>
-            {ok.map((result) => (
-              <UserChip
-                key={result.slug}
-                result={result}
-                selected={selected}
-                onSelect={onSelect}
-              />
-            ))}
-          </div>
-        ))}
-
-      {shown.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          No one matches “{query}”.
-        </p>
-      )}
+      </div>
     </div>
+  );
+}
+
+/** A sticky section header inside the scrollable user list. */
+function GroupLabel({ children }: { children: ReactNode }) {
+  return (
+    <p className="sticky top-0 z-10 bg-muted/90 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground backdrop-blur-sm">
+      {children}
+    </p>
   );
 }
 
