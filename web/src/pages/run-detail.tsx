@@ -397,36 +397,58 @@ function UserTabs({
   onSelect: (slug: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
   const q = query.trim().toLowerCase();
+  const failedTotal = results.filter((r) => r.error !== null).length;
+  const okTotal = results.length - failedTotal;
+  const mixed = failedTotal > 0 && okTotal > 0; // a status filter only helps when there's a mix
+  const byStatus =
+    !mixed || filter === "all"
+      ? results
+      : results.filter((r) =>
+          filter === "failed" ? r.error !== null : r.error === null,
+        );
   const shown = q
-    ? results.filter((r) => r.username.toLowerCase().includes(q))
-    : results;
+    ? byStatus.filter((r) => r.username.toLowerCase().includes(q))
+    : byStatus;
   const failed = shown.filter((r) => r.error !== null);
   const ok = shown.filter((r) => r.error === null);
-  const failedTotal = results.filter((r) => r.error !== null).length;
   const many = results.length > 10;
-  // Show a group label only when both groups are on screen — otherwise the summary line already says it.
+  // Show a group label only when both groups are on screen — otherwise the filter/summary says it.
   const bothGroups = failed.length > 0 && ok.length > 0;
 
   return (
     <div className="space-y-3" role="tablist" aria-label="Users in this run">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          {failedTotal > 0 && (
-            <span className="font-medium text-destructive">
-              {failedTotal} failed
-            </span>
-          )}
-          {failedTotal > 0 && " · "}
-          {results.length - failedTotal} succeeded
-        </p>
+      <div className="space-y-2">
+        {mixed ? (
+          <Segmented<"all" | "failed" | "ok">
+            value={filter}
+            onChange={setFilter}
+            ariaLabel="Filter people by status"
+            options={[
+              { value: "all", label: `All ${results.length}` },
+              { value: "failed", label: `Failed ${failedTotal}` },
+              { value: "ok", label: `OK ${okTotal}` },
+            ]}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {failedTotal > 0 ? (
+              <span className="font-medium text-destructive">
+                {failedTotal} failed
+              </span>
+            ) : (
+              `${okTotal} succeeded`
+            )}
+          </p>
+        )}
         {many && (
           <input
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Find a person…"
-            className="h-8 w-48 rounded-md border bg-background px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-8 w-full rounded-md border bg-background px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Search users in this run"
           />
         )}
