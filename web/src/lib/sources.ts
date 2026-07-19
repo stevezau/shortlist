@@ -36,7 +36,7 @@ export const SOURCES: readonly SourceInfo[] = [
     id: "llm_library",
     label: "AI — suggests from your library",
     short: "AI from library",
-    desc: "Your AI curator reads each person's taste and picks owned titles that fit — reaching across your whole library, not just what's similar to one seed.",
+    desc: "Your AI curator scans your whole library for owned titles that fit each person's taste. Honest note: in our testing this adds the fewest unique picks of any source for the most AI cost — most of what it finds, the other sources already found. Leave it off unless you want maximum coverage and don't mind the spend; it's the first thing to turn off to cut AI cost.",
     requires: "curator",
   },
   {

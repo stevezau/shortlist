@@ -32,6 +32,15 @@ It can't. The LLM only re-ranks candidates that are already verified to exist in
 library and unwatched by that user. Anything else it returns is dropped and logged. And
 with provider "None", Shortlist works with no AI at all.
 
+**What does the AI actually do, and do I have to pay for it?**
+No — Shortlist runs fine with no AI. Most titles are found by the free TMDB sources; the AI's main
+job is to make the _final_ pick from those and write each row's one-line "why". Two optional sources
+also use AI (a web search that finds acclaimed titles TMDB misses — the one worth paying for — and a
+scan of your own library, which adds little and is off by default). Set the curator to "None" and you
+still get full private rows with plain "Because you watched…" reasons. See
+[How Shortlist uses AI](guides.md#how-shortlist-uses-ai-and-how-to-control-the-cost) for the full
+breakdown and cost-tuning tips.
+
 **Will it fight with Kometa?**
 No. Shortlist only ever modifies or deletes collections carrying a `shortlist_*` label. Anything
 else — Kometa overlays, your own collections — is detected and left alone.

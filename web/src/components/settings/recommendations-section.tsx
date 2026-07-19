@@ -124,6 +124,26 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             </Link>{" "}
             → Edit → Recommendation sources.
           </p>
+          <div className="space-y-1.5 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+            <p className="font-medium text-foreground">
+              Where AI is used, and what it costs
+            </p>
+            <p>
+              The <strong>TMDB</strong> sources use no AI and no per-token cost
+              (just the free TMDB key you already set up) — they find most of
+              the titles. Two sources below use your AI curator:{" "}
+              <strong>AI web search</strong> — in our testing the strongest
+              extra, surfacing acclaimed titles TMDB misses — and{" "}
+              <strong>AI from library</strong>, which adds the least for the
+              most cost (turn it off first to save).
+            </p>
+            <p>
+              Separately, your AI curator makes the final pick and writes each
+              row’s short “why”. Prefer no AI at all? Leave the AI sources off
+              and set the curator to <strong>None</strong> under Curation — you
+              still get full rows, ranked by score with plain reasons.
+            </p>
+          </div>
           {SIMPLE_SOURCES.map((source) => (
             <div key={source.id} className="space-y-2">
               <div className="flex items-start justify-between gap-4">

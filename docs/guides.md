@@ -159,6 +159,68 @@ audience are its own, exactly like any other row.
   you want it gone right now. Everything left in place stays private — the row's label keeps it
   excluded from everyone else.
 
+## How Shortlist uses AI (and how to control the cost)
+
+Shortlist works with **no AI at all** — but a curator (Claude, GPT, Gemini, or a local Ollama model)
+makes the picks noticeably better. Here's exactly where AI does and doesn't touch your rows, in plain
+English, so you can decide what to pay for.
+
+**Building a row happens in four steps:**
+
+1. **Find candidates.** Every source you enabled goes looking for titles. Most of them use **no AI**:
+   the two TMDB sources (similar + discover) and Trakt are plain lookups against those services — free,
+   no API key beyond the ones you already set up. Two sources _do_ use your AI curator — see below.
+2. **Keep only what you own.** Everything found is matched against your actual library and against what
+   the person has already watched. Anything you don't have, or they've already seen, is dropped. **This
+   is why the AI can never invent a title you don't own** — it only ever gets to choose from real,
+   owned, unwatched titles.
+3. **Balance the shortlist.** Shortlist takes a fair share from each source (so one chatty source
+   can't crowd out the rest) and scores them. **No AI here** — it's a simple ranking.
+4. **Curate + explain.** Your AI curator makes the final selection from that balanced shortlist and
+   writes the one-line "why" under each pick ("Because you liked Fargo…"). This is the single place AI
+   adds the most value, and it's what most people notice.
+
+### The two AI-powered sources
+
+- **AI — web search** (the "AI web search" toggle): searches the live web for acclaimed, current
+  "what to watch next" titles, then keeps the ones you own. In our own testing this was the **strongest
+  extra source** — it surfaces well-reviewed titles the TMDB lists simply don't return. If you pay for
+  any AI source, this is the one to keep.
+- **AI — suggests from your library** (the "AI from library" toggle): asks the curator to scan your
+  library for owned titles that fit each person. Honest assessment from our testing: it adds the
+  **fewest unique picks for the most AI cost** — nearly everything it finds, the other sources already
+  found. **It's the first thing to turn off to cut your bill**, and it's off by default.
+
+### If you don't want to use AI
+
+Set the curator to **None** (Settings → Curation) and leave the two AI sources off. You still get full,
+per-person private rows: candidates come from TMDB/Trakt, and the final selection uses the score
+ranking with plain "Because you watched…" reasons instead of AI-written ones. Everything about privacy,
+scheduling and requests works exactly the same. You lose the AI web-search source and the tailored
+"why" text — that's the whole difference.
+
+### Tuning AI cost
+
+Costs come from the curator (Anthropic/OpenAI/Google charge per token; Ollama is free but runs on your
+own hardware). Roughly cheapest-to-priciest levers:
+
+1. **Turn off "AI from library."** Biggest saving for the least loss — most people should leave it off.
+2. **Use a small, cheap model.** A fast/mini model (e.g. Claude Haiku, GPT-mini, Gemini Flash) is
+   plenty for curation; you don't need a flagship model to pick from a 40-title shortlist.
+3. **Run less often.** Nightly is the default; a longer schedule means fewer runs and fewer tokens.
+   This is the most direct way to lower your total bill.
+4. **Fewer AI sources per row.** A row can override the global sources (Rows → Edit) — keep AI web
+   search only on the rows that benefit, and let the rest run on the free TMDB sources.
+
+Worth knowing: the curator re-picks and re-explains **every** enabled person on every run, so a quiet
+night with no library changes still spends roughly the same tokens as a busy one — how _often_ you run
+(and which model) is what drives cost, not how much changed. (Runs do skip the Plex _write_ when a
+person's row is unchanged, but that saves time on the Plex side, not AI tokens.)
+
+The "AI web search" card also lets you pick the **search backend** — your curator's own web search
+(Claude/GPT/Gemini), an **Exa** key (works with any provider, and the only option for Ollama), or
+**Auto**, which uses both when available because they tend to find different titles.
+
 ## Requests (Radarr / Sonarr)
 
 Off by default. When on, Shortlist notices the titles your people's taste surfaced that your library
