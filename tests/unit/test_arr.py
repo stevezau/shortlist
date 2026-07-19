@@ -108,10 +108,12 @@ class TestRadarrAddMovie:
         respx.post("http://radarr.test/api/v3/tag").mock(side_effect=make_tag)
         respx.post("http://radarr.test/api/v3/movie").mock(return_value=httpx.Response(201, json={"id": 5}))
 
-        RadarrClient(RADARR).add_movie(273481, dry_run=False, extra_tags={"J.FM", "Sci-Fi Night!", "kids"})
+        # Includes an all-punctuation label that reduces to "" — it must be DROPPED, never POSTed as
+        # an empty tag (which the Arr also 400s).
+        RadarrClient(RADARR).add_movie(273481, dry_run=False, extra_tags={"J.FM", "Sci-Fi Night!", "kids", "!!!"})
 
         assert all(re.fullmatch(r"[a-z0-9-]+", t) for t in created)  # nothing the Arr would reject
-        assert set(created) == {"j-fm", "sci-fi-night", "kids"}
+        assert set(created) == {"j-fm", "sci-fi-night", "kids"}  # the "!!!" label produced no tag
 
     @respx.mock
     def test_reuses_an_existing_tag_case_insensitively(self):
