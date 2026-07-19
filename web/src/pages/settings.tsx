@@ -9,7 +9,6 @@ import { ConnectionsSection } from "@/components/settings/connections-section";
 import { CurationSection } from "@/components/settings/curation-section";
 import { DangerZoneSection } from "@/components/settings/danger-zone-section";
 import { DefaultsSection } from "@/components/settings/defaults-section";
-import { DiagnosticsCard } from "@/components/settings/diagnostics-card";
 import { RecommendationsSection } from "@/components/settings/recommendations-section";
 import { RequestsSection } from "@/components/settings/requests-section";
 import { RowPlacementSection } from "@/components/settings/row-placement-section";
@@ -27,12 +26,7 @@ function sectionContent(settings: Settings): Record<string, ReactNode> {
     defaults: <DefaultsSection settings={settings} />,
     placement: <RowPlacementSection settings={settings} />,
     requests: <RequestsSection settings={settings} />,
-    advanced: (
-      <div className="space-y-6">
-        <AdvancedSection settings={settings} />
-        <DiagnosticsCard />
-      </div>
-    ),
+    advanced: <AdvancedSection settings={settings} />,
     "api-access": <ApiAccessCard />,
     danger: <DangerZoneSection settings={settings} />,
   };

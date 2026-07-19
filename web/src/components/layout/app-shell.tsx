@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Bug,
+  Check,
+  ClipboardCopy,
   Gauge,
   Inbox,
   LifeBuoy,
@@ -36,10 +38,34 @@ const NAV_ITEMS = [
 
 /** Help + Report-a-bug — both open the project's GitHub in a new tab; the bug link pre-fills the
  *  version + browser so a report always carries the two facts people forget to include. */
-function HelpLinks() {
+export function HelpLinks() {
   const version = useVersion();
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
+    "idle",
+  );
   const linkClass =
-    "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
+    "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
+
+  // The secrets-free diagnostics bundle lives with the bug-report action, not in Settings — grab it
+  // here, then paste it into the GitHub issue. (Too long to pre-fill into the issue URL.)
+  const copyDiagnostics = async () => {
+    try {
+      // Both the fetch (a 500 building the bundle) and the clipboard write can fail — surface either
+      // as "couldn't copy" rather than a silently dead button.
+      await navigator.clipboard.writeText(await api.getDebugBundle());
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
+    setTimeout(() => setCopyState("idle"), 2500);
+  };
+  const copyLabel =
+    copyState === "copied"
+      ? "Copied — paste into the issue"
+      : copyState === "error"
+        ? "Couldn’t copy — try again"
+        : "Copy diagnostics";
+
   return (
     <div className="space-y-1 px-3">
       <a
@@ -60,6 +86,19 @@ function HelpLinks() {
         <Bug className="h-4 w-4 shrink-0" aria-hidden="true" />
         Report a bug
       </a>
+      <button
+        type="button"
+        onClick={copyDiagnostics}
+        className={linkClass}
+        title="Copy a secrets-free summary of your setup to paste into a bug report"
+      >
+        {copyState === "copied" ? (
+          <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
+        ) : (
+          <ClipboardCopy className="h-4 w-4 shrink-0" aria-hidden="true" />
+        )}
+        <span aria-live="polite">{copyLabel}</span>
+      </button>
     </div>
   );
 }
