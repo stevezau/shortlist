@@ -34,6 +34,18 @@ export function formatDuration(ms: number): string {
   return `${minutes}m ${Math.round(seconds % 60)}s`;
 }
 
+/** Wall-clock a run took: finished − started in ms, or null while it's still running / unparseable. */
+export function runElapsedMs(
+  startedAt: string,
+  finishedAt: string | null,
+): number | null {
+  if (!finishedAt) return null;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(finishedAt);
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
+  return end - start;
+}
+
 /** Map a run/user status string onto a badge tone. */
 export function runStatusVariant(
   status: string,

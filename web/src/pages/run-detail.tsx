@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import {
   formatDate,
   formatDuration,
+  runElapsedMs,
   runStatusLabel,
   runStatusVariant,
   triggerLabel,
@@ -648,7 +649,11 @@ export function RunDetailPage() {
                   {/* Counts are only meaningful once the run finalizes them — while running the
                       stats are empty, which used to render a bare " · ok, failed". */}
                   {run.finished_at
-                    ? ` · finished ${formatDate(run.finished_at)} · ${run.stats.users_ok ?? 0} ok${
+                    ? ` · finished ${formatDate(run.finished_at)}${
+                        runElapsedMs(run.started_at, run.finished_at) != null
+                          ? ` · took ${formatDuration(runElapsedMs(run.started_at, run.finished_at)!)}`
+                          : ""
+                      } · ${run.stats.users_ok ?? 0} ok${
                         (run.stats.users_error ?? 0) > 0
                           ? `, ${run.stats.users_error} failed`
                           : ""

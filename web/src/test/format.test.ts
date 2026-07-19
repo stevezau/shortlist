@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   cronFromTime,
+  formatDuration,
   formatHitRate,
   isPresetCron,
   renderRowName,
+  runElapsedMs,
   settingBool,
   settingNumber,
   settingString,
@@ -130,6 +132,20 @@ describe("small formatters", () => {
     expect(formatHitRate(null)).toBe("—");
     expect(formatHitRate(0.314)).toBe("31%");
     expect(formatHitRate(1)).toBe("100%");
+  });
+
+  it("runElapsedMs measures finished − started, and is null while running or reversed", () => {
+    const start = "2026-07-19T03:30:00Z";
+    expect(runElapsedMs(start, "2026-07-19T03:52:30Z")).toBe(22.5 * 60 * 1000);
+    expect(runElapsedMs(start, null)).toBeNull(); // still running
+    expect(runElapsedMs(start, "2026-07-19T03:29:00Z")).toBeNull(); // clock skew / bad data
+    expect(runElapsedMs(start, "not-a-date")).toBeNull();
+  });
+
+  it("formatDuration reads in ms, seconds, then minutes+seconds", () => {
+    expect(formatDuration(450)).toBe("450ms");
+    expect(formatDuration(2500)).toBe("2.5s");
+    expect(formatDuration(22.5 * 60 * 1000)).toBe("22m 30s");
   });
 
   it("renderRowName substitutes every {top_seed}", () => {

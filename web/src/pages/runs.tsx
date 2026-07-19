@@ -7,7 +7,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { MutationAlert } from "@/components/mutation-alert";
@@ -36,6 +36,8 @@ import {
 } from "@/components/ui/table";
 import {
   formatDate,
+  formatDuration,
+  runElapsedMs,
   runStatusLabel,
   runStatusVariant,
   timeAgo,
@@ -61,6 +63,33 @@ function RunsSkeleton() {
   );
 }
 
+/** How long a run took. A finished run shows its fixed duration; a live one ticks up each second. */
+export function RunDuration({ run }: { run: Run }) {
+  const [now, setNow] = useState(() => Date.now());
+  const running = !run.finished_at;
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  if (running) {
+    const started = Date.parse(run.started_at);
+    const elapsed = Number.isNaN(started) ? null : Math.max(0, now - started);
+    return (
+      <span className="tabular-nums text-muted-foreground" title="Running…">
+        {elapsed != null ? formatDuration(elapsed) : "—"}
+      </span>
+    );
+  }
+  const ms = runElapsedMs(run.started_at, run.finished_at);
+  return (
+    <span className="tabular-nums" title="How long this run took">
+      {ms != null ? formatDuration(ms) : "—"}
+    </span>
+  );
+}
+
 function RunRow({ run }: { run: Run }) {
   const cancel = useCancelRun();
   return (
@@ -81,6 +110,9 @@ function RunRow({ run }: { run: Run }) {
         title={formatDate(run.started_at)}
       >
         {timeAgo(run.started_at)}
+      </TableCell>
+      <TableCell className="text-muted-foreground">
+        <RunDuration run={run} />
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap gap-1">
@@ -321,6 +353,7 @@ export function RunsPage() {
                   <TableHead>Run</TableHead>
                   <TableHead>Trigger</TableHead>
                   <TableHead>Started</TableHead>
+                  <TableHead>Duration</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Users</TableHead>
                 </TableRow>
