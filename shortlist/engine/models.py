@@ -480,7 +480,12 @@ class EngineConfig:
     # a partly-watched show or one with a new season stays eligible). 1.0: no filtering. Between:
     # at most that fraction of the row may be things already finished. Overridable per row.
     watched_pct: float = 0.0
-    watched_show_pct: float = 0.9  # a show watched to >= this fraction of its episodes counts as finished
+    # A show watched to >= this fraction of its episodes counts as finished. 0.8, not 0.9: a returning
+    # show a person is caught up on sits a few episodes short of 100% (the newest ep just aired, or one
+    # was marked-not-played), so 0.9 kept re-recommending shows they've clearly finished — MooHouse's
+    # "Deadliest Catch: The Viking Returns" at 8/9 = 89% slipped under the 0.9 bar (2026-07-21). The
+    # season-worth floor in `_watched_titles` catches long shows; this catches near-complete short ones.
+    watched_show_pct: float = 0.8
     # Day-to-day variability, as a fraction: 0.0 (default) = stable (the strongest picks every day);
     # 1.0 = fresh (rotate the whole row daily and reach deep down the ranked list). Overridable per row.
     freshness: float = 0.0

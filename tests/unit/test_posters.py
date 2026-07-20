@@ -27,6 +27,36 @@ def _profile(name: str = "Alex") -> UserProfile:
     return UserProfile(username=name, plex_account_id=1, user_type=UserType.SHARED)
 
 
+class TestBuildPosterSpec:
+    """ContextBuilder._build_poster turns a row's stored poster config into the spec delivery applies.
+
+    Regression (2026-07-21): only 'upload' and the legacy 'generate' were handled, so the current
+    'text'/'ai' modes fell through to None and no poster was ever applied to the collection.
+    """
+
+    def _spec(self, poster: dict):
+        from types import SimpleNamespace
+
+        from shortlist.server.services.context_builder import ContextBuilder
+
+        return ContextBuilder._build_poster(None, SimpleNamespace(id=1, poster=poster))
+
+    def test_text_mode_builds_a_spec(self):
+        spec = self._spec({"mode": "text", "title": "Hi", "subtitle": "Sub", "style": ""})
+        assert spec is not None and spec.mode == "text" and spec.title == "Hi" and spec.subtitle == "Sub"
+
+    def test_ai_mode_builds_a_spec(self):
+        spec = self._spec({"mode": "ai", "title": "Hi", "subtitle": "", "style": "neon"})
+        assert spec is not None and spec.mode == "ai" and spec.style == "neon"
+
+    def test_legacy_generate_still_builds_a_spec(self):
+        assert self._spec({"mode": "generate", "title": "Hi"}).mode == "generate"
+
+    def test_plex_default_or_blank_yields_none(self):
+        assert self._spec({}) is None
+        assert self._spec({"mode": ""}) is None
+
+
 class TestApplyPoster:
     """Cosmetic apply step — must upload for real modes, skip safely otherwise, and never raise."""
 

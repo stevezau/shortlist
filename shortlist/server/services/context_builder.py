@@ -505,9 +505,13 @@ class ContextBuilder:
         if mode == "upload":
             stored = load_upload(session, collection.id)
             return PosterSpec(mode="upload", image=stored[0]) if stored else None
-        if mode == "generate":
+        # "text" (built-in Pillow) and "ai" (image provider) both render from title/subtitle/style;
+        # "generate" is the pre-rename name for "ai". apply_poster maps the mode to a render engine.
+        # (Bug 2026-07-21: only "generate" was handled here, so the renamed "text"/"ai" modes silently
+        # yielded None and no poster was ever applied.)
+        if mode in ("text", "ai", "generate"):
             return PosterSpec(
-                mode="generate",
+                mode=mode,
                 title=cfg.get("title") or "",
                 subtitle=cfg.get("subtitle") or "",
                 style=cfg.get("style") or "",

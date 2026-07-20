@@ -127,6 +127,13 @@ class TestWatchedTitles:
         finished = self._finished(movies=set(), plays={40: 4}, episodes={40: 226})
         assert (40, MediaType.SHOW) not in finished
 
+    def test_a_near_complete_short_show_counts_at_the_lowered_bar(self):
+        # 8 of 9 episodes = 89%: caught up on a returning show (the newest ep just aired). At the 0.8
+        # default it counts as watched; at the old 0.9 it wrongly stayed a fresh pick (MooHouse's
+        # "Deadliest Catch: The Viking Returns"). The floor (10) doesn't help a 9-episode show.
+        assert (10, MediaType.SHOW) in self._finished(movies=set(), plays={10: 8}, episodes={10: 9}, pct=0.8)
+        assert (10, MediaType.SHOW) not in self._finished(movies=set(), plays={10: 8}, episodes={10: 9}, pct=0.9)
+
 
 class TestWatchedCap:
     """The percentage cap: at most `floor(k*pct)` of a row may be already-finished; the rest is
