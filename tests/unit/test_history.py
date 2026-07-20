@@ -140,3 +140,16 @@ class TestDeriveSeeds:
         ids = {f"Movie {i}": i + 1 for i in range(10)}
         seeds = derive_seeds(history, lambda w: ids[w.title], max_seeds=4)
         assert len(seeds) == 4
+
+    def test_reserves_seed_budget_for_the_minority_media_type(self):
+        # A TV-heavy watcher: 20 recent shows + 3 older movies. The movies must still seed, or a
+        # media=both row's Movies half starves (SFLIX/MooHouse: 58 of her last 60 watches were TV).
+        history = [make_watched(f"Show {i}", days_ago=i, media_type=MediaType.SHOW) for i in range(20)]
+        history += [make_watched(f"Movie {i}", days_ago=40 + i, media_type=MediaType.MOVIE) for i in range(3)]
+        ids = {f"Show {i}": i + 1 for i in range(20)}
+        ids |= {f"Movie {i}": 100 + i for i in range(3)}
+        seeds = derive_seeds(history, lambda w: ids[w.title], max_seeds=10)
+        assert len(seeds) == 10
+        # All 3 movies survive the cap despite ranking below every show by weight — without the
+        # per-media reserve the top 10 would be all shows and the movie row would get no candidates.
+        assert sum(1 for s in seeds if s.media_type is MediaType.MOVIE) == 3

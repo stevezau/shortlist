@@ -171,4 +171,19 @@ def derive_seeds(
         recency_weight = max(0.25, 1.0 - recency_days / 90)  # linear decay over ~3 months
         seeds.append(Seed(tmdb_id=tmdb_id, title=title, media_type=media_type, weight=len(items) * recency_weight))
     seeds.sort(key=lambda s: s.weight, reverse=True)
-    return seeds[:max_seeds]
+
+    # Guarantee each media type the person watches a share of the seed budget. Otherwise the global
+    # top-N by weight can be entirely one type — a TV-heavy watcher's 30 seeds are all shows, so the
+    # movie half of a `media=both` row gets no candidates and never builds (SFLIX/MooHouse: 58 of her
+    # last 60 watches were TV, so her Movies row stayed empty despite 598 movie watches; 2026-07-20).
+    movies = [s for s in seeds if s.media_type is MediaType.MOVIE]
+    shows = [s for s in seeds if s.media_type is MediaType.SHOW]
+    if not (movies and shows):
+        return seeds[:max_seeds]  # single media type — nothing to balance
+    per_type = max(1, max_seeds // 3)  # each present type keeps >= a third of the budget (if it has that many)
+    reserved = {id(s) for s in movies[:per_type]} | {id(s) for s in shows[:per_type]}
+    # Reserved seeds first, then the rest — but weight order is preserved WITHIN each group (both lists
+    # are already weight-sorted), so a balanced watcher's ordering is unchanged; only a lopsided one's
+    # minority-media seeds get promoted above the cutoff.
+    ordered = [s for s in seeds if id(s) in reserved] + [s for s in seeds if id(s) not in reserved]
+    return ordered[:max_seeds]
