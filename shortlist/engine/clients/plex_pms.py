@@ -155,12 +155,15 @@ class PlexClient:
     """PMS operations, restricted to collections Shortlist owns (label-gated)."""
 
     def __init__(self, base_url: str, token: str, *, timeout: int = 20):
-        # 20s (down from 60): on a LAN PMS a single call taking >20s means the server is stalled, not
-        # working, and waiting the full 60s just multiplied the damage (a stuck GET retried 4x = ~240s,
-        # serialized behind the write-lock; SFLIX run 3, 2026-07-19). 20s fails a genuinely stalled call
-        # fast; the retrying session's backoff still covers real transients, and the reorder no longer
-        # holds the write-lock (it's deferred, best-effort) so the old "keep the ceiling high for the
-        # busy reorder" reason is gone.
+        # This 20s default is for the fast-fail connection probes (setup/test-connection/section list).
+        # The RUN's client is built by context_builder with the configurable `plex.timeout_s` (default
+        # 45), because a large TV library's collection rebuild legitimately takes 15-20s and 20s timed
+        # those out + retried (SFLIX 47-user run, 2026-07-20).
+        # On why the default is 20, not 60: on a LAN PMS a single call taking >20s means the server is
+        # stalled, not working, and waiting the full 60s just multiplied the damage (a stuck GET retried
+        # 4x = ~240s, serialized behind the write-lock; SFLIX run 3, 2026-07-19). The retrying session's
+        # backoff still covers real transients, and the reorder no longer holds the write-lock (deferred,
+        # best-effort) so the old "keep the ceiling high for the busy reorder" reason is gone.
         self._server = PlexServer(base_url, token, session=_retrying_session(), timeout=timeout)
         # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
         # constructs one per run), so these live exactly one run — no cross-run staleness. Library

@@ -88,6 +88,12 @@ DEFAULTS: dict[str, Any] = {
     # this server" rows), so a disabled user sees nothing from Shortlist. Off = disabled users still see
     # public shared rows like any other account with library access.
     "privacy.hide_shared_from_disabled": True,
+    # How long (seconds) to wait on a single PMS call before giving up and retrying. Reads are near-
+    # instant on a LAN, but rebuilding a big library's collection (a TV row on a large server) legitimately
+    # takes 15-20s+, so too low a value times those out and forces a wasteful retry. 20 proved too tight
+    # for large TV libraries (SFLIX 2026-07-20: legit writes at 19.9s, many ERR at 20.0s then retried); 45
+    # gives headroom while still failing a truly-stalled call. Raise it if big writes still time out. Advanced.
+    "plex.timeout_s": 45,
     "plextv.throttle_s": 0.0,  # FLOOR between plex.tv writes; 0 = as fast as plex.tv accepts (adaptive 429 backoff)
     # How many users a run processes concurrently. Only their reads + AI curation overlap; every Plex
     # and plex.tv write stays strictly serial. 1 = fully sequential; higher = faster big runs at the

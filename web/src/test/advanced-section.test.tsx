@@ -62,4 +62,15 @@ describe("AdvancedSection", () => {
       expect(putSettings).toHaveBeenCalledWith({ "run.concurrency": 8 }),
     );
   });
+
+  it("auto-saves the Plex request timeout as a number and defaults to 45s", async () => {
+    renderSection({});
+    expect(
+      screen.getByRole("button", { name: "45s" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    await userEvent.click(screen.getByRole("button", { name: "60s" }));
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith({ "plex.timeout_s": 60 }),
+    );
+  });
 });

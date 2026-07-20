@@ -45,7 +45,12 @@ def configured(sessions, tmp_path, monkeypatch):
         store.set("tmdb.apikey", "k")
     plex_client = MagicMock()
     plex_client.machine_id = "m1"
-    monkeypatch.setattr(context_builder_mod, "PlexClient", lambda url, token: plex_client)
+
+    def _make_plex(url, token, timeout=20):
+        plex_client.init_timeout = timeout  # so a test can assert the configured timeout flows through
+        return plex_client
+
+    monkeypatch.setattr(context_builder_mod, "PlexClient", _make_plex)
     monkeypatch.setattr(context_builder_mod, "PlexTvClient", lambda *a, **k: MagicMock())
     monkeypatch.setattr(context_builder_mod, "TmdbClient", lambda *a, **k: MagicMock())
     return box
@@ -72,6 +77,25 @@ class TestBuildContext:
         ctx = service.build_context(dry_run=False)
         assert isinstance(ctx.history_source, StoreHistorySource)
         assert isinstance(ctx.history_source._upstream, FallbackHistorySource)
+
+    def test_plex_timeout_setting_flows_to_the_client(self, service, sessions, configured, monkeypatch):
+        # A big TV library's collection rebuild legitimately takes 15-20s+; the run's PMS client must
+        # get the configured per-call timeout (default 45s) so those don't time out and retry.
+        captured: dict[str, int] = {}
+        plex = MagicMock()
+        plex.machine_id = "m1"
+
+        def _make_plex(url, token, timeout=20):
+            captured["timeout"] = timeout
+            return plex
+
+        monkeypatch.setattr(context_builder_mod, "PlexClient", _make_plex)
+        service.build_context(dry_run=True)
+        assert captured["timeout"] == 45  # default headroom
+        with sessions() as session:
+            SettingsStore(session, configured).set("plex.timeout_s", 90)
+        service.build_context(dry_run=True)
+        assert captured["timeout"] == 90  # an explicit setting overrides it
 
     def test_ollama_provider_is_built_with_its_url(self, service, sessions, configured):
         """Ollama takes a base URL and no key; the key was previously unstorable, 422ing setup."""

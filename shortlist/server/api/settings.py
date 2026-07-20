@@ -95,6 +95,7 @@ VALIDATORS = {
     # The FLOOR (minimum seconds) between plex.tv writes. 0 = fire as fast as plex.tv accepts; the
     # client backs off adaptively on 429 (rule 6), so 0 is safe, not an "off switch" like it once was.
     "plextv.throttle_s": _bounded_float(0.0, 60.0),
+    "plex.timeout_s": _bounded_int(5, 300),  # per-PMS-call timeout; read unguarded in build_context
     "run.concurrency": _bounded_int(1, 16),  # 1 = sequential; writes stay serial regardless
     "paused_all": _is_bool,
     "requests.enabled": _is_bool,

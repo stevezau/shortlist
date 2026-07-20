@@ -644,6 +644,13 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"plextv.throttle_s": -1}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"plextv.throttle_s": 61}}).status_code == 422
 
+    def test_a_bad_plex_timeout_is_refused(self, client: TestClient):
+        # It's read unguarded as int(...) in build_context, so a bad stored value would crash every run.
+        assert client.put("/api/settings", json={"values": {"plex.timeout_s": 45}}).status_code == 200
+        assert client.put("/api/settings", json={"values": {"plex.timeout_s": "abc"}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"plex.timeout_s": 0}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"plex.timeout_s": 301}}).status_code == 422
+
     def test_a_non_numeric_row_size_is_refused(self, client: TestClient):
         # "abc" was stored happily, then raised ValueError inside every run and 500'd two endpoints.
         assert client.put("/api/settings", json={"values": {"row.size": "abc"}}).status_code == 422

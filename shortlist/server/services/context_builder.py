@@ -108,7 +108,9 @@ class ContextBuilder:
             plex_token = store.get("plex.token")
             if not plex_url or not plex_token:
                 raise RuntimeError("Plex connection is not configured yet — finish setup first")
-            plex = PlexClient(plex_url, plex_token)
+            # A large TV library's collection rebuild legitimately takes 15-20s+; the configured
+            # per-call timeout (default 45s) gives those headroom instead of timing out + retrying.
+            plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
             plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             trakt = (

@@ -48,6 +48,9 @@ def _bridge_stdlib_logging() -> None:
     logging.basicConfig(handlers=[_InterceptHandler()], level=logging.INFO, force=True)
     # httpx logs a line per request at INFO; our own http_retry already narrates calls at DEBUG.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # asyncio warns "socket.send() raised exception" every time an SSE/HTTP client disconnects
+    # mid-stream — harmless, but noisy now that the bridge surfaces it. Keep real asyncio errors.
+    logging.getLogger("asyncio").setLevel(logging.ERROR)
     _stdlib_bridged = True
 
 
