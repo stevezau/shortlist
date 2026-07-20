@@ -139,6 +139,24 @@ class TestRequestsApi:
         with client.app.state.sessions() as session:
             assert session.get(RequestCandidate, 3) is not None  # id 3 is the seeded "Sent Film"
 
+    def test_clear_hides_a_sent_row_but_keeps_the_tombstone(self, client: TestClient):
+        # "Clear from log" hides a sent title from the inbox, but the row stays (status still sent,
+        # hidden=True) so a still-downloading title can't be seen as missing and re-requested.
+        assert client.post("/api/requests/clear", json={"ids": [3]}).json()["cleared"] == 1
+        # Gone from the inbox list...
+        assert 30 not in {r["tmdb_id"] for r in client.get("/api/requests").json()}
+        # ...but still on file as a sent tombstone.
+        with client.app.state.sessions() as session:
+            row = session.get(RequestCandidate, 3)
+            assert row is not None and row.status == "sent" and row.hidden is True
+        # Idempotent: clearing an already-hidden row is a no-op (nothing left to hide).
+        assert client.post("/api/requests/clear", json={"ids": [3]}).json()["cleared"] == 0
+
+    def test_clear_ignores_a_pending_row(self, client: TestClient):
+        # Clear is for the send log only; a pending id (id 2) has Delete/Reject, so clear is a no-op.
+        assert client.post("/api/requests/clear", json={"ids": [2]}).json()["cleared"] == 0
+        assert 20 in {r["tmdb_id"] for r in client.get("/api/requests").json()}
+
     def test_restore_moves_a_rejected_title_back_to_pending(self, client: TestClient):
         # "Allow again": a rejected title returns to Waiting immediately, ready to send — not deleted.
         client.post("/api/requests/reject", json={"ids": [1]})

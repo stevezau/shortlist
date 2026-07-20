@@ -432,6 +432,14 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
 
+  // Clear SENT titles from the send log — hides them (the sent tombstone stays, so they're not
+  // re-requested), never un-sends from Sonarr/Radarr.
+  clearRequests: (ids: number[]): Promise<{ cleared: number }> =>
+    request("/api/requests/clear", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
+
   // --- System ---
   /**
    * Full uninstall (or a dry-run preview of it). The backend requires the

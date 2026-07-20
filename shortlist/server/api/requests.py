@@ -57,9 +57,13 @@ class RequestAction(BaseModel):
 
 @router.get("")
 def list_requests(request: Request) -> list[RequestCandidateOut]:
-    """The whole inbox: pending first (most-wanted, best-rated on top), then sent, then rejected."""
+    """The whole inbox: pending first (most-wanted, best-rated on top), then sent, then rejected.
+
+    Rows the owner cleared from the Sent log (``hidden``) are excluded — they stay in the DB as sent
+    tombstones (so the title isn't re-requested) but never show in the UI again.
+    """
     with request.app.state.sessions() as session:
-        rows = session.query(RequestCandidate).all()
+        rows = session.query(RequestCandidate).filter(~RequestCandidate.hidden).all()
     rows.sort(key=lambda r: (_STATUS_ORDER.get(r.status, 9), -r.demand, -r.rating))
     return [
         RequestCandidateOut(
@@ -148,6 +152,31 @@ def delete_requests(body: RequestAction, request: Request) -> dict:
         session.add(Event(scope="requests.delete", level="info", message={"ids": body.ids, "count": count}))
         session.commit()
     return {"deleted": count}
+
+
+@router.post("/clear")
+def clear_requests(body: RequestAction, request: Request) -> dict:
+    """Clear the given SENT titles from the send log — hide them, don't delete them.
+
+    A sent row is a load-bearing tombstone: dropping it lets a still-downloading title look "missing"
+    and get re-requested every night (see ``delete_requests``). So "clear" sets ``hidden`` instead —
+    the row stays ``sent`` and keeps protecting against re-request, but never shows in the inbox again.
+    Only ``sent`` rows are cleared; a pending/rejected id is ignored (those have Delete / Reject).
+    """
+    with request.app.state.sessions() as session:
+        rows = (
+            session.query(RequestCandidate)
+            .filter(RequestCandidate.id.in_(body.ids), RequestCandidate.status == "sent")
+            .all()
+        )
+        count = 0
+        for row in rows:
+            if not row.hidden:
+                row.hidden = True
+                count += 1
+        session.add(Event(scope="requests.clear", level="info", message={"ids": body.ids, "count": count}))
+        session.commit()
+    return {"cleared": count}
 
 
 @router.post("/send")

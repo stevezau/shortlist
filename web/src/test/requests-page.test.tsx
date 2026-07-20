@@ -13,6 +13,7 @@ const {
   rejectRequests,
   deleteRequests,
   restoreRequests,
+  clearRequests,
   getSettings,
 } = vi.hoisted(() => ({
   listRequests: vi.fn(),
@@ -23,6 +24,9 @@ const {
   deleteRequests: vi.fn((_ids: number[]) => Promise.resolve({ deleted: 1 })),
   restoreRequests: vi.fn((ids: number[]) =>
     Promise.resolve({ restored: ids.length }),
+  ),
+  clearRequests: vi.fn((ids: number[]) =>
+    Promise.resolve({ cleared: ids.length }),
   ),
   getSettings: vi.fn((): Promise<Record<string, unknown>> =>
     Promise.resolve({ "requests.enabled": true }),
@@ -38,6 +42,7 @@ vi.mock("@/lib/api", () => ({
     rejectRequests: (ids: number[]) => rejectRequests(ids),
     deleteRequests: (ids: number[]) => deleteRequests(ids),
     restoreRequests: (ids: number[]) => restoreRequests(ids),
+    clearRequests: (ids: number[]) => clearRequests(ids),
     getSettings: () => getSettings(),
   },
 }));
@@ -90,6 +95,7 @@ describe("RequestsPage", () => {
     rejectRequests.mockClear();
     deleteRequests.mockClear();
     restoreRequests.mockClear();
+    clearRequests.mockClear();
     getSettings.mockResolvedValue({ "requests.enabled": true });
   });
 
@@ -146,6 +152,24 @@ describe("RequestsPage", () => {
       screen.getByRole("heading", { name: "Sent to Radarr & Sonarr" }),
     ).toBeTruthy();
     expect(screen.getByText(/added to Sonarr/i)).toBeTruthy();
+  });
+
+  it("clears a sent title from the send log (hides it, doesn't un-send)", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Shogun",
+        media_type: "show",
+        status: "sent",
+      }),
+    ]);
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Sent (1)" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Clear$/i }));
+    await waitFor(() => expect(clearRequests).toHaveBeenCalledWith([2]));
   });
 
   it("deep-links a sent show straight to its Sonarr series page via the captured slug", async () => {

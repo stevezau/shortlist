@@ -405,3 +405,12 @@ export function useRestoreRequests() {
       queryClient.invalidateQueries({ queryKey: queryKeys.requests }),
   });
 }
+
+export function useClearRequests() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (ids: number[]) => api.clearRequests(ids),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.requests }),
+  });
+}

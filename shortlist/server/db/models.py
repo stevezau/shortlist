@@ -331,6 +331,10 @@ class RequestCandidate(Base):
     # On Sonarr/Radarr's import-exclusion list (usually from a past delete): surfaced in the inbox so
     # the owner knows approving it is a no-op until they remove the exclusion in the Arr.
     excluded: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Owner cleared this from the Sent log. The row STAYS `status="sent"` — a load-bearing tombstone
+    # that stops a still-downloading title being re-requested (see delete_requests / _persist_request_queue)
+    # — so we hide it from the UI instead of deleting it. Excluded from the inbox list; engine unaffected.
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     first_seen_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # which run first surfaced it
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

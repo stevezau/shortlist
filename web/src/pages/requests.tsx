@@ -28,6 +28,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { apiErrorMessage } from "@/lib/api";
 import { formatDate, settingBool, settingString } from "@/lib/format";
 import {
+  useClearRequests,
   useDeleteRequests,
   useRejectRequests,
   useRequests,
@@ -284,10 +285,14 @@ function SentRow({
   item,
   radarrUrl,
   sonarrUrl,
+  onClear,
+  clearing,
 }: {
   item: RequestCandidate;
   radarrUrl: string;
   sonarrUrl: string;
+  onClear: (id: number) => void;
+  clearing: boolean;
 }) {
   const isMovie = item.media_type === "movie";
   const app = isMovie ? "Radarr" : "Sonarr";
@@ -316,10 +321,22 @@ function SentRow({
     <div className="space-y-1.5 rounded-lg border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="font-medium">{item.title}</p>
-        <Badge variant="success" className="gap-1">
-          <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
-          Sent to {app}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="success" className="gap-1">
+            <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
+            Sent to {app}
+          </Badge>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={clearing}
+            onClick={() => onClear(item.id)}
+            title={`Remove from the send log. ${item.title} stays in ${app} — this only clears the entry here, and it won't be re-requested.`}
+          >
+            <X aria-hidden="true" />
+            Clear
+          </Button>
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
         <TypeBadge mediaType={item.media_type} />
@@ -435,6 +452,7 @@ export function RequestsPage() {
   const reject = useRejectRequests();
   const del = useDeleteRequests();
   const restore = useRestoreRequests();
+  const clear = useClearRequests();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   // Opens on Waiting, but a `?tab=sent` deep-link (e.g. the dashboard's "View the full send log")
   // lands straight on that view. `?tab=dismissed` is an accepted alias for the renamed Rejected tab.
@@ -507,7 +525,11 @@ export function RequestsPage() {
   const allChecked =
     pendingShown.length > 0 && selectedPending.length === pendingShown.length;
   const busy =
-    send.isPending || reject.isPending || del.isPending || restore.isPending;
+    send.isPending ||
+    reject.isPending ||
+    del.isPending ||
+    restore.isPending ||
+    clear.isPending;
 
   const toggleAll = () =>
     setSelected(
@@ -787,9 +809,36 @@ export function RequestsPage() {
 
                     {active === "sent" && (
                       <section className="space-y-3">
-                        <h2 className="text-sm font-medium text-muted-foreground">
-                          Sent to Radarr &amp; Sonarr
-                        </h2>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <h2 className="text-sm font-medium text-muted-foreground">
+                            Sent to Radarr &amp; Sonarr
+                          </h2>
+                          {sentShown.length > 0 && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              loading={clear.isPending}
+                              disabled={busy}
+                              onClick={() =>
+                                clear.mutate(sentShown.map((r) => r.id))
+                              }
+                              title="Clear every entry here from the send log. The titles stay in Sonarr/Radarr and won't be re-requested."
+                            >
+                              {!clear.isPending && (
+                                <Trash2 aria-hidden="true" />
+                              )}
+                              Clear all ({sentShown.length})
+                            </Button>
+                          )}
+                        </div>
+                        {clear.isError && (
+                          <p role="alert" className="text-sm text-destructive">
+                            {apiErrorMessage(
+                              clear.error,
+                              "That didn't go through. Check the server log and try again.",
+                            )}
+                          </p>
+                        )}
                         {sentShown.length > 0 ? (
                           <div className="space-y-2">
                             {sentShown.map((item) => (
@@ -798,6 +847,8 @@ export function RequestsPage() {
                                 item={item}
                                 radarrUrl={radarrUrl}
                                 sonarrUrl={sonarrUrl}
+                                onClear={(id) => clear.mutate([id])}
+                                clearing={clear.isPending}
                               />
                             ))}
                           </div>
