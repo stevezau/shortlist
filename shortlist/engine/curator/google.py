@@ -70,7 +70,9 @@ class GoogleCurator:
                 },
             )
         except Exception as e:  # google-genai raises provider-specific exceptions
-            raise CuratorError(f"Google error: {e}") from e
+            # NEVER interpolate {e}: google-genai embeds the API key in the error as `?key=AIza…`,
+            # a shape redact() doesn't cover. Type only — this reaches the run report + events row.
+            raise CuratorError(f"Google error ({type(e).__name__})") from e
         usage = getattr(r, "usage_metadata", None)
         self.last_tokens = getattr(usage, "total_token_count", 0) or 0
         text = r.text or ""
@@ -102,7 +104,8 @@ class GoogleCurator:
                 ),
             )
         except Exception as e:  # google-genai raises provider-specific exceptions
-            logger.warning("llm_web (google): {}", e)
+            # Type only — the google-genai error text carries the API key (`?key=AIza…`).
+            logger.warning("llm_web (google) failed ({})", type(e).__name__)
             return []
         usage = getattr(r, "usage_metadata", None)
         self.last_tokens = getattr(usage, "total_token_count", 0) or 0
@@ -115,7 +118,8 @@ class GoogleCurator:
                 model=self._model, contents=user, config={"system_instruction": system}
             )
         except Exception as e:
-            logger.warning("complete (google): {}", e)
+            # Type only — the google-genai error text carries the API key (`?key=AIza…`).
+            logger.warning("complete (google) failed ({})", type(e).__name__)
             return ""
         usage = getattr(r, "usage_metadata", None)
         self.last_tokens = getattr(usage, "total_token_count", 0) or 0

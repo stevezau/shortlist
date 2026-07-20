@@ -48,7 +48,14 @@ def schedule_groups(app) -> dict[str, list[int]]:
 def _make_job(app, cron: str, collection_ids: list[int]):
     async def fire() -> None:
         logger.info("scheduled run firing: cron '{}' for {} row(s)", cron, len(collection_ids))
-        await app.state.run_service.start_run(trigger="schedule", dry_run=False, collection_ids=collection_ids)
+        try:
+            await app.state.run_service.start_run(trigger="schedule", dry_run=False, collection_ids=collection_ids)
+        except Exception:
+            # Unguarded, this exception escapes into APScheduler and the run silently never happens —
+            # the "why didn't 03:30 fire" case. Log with full context so it lands in the durable file.
+            # start_run only inserts a Run row + spawns the background task here; the token-bearing Plex
+            # I/O runs inside _execute (its own redaction), so this traceback never carries a secret.
+            logger.exception("scheduled run failed to start (cron '{}', {} row(s))", cron, len(collection_ids))
 
     return fire
 
@@ -64,7 +71,10 @@ def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
     """The daily watch-status reconcile — one fixed job, unaffected by row schedules."""
 
     async def fire() -> None:
-        await app.state.run_service.sync_watched()
+        try:
+            await app.state.run_service.sync_watched()
+        except Exception:
+            logger.exception("daily watch-sync failed")
 
     scheduler.add_job(fire, CronTrigger.from_crontab(_WATCH_SYNC_CRON), id=WATCH_SYNC_JOB_ID, replace_existing=True)
 

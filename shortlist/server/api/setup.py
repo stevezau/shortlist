@@ -93,7 +93,10 @@ async def list_servers(request: Request) -> list[dict]:
             async with httpx.AsyncClient(timeout=4, verify=False) as client:
                 r = await client.get(f"{uri}/identity")
             return {"uri": uri, "ok": r.status_code == 200}
-        except Exception:
+        except Exception as e:
+            # "Shortlist can't reach my Plex URL" is the #1 first-run question — record the reason
+            # (refused vs TLS vs timeout vs DNS) so it's answerable from the log, not just a bare False.
+            logger.debug("setup probe: {} unreachable ({})", uri, type(e).__name__)
             return {"uri": uri, "ok": False}
 
     out = []

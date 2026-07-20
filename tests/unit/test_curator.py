@@ -398,6 +398,64 @@ class TestGoogleCurator:
         call = client.models.generate_content.call_args
         assert call.kwargs["config"]["response_json_schema"] == picks_schema()
 
+    def test_curate_error_never_leaks_the_api_key(self, monkeypatch):
+        # google-genai embeds the key in error text as `?key=AIza…`; redact() doesn't cover that shape,
+        # so the CuratorError (which reaches the run report + events row + UI) must be type-only.
+        google_pkg = ModuleType("google")
+        genai = ModuleType("google.genai")
+        genai.Client = MagicMock()
+        google_pkg.genai = genai
+        monkeypatch.setitem(sys.modules, "google", google_pkg)
+        monkeypatch.setitem(sys.modules, "google.genai", genai)
+        from shortlist.engine.curator.google import GoogleCurator
+
+        client = MagicMock()
+        genai.Client.return_value = client
+        secret = "AIzaSyLEAKED_secret_key_1234567890"
+        client.models.generate_content.side_effect = RuntimeError(
+            f"400 error from https://generativelanguage.googleapis.com/v1/models?key={secret}"
+        )
+        with pytest.raises(CuratorError) as exc:
+            GoogleCurator(api_key="k").curate(make_profile(history=[]), candidates(), k=1)
+        assert secret not in str(exc.value)
+        assert "RuntimeError" in str(exc.value)  # type is still reported for debugging
+
+    def test_web_and_complete_log_paths_never_leak_the_api_key(self, monkeypatch):
+        # The llm_web + complete paths swallow errors and log a warning — same `?key=AIza…` leak class
+        # as curate, but log-only. Capture the log and assert the secret never reaches it.
+        from loguru import logger
+
+        google_pkg = ModuleType("google")
+        genai = ModuleType("google.genai")
+        genai.Client = MagicMock()
+        types_mod = ModuleType("google.genai.types")  # recommend_web does `from google.genai import types`
+        types_mod.Tool = MagicMock()
+        types_mod.GoogleSearch = MagicMock()
+        types_mod.GenerateContentConfig = MagicMock()
+        genai.types = types_mod
+        google_pkg.genai = genai
+        monkeypatch.setitem(sys.modules, "google", google_pkg)
+        monkeypatch.setitem(sys.modules, "google.genai", genai)
+        monkeypatch.setitem(sys.modules, "google.genai.types", types_mod)
+        from shortlist.engine.curator.google import GoogleCurator
+
+        client = MagicMock()
+        genai.Client.return_value = client
+        secret = "AIzaSyLEAKED_secret_key_1234567890"
+        client.models.generate_content.side_effect = RuntimeError(
+            f"400 from https://generativelanguage.googleapis.com/v1/models?key={secret}"
+        )
+
+        captured: list[str] = []
+        sink_id = logger.add(captured.append, level="WARNING")
+        try:
+            cur = GoogleCurator(api_key="k")
+            assert cur.recommend_web(make_profile(history=[]), [], k=3) == []
+            assert cur.complete("sys", "user") == ""
+        finally:
+            logger.remove(sink_id)
+        assert secret not in "".join(captured)
+
     def test_list_models_strips_prefix_and_keeps_content_generators(self, monkeypatch):
         google_pkg = ModuleType("google")
         genai = ModuleType("google.genai")

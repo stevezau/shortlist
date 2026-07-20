@@ -9,6 +9,7 @@ from typing import Annotated
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
+from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 
@@ -568,6 +569,9 @@ async def preview_poster(collection_id: int, body: PosterIn, request: Request) -
             poster_service.preview_poster, studio, mode, body.title, body.subtitle, body.style
         )
     except Exception as exc:
+        # Type only in both the log and the response — an image-provider error can carry the API key
+        # (Google embeds it in the URL). Without this line the operator sees only a browser 502.
+        logger.warning("poster preview failed (mode {!r}, {})", mode, type(exc).__name__)
         raise HTTPException(502, f"couldn't generate a preview ({type(exc).__name__})") from exc
     if not image:
         raise HTTPException(502, "couldn't produce a poster image")

@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 import httpx
+from loguru import logger
 
 from shortlist.engine.clients import http_retry
 from shortlist.engine.models import ArrTarget
@@ -167,6 +168,8 @@ class _ArrClient:
         if tag_id is not None:
             self._resolved[key] = tag_id
             self._existing_tags[key] = tag_id
+            # A real write into the operator's arr — leave a trail (this file was previously silent).
+            logger.debug("{}: created tag {!r} (id {})", self.app_name, label, tag_id)
         return tag_id
 
 
@@ -194,6 +197,7 @@ class RadarrClient(_ArrClient):
         if resource.get("id"):  # a non-zero id means Radarr already tracks it
             return "skipped_present", "already in Radarr"
         if dry_run:
+            logger.info("[dry-run] Radarr: would add tmdb {}", tmdb_id)
             return "would_request", "would add to Radarr"
         body = {
             **resource,
@@ -242,6 +246,7 @@ class SonarrClient(_ArrClient):
         if resource.get("id"):  # a non-zero id means Sonarr already tracks it
             return "skipped_present", "already in Sonarr"
         if dry_run:
+            logger.info("[dry-run] Sonarr: would add tvdb {}", tvdb_id)
             return "would_request", "would add to Sonarr"
         body = {
             **resource,

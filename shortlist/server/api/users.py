@@ -142,6 +142,9 @@ async def _remove_users_rows(state, user_slug: str) -> None:
         await asyncio.get_running_loop().run_in_executor(None, work)
     except Exception as e:
         error = redact(f"{type(e).__name__}: {e}")  # a PMS error can carry a tokened URL (rule 9)
+        # Also narrate it: the failure IS audited to events, but this is a destructive Plex write, so
+        # it should show in the live run/console log the operator is watching, not only the DB.
+        logger.warning("disable cleanup for {} hit an error ({})", user_slug, type(e).__name__)
     with state.sessions() as session:
         session.add(
             Event(
@@ -248,7 +251,9 @@ async def user_history(user_id: int, request: Request, limit: int = 25) -> list[
     try:
         rows = await asyncio.get_running_loop().run_in_executor(None, fetch)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}") from e
+        # A PMS/Tautulli error can carry a tokened URL — redact before it reaches the response (rule 9).
+        logger.warning("user-history fetch failed for user {} ({})", user_id, type(e).__name__)
+        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
     if rows is None:
         raise HTTPException(status_code=404, detail="user not found")
     return rows

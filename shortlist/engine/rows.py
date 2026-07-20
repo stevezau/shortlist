@@ -907,7 +907,15 @@ def _shared_row(
             # Shared-row LLM spend used to vanish — only the per-person path accounted tokens.
             toks = getattr(ctx.curator, "last_tokens", 0)
             _record_curate(user_report, curate_tokens, spec.slug, section.key, toks)
-        except CuratorError:
+        except CuratorError as e:
+            # Match the personal-row path: say the curator failed so a heuristic-filled shared row
+            # ("Popular on this server") isn't a silent mystery to the operator.
+            logger.warning(
+                "shared row {!r} section {}: curator failed ({}); using heuristic",
+                spec.slug,
+                section.key,
+                type(e).__name__,
+            )
             sec_picks = NullCurator().curate(agg, sub, k)
         if len(sec_picks) < k:
             # Backfill from this library's ranked pool so a thin curate never SHRINKS the row.
