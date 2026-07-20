@@ -60,6 +60,10 @@ export function AiWebSearchCard({
   const nativeUnusable =
     !curatorMissing && backend === "native" && !hasNativeWebSearch(settings);
   const exaMissing = !curatorMissing && needsExa(backend, settings);
+  // Whether this backend actually hits Exa (so we only surface Exa's usage/limits when relevant):
+  // the "exa" backend always, and "auto" when the curator can't self-search.
+  const usesExa =
+    backend === "exa" || (backend === "auto" && !hasNativeWebSearch(settings));
 
   return (
     <Card>
@@ -129,6 +133,31 @@ export function AiWebSearchCard({
                 settings={settings}
               />
             )}
+
+            {/* Usage & limits, so the cost of turning this on is never a surprise (the MDBList card
+                does the same for its lookups). Only the Exa free-tier line is Exa-specific. */}
+            <div className="space-y-1.5 rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+              <p className="font-medium text-foreground">
+                How much it searches
+              </p>
+              <p>
+                On a row&rsquo;s refresh night it runs one search per recent
+                watch, up to the{" "}
+                <a href="#recs-heading" className="font-medium underline">
+                  Recent watches to search
+                </a>{" "}
+                count (default 10). Results are cached for two weeks and shared
+                across everyone, so a popular title is searched once for the
+                whole server — not once per person.
+              </p>
+              {usesExa && (
+                <p>
+                  Exa&rsquo;s free tier covers roughly 1,000 searches a month —
+                  plenty for a small server. A large server, or a high recent
+                  count, may need a paid Exa plan.
+                </p>
+              )}
+            </div>
           </div>
         )}
       </CardContent>
