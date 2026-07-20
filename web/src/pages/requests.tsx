@@ -376,6 +376,15 @@ const RATING_OPTIONS: { value: string; label: string }[] = [
   { value: "9", label: "9+" },
 ];
 
+/** A vote-count floor — a high rating on a handful of votes is noise; this keeps only well-attested
+ *  titles. Values are strings for the shared Segmented control. */
+const VOTES_OPTIONS: { value: string; label: string }[] = [
+  { value: "0", label: "Any votes" },
+  { value: "100", label: "100+" },
+  { value: "500", label: "500+" },
+  { value: "1000", label: "1k+" },
+];
+
 /** Order a list by the chosen sort. `recent` = newest state change first, falling back to queue order
  *  (id) for items that were queued but never sent, so a sent log reads newest-first and a waiting
  *  queue keeps its arrival order. */
@@ -420,6 +429,7 @@ export function RequestsPage() {
   const [media, setMedia] = useState<MediaFilter>("all");
   const [sort, setSort] = useState<RequestSort>("recent");
   const [minRating, setMinRating] = useState("0");
+  const [minVotes, setMinVotes] = useState("0");
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -453,14 +463,20 @@ export function RequestsPage() {
       list.some((r) => r.media_type === "show");
     return mixed ? list.filter((r) => r.media_type === media) : list;
   };
-  // The rating floor hides weaker titles; like the media filter it narrows what's on screen (and so
-  // what select-all/counts act on).
+  // The rating and vote floors hide weaker titles; like the media filter they narrow what's on
+  // screen (and so what select-all/counts act on).
   const ratingFloor = Number(minRating) || 0;
-  const applyRating = <T extends { rating: number }>(list: T[]): T[] =>
-    ratingFloor <= 0 ? list : list.filter((r) => r.rating >= ratingFloor);
-  const pendingShown = sortRequests(applyRating(applyMedia(pending)), sort);
-  const sentShown = sortRequests(applyRating(applyMedia(sent)), sort);
-  const rejectedShown = sortRequests(applyRating(applyMedia(rejected)), sort);
+  const votesFloor = Number(minVotes) || 0;
+  const applyThresholds = <T extends { rating: number; vote_count: number }>(
+    list: T[],
+  ): T[] =>
+    list.filter((r) => r.rating >= ratingFloor && r.vote_count >= votesFloor);
+  const pendingShown = sortRequests(applyThresholds(applyMedia(pending)), sort);
+  const sentShown = sortRequests(applyThresholds(applyMedia(sent)), sort);
+  const rejectedShown = sortRequests(
+    applyThresholds(applyMedia(rejected)),
+    sort,
+  );
 
   // Only visible pending rows are selectable, so an id lingering in the set after a send/reject or a
   // filter change is harmless, but scoping to what's shown keeps the count honest.
@@ -578,6 +594,7 @@ export function RequestsPage() {
                           setView(next);
                           setMedia("all");
                           setMinRating("0");
+                          setMinVotes("0");
                         }}
                         ariaLabel="Which requests to show"
                       />
@@ -614,6 +631,14 @@ export function RequestsPage() {
                             onChange={setMinRating}
                             ariaLabel="Minimum rating"
                             options={RATING_OPTIONS}
+                          />
+                        )}
+                        {activeFull.length > 1 && (
+                          <Segmented
+                            value={minVotes}
+                            onChange={setMinVotes}
+                            ariaLabel="Minimum vote count"
+                            options={VOTES_OPTIONS}
                           />
                         )}
                       </div>

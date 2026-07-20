@@ -254,6 +254,25 @@ describe("RequestsPage", () => {
     expect(screen.queryByText("Middling")).toBeNull();
   });
 
+  it("hides thinly-voted titles below the chosen vote floor", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Well Attested",
+        vote_count: 4200,
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Barely Rated", vote_count: 12 }),
+    ]);
+    renderPage();
+    await screen.findByText("Well Attested");
+    expect(screen.getByText("Barely Rated")).toBeTruthy();
+    // A high score on 12 votes is noise — the 500+ floor drops it.
+    await userEvent.click(screen.getByRole("button", { name: "500+" }));
+    expect(screen.getByText("Well Attested")).toBeTruthy();
+    expect(screen.queryByText("Barely Rated")).toBeNull();
+  });
+
   it("offers no library split when the queue is a single media type", async () => {
     listRequests.mockResolvedValue([
       candidate({ id: 1, title: "Dune", media_type: "movie" }),

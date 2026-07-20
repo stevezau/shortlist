@@ -41,23 +41,36 @@ export function SettingsSubNav() {
 
   return (
     <div className="ml-4 mt-1 hidden border-l border-border/60 pl-2 md:block">
-      {SETTINGS_SECTIONS.map(({ id, label, icon: Icon }) => {
+      {SETTINGS_SECTIONS.map(({ id, label, icon: Icon, group }, i) => {
         const current = active === id;
+        // Emit a small group heading whenever the group changes, so the flat list reads as clusters.
+        const startsGroup = SETTINGS_SECTIONS[i - 1]?.group !== group;
         return (
-          <a
-            key={id}
-            href={`#${id}`}
-            aria-current={current ? "true" : undefined}
-            className={cn(
-              "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
-              current
-                ? "font-medium text-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          <div key={id}>
+            {startsGroup && (
+              <p
+                className={cn(
+                  "px-2.5 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide text-muted-foreground/70",
+                  i > 0 && "pt-3",
+                )}
+              >
+                {group}
+              </p>
             )}
-          >
-            <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            {label}
-          </a>
+            <a
+              href={`#${id}`}
+              aria-current={current ? "true" : undefined}
+              className={cn(
+                "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
+                current
+                  ? "font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {label}
+            </a>
+          </div>
         );
       })}
     </div>
