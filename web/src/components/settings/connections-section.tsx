@@ -109,7 +109,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
             {
               key: "curator.model",
               label: "Model (blank = a sensible default)",
-              kind: "text",
+              kind: "model",
               placeholder: "e.g. claude-haiku-4-5",
               showIf: (v) => v["curator.provider"] !== "none",
             },

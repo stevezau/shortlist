@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/secret-input";
 import { api, apiErrorMessage } from "@/lib/api";
 import { settingString } from "@/lib/format";
-import { useSaveSettings } from "@/lib/queries";
+import { useCuratorModels, useSaveSettings } from "@/lib/queries";
 import type { Settings, TestableService } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +30,10 @@ export type ConnectionField =
   | {
       key: string;
       label: string;
-      kind: "text" | "password";
+      // "model" renders a free-text input backed by a datalist of the AI provider's available
+      // models — pick one from the dropdown, or type any id to override. Needs a sibling
+      // `curator.provider` field on the same card so it knows whose models to list.
+      kind: "text" | "password" | "model";
       placeholder?: string;
       showIf?: (values: Record<string, string>) => boolean;
       /** Optional "Get a key ↗" link shown by the field. A function receives the current field
@@ -78,6 +81,28 @@ export function ConnectionCard({
   );
   const fieldId = useId();
   const configured = Boolean(summary);
+
+  // A "model" field lists the AI provider's available models in a datalist. Only fetch while the
+  // editor is open and this card actually has one — the endpoint reads the SAVED provider + key
+  // server-side, so the query is keyed on the current provider value for cache correctness and is
+  // gated on a saved credential (a key for the API providers, the URL for Ollama). Mirrors the
+  // setup wizard's guard so an unconfigured provider doesn't fire a request the server can't answer.
+  const provider = values["curator.provider"] ?? "";
+  const hasModelField = fields.some((f) => f.kind === "model");
+  const hasCuratorCredential =
+    provider === "ollama"
+      ? Boolean(settingString(settings, "curator.ollama_url"))
+      : settingString(settings, "curator.api_key") === REDACTED;
+  const models = useCuratorModels(
+    provider,
+    editing &&
+      hasModelField &&
+      Boolean(provider) &&
+      provider !== "none" &&
+      hasCuratorCredential,
+  );
+  const modelOptions = models.data?.models ?? [];
+  const modelListId = `${fieldId}-models`;
 
   // Auto-test a configured connection once when the page opens, so the dot shows real green/red
   // without the owner clicking Test on every card. Only configured services probe (nothing to test
@@ -231,6 +256,34 @@ export function ConnectionCard({
                         setValues((prev) => ({ ...prev, [field.key]: v }))
                       }
                     />
+                  ) : field.kind === "model" ? (
+                    <>
+                      <Input
+                        id={id}
+                        type="text"
+                        list={modelListId}
+                        placeholder={field.placeholder}
+                        value={values[field.key] ?? ""}
+                        onChange={(e) =>
+                          setValues((prev) => ({
+                            ...prev,
+                            [field.key]: e.target.value,
+                          }))
+                        }
+                      />
+                      <datalist id={modelListId}>
+                        {modelOptions.map((m) => (
+                          <option key={m} value={m} />
+                        ))}
+                      </datalist>
+                      <p className="text-xs text-muted-foreground">
+                        {models.isLoading
+                          ? "Loading available models…"
+                          : modelOptions.length
+                            ? "Pick one, or type any model id to override. Blank = a sensible default."
+                            : "Type a model id, or leave blank for a sensible default."}
+                      </p>
+                    </>
                   ) : (
                     <Input
                       id={id}
