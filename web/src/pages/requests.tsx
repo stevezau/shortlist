@@ -366,6 +366,16 @@ const SORT_OPTIONS: { value: RequestSort; label: string }[] = [
   { value: "demand", label: "Most wanted" },
 ];
 
+/** A rating floor to hide weaker titles. Every queued title already cleared the request min-rating
+ *  gate, so the useful thresholds sit above it — these narrow a crowded inbox to the strongest.
+ *  Values are strings because the shared Segmented control keys on string values. */
+const RATING_OPTIONS: { value: string; label: string }[] = [
+  { value: "0", label: "Any rating" },
+  { value: "7", label: "7+" },
+  { value: "8", label: "8+" },
+  { value: "9", label: "9+" },
+];
+
 /** Order a list by the chosen sort. `recent` = newest state change first, falling back to queue order
  *  (id) for items that were queued but never sent, so a sent log reads newest-first and a waiting
  *  queue keeps its arrival order. */
@@ -409,6 +419,7 @@ export function RequestsPage() {
   );
   const [media, setMedia] = useState<MediaFilter>("all");
   const [sort, setSort] = useState<RequestSort>("recent");
+  const [minRating, setMinRating] = useState("0");
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -442,9 +453,14 @@ export function RequestsPage() {
       list.some((r) => r.media_type === "show");
     return mixed ? list.filter((r) => r.media_type === media) : list;
   };
-  const pendingShown = sortRequests(applyMedia(pending), sort);
-  const sentShown = sortRequests(applyMedia(sent), sort);
-  const rejectedShown = sortRequests(applyMedia(rejected), sort);
+  // The rating floor hides weaker titles; like the media filter it narrows what's on screen (and so
+  // what select-all/counts act on).
+  const ratingFloor = Number(minRating) || 0;
+  const applyRating = <T extends { rating: number }>(list: T[]): T[] =>
+    ratingFloor <= 0 ? list : list.filter((r) => r.rating >= ratingFloor);
+  const pendingShown = sortRequests(applyRating(applyMedia(pending)), sort);
+  const sentShown = sortRequests(applyRating(applyMedia(sent)), sort);
+  const rejectedShown = sortRequests(applyRating(applyMedia(rejected)), sort);
 
   // Only visible pending rows are selectable, so an id lingering in the set after a send/reject or a
   // filter change is harmless, but scoping to what's shown keeps the count honest.
@@ -561,6 +577,7 @@ export function RequestsPage() {
                         onChange={(next) => {
                           setView(next);
                           setMedia("all");
+                          setMinRating("0");
                         }}
                         ariaLabel="Which requests to show"
                       />
@@ -589,6 +606,14 @@ export function RequestsPage() {
                             onChange={setSort}
                             ariaLabel="Sort requests"
                             options={SORT_OPTIONS}
+                          />
+                        )}
+                        {activeFull.length > 1 && (
+                          <Segmented
+                            value={minRating}
+                            onChange={setMinRating}
+                            ariaLabel="Minimum rating"
+                            options={RATING_OPTIONS}
                           />
                         )}
                       </div>

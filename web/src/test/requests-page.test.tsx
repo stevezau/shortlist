@@ -240,6 +240,20 @@ describe("RequestsPage", () => {
     ).toBeTruthy();
   });
 
+  it("hides titles below the chosen rating floor", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, tmdb_id: 100, title: "Acclaimed", rating: 9.1 }),
+      candidate({ id: 2, tmdb_id: 200, title: "Middling", rating: 5.2 }),
+    ]);
+    renderPage();
+    await screen.findByText("Acclaimed");
+    expect(screen.getByText("Middling")).toBeTruthy();
+    // Raise the floor to 8+ — the 5.2 title drops out, the 9.1 stays.
+    await userEvent.click(screen.getByRole("button", { name: "8+" }));
+    expect(screen.getByText("Acclaimed")).toBeTruthy();
+    expect(screen.queryByText("Middling")).toBeNull();
+  });
+
   it("offers no library split when the queue is a single media type", async () => {
     listRequests.mockResolvedValue([
       candidate({ id: 1, title: "Dune", media_type: "movie" }),
