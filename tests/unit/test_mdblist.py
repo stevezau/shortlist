@@ -91,9 +91,15 @@ class TestMdbListRating:
 
     @respx.mock
     def test_usage_and_ping_read_the_user_endpoint(self):
-        respx.get("https://api.mdblist.com/user").mock(
+        route = respx.get("https://api.mdblist.com/user").mock(
             return_value=httpx.Response(200, json={"api_requests": 1000, "api_requests_count": 137})
         )
         client = MdbListClient("k")
         assert client.usage() == (137, 1000)
+        assert route.call_count == 1  # usage = one /user call
+
+        # ping surfaces the same quota from a SINGLE /user call — it parses the response it already
+        # fetched rather than calling usage() again. The Test button auto-fires on page load, so a
+        # wasted second call billed two requests against the daily cap per settings view.
         assert "137 of 1000" in client.ping()
+        assert route.call_count == 2  # exactly one more, not two — ping is a single request

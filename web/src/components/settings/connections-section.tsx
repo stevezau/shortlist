@@ -10,6 +10,7 @@ import {
 import { ConnectionCard } from "@/components/connection-card";
 import { settingString } from "@/lib/format";
 import { CURATOR_PROVIDERS, findProvider } from "@/lib/providers";
+import { useRuns } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
 const PROVIDER_OPTIONS = CURATOR_PROVIDERS.map((provider) => ({
@@ -17,8 +18,21 @@ const PROVIDER_OPTIONS = CURATOR_PROVIDERS.map((provider) => ({
   label: provider.label,
 }));
 
+/** "Last run: 46 Exa searches" — a spend proxy for the Exa card (Exa has no live-quota endpoint,
+ * so the most recent finished run's search count is the closest thing to "usage today"). */
+function exaUsageNote(lastExa: number | undefined): string | undefined {
+  if (lastExa == null) return undefined;
+  return `Last run: ${lastExa.toLocaleString()} Exa search${lastExa === 1 ? "" : "es"} · billed per search`;
+}
+
 /** Connections: Plex, Tautulli, TMDB, and the AI curator — each editable and testable in place. */
 export function ConnectionsSection({ settings }: { settings: Settings }) {
+  const runs = useRuns();
+  const lastFinishedRun = runs.data?.find((r) => r.finished_at);
+  const exaConfigured = Boolean(settingString(settings, "exa.apikey"));
+  const exaFootnote = exaConfigured
+    ? exaUsageNote(lastFinishedRun?.stats?.exa_searches)
+    : undefined;
   return (
     <section
       id="connections"
@@ -219,6 +233,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           summary={settingString(settings, "exa.apikey") ? "API key saved" : ""}
           glyph={<Globe aria-hidden className="text-primary" />}
           fields={[{ key: "exa.apikey", label: "API key", kind: "password" }]}
+          footnote={exaFootnote}
         />
       </div>
       {/* Required by the TMDB API terms of use whenever their data is displayed. */}

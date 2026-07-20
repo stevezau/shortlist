@@ -244,6 +244,9 @@ function RunStatTiles({ run }: { run: RunDetail }) {
   const requested = s.titles_requested ?? 0;
   const tokens = s.llm_tokens ?? 0;
   const exa = s.exa_searches ?? 0;
+  // "web search 467,463 · final picks 52,625 tokens" — the trailing unit makes clear these are token
+  // counts, not the (separate) Exa search count shown in its own tile below.
+  const stepInline = tokenStepInline(s.llm_tokens_by_step);
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       <StatTile
@@ -276,7 +279,7 @@ function RunStatTiles({ run }: { run: RunDetail }) {
           icon={Sparkles}
           label="AI tokens"
           value={tokens.toLocaleString()}
-          hint={tokenStepInline(s.llm_tokens_by_step) || "curate + AI sources"}
+          hint={stepInline ? `${stepInline} tokens` : "curate + AI sources"}
           title="Total AI tokens this run cost, split by what the AI did. Turn AI sources off in Settings → Recommendations to lower it."
         />
       )}
@@ -285,7 +288,8 @@ function RunStatTiles({ run }: { run: RunDetail }) {
           icon={Search}
           label="Exa searches"
           value={exa}
-          hint="web lookups"
+          hint="web lookups · billed per search"
+          title="Number of Exa web-search requests this run made — a count, not tokens. Exa bills per search."
         />
       )}
     </div>

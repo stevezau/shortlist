@@ -61,6 +61,7 @@ export function ConnectionCard({
   settings,
   fields,
   summary,
+  footnote,
 }: {
   service: TestableService;
   title: string;
@@ -72,6 +73,8 @@ export function ConnectionCard({
   fields: ConnectionField[];
   /** One-line description of the saved config when idle (e.g. the URL, or "API key saved"). */
   summary: string;
+  /** Optional extra line shown under the card when idle — e.g. recent usage the owner should see. */
+  footnote?: ReactNode;
 }) {
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
   const save = useSaveSettings();
@@ -341,6 +344,9 @@ export function ConnectionCard({
           <p className="text-sm text-muted-foreground">
             {summary || "Not set up yet — choose Set up to connect."}
           </p>
+        )}
+        {footnote && !editing && (
+          <p className="mt-2 text-xs text-muted-foreground">{footnote}</p>
         )}
       </CardContent>
     </Card>

@@ -110,16 +110,15 @@ class MdbListClient:
             return None
         if r.status_code != 200:
             return None
-        try:
-            data = r.json()
-        except ValueError:
-            return None
-        used = _parse_int(data.get("api_requests_count"))
-        limit = _parse_int(data.get("api_requests"))
-        return (used or 0, limit) if limit is not None else None
+        return self._parse_usage(r)
 
     def ping(self) -> str:
-        """A tiny authenticated call for the settings 'Test' button; raises on a bad key."""
+        """A tiny authenticated call for the settings 'Test' button; raises on a bad key.
+
+        One ``/user`` call: the quota line is parsed from the same response, never a second request.
+        (The Test button auto-fires when the settings page opens, so a wasted extra call was billing
+        two requests against the daily cap per page view.)
+        """
         try:
             r = http_retry.get(f"{API}/user", params={"apikey": self._api_key}, timeout=self._timeout)
         except httpx.HTTPError as e:
@@ -128,8 +127,19 @@ class MdbListClient:
             raise MdbListError("MDBList rejected the API key")
         if r.status_code != 200:
             raise MdbListError(f"MDBList returned HTTP {r.status_code}")
-        usage = self.usage()
+        usage = self._parse_usage(r)
         return f"Connected — {usage[0]} of {usage[1]} requests used today" if usage else "Connected to MDBList"
+
+    @staticmethod
+    def _parse_usage(response: httpx.Response) -> tuple[int, int] | None:
+        """(requests used today, daily allowance) from a ``/user`` response body, or None if unreadable."""
+        try:
+            data = response.json()
+        except ValueError:
+            return None
+        used = _parse_int(data.get("api_requests_count"))
+        limit = _parse_int(data.get("api_requests"))
+        return (used or 0, limit) if limit is not None else None
 
 
 def _normalise(value: object, source: str) -> float | None:
