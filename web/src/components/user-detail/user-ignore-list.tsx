@@ -40,9 +40,9 @@ export function UserIgnoreList({ user }: { user: User }) {
     <Card>
       <CardContent className="space-y-3 pt-6">
         <p className="text-sm text-muted-foreground">
-          Titles {user.display_name ?? user.username} never wants involved.
-          Block a pick from their row or the Runs page — this is where you undo
-          it. Changes apply on their next run.
+          Titles {user.display_name ?? user.username} never wants involved. Use
+          the ignore buttons on any of their picks above to add one — this is
+          where you undo it. Changes apply on their next run.
         </p>
 
         {blocked.isLoading && <Skeleton className="h-16 w-full" />}

@@ -106,8 +106,8 @@ user. Posters are cosmetic — a poster that can't be made never blocks a row fr
 ## Ignoring a title
 
 Not everything someone watches should shape what they're shown — one Western, one football match,
-one thing watched out of curiosity, and the row fills with more of the same. Every pick (on a
-person's page, and on the Runs page) has two ignore controls:
+one thing watched out of curiosity, and the row fills with more of the same. Open a person (Users →
+click them); every pick in their rows has two ignore controls:
 
 - **Never suggest this** — the title is dropped from that person's pool from the next run on. It
   stays blocked even on a row that allows already-watched titles.
