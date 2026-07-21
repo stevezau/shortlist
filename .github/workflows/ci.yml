@@ -31,21 +31,20 @@ jobs:
 
   test-python:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+      # 3.12 only, deliberately: the shipped artifact is a single Docker image built
+      # FROM python:3.12-slim, so 3.12 is the only interpreter this runs on in
+      # production. Bump this in the same change as the Dockerfile base image.
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
       - run: pip install -e ".[dev]"
       # --cov-report=xml adds an XML report on top of the term-missing one in
       # pyproject addopts, so Codecov has a file to ingest (badge stays "unknown"
-      # without it). Only the 3.12 job uploads, to avoid double-counting.
+      # without it).
       - run: pytest --cov-report=xml
       - uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.12'
         continue-on-error: true
         with:
           files: ./coverage.xml
