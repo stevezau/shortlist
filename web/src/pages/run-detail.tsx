@@ -245,6 +245,9 @@ function RunStatTiles({ run }: { run: RunDetail }) {
   const s = run.stats;
   const elapsed = runElapsedMs(run.started_at, run.finished_at);
   const failed = s.users_error ?? 0;
+  // Skipped is neither a success nor a failure — a run where everyone was skipped used to read
+  // "3 · all succeeded" above three rows badged "Skipped".
+  const skipped = s.users_skipped ?? 0;
   const requested = s.titles_requested ?? 0;
   const tokens = s.llm_tokens ?? 0;
   const exa = s.exa_searches ?? 0;
@@ -263,8 +266,14 @@ function RunStatTiles({ run }: { run: RunDetail }) {
         icon={Users}
         label="People"
         value={s.users_ok ?? 0}
-        hint={failed > 0 ? `${failed} failed` : "all succeeded"}
-        tone={failed > 0 ? "destructive" : "success"}
+        hint={
+          failed > 0
+            ? `${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ""}`
+            : skipped > 0
+              ? `${skipped} skipped, built nothing`
+              : "all succeeded"
+        }
+        tone={failed > 0 ? "destructive" : skipped > 0 ? "warning" : "success"}
       />
       <StatTile
         icon={Shuffle}
@@ -519,6 +528,12 @@ function UserRow({
           <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
           Failed
         </span>
+      ) : result.status === "skipped" ? (
+        // A green tick on someone who built nothing is the row-level version of "all succeeded".
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          Skipped
+          <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
       ) : (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
           {formatDuration(result.duration_ms)}
@@ -544,22 +559,31 @@ function UserTabs({
   const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
   const q = query.trim().toLowerCase();
   const failedTotal = results.filter((r) => r.error !== null).length;
-  const okTotal = results.length - failedTotal;
-  const mixed = failedTotal > 0 && okTotal > 0; // a status filter only helps when there's a mix
+  const skippedTotal = results.filter(
+    (r) => r.error === null && r.status === "skipped",
+  ).length;
+  const okTotal = results.length - failedTotal - skippedTotal;
+  // Three outcomes, so classify by all three EVERYWHERE. Grouping on `error === null` alone put
+  // skipped people under a "Succeeded" heading while their own row said "Skipped" — the same
+  // contradiction the stat tile had, surviving one level down.
+  const isSkipped = (r: RunUserResult) =>
+    r.error === null && r.status === "skipped";
+  const isOk = (r: RunUserResult) => r.error === null && !isSkipped(r);
+  const mixed = failedTotal > 0 && okTotal + skippedTotal > 0; // a filter only helps when there's a mix
   const byStatus =
     !mixed || filter === "all"
       ? results
-      : results.filter((r) =>
-          filter === "failed" ? r.error !== null : r.error === null,
-        );
+      : results.filter((r) => (filter === "failed" ? r.error !== null : !r.error));
   const shown = q
     ? byStatus.filter((r) => r.username.toLowerCase().includes(q))
     : byStatus;
   const failed = shown.filter((r) => r.error !== null);
-  const ok = shown.filter((r) => r.error === null);
+  const ok = shown.filter(isOk);
+  const skipped = shown.filter(isSkipped);
   const many = results.length > 10;
-  // Show a group label only when both groups are on screen — otherwise the filter/summary says it.
-  const bothGroups = failed.length > 0 && ok.length > 0;
+  // Show group labels only when more than one group is on screen — otherwise the summary says it.
+  const bothGroups =
+    [failed.length, ok.length, skipped.length].filter(Boolean).length > 1;
 
   return (
     <div className="space-y-3" role="tablist" aria-label="Users in this run">
@@ -572,7 +596,7 @@ function UserTabs({
             options={[
               { value: "all", label: `All ${results.length}` },
               { value: "failed", label: `Failed ${failedTotal}` },
-              { value: "ok", label: `OK ${okTotal}` },
+              { value: "ok", label: `OK ${okTotal + skippedTotal}` },
             ]}
           />
         ) : (
@@ -581,8 +605,10 @@ function UserTabs({
               <span className="font-medium text-destructive">
                 {failedTotal} failed
               </span>
+            ) : okTotal === 0 && skippedTotal > 0 ? (
+              `${skippedTotal} skipped — nothing was built`
             ) : (
-              `${okTotal} succeeded`
+              `${okTotal} succeeded${skippedTotal > 0 ? `, ${skippedTotal} skipped` : ""}`
             )}
           </p>
         )}
@@ -611,8 +637,21 @@ function UserTabs({
               onSelect={onSelect}
             />
           ))}
-          {bothGroups && <GroupLabel>Succeeded · {ok.length}</GroupLabel>}
+          {bothGroups && ok.length > 0 && (
+            <GroupLabel>Succeeded · {ok.length}</GroupLabel>
+          )}
           {ok.map((result) => (
+            <UserRow
+              key={result.slug}
+              result={result}
+              selected={selected}
+              onSelect={onSelect}
+            />
+          ))}
+          {bothGroups && skipped.length > 0 && (
+            <GroupLabel>Skipped · {skipped.length}</GroupLabel>
+          )}
+          {skipped.map((result) => (
             <UserRow
               key={result.slug}
               result={result}

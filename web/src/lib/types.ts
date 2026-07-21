@@ -217,6 +217,8 @@ export interface ApiTokenCreated {
 export interface RunStats {
   users_ok: number;
   users_error: number;
+  /** Built nothing, but nothing went wrong (no row was due for them). Absent on legacy runs. */
+  users_skipped?: number;
   /** Titles added to rows across all users this run. */
   titles_added?: number;
   /** Titles rotated out of rows across all users this run. */

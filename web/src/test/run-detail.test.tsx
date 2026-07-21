@@ -376,3 +376,67 @@ describe("RunDetailPage — grouped by library", () => {
     ).toBeInTheDocument();
   });
 });
+
+
+function skippedUser(username: string, i: number) {
+  return {
+    username,
+    slug: username,
+    status: "skipped",
+    error: null,
+    reason: "There are no per-person rows to build.",
+    duration_ms: 0,
+    llm_tokens: 0,
+    diff: {},
+    picks: [],
+    breakdown: [],
+    id: i,
+  };
+}
+
+describe("RunDetail — a skipped person is not a success", () => {
+  it("groups skipped apart from succeeded when a run has all three outcomes", async () => {
+    // The same "count says success, row says skipped" bug, one level down: grouping on
+    // `error === null` put skipped people under the "Succeeded" heading.
+    const r = run([]);
+    r.stats = { users_ok: 1, users_error: 1, users_skipped: 1, titles_requested: 0 };
+    r.users = [
+      { ...skippedUser("sarah", 1), status: "ok", reason: null },
+      { ...skippedUser("mike", 2), error: "boom", status: "error", reason: null },
+      skippedUser("canary", 3),
+    ] as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail();
+
+    expect(await screen.findByText(/Succeeded · 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Skipped · 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Failed · 1/i)).toBeInTheDocument();
+  });
+
+  it("does not claim 'all succeeded' when everyone was skipped", async () => {
+    // The contradiction this fixes: three rows badged "Skipped" under a header reading
+    // "3 · all succeeded", because the stats only ever counted error vs non-error.
+    const r = run([]);
+    r.stats = { users_ok: 0, users_error: 0, users_skipped: 3, titles_requested: 0 };
+    r.users = ["sarah", "mike", "canary"].map((u, i) =>
+      skippedUser(u, i),
+    ) as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail();
+
+    // Both surfaces that used to say "succeeded": the People tile's hint and the list summary.
+    expect(
+      await screen.findByText(/3 skipped, built nothing/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/3 skipped — nothing was built/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("all succeeded")).toBeNull();
+    // …and the person panel explains WHY rather than leaving them on "Working on this person…".
+    expect(
+      await screen.findByText(/no per-person rows to build/i),
+    ).toBeInTheDocument();
+  });
+});

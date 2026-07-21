@@ -357,7 +357,10 @@ class RunService:
         with self._sessions() as session:
             run = session.get(Run, run_id)
             users_by_slug = {u.slug: u for u in session.query(User).all()}
-            ok = errors = 0
+            # Skipped is its OWN outcome, not a success: a skipped user built nothing, and folding
+            # them into `ok` made a run where every single person was skipped report "3 succeeded ·
+            # all succeeded" above three rows badged "Skipped".
+            ok = errors = skipped = 0
             for user_report in report.users:
                 user = users_by_slug.get(user_report.slug)
                 if user is None:
@@ -369,10 +372,14 @@ class RunService:
                     if user_report.slug.startswith(f"{SHARED_SLUG_PREFIX}_"):
                         if user_report.status == "error":
                             errors += 1
+                        elif user_report.status == "skipped":
+                            skipped += 1
                         self._emit_shared_row_event(session, run_id, user_report, report.dry_run)
                     continue
                 if user_report.status == "error":
                     errors += 1
+                elif user_report.status == "skipped":
+                    skipped += 1
                 else:
                     ok += 1
                 # Skip anyone already written by the live per-user persist — still counted above for
@@ -386,7 +393,7 @@ class RunService:
             self._persist_request_queue(session, run_id, report)
             if report.error:
                 self._add_event(session, "run", "error", run_id, error=report.error)
-            self._finalize_run(run, report, status, error, ok, errors)
+            self._finalize_run(run, report, status, error, ok, errors, skipped)
             from shortlist.server.settings_store import SettingsStore
 
             self._prune_runs(session, int(SettingsStore(session).get("runs.retention")))
@@ -675,7 +682,9 @@ class RunService:
                     row.arr_slug = m.arr_slug
 
     @staticmethod
-    def _finalize_run(run: Run, report, status: str | None, error: str | None, ok: int, errors: int) -> None:
+    def _finalize_run(
+        run: Run, report, status: str | None, error: str | None, ok: int, errors: int, skipped: int = 0
+    ) -> None:
         # `report.ok` — not `errors == 0`. A run-level failure (the sweep could not run, so we
         # refused to write) has no per-user error to count, and must never report success.
         run.status = status or ("ok" if report.ok else "error")
@@ -693,6 +702,8 @@ class RunService:
         run.stats = {
             "users_ok": ok,
             "users_error": errors,
+            # Built nothing, but nothing went wrong — see RunUser.reason for which case it was.
+            "users_skipped": skipped,
             "dry_run": report.dry_run,
             "rows_swept": sum(len(titles) for titles in report.swept_rows.values()),
             "shares_updated": len(report.filter_writes),
