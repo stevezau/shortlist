@@ -29,7 +29,7 @@ framework-agnostic; the app layer (Flask+SocketIO+Jinja in MPG) is NOT what Shor
 | `.pre-commit-config.yaml`, `.codecov.yml`, `.gitattributes`, `.dockerignore`                                                                                                         | Port                                                                                                                                        |
 | `README.md` structure                                                                                                                                                                | Port the shape: shields (+ AI-Assisted badge), logo, About/Problem/Solution, screenshots table, Quick Start, docs-hub table                 |
 | `docs/` hub (`README/getting-started/guides/reference/faq`)                                                                                                                          | Port structure                                                                                                                              |
-| `DOCKERHUB_README.md`, `docker-compose.example.yml`, `unraid-templates/`                                                                                                             | Port patterns (Unraid = big homelab reach)                                                                                                  |
+| `docker-compose.example.yml`, `unraid-templates/`                                                                                                                                    | Port patterns (Unraid = big homelab reach)                                                                                                  |
 | `llms.txt`                                                                                                                                                                           | Port (AI-readable repo summary)                                                                                                             |
 | `CONTRIBUTING.md`                                                                                                                                                                    | Port + adapt                                                                                                                                |
 | Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                              |
@@ -97,7 +97,7 @@ shortlist/
 ├── docker-compose.example.yml
 ├── pyproject.toml                # ruff config, pytest config (cov target 80%), hatchling
 ├── Makefile                      # dev, test, lint, e2e, build
-└── README.md · DOCKERHUB_README.md · CONTRIBUTING.md · LICENSE(MIT) · llms.txt
+└── README.md · CONTRIBUTING.md · LICENSE(MIT) · llms.txt
 ```
 
 **The contract that keeps this honest:** `shortlist/engine/` imports nothing from `shortlist/server/`.
@@ -218,7 +218,7 @@ GitHub Release → images.
 | **1 — Engine + pilot** (~1 wk + soak) | `engine/` + `clients/` + unit suite. Runs nightly on plex host (`error_checker.sh`). Rollout 5→15→40 users                                                                  | 1–2 wks nightly runs, zero privacy incidents, hit-rate baseline |
 | **2 — Server + UI core** (~2 wks)     | FastAPI + DB + scheduler + SSE; dashboard/users/runs/settings                                                                                                               | Steve manages his instance via UI, cron retired                 |
 | **3 — Onboarding** (~1 wk)            | PIN auth, wizard 0–7, uninstall/restore, fake_plex e2e                                                                                                                      | Clean-server `docker run` → rows with zero docs                 |
-| **4 — Ship-ready** (~1 wk)            | README/docs/screenshots/GIF, Unraid template, DOCKERHUB_README, issue templates, 3–5 external beta testers                                                                  | Beta onboards unassisted                                        |
+| **4 — Ship-ready** (~1 wk)            | README/docs/screenshots/GIF, Unraid template, issue templates, 3–5 external beta testers                                                                                    | Beta onboards unassisted                                        |
 | **5 — Launch**                        | r/selfhosted + r/PleX posts, Awesome-Selfhosted PR                                                                                                                          | v1.0 public                                                     |
 
 ---
