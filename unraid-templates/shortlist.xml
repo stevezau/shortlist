@@ -2,16 +2,24 @@
 <Container version="2">
   <Name>shortlist</Name>
   <Repository>ghcr.io/stevezau/shortlist:latest</Repository>
-  <Registry>https://ghcr.io/stevezau/shortlist</Registry>
+  <Registry>https://github.com/stevezau/shortlist/pkgs/container/shortlist</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
   <Support>https://github.com/stevezau/shortlist/issues</Support>
   <Project>https://github.com/stevezau/shortlist</Project>
-  <Overview>A private, AI-curated "Picked for You" row for every user on your Plex server. Each user gets a personal collection row built nightly from their own watch history — visible only to them (Plex Pass + PMS 1.43.2+). Each row is a labeled collection excluded on every other account's share — delivered hidden and only promoted once those exclusions are in place; fully reversible uninstall; works with or without an LLM key.</Overview>
-  <Category>MediaServer:Other Tools:</Category>
+  <ReadMe>https://github.com/stevezau/shortlist/blob/master/README.md</ReadMe>
+  <!-- Pinned to master (the stable branch), not the dev default branch, so CA never serves an
+       unreleased template edit. Keep this file identical on dev and master. -->
+  <TemplateURL>https://raw.githubusercontent.com/stevezau/shortlist/master/unraid-templates/shortlist.xml</TemplateURL>
+  <Beta>true</Beta>
+  <Overview>A private, personalized "Picked for You" row for every user on your Plex server. Each user gets a personal collection row built automatically from their own watch history — visible only to them, never to anyone else. Optional AI curation (Claude / OpenAI / Gemini / local Ollama) explains each pick with a "Because you watched X", or run it with no AI at all. Only ever recommends titles already in your library, and can optionally ask Radarr/Sonarr for the ones you're missing. Each row is a labeled collection excluded on every other account's share — delivered hidden and only promoted once those exclusions are in place — with a fully reversible uninstall that restores your share filters from a snapshot. NOTE: this is a public beta; please report issues on GitHub.</Overview>
+  <Category>MediaServer:Other</Category>
   <WebUI>http://[IP]:[PORT:5959]</WebUI>
-  <Icon>https://raw.githubusercontent.com/stevezau/shortlist/master/web/public/favicon.svg</Icon>
+  <Icon>https://raw.githubusercontent.com/stevezau/shortlist/master/unraid-templates/shortlist-icon.png</Icon>
+  <Screenshot>https://raw.githubusercontent.com/stevezau/shortlist/master/docs/images/plex-picked-for-you.jpg</Screenshot>
+  <Requires>Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin account, and a free TMDB API key. Tautulli and an LLM API key are optional.</Requires>
+  <ExtraSearchTerms>plex recommendations picked for you personalized rows collections tautulli radarr sonarr</ExtraSearchTerms>
   <Config Name="WebUI Port" Target="5959" Default="5959" Mode="tcp" Description="Web UI port" Type="Port" Display="always" Required="true" Mask="false">5959</Config>
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/shortlist" Mode="rw" Description="Shortlist config, database and logs" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/shortlist</Config>
   <Config Name="PUID" Target="PUID" Default="99" Description="User ID" Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
