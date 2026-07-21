@@ -3,7 +3,12 @@
 > A private, personalized **"Picked for You"** row for every user on your Plex server.
 
 [![CI](https://github.com/stevezau/shortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/stevezau/shortlist/actions/workflows/ci.yml)
-[![Docker](https://github.com/stevezau/shortlist/actions/workflows/docker.yml/badge.svg)](https://github.com/stevezau/shortlist/actions/workflows/docker.yml)
+[![Coverage](https://img.shields.io/codecov/c/github/stevezau/shortlist)](https://codecov.io/gh/stevezau/shortlist)
+[![Latest release](https://img.shields.io/github/v/release/stevezau/shortlist?include_prereleases&label=release)](https://github.com/stevezau/shortlist/releases)
+[![Stars](https://img.shields.io/github/stars/stevezau/shortlist)](https://github.com/stevezau/shortlist/stargazers)
+[![Forks](https://img.shields.io/github/forks/stevezau/shortlist)](https://github.com/stevezau/shortlist/network/members)
+[![Open issues](https://img.shields.io/github/issues/stevezau/shortlist)](https://github.com/stevezau/shortlist/issues)
+[![Contributors](https://img.shields.io/github/contributors/stevezau/shortlist)](https://github.com/stevezau/shortlist/graphs/contributors)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![AI-Assisted](https://img.shields.io/badge/AI-assisted%20development-8A2BE2)
 

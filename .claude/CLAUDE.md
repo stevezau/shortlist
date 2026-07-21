@@ -70,6 +70,10 @@ See shortlist-architecture.md §2–§4 for the full tree, DB schema, and API su
 
 ## Conventions
 
+- **Branch model** (mirrors media_preview_generator): `dev` is the default/working branch — commit
+  and push here; every green `dev` push publishes `ghcr.io/stevezau/shortlist:dev`. `master` is the
+  stable branch, advanced only by promoting `dev` → `master` via PR at release time. Releases are cut
+  by tagging `vX.Y.Z` (CI builds `:latest` + `:X.Y.Z`). Publishing is gated on lint+tests+e2e green.
 - **Conventional Commits** (`feat:`, `fix:`, `docs:`, `test:`, `chore:`)
 - **Before creating any commit, dispatch the Architecture Review agent**
   (`.claude/agents/architecture-review.md`) against the staged diff. Block on HIGH findings.

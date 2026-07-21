@@ -2,8 +2,20 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [dev]
+    tags: ["v*"]
   pull_request:
+    branches: [master, dev]
+  workflow_dispatch:
+
+# Cancel superseded PR runs; never cancel an in-flight push to dev/tags so a
+# partially-pushed image manifest is not aborted mid-write.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
   lint:
@@ -28,11 +40,16 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
-      - run: pytest
+      # --cov-report=xml adds an XML report on top of the term-missing one in
+      # pyproject addopts, so Codecov has a file to ingest (badge stays "unknown"
+      # without it). Only the 3.12 job uploads, to avoid double-counting.
+      - run: pytest --cov-report=xml
       - uses: codecov/codecov-action@v4
         if: matrix.python-version == '3.12'
         continue-on-error: true
         with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
   test-web:
@@ -71,3 +88,46 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: playwright install --with-deps chromium
       - run: pytest -m e2e --no-cov
+
+  docker:
+    # Publish gate: build + push the image ONLY after lint, both Python versions,
+    # web tests, and e2e are all green. Runs on push events only (dev branch +
+    # v* tags) — never on pull_request (a PR must not publish) and never on
+    # workflow_dispatch (a manual run from a non-dev/non-tag ref would compute an
+    # empty tag set and push nothing). dev push -> :dev; tag push -> :latest + :<version>.
+    needs: [lint, test-python, test-web, e2e]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=semver,pattern={{version}}
+            # During 0.x beta, :latest intentionally follows EVERY release tag
+            # (including -beta.N) so testers pulling :latest get the newest beta.
+            # When the first STABLE (v0.1.0) ships, switch this to metadata-action's
+            # `flavor: latest=auto` so a later -beta tag can't clobber stable's :latest.
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
