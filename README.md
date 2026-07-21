@@ -23,6 +23,10 @@ probably want to, and puts it on their Plex home screen. It's **private**: each 
 their own row, nobody else's. It refreshes automatically. It turns your library into something
 everyone can actually discover from.
 
+![A "TV Shows Picked for You" row on Plex Home](docs/images/plex-picked-for-you.jpg)
+
+<sub>A live "Picked for You" row on Plex Home — private to that user, built from their watch history.</sub>
+
 ## Why this couldn't exist before 2026
 
 Per-user private collections were impossible until Plex fixed label restrictions on
@@ -73,6 +77,17 @@ labeled collection excluded on every other account's share, so only its owner ev
   single change, until you're happy.
 - 📦 **Homelab-native** — one container, `/config` volume, dark UI, GHCR multi-arch, healthcheck,
   Unraid template.
+
+## Screenshots
+
+|                                                               |                                                                     |
+| ------------------------------------------------------------- | ------------------------------------------------------------------- |
+| ![Setup wizard](docs/images/wizard.png)                       | ![A user's picks and why](docs/images/user-detail.png)              |
+| **A ~10-minute setup wizard** — connect Plex, pick users, go  | **Each person's row, and _why_ each pick** — "Because you watched…" |
+| ![A run in progress](docs/images/run-detail.png)              | ![Settings & integrations](docs/images/settings.png)                |
+| **Watch every run** — history → candidates → curate → deliver | **Connects to what you run** — Tautulli, Radarr/Sonarr, Trakt, LLMs |
+
+<sub>App screenshots use placeholder titles (a test library); the Plex row above is a real server.</sub>
 
 ## Quick start
 
