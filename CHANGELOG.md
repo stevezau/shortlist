@@ -4,6 +4,72 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.2] - 2026-07-22
+
+Second beta. Mostly the things the first beta's users ran into.
+
+### The owner is a user now
+
+- **You get a row too.** Shortlist only ever built rows for accounts you *share with*, so on a
+  one-person server it did nothing at all — plex.tv's user list never includes the account that owns
+  the server ([#1]). The owner is now synced like anyone else, disabled by default so an existing
+  install gains a switch rather than a row appearing unannounced. Their watch history is read from
+  the PMS local account, which is named after your plex.tv **username**, not your display title.
+- **The honest caveat, stated up front.** Plex cannot hide a collection from the server owner, so
+  your own Home shows *every* user's row. The app says so where it matters instead of leaving you to
+  discover it.
+
+### Say why, not just what
+
+- **Every skip explains itself** ([#3]). "Skipped" used to be the whole message. A run now records
+  the reason per person — no watch history yet, no candidates survived filtering, the row's
+  libraries don't match their share — and shows it in the run detail.
+- **A failed run names the account that blocked it** and what went wrong, rather than
+  "promotion skipped — a privacy sync failed this run".
+- **A skipped person is no longer counted as a success.** Three skipped users reported as
+  "3 succeeded".
+
+### Logs, in the app
+
+- **A Logs view** — filter by level, search, follow live, copy, or download every log file as a zip.
+  Built because diagnosing the first beta meant asking people to fish `logs.log` out of a container.
+- **Redacted before you ever see it.** Plex tokens, bearer credentials and provider API keys
+  (Anthropic, OpenAI including `sk-proj-`/`sk-or-v1-`, Google, xAI, Groq) are stripped from every
+  line served, copied, or exported — the whole point of the view is that the output is shareable.
+
+### Rows and users
+
+- **Nicknames** ([#4]) — call someone what they're actually called in a row title, without touching
+  their Plex username. The label never moves, so their row stays private. A Tautulli rename now
+  renames the collections already on Plex instead of leaving a stale duplicate.
+- **Watch history is scoped to the row's own libraries.** A row built from your 4K library was
+  seeded by what you watched anywhere, so its picks could be shaped by history from a library that
+  row never touches.
+
+### One local-AI provider
+
+- **"Local / OpenAI-compatible" replaces the separate Ollama and OpenAI-compatible options**
+  ([#7]). llama.cpp, LM Studio, vLLM, LocalAI, Ollama and OpenRouter all speak the same
+  `/v1/chat/completions`, so one provider with a base URL covers all of them. Existing Ollama setups
+  migrate automatically. A bare host gains `/v1` for you; **Test** lists your models instead of
+  making one generate, so it answers instantly.
+- **It now survives the servers it exists for.** The request degrades from OpenAI's strict
+  JSON-schema mode to plain JSON mode to neither, since older local builds reject the strict form
+  outright; and a blank **Model** resolves to a chat model the server actually reports, rather than
+  OpenAI's default (which vLLM and LM Studio reject) or the alphabetically-first name (which on a
+  stock Ollama box is an embedding model that cannot chat).
+
+### Also
+
+- The users roster can be re-synced after setup, not only during it.
+- Unraid Community Applications template and CA profile.
+- CI tests only Python 3.12 — the version the image actually ships.
+
+[#1]: https://github.com/stevezau/shortlist/issues/1
+[#3]: https://github.com/stevezau/shortlist/issues/3
+[#4]: https://github.com/stevezau/shortlist/issues/4
+[#7]: https://github.com/stevezau/shortlist/issues/7
+
 ## [0.1.0-beta] - 2026-07-21
 
 First public beta. Everything below ships in this release.
