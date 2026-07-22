@@ -782,6 +782,7 @@ def _run_user(
                 # rest from its fresh candidates. (At pct == 0 the pool already dropped finished ones.)
                 sec_picks = _apply_watched_cap(sec_picks, sub, watched_titles, k, pct)
             section_picks[section.key] = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
+            _log_row_provenance(user, spec, section, section_picks[section.key], sub, k)
         # Stamp each pick with the row AND the library it belongs to, so the user page can group picks
         # per row and the effectiveness report can split a multi-library row into one line per library.
         library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
@@ -1088,12 +1089,73 @@ def _shared_row(
     return agg if picks else None
 
 
+# Below this, a title is in the pool because TMDB mentioned it somewhere near the bottom of a list,
+# not because it resembles anything the person watched. A row of four genuinely-similar titles is
+# worth more than ten where six are filler — and filler is what a beta user saw when a medical drama
+# produced The Sandman, Servant and Torchwood, each captioned "Because you watched The Pitt".
+# Sources with no ranking of their own sit at the neutral 1.0 and so are never filtered out here.
+MIN_FILLER_AFFINITY = 0.35
+
+
+def _log_row_provenance(
+    user: UserProfile,
+    spec: RowSpec,
+    section,
+    picks: list[Pick],
+    pool: list[Candidate],
+    wanted: int,
+) -> None:
+    """Explain a finished row in the log: what went in, and what was rejected as too loose.
+
+    A beta user reported a medical-drama row full of fantasy, and answering "why?" meant querying
+    TMDB by hand — nothing in the log said where any pick came from or how strong the claim was. One
+    DEBUG block per row makes the same question answerable from a downloaded log.
+    """
+    label = f"{user.username}/{spec.slug}@{getattr(section, 'title', '?')}"
+    if not picks:
+        logger.debug("{}: no picks — {} candidates, none worth delivering", label, len(pool))
+        return
+    logger.debug("{}: {} picks from {} candidates (row size {})", label, len(picks), len(pool), wanted)
+    for pick in picks:
+        logger.debug(
+            "  #{} {} — {} · {} · affinity {:.2f}",
+            pick.rank,
+            pick.title,
+            f"seed {pick.seed_title}" if pick.seed_title else "no seed",
+            "+".join(pick.sources) or "source not recorded",
+            pick.affinity,
+        )
+    if len(picks) < wanted:
+        # The row is deliberately short: `_pad_picks` refused to fill it from the tail. Say so, or
+        # it reads as a bug — a short row is the fix working, not the pipeline failing.
+        too_loose = [c for c in pool if c.affinity < MIN_FILLER_AFFINITY]
+        logger.info(
+            "{}: row is {} short of {} — {} candidate(s) were too loosely related to deliver{}",
+            label,
+            wanted - len(picks),
+            wanted,
+            len(too_loose),
+            f" (closest rejected: {max(too_loose, key=lambda c: c.affinity).title})" if too_loose else "",
+        )
+
+
 def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]:
-    """Top up short curator output from the heuristic order (never invents titles)."""
+    """Top up short curator output from the heuristic order (never invents titles).
+
+    Only from candidates whose source actually vouched for them: padding is where a weak association
+    turns into a delivered row, so the row is allowed to come up short instead.
+    """
     have = {(p.tmdb_id, p.media_type) for p in picks}  # movie 1399 and TV 1399 are different titles
+    worth_it = [c for c in ranked if c.affinity >= MIN_FILLER_AFFINITY]
+    if len(worth_it) < len(ranked):
+        logger.debug(
+            "padding: {} of {} candidates were too loosely related to deliver",
+            len(ranked) - len(worth_it),
+            len(ranked),
+        )
     fillers = NullCurator().curate(
         UserProfile(username="", plex_account_id=0, user_type=UserType.SHARED),
-        [c for c in ranked if (c.tmdb_id, c.media_type) not in have],
+        [c for c in worth_it if (c.tmdb_id, c.media_type) not in have],
         k - len(picks),
     )
     out = list(picks)
@@ -1130,6 +1192,7 @@ def _cold_start_picks(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, 
                     rank=len(picks) + 1,
                     reason="Popular on this server",
                     media_type=kind,
+                    sources=["cold_start"],  # no history to work from — say so rather than imply a match
                 )
             )
     return picks

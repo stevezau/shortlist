@@ -169,6 +169,21 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     report = engine_run(ctx, users)
 
     assert report.ok, [(u.username, u.error) for u in report.users]
+
+    # Provenance survives the whole pipeline — candidate source -> ranking -> curator -> Pick.
+    # Asserted here rather than in a unit test because every link in that chain is real: the actual
+    # TmdbClient calling the actual /recommendations and /similar endpoints, then the actual ranking.
+    delivered = [p for u in report.users for p in u.picks]
+    assert delivered, "nothing was delivered, so provenance proves nothing"
+    for pick in delivered:
+        assert pick.sources, f"{pick.title} reached the row with no record of what suggested it"
+        assert 0 < pick.affinity <= 1.0, f"{pick.title} has a nonsense affinity {pick.affinity}"
+    seeded = [p for p in delivered if "tmdb_similar" in p.sources]
+    assert seeded, "the TMDB source produced nothing, so affinity was never exercised"
+    assert any(p.affinity < 1.0 for p in seeded), (
+        "every TMDB pick scored a perfect 1.0 — position is being discarded again, which is the "
+        "exact bug that filled a medical-drama row with fantasy"
+    )
     by_slug = {u.slug: u for u in report.users}
     assert by_slug["sarah"].status == "ok"
     assert by_slug["mike"].status == "ok"

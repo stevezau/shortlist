@@ -1,5 +1,8 @@
 # ---- web build ------------------------------------------------------------------
-FROM node:22-alpine AS web
+# --platform=$BUILDPLATFORM: the web build emits static files, which are identical whatever the
+# target architecture — so it runs natively on the builder instead of once per platform under QEMU.
+# Emulating a pnpm build for arm64 cost minutes and produced byte-identical output.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /build
 RUN corepack enable
 # pnpm-workspace.yaml carries the approved build scripts (esbuild); without it pnpm 10
@@ -19,12 +22,25 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
-COPY shortlist/ ./shortlist/
-# Bundle every LLM provider SDK — the container is the whole product, so the curator must work
-# for whichever provider the owner picks in setup without them shelling in to pip install extras.
-# (ollama/none need no SDK.) `posters` (Pillow) powers uploaded-poster normalization; OpenAI/Google
+
+# DEPENDENCIES FIRST, from pyproject alone — this layer must not see application source, or every
+# commit reinstalls FastAPI, SQLAlchemy and three LLM SDKs from scratch on BOTH architectures. The
+# stub package exists only so hatchling can read `__version__` and resolve the dependency set; the
+# real source arrives in the next layer and is installed over it with --no-deps.
+#
+# Bundle every LLM provider SDK — the container is the whole product, so the curator must work for
+# whichever provider the owner picks in setup without them shelling in to pip install extras.
+# (local/none need no SDK.) `posters` (Pillow) powers uploaded-poster normalization; OpenAI/Google
 # also generate poster images, reusing the curator key.
-RUN pip install --no-cache-dir ".[anthropic,openai,google,posters]"
+RUN mkdir -p shortlist \
+    && printf '__version__ = "0.0.0"\n' > shortlist/__init__.py \
+    && pip install --no-cache-dir ".[anthropic,openai,google,posters]" \
+    && rm -rf shortlist
+
+COPY shortlist/ ./shortlist/
+# --no-deps: everything it needs is already in the layer above, so a source-only change reinstalls
+# just this package (seconds) instead of the whole dependency tree.
+RUN pip install --no-cache-dir --no-deps .
 
 COPY --from=web /build/dist ./web/dist
 COPY docker/entrypoint.sh /entrypoint.sh

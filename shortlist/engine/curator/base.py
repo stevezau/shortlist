@@ -357,6 +357,8 @@ def validate_picks(
                 media_type=c.media_type,
                 seed_tmdb_id=seed.tmdb_id if seed else None,
                 seed_title=seed.title if seed else None,
+                sources=sorted(c.sources),
+                affinity=c.affinity,
             )
         )
         if len(picks) == k:

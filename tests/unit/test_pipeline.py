@@ -15,6 +15,12 @@ from shortlist.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 
+def _ranked(items: list[dict], affinity: float = 1.0) -> list[tuple[dict, float]]:
+    """`TmdbClient.suggestions` returns (item, affinity) pairs. These tests predate affinity and
+    don't exercise it, so everything sits at the neutral top-of-list 1.0."""
+    return [(item, affinity) for item in items]
+
+
 @pytest.fixture
 def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> EngineContext:
     plex = MagicMock()
@@ -34,9 +40,11 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     history = MagicMock()
     history.fetch.return_value = [make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)]
 
+    # (item, affinity) pairs — see TmdbClient.suggestions. These predate affinity and don't
+    # exercise it, so both sit at the neutral top-of-list 1.0.
     mock_tmdb.suggestions.return_value = [
-        {"id": 10, "title": "Candidate Ten", "genre_ids": [], "vote_average": 8.0},
-        {"id": 20, "title": "Candidate Twenty", "genre_ids": [], "vote_average": 7.0},
+        ({"id": 10, "title": "Candidate Ten", "genre_ids": [], "vote_average": 8.0}, 1.0),
+        ({"id": 20, "title": "Candidate Twenty", "genre_ids": [], "vote_average": 7.0}, 1.0),
     ]
     mock_tmdb.genre_names.return_value = {}
 
@@ -339,7 +347,7 @@ class TestRun:
     def test_no_picks_leaves_existing_row_untouched(self, ctx: EngineContext, mock_plextv):
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.tmdb.suggestions.return_value = []  # nothing suggested -> no candidates
+        ctx.tmdb.suggestions.return_value = _ranked([])  # nothing suggested -> no candidates
         ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
@@ -581,10 +589,12 @@ class TestPerRowOverrides:
 
         # 59 high-rated movies flood the pool and ONE lower-rated show — from the SAME source, so a
         # source quota can't rescue it. Only filtering by media BEFORE the cut can.
-        def suggestions(tid, mt):
+        def suggestions(tid, mt):  # returns (item, affinity) pairs
             if mt is MediaType.MOVIE:
-                return [{"id": i, "title": f"Movie {i}", "genre_ids": [], "vote_average": 9.0} for i in range(1, 60)]
-            return [{"id": 5001, "title": "A Show", "genre_ids": [], "vote_average": 6.0}]
+                return _ranked(
+                    [{"id": i, "title": f"Movie {i}", "genre_ids": [], "vote_average": 9.0} for i in range(1, 60)]
+                )
+            return _ranked([{"id": 5001, "title": "A Show", "genre_ids": [], "vote_average": 6.0}])
 
         ctx.tmdb.suggestions.side_effect = suggestions
         ctx.config.candidate_sources = ["tmdb_similar"]
@@ -700,12 +710,12 @@ class TestPerRowOverrides:
         shows = {5000: 5999, **{5000 + i: 6000 + i for i in range(1, 40)}}
         ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (movies if sec is movie_section else shows, {})
 
-        def suggestions(tid, mt):
+        def suggestions(tid, mt):  # returns (item, affinity) pairs
             # Plenty of BOTH movie and show candidates in the pool.
             base = 1 if mt is MediaType.MOVIE else 5000
-            return [
-                {"id": base + i, "title": f"T{base + i}", "genre_ids": [], "vote_average": 8.0} for i in range(1, 40)
-            ]
+            return _ranked(
+                [{"id": base + i, "title": f"T{base + i}", "genre_ids": [], "vote_average": 8.0} for i in range(1, 40)]
+            )
 
         ctx.tmdb.suggestions.side_effect = suggestions
         # A watcher of one movie + one show, so both media types seed.
@@ -744,7 +754,7 @@ class TestPerRowOverrides:
         pool = [
             {"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in [*range(10, 16), *range(50, 56)]
         ]
-        ctx.tmdb.suggestions.side_effect = lambda tid, mt: pool
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie")]
         ctx.config.min_history = 1
@@ -773,7 +783,7 @@ class TestPerRowOverrides:
         pool = [
             {"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in [*range(10, 16), *range(50, 56)]
         ]
-        ctx.tmdb.suggestions.side_effect = lambda tid, mt: pool
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie")]
         ctx.config.min_history = 1
@@ -800,7 +810,7 @@ class TestPerRowOverrides:
         idx = {900: 999, **{i: 1000 + i for i in range(10, 20)}}
         ctx.plex.build_library_index.return_value = (idx, {})
         pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 20)]
-        ctx.tmdb.suggestions.side_effect = lambda tid, mt: pool
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie", freshness=freshness)]
         ctx.config.min_history = 1
@@ -895,10 +905,12 @@ class TestPerRowOverrides:
         AI cost. Default sources are TMDB-only, so every token here is curation (no gather/Exa)."""
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.tmdb.suggestions.return_value = [
-            {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
-            {"id": 20, "title": "Fresh Twenty", "genre_ids": [], "vote_average": 7.0},
-        ]
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
+                {"id": 20, "title": "Fresh Twenty", "genre_ids": [], "vote_average": 7.0},
+            ]
+        )
         ctx.plex.build_library_index.return_value = ({900: 999, 10: 1010, 20: 1020}, {})
         ctx.curator.curate.side_effect = curated_picks
         ctx.curator.last_tokens = 50  # each curated (row, library) section reports this
@@ -980,11 +992,13 @@ class TestPerRowOverrides:
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
         # She finished movie 900 (the seed, ratingKey 999). It resurfaces as a candidate — must drop.
-        ctx.tmdb.suggestions.return_value = [
-            {"id": 900, "title": "Already Finished", "genre_ids": [], "vote_average": 9.0},
-            {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
-            {"id": 20, "title": "Fresh Twenty", "genre_ids": [], "vote_average": 7.0},
-        ]
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 900, "title": "Already Finished", "genre_ids": [], "vote_average": 9.0},
+                {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
+                {"id": 20, "title": "Fresh Twenty", "genre_ids": [], "vote_average": 7.0},
+            ]
+        )
         ctx.plex.build_library_index.return_value = ({900: 999, 10: 1010, 20: 1020}, {})
         ctx.curator.curate.side_effect = curated_picks
 
@@ -1007,10 +1021,12 @@ class TestPerRowOverrides:
             make_watched("Seed Movie", days_ago=1, rating_key=999),  # tmdb 900 — the sole seed
             make_watched("Finished Extra", days_ago=9, rating_key=550),  # tmdb 50 — finished, not a seed
         ]
-        ctx.tmdb.suggestions.return_value = [
-            {"id": 50, "title": "Finished Extra", "genre_ids": [], "vote_average": 9.0},  # finished, resurfaced
-            {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
-        ]
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 50, "title": "Finished Extra", "genre_ids": [], "vote_average": 9.0},  # finished, resurfaced
+                {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
+            ]
+        )
         ctx.plex.build_library_index.return_value = ({900: 999, 50: 550, 10: 1010}, {})
         ctx.curator.curate.side_effect = curated_picks
 
@@ -1073,10 +1089,12 @@ class TestRequestsWiring:
 
     def _suggest_a_missing_title(self, ctx: EngineContext) -> None:
         # Candidate 30 is NOT in the library index (which holds only 10 and 20), so it's requestable.
-        ctx.tmdb.suggestions.return_value = [
-            {"id": 10, "title": "In Library", "genre_ids": [], "vote_average": 8.0, "vote_count": 900},
-            {"id": 30, "title": "Missing Title", "genre_ids": [], "vote_average": 8.4, "vote_count": 800},
-        ]
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 10, "title": "In Library", "genre_ids": [], "vote_average": 8.0, "vote_count": 900},
+                {"id": 30, "title": "Missing Title", "genre_ids": [], "vote_average": 8.4, "vote_count": 800},
+            ]
+        )
 
     def test_disabled_by_default_never_calls_the_request_pass(self, ctx: EngineContext, mock_plextv, monkeypatch):
         sarah = make_profile("sarah", account_id=100)
@@ -1364,9 +1382,11 @@ class TestPlacement:
         idx_4k = {900: 999, 800: 888, **{i: 2000 + i for i in range(50, 56)}}
         ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (idx_std if sec is movies else idx_4k, {})
 
-        def suggestions(tid, mt):
+        def suggestions(tid, mt):  # returns (item, affinity) pairs
             base = 10 if tid == 900 else 50  # Fargo -> Movies ids, Heat -> 4K ids
-            return [{"id": base + i, "title": f"T{base + i}", "genre_ids": [], "vote_average": 8.0} for i in range(6)]
+            return _ranked(
+                [{"id": base + i, "title": f"T{base + i}", "genre_ids": [], "vote_average": 8.0} for i in range(6)]
+            )
 
         ctx.tmdb.suggestions.side_effect = suggestions
         ctx.history_source.fetch.return_value = [

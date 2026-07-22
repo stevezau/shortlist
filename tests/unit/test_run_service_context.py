@@ -171,6 +171,8 @@ class TestBuildContext:
                     section_key=section,
                     title=f"t{tmdb_id}",
                     reason="because",
+                    sources="tmdb_similar",
+                    affinity=0.42,
                 )
 
             # An older run's picks for the row, then a newer run that rebuilt it — carry-forward must
@@ -187,6 +189,11 @@ class TestBuildContext:
         assert got[0].title == "t201" and got[0].reason == "because"
         # The legacy unstamped pick maps to no row and is dropped, not filed under ("", "").
         assert ("sarah", "", "") not in ctx.previous_picks
+        # Provenance round-trips. Without this a carried-forward pick comes back blank, so on every
+        # non-refresh night the UI's "suggested by …" line vanishes and the pick is RE-PERSISTED as
+        # "not recorded" — provenance would survive exactly one run.
+        assert got[0].sources == ["tmdb_similar"]
+        assert got[0].affinity == 0.42
 
 
 class TestBuildRequests:

@@ -16,6 +16,7 @@ from shortlist.engine.privacy import (
     remove_label_excludes,
     serialize_filter,
     shortlist_labels_in,
+    summarise_filter_diff,
     sync_user_restrictions,
 )
 from tests.conftest import make_profile, plextv_user
@@ -436,3 +437,59 @@ class TestRestore:
         mock_plextv.update_user_filters.side_effect = lambda account_id, fields: None
         with pytest.raises(RuntimeError, match="restore mismatch"):
             privacy.restore_user_restrictions(mock_plextv, snapshot)
+
+
+class TestFilterDiffSummary:
+    """A 48-user server puts every other account's exclude in each account's filter string, so
+    logging the before AND after was ~8 KB per user per field — the same 47 labels every time, with
+    the one that changed buried in the middle. The full diff still goes to the audit event."""
+
+    PREFIX = "Shortlist"
+
+    def _long_filter(self, n: int, extra: str = "") -> str:
+        labels = [f"{self.PREFIX}_user{i}" for i in range(n)]
+        if extra:
+            labels.append(extra)
+        return "label!=" + ",".join(labels)
+
+    def test_it_names_only_what_changed(self):
+        before, after = self._long_filter(47), self._long_filter(47, f"{self.PREFIX}_s_flix")
+
+        summary = summarise_filter_diff({"filterMovies": (before, after)}, self.PREFIX)
+
+        assert summary == "filterMovies +1 (Shortlist_s_flix)"
+        assert "user0" not in summary, "the 47 unchanged labels are noise"
+        assert len(summary) < 100, f"a log line, not a dump: {len(summary)} chars"
+
+    def test_a_first_run_adding_everyone_stays_short(self):
+        summary = summarise_filter_diff({"filterMovies": ("", self._long_filter(47))}, self.PREFIX)
+
+        assert "+47" in summary
+        assert "+44 more" in summary, "list a few, count the rest"
+        assert len(summary) < 120
+
+    def test_removals_are_reported_too(self):
+        before, after = self._long_filter(3), self._long_filter(2)
+
+        assert summarise_filter_diff({"filterMovies": (before, after)}, self.PREFIX) == (
+            "filterMovies -1 (Shortlist_user2)"
+        )
+
+    def test_both_fields_are_covered(self):
+        before, after = self._long_filter(1), self._long_filter(2)
+
+        summary = summarise_filter_diff(
+            {"filterMovies": (before, after), "filterTelevision": (before, after)}, self.PREFIX
+        )
+
+        assert summary.count("Shortlist_user1") == 2
+        assert "filterMovies" in summary and "filterTelevision" in summary
+
+    def test_a_change_outside_our_labels_is_still_reported(self):
+        """Pruning a shared row's label can leave our own exclude set identical — the write still
+        happened, so the log must not claim nothing changed."""
+        summary = summarise_filter_diff(
+            {"filterMovies": ("label!=Shortlist_a,other", "label!=Shortlist_a")}, self.PREFIX
+        )
+
+        assert summary == "filterMovies rewritten"

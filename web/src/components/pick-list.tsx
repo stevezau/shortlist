@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { provenanceLabel } from "@/lib/pick-provenance";
 import type { Pick } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +43,13 @@ export function PickList({
                 — {pick.reason}
                 {pick.seed_title ? ` · inspired by ${pick.seed_title}` : ""}
               </span>
+              {/* Where it came from, on its own line: "why is this here?" was previously
+                  unanswerable without reading the logs. */}
+              {provenanceLabel(pick) ? (
+                <span className="block text-xs text-muted-foreground/80">
+                  {provenanceLabel(pick)}
+                </span>
+              ) : null}
             </span>
           </li>
         ))}

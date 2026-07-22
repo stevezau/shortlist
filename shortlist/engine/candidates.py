@@ -172,6 +172,35 @@ def _web_via_search(
     return titles
 
 
+def _seed_genre_ids(tmdb: TmdbClient, seed: Seed) -> set[int]:
+    """The seed's own genres, for `genre_coherence`. Cached by the client; a failure just means
+    "no opinion" — never a dead source."""
+    try:
+        return set(tmdb.genre_ids_for(seed.tmdb_id, seed.media_type))
+    except Exception as e:
+        logger.debug("could not read genres for seed {} ({})", seed.title, type(e).__name__)
+        return set()
+
+
+def genre_coherence(seed_genre_ids: set[int], candidate_genre_ids: list[int]) -> float:
+    """How much a candidate stays inside the seed's genres, 0.5..1.0.
+
+    Position in TMDB's list is not enough on its own. `The Pitt` is tagged simply "Drama", and so is
+    almost everything it suggests — but Torchwood and The Sandman are ALSO "Sci-Fi & Fantasy", and
+    that foreign genre is the whole difference between a medical drama and a fantasy series. TMDB
+    still recommends them, fairly high up; nothing in position or rating says they don't belong.
+
+    Measured on genres the candidate has that the seed does NOT, as a share of its own genres — not
+    on overlap, which cannot discriminate when every title shares the one broad genre. Floored at
+    0.5 so this shades the ranking rather than dominating it, and returns 1.0 (no opinion) whenever
+    either side has no genres recorded.
+    """
+    if not seed_genre_ids or not candidate_genre_ids:
+        return 1.0
+    foreign = set(candidate_genre_ids) - seed_genre_ids
+    return 1.0 - 0.5 * (len(foreign) / len(set(candidate_genre_ids)))
+
+
 def gather_candidates(
     tmdb: TmdbClient,
     seeds: list[Seed],
@@ -208,7 +237,13 @@ def gather_candidates(
             genre_maps[media_type] = tmdb.genre_names(media_type)
         return genre_maps[media_type]
 
-    def add(item: dict, media_type: MediaType, source: str) -> Candidate:
+    # The best MEASURED affinity per title. Kept separately from `Candidate.affinity` because the
+    # field's default (1.0) is "no ranking information", which is indistinguishable from a source
+    # claiming a perfect match — so a title that tmdb_discover also found would otherwise have its
+    # measured position overwritten by that neutral default and sail back to the top of the row.
+    measured: dict[tuple[int, MediaType], float] = {}
+
+    def add(item: dict, media_type: MediaType, source: str, affinity: float | None = None) -> Candidate:
         key = (item["id"], media_type)
         if key not in pool:
             date = item.get("release_date") or item.get("first_air_date") or ""
@@ -222,8 +257,13 @@ def gather_candidates(
                 rating=float(item.get("vote_average") or 0.0),
                 vote_count=int(item.get("vote_count") or 0),
             )
-        # A title two sources both found belongs to both — it competes in each one's share.
+        # A title two sources both found belongs to both — it competes in each one's share, and
+        # keeps the STRONGEST claim any of them made for it. A source with nothing to claim
+        # (`affinity is None`) adds itself to `sources` but never touches the score.
         pool[key].sources.add(source)
+        if affinity is not None:
+            measured[key] = max(measured.get(key, 0.0), affinity)
+            pool[key].affinity = measured[key]
         return pool[key]
 
     def merge(tmdb_id: int, title: str, media_type: MediaType, year, genres, source: str) -> Candidate:
@@ -245,8 +285,10 @@ def gather_candidates(
         attempted.add("tmdb_similar")
         try:
             for seed in seeds:
-                for item in tmdb.suggestions(seed.tmdb_id, seed.media_type):
-                    add(item, seed.media_type, "tmdb_similar").seeds.append(seed)
+                seed_genres = _seed_genre_ids(tmdb, seed)
+                for item, affinity in tmdb.suggestions(seed.tmdb_id, seed.media_type):
+                    coherence = genre_coherence(seed_genres, item.get("genre_ids") or [])
+                    add(item, seed.media_type, "tmdb_similar", affinity * coherence).seeds.append(seed)
         except Exception as e:
             # The only source that used to have no isolation: a TMDB hiccup here killed the user's
             # whole run, discarding the pools every other source had already gathered.

@@ -496,6 +496,8 @@ class RunService:
                         library=pick.library,
                         title=pick.title,
                         reason=pick.reason,
+                        sources=",".join(pick.sources),
+                        affinity=pick.affinity,
                         seed_tmdb_id=pick.seed_tmdb_id,
                         seed_title=pick.seed_title,
                     )

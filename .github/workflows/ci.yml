@@ -114,7 +114,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
+            # `dev` on a dev push AND on a release tag: a tag is cut FROM dev, so leaving :dev
+            # pointing at the previous build meant the newest code was on :latest but not on the
+            # tag people testing pre-release are actually pulling.
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/v') }}
             type=semver,pattern={{version}}
             # During 0.x beta, :latest intentionally follows EVERY release tag
             # (including -beta.N) so testers pulling :latest get the newest beta.

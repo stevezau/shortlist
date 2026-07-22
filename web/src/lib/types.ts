@@ -261,6 +261,10 @@ export interface Pick {
   reason: string;
   /** Which watched title produced this pick, when the pipeline knows it. */
   seed_title?: string;
+  /** Candidate source ids that surfaced this pick; empty on picks written before provenance existed. */
+  sources?: string[];
+  /** 0..1, how near the top of the suggesting source's list it sat. 1.0 also means "unranked source". */
+  affinity?: number;
   media_type?: string;
   /** Which row this pick belongs to (Collection slug). */
   collection_slug?: string;

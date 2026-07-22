@@ -178,7 +178,15 @@ class TestTmdbClient:
             return_value=httpx.Response(200, json={"results": [{"id": 20}, {"id": 30}]})
         )
         pooled = TmdbClient("k").suggestions(1, MediaType.MOVIE)
-        assert sorted(x["id"] for x in pooled) == [10, 20, 30]
+        assert sorted(item["id"] for item, _affinity in pooled) == [10, 20, 30]
+        affinities = {item["id"]: affinity for item, affinity in pooled}
+        assert affinities[10] > affinities[30], "/recommendations vouches harder than /similar"
+        # id 20 is second in /recommendations and FIRST in /similar. With lists this short the
+        # /similar claim (0.6, top of its list) actually beats the /recommendations one (0.5,
+        # bottom of its list) — and taking the max is the point: a title keeps the best case made
+        # for it, whichever endpoint made it.
+        assert affinities[20] == 0.6
+        assert affinities[10] == 1.0 and affinities[30] == pytest.approx(0.3)
 
     @respx.mock
     def test_discover_queries_genres_and_returns_results(self):

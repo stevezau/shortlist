@@ -263,14 +263,14 @@ def sync_user_restrictions(
             filters=dict(remote.filters),
         )
         if dry_run:
-            logger.info("[dry-run] {}: would snapshot filters {}", user.username, snapshot.filters)
+            logger.info("[dry-run] {}: would snapshot filters before the first write", user.username)
         else:
             snapshots.save(snapshot)
             logger.info("{}: snapshot persisted before first restriction write", user.username)
 
     diff = {k: (remote.filters[k], v) for k, v in desired_fields.items()}
     if dry_run:
-        logger.info("[dry-run] {}: would merge filters {}", user.username, diff)
+        logger.info("[dry-run] {}: would merge filters — {}", user.username, summarise_filter_diff(diff, label_prefix))
         return diff
 
     plextv.update_user_filters(user.plex_account_id, desired_fields)
@@ -279,8 +279,37 @@ def sync_user_restrictions(
     # ONCE after all writes and verifies every written account's shortlist excludes persisted, still
     # strictly before any promotion — see the batched read-back at the end of _privacy_sync_phase in
     # pipeline.py (plex-safety rule 1).
-    logger.info("{}: filters merged {}", user.username, diff)
+    logger.info("{}: filters merged — {}", user.username, summarise_filter_diff(diff, label_prefix))
     return diff
+
+
+def summarise_filter_diff(diff: dict[str, tuple[str, str]], label_prefix: str) -> str:
+    """A one-line description of what a filter write actually CHANGED.
+
+    The full before/after belongs in the audit event (rule 10), not in the log: on a 48-user server
+    each account's filter string carries every other account's exclude, so logging both sides put
+    ~8 KB per user per field into the file. Forty-eight of those buried everything else in the run,
+    which is the opposite of what the log is for — and it is the same 47 labels every time, so the
+    only information in it is the one that changed.
+    """
+    parts = []
+    for fieldname, (before, after) in sorted(diff.items()):
+        was = shortlist_labels_in(before, label_prefix)
+        now = shortlist_labels_in(after, label_prefix)
+        added, removed = sorted(now - was), sorted(was - now)
+        if not added and not removed:
+            # A change outside our own excludes (pruning a shared row's label leaves the set equal).
+            parts.append(f"{fieldname} rewritten")
+            continue
+        bits = []
+        for sign, labels in (("+", added), ("-", removed)):
+            if not labels:
+                continue
+            shown = ", ".join(labels[:3])
+            more = f" +{len(labels) - 3} more" if len(labels) > 3 else ""
+            bits.append(f"{sign}{len(labels)} ({shown}{more})")
+        parts.append(f"{fieldname} {' '.join(bits)}")
+    return "; ".join(parts) or "no change"
 
 
 def restore_user_restrictions(
@@ -297,7 +326,8 @@ def restore_user_restrictions(
     if not changed:
         return False
     if dry_run:
-        logger.info("[dry-run] {}: would restore filters {}", snapshot.username, changed)
+        # Field names only: a restore payload is the user's ENTIRE original filter string per field.
+        logger.info("[dry-run] {}: would restore {} from the snapshot", snapshot.username, ", ".join(sorted(changed)))
         return True
     plextv.update_user_filters(snapshot.plex_account_id, changed)
     readback = plextv.get_user(snapshot.plex_account_id)

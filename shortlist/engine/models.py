@@ -88,6 +88,13 @@ class Candidate:
     # llm_library, llm_web) would otherwise be crowded out wholesale by the seeded ones — see
     # ranking.pre_rank, which gives each source a fair share of the pool it hands the curator.
     sources: set[str] = field(default_factory=set)
+    # How strongly the source that produced it vouched for it, 0..1. TMDB sets this from which
+    # endpoint suggested the title and how near the top of that list it sat — the similarity signal
+    # that used to be discarded. Sources with no ranking of their own (discover, Trakt, the LLM
+    # sources) keep the neutral 1.0: they are deliberate picks, not the tail of a list, and
+    # penalising them for lacking a signal they never had is what `pre_rank`'s round-robin exists to
+    # prevent. A title several seeds suggested keeps the strongest claim any of them made.
+    affinity: float = 1.0
 
     @property
     def seed_frequency(self) -> int:
@@ -123,6 +130,11 @@ class Pick:
     # section key, `library` its display name ("Movies") for the report label.
     section_key: str = ""
     library: str = ""
+    # Which candidate source(s) surfaced this title, and how strongly they vouched for it. Carried
+    # all the way to the UI so "why is this here?" is answerable without reading a log: a pick that
+    # came from the tail of TMDB's list should LOOK different to one an LLM chose deliberately.
+    sources: list[str] = field(default_factory=list)
+    affinity: float = 1.0
 
 
 @dataclass

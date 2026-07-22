@@ -185,6 +185,33 @@ revoking (`DELETE /api/system/api-token`) invalidates the old token immediately.
 curl -H "Authorization: Bearer <token>" https://<host>/api/runs
 ```
 
+## How a pick is chosen (and why a row can be short)
+
+Every candidate carries an **affinity** — how strongly the source that produced it vouched for it,
+0..1:
+
+- **TMDB** sets it from which endpoint suggested the title and how near the top of that list it sat
+  (`/recommendations` is worth more than `/similar`, and both decay down their list), multiplied by
+  a **genre-coherence** factor: the share of the candidate's own genres that the seed does not have.
+  TMDB tags a medical drama simply "Drama" and so is nearly everything it suggests, so overlap alone
+  discriminates nothing — but a suggestion also tagged "Sci-Fi & Fantasy" is measurably further away.
+- **Sources with no ranking of their own** — `tmdb_discover`, `trakt`, `llm_library`, `llm_web` —
+  report the neutral `1.0`. That means "no ranking information", not "perfect match"; they are
+  deliberate picks rather than the tail of a list, and `pre_rank`'s per-source round-robin is what
+  keeps them competing fairly.
+
+Ranking is `(1 + seed_frequency) × rating × (1 + seed_weight) × affinity`, so a well-rated but
+distant title no longer beats an obviously similar one.
+
+**A row is allowed to come up short.** Padding a partly-filled row only draws from candidates at or
+above `MIN_FILLER_AFFINITY` (0.35) — four genuinely-similar titles beat ten where six are filler.
+When that happens the run log says so at INFO, naming the closest rejected title, so a short row
+reads as the filter working rather than as a failure.
+
+Each delivered pick records its provenance (`sources`, `affinity`, returned by `GET /api/users` and
+the run detail) and the UI shows it under the title — *"suggested by TMDB · loosely related"*. At
+DEBUG the run log prints the same per row: every pick with its seed, source and affinity.
+
 ## How rows stay private
 
 Each row is a Plex collection labelled `shortlist_<userslug>`. Every _other_ account's share filter

@@ -110,7 +110,14 @@ async def get_run(run_id: int, request: Request) -> dict:
                     "exa_searches": run_user.exa_searches,
                     "diff": run_user.diff or {},
                     "picks": [
-                        {"rank": p.rank, "title": p.title, "reason": p.reason, "seed_title": p.seed_title}
+                        {
+                            "rank": p.rank,
+                            "title": p.title,
+                            "reason": p.reason,
+                            "seed_title": p.seed_title,
+                            "sources": [s for s in (p.sources or "").split(",") if s],
+                            "affinity": p.affinity,
+                        }
                         for p in picks
                     ],
                     # Per-(row, library) breakdown; [] on legacy runs -> UI falls back to diff + picks.

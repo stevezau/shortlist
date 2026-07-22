@@ -4,6 +4,56 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.3] - 2026-07-22
+
+Picks that actually resemble what you watched.
+
+### Ranking
+
+A beta user's row seeded by **The Pitt** — a medical drama — came back as The Sandman, Servant,
+Torchwood and King & Conqueror. TMDB was not at fault: its recommendations for that show are ER,
+Chicago Med, Grey's Anatomy, Code Black, The Good Doctor. Shortlist was reading the right list and
+picking from the wrong end of it.
+
+- **TMDB's ordering is no longer thrown away.** Suggestions were pooled into one bag, so "#1 closest
+  match" and "#19, loosely related" arrived indistinguishable — and `/similar` (keyword matching)
+  was weighted the same as `/recommendations` (what people actually watch together).
+- **Ranking now asks whether a title is similar, not just well-rated.** With position discarded, the
+  only thing separating candidates was TMDB's average vote — which on real data put *Traitors*, a
+  reality competition show, at the top of a medical drama's row.
+- **Genre coherence.** Position alone wasn't enough: TMDB tags The Pitt simply "Drama", as it does
+  nearly everything it suggests. But Torchwood and The Sandman are *also* "Sci-Fi & Fantasy", and
+  that foreign genre is the whole difference.
+
+Sources with no ranking of their own — discover, Trakt, the AI sources — are unaffected. They are
+deliberate picks, not the tail of a list.
+
+### Rows can be short now
+
+Filling a half-empty row from the tail is how a weak association became a delivered title. Padding
+now draws only from candidates that are genuinely related, so **a row may come up short** — four
+titles that fit beat ten where six are filler. The run log says so, naming the closest rejected
+title, so a short row reads as the filter working rather than a failure.
+
+### Where every pick came from
+
+Each pick records the source that surfaced it and how strongly that source vouched, shown under the
+title:
+
+```
+#3  The Sandman — Because you watched The Pitt
+    suggested by TMDB · loosely related
+```
+
+Nothing claims a strength it didn't measure: sources that don't rank their suggestions say only who
+suggested it. The run log carries the same per row at DEBUG — every pick with its seed, source and
+affinity — so a "why did it pick that?" report is answerable from a downloaded log.
+
+### Also
+
+- Release tags now publish `:dev` as well as `:latest` and the version tag — a tag is cut from
+  `dev`, so `:dev` was being left a build behind.
+
 ## [0.1.0-beta.2] - 2026-07-22
 
 Second beta. Mostly the things the first beta's users ran into.

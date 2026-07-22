@@ -353,6 +353,11 @@ class ContextBuilder:
                     rank=r.rank,
                     reason=r.reason,
                     media_type=MediaType(r.media_type),
+                    # Carried, or provenance would survive exactly one night: on a non-refresh night
+                    # the pick comes back through here, and rebuilding it without these would blank
+                    # the UI's "suggested by …" line and re-persist it as "not recorded".
+                    sources=[part for part in (r.sources or "").split(",") if part],
+                    affinity=r.affinity,
                     seed_tmdb_id=r.seed_tmdb_id,
                     seed_title=r.seed_title,
                     collection_slug=r.collection_slug,
