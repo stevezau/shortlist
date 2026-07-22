@@ -646,6 +646,86 @@ class TestRunsApi:
         assert result["reason"] == "There are no per-person rows to build."
         assert result["error"] is None
 
+    def test_the_run_page_gets_provenance_on_the_breakdown_it_actually_renders(self, client: TestClient):
+        """The run page renders the stored `breakdown` blob, NOT the picks list — so provenance
+        added to the picks table alone was invisible on the one screen built to answer "why was
+        this picked?". Backfilled from the picks rows so existing runs explain themselves too,
+        instead of staying blank until they are rebuilt."""
+        from shortlist.server.db.models import PickRow, Run, RunUser, User
+
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user_id,
+                    status="ok",
+                    # A blob written before provenance existed: picks without sources/affinity.
+                    breakdown=[
+                        {
+                            "row_slug": "picked",
+                            "row_title": "Picked",
+                            "library_key": "1",
+                            "picks": [{"rank": 1, "title": "Torchwood", "tmdb_id": 55, "media_type": "show"}],
+                        }
+                    ],
+                )
+            )
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=user_id,
+                    tmdb_id=55,
+                    media_type="show",
+                    rating_key=1,
+                    rank=1,
+                    title="Torchwood",
+                    sources="tmdb_similar",
+                    affinity=0.28,
+                )
+            )
+            session.commit()
+            run_id = run.id
+
+        entry = client.get(f"/api/runs/{run_id}").json()["users"][0]["breakdown"][0]["picks"][0]
+
+        assert entry["sources"] == ["tmdb_similar"]
+        assert entry["affinity"] == 0.28
+
+    def test_a_breakdown_pick_with_no_matching_row_is_left_alone(self, client: TestClient):
+        """Never invent provenance: a pick the picks table doesn't know about stays blank, which the
+        UI renders as nothing rather than as a confident claim."""
+        from shortlist.server.db.models import Run, RunUser, User
+
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user_id,
+                    status="ok",
+                    breakdown=[
+                        {
+                            "row_slug": "picked",
+                            "library_key": "1",
+                            "picks": [{"rank": 1, "title": "Unknown", "tmdb_id": 999, "media_type": "movie"}],
+                        }
+                    ],
+                )
+            )
+            session.commit()
+            run_id = run.id
+
+        entry = client.get(f"/api/runs/{run_id}").json()["users"][0]["breakdown"][0]["picks"][0]
+
+        assert "sources" not in entry or entry["sources"] == []
+
     def test_a_failed_run_exposes_why_not_just_that_it_failed(self, client: TestClient):
         """The reason lived only inside `stats`, which no client read — so a run that failed for a
         run-level reason (a share filter Plex refused) surfaced as a bare "Failed" and the operator

@@ -82,6 +82,33 @@ async def clear_runs(request: Request) -> dict:
     return {"deleted": deleted}
 
 
+def _with_provenance(breakdown: list[dict], picks: list) -> list[dict]:
+    """Fill in `sources`/`affinity` on breakdown picks from the picks table.
+
+    The run page renders the stored breakdown blob, which only started carrying provenance from the
+    run that introduced it — but the `picks` rows for those same runs have it. Joining on
+    (tmdb_id, media_type) means an existing run explains itself immediately instead of staying blank
+    until it is rebuilt. Entries that already carry provenance are left alone.
+    """
+    known = {(p.tmdb_id, p.media_type): p for p in picks}
+    out = []
+    for entry in breakdown:
+        enriched = []
+        for pick in entry.get("picks") or []:
+            if pick.get("sources"):
+                enriched.append(pick)
+                continue
+            row = known.get((pick.get("tmdb_id"), pick.get("media_type")))
+            if row is None:
+                enriched.append(pick)
+                continue
+            enriched.append(
+                {**pick, "sources": [s for s in (row.sources or "").split(",") if s], "affinity": row.affinity}
+            )
+        out.append({**entry, "picks": enriched})
+    return out
+
+
 @router.get("/{run_id}")
 async def get_run(run_id: int, request: Request) -> dict:
     with request.app.state.sessions() as session:
@@ -121,7 +148,7 @@ async def get_run(run_id: int, request: Request) -> dict:
                         for p in picks
                     ],
                     # Per-(row, library) breakdown; [] on legacy runs -> UI falls back to diff + picks.
-                    "breakdown": run_user.breakdown or [],
+                    "breakdown": _with_provenance(run_user.breakdown or [], picks),
                 }
             )
         return {**_run_summary(run), "users": users}

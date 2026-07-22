@@ -365,6 +365,11 @@ def deliver_rows(
                             "seed_title": p.seed_title,
                             "tmdb_id": p.tmdb_id,
                             "media_type": p.media_type.value,
+                            # The run page renders THIS blob, not the picks table — so provenance
+                            # has to be here too, or "why was this picked?" is unanswerable on the
+                            # one screen built to answer it.
+                            "sources": list(p.sources),
+                            "affinity": p.affinity,
                         }
                         for p in this_section
                     ],

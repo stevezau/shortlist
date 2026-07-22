@@ -4,6 +4,18 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.5] - 2026-07-22
+
+### Fixed
+
+- **The run page really does show where each pick came from now.** There were three places that
+  build a pick, and the run page renders the one that was still missing provenance — a stored
+  per-(row, library) breakdown, not the picks table. beta.4 fixed the renderer; the data feeding it
+  was still blank.
+- **Existing runs explain themselves too.** Provenance is joined onto the breakdown from the picks
+  rows when a run is read, so runs recorded before this don't stay blank until they're rebuilt. A
+  pick with no matching row stays blank rather than being given an invented source.
+
 ## [0.1.0-beta.4] - 2026-07-22
 
 ### Fixed
