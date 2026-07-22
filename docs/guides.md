@@ -170,8 +170,8 @@ volumes:
   - /path/to/plex/.../Plug-in Support/Databases:/plexdb:ro
 ```
 
-and set **Settings → Advanced → "Read watched state from the Plex database"** to `/plexdb`. One read
-covers every account on the server. The database is opened read-only and Shortlist never writes to
+and that's it — mounting it at `/plexdb` switches it on. (Settings → Advanced has a path field if
+your layout differs, with a **Test** button.) One read covers every account on the server. The database is opened read-only and Shortlist never writes to
 it — it only reads which items each account has watched.
 
 This is off unless you set it: it needs a deliberate mount, and it can't work if Shortlist runs on a

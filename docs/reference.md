@@ -201,7 +201,9 @@ a mark-as-watched**, at any depth or date window. Ticking a film off, or marking
 leaves no play record. On one real server that hid 13,201 watched titles behind the ~1,074 the API
 reported, which is how already-watched films kept reappearing in a row.
 
-Setting `plex.db_path` to the Plex database (`com.plexapp.plugins.library.db`, or the folder holding
+Mounting the database at **`/plexdb`** is all it takes — bind-mounting a database into a container
+is not something anyone does by accident, so the mount *is* the opt-in. `plex.db_path` overrides
+that for an unusual layout. Pointing Shortlist at the Plex database (`com.plexapp.plugins.library.db`, or the folder holding
 it) closes that gap for **every account on the server in one read**. It is opened read-only
 (`immutable=1` — SQLite takes no locks and writes nothing), and Shortlist never writes to it.
 It only fills gaps: a title the play history already covers is left alone, so flags never inflate

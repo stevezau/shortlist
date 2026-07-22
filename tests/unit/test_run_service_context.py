@@ -332,3 +332,48 @@ def test_build_scheduler_registers_the_daily_watch_sync(sessions):
     app = SimpleNamespace(state=SimpleNamespace(sessions=sessions, run_service=None))
     scheduler = build_scheduler(app)
     assert scheduler.get_job(WATCH_SYNC_JOB_ID) is not None  # daily, independent of any row's cron
+
+
+class TestPlexDbAutoMount:
+    """Bind-mounting Plex's database into the container is the opt-in — being made to then type the
+    path you just mounted is a second hoop that buys no extra consent."""
+
+    def test_the_documented_mount_switches_it_on_with_no_setting(self, tmp_path, monkeypatch):
+        from shortlist.server.services import context_builder as cb
+
+        mount = tmp_path / "plexdb"
+        mount.mkdir()
+        (mount / cb.PlexDbReader.FILENAME).write_bytes(b"")
+        monkeypatch.setattr(cb, "DEFAULT_PLEX_DB_MOUNT", mount)
+
+        reader = cb._flag_reader(_StubStore({}))
+
+        assert reader is not None and reader.path == mount / cb.PlexDbReader.FILENAME
+
+    def test_nothing_is_discovered_when_the_mount_is_absent(self, tmp_path, monkeypatch):
+        """No searching the filesystem for someone's Plex database — one documented path or off."""
+        from shortlist.server.services import context_builder as cb
+
+        monkeypatch.setattr(cb, "DEFAULT_PLEX_DB_MOUNT", tmp_path / "not-mounted")
+
+        assert cb._flag_reader(_StubStore({})) is None
+
+    def test_an_explicit_path_always_wins(self, tmp_path, monkeypatch):
+        from shortlist.server.services import context_builder as cb
+
+        mount = tmp_path / "plexdb"
+        mount.mkdir()
+        (mount / cb.PlexDbReader.FILENAME).write_bytes(b"")
+        monkeypatch.setattr(cb, "DEFAULT_PLEX_DB_MOUNT", mount)
+
+        reader = cb._flag_reader(_StubStore({"plex.db_path": "/somewhere/else.db"}))
+
+        assert reader is not None and str(reader.path) == "/somewhere/else.db"
+
+
+class _StubStore:
+    def __init__(self, values: dict):
+        self._values = values
+
+    def get(self, key, default=None):
+        return self._values.get(key, default)

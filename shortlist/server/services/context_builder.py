@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 
 from loguru import logger
 from sqlalchemy import and_, func
@@ -113,10 +114,26 @@ def _pms_account_resolver(plex: PlexClient, session: Session) -> Callable[[UserP
     return resolve
 
 
+# Where the docs tell people to mount Plex's database. Bind-mounting a database into a container is
+# not something anyone does by accident, so the MOUNT is the deliberate opt-in — making the owner
+# then type the path they just mounted is a second hoop that buys no extra consent. Nothing is
+# auto-discovered: if this exact path isn't mounted, the feature stays off.
+DEFAULT_PLEX_DB_MOUNT = Path("/plexdb")
+
+
 def _flag_reader(store: SettingsStore) -> PlexDbReader | None:
-    """The PMS-database watched-flag reader, or None when the owner hasn't opted in."""
+    """The PMS-database watched-flag reader, or None when it isn't set up.
+
+    An explicit `plex.db_path` always wins, so an unusual layout stays possible.
+    """
     path = (store.get("plex.db_path") or "").strip()
-    return PlexDbReader(path) if path else None
+    if path:
+        return PlexDbReader(path)
+    default = DEFAULT_PLEX_DB_MOUNT / PlexDbReader.FILENAME
+    if default.is_file():
+        logger.info("watched flags: using the Plex database mounted at {}", DEFAULT_PLEX_DB_MOUNT)
+        return PlexDbReader(DEFAULT_PLEX_DB_MOUNT)
+    return None
 
 
 class ContextBuilder:
