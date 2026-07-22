@@ -336,6 +336,17 @@ export const api = {
   syncWatched: (): Promise<{ started: boolean }> =>
     request("/api/report/sync", { method: "POST" }),
 
+  /**
+   * Reconcile watched status from Plex's own database — the only source that sees a
+   * mark-as-watched. `configured` is false when no database is mounted; `added` is how many watched
+   * events the reconcile discovered that the play history had never seen.
+   */
+  reconcileWatched: (): Promise<{
+    configured: boolean;
+    users: number;
+    added: number;
+  }> => request("/api/tools/reconcile-watched", { method: "POST" }),
+
   /** A library's managed collections — the candidate anchors for placing rows in the shelf. */
   getLibraryCollections: (key: string): Promise<{ title: string }[]> =>
     request(`/api/system/libraries/${encodeURIComponent(key)}/collections`),

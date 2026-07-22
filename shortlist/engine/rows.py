@@ -493,6 +493,9 @@ def _run_user(
     Pool = tuple[list[Candidate], list[Candidate], list[Candidate]]
     pool_cache: dict[tuple, Pool] = {}
     pool_failures: dict[tuple, str] = {}  # pool key -> why every source for it failed
+    # Gather stats per pool key, cached alongside the pool itself so curate_section can check whether
+    # llm_web contributed tokens (= ran successfully) and gate the LLM curate call on it.
+    pool_gather_stats: dict[tuple, candidates_mod.GatherStats] = {}
     # This person's watched breakdown, filled in the non-cold branch and read by pools_for: watched
     # movie tmdb_ids, and show tmdb_id -> episode-play count (for the finished-show fraction). The
     # derived set of FINISHED (tmdb_id, media_type) titles is computed once the breakdown is in.
@@ -560,6 +563,9 @@ def _run_user(
                     # per-library cap trims the surplus at delivery). None -> exclude only the seeds.
                     watched_exclusions=watched_titles if effective_watched_pct(spec) == 0 else None,
                 )
+                # Cache the gather stats alongside the pool so curate_section can check whether llm_web
+                # ran (contributed tokens) and gate the LLM curate call on it.
+                pool_gather_stats[key] = gather_stats
             except Exception as e:
                 pool_failures[key] = f"{type(e).__name__}: {e}"
                 logger.warning("{}: row '{}' has no working candidate source ({})", user.username, spec.slug, e)
@@ -688,9 +694,25 @@ def _run_user(
 
     def curate_section(profile: UserProfile, cands: list[Candidate], want: int, spec: RowSpec, section) -> list[Pick]:
         """Curate up to ``want`` picks from ``cands``, recording token spend and degrading to the
-        heuristic curator if the AI one fails. Empty in → empty out (nothing to curate)."""
+        heuristic curator if the AI one fails. Empty in → empty out (nothing to curate).
+
+        The LLM curate call is gated on whether llm_web actually contributed candidates: when search
+        didn't run (not in sources, or ran but returned nothing), the deterministic ranker + template
+        reasons are good enough — no need to pay for the LLM to polish picks it didn't help find.
+        """
         if not cands or want <= 0:
             return []
+
+        # Gate: only curate with the LLM when llm_web contributed tokens (= ran successfully)
+        key = pool_key(spec)
+        stats = pool_gather_stats.get(key)
+        llm_web_tokens = stats.tokens_by_source.get("llm_web", 0) if stats else 0
+
+        if llm_web_tokens == 0:
+            # No search contribution → skip the LLM, use deterministic ranker + genre template
+            logger.debug("{}: row '{}' skipping LLM curate (llm_web contributed no tokens)", user.username, spec.slug)
+            return NullCurator().curate(profile, cands, want)
+
         try:
             picks = ctx.curator.curate(profile, cands, want)
             _record_curate(user_report, curate_tokens, spec.slug, section.key, getattr(ctx.curator, "last_tokens", 0))

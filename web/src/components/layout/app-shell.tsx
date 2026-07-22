@@ -13,6 +13,7 @@ import {
   Rows3,
   Settings as SettingsIcon,
   Users as UsersIcon,
+  Wrench,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
   { to: "/logs", label: "Logs", icon: ScrollText, end: false },
   { to: "/requests", label: "Requests", icon: Inbox, end: false },
+  { to: "/tools", label: "Tools", icon: Wrench, end: false },
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },
 ];
 

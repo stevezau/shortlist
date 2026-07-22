@@ -16,6 +16,7 @@ import { LogsPage } from "@/pages/logs";
 import { RunsPage } from "@/pages/runs";
 import { SettingsPage } from "@/pages/settings";
 import { SetupPage } from "@/pages/setup";
+import { ToolsPage } from "@/pages/tools";
 import { UninstallPage } from "@/pages/uninstall";
 import { UserDetailPage } from "@/pages/user-detail";
 import { UsersPage } from "@/pages/users";
@@ -105,6 +106,7 @@ export default function App() {
             <Route path="logs" element={<LogsPage />} />
             <Route path="runs/:id" element={<RunDetailPage />} />
             <Route path="requests" element={<RequestsPage />} />
+            <Route path="tools" element={<ToolsPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/uninstall" element={<UninstallPage />} />
             <Route

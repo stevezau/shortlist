@@ -141,13 +141,17 @@ class TestPlexDbFlags:
         return tmp_path
 
     def test_a_marked_title_reaches_the_store_and_the_filter(self, sessions, sarah, plexdb_dir):
-        """The end-to-end point: the play history knows nothing, the flag closes the gap."""
+        """The end-to-end point: the play history knows nothing, the reconcile closes the gap. The
+        reconcile is the deliberate one-off — a plain fetch never touches the PMS database."""
         reader = self._reader(plexdb_dir, [(100, 9587, "Gravity", 2013, self.MOVIE_TYPE, 1, 1728609330)])
         source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0, flags=reader)
 
-        got = source.fetch(sarah, min_completion=0.0)
+        assert source.fetch(sarah, min_completion=0.0) == [], "a run must not read the PMS database"
 
-        assert [w.title for w in got] == ["Gravity"]
+        added = source.reconcile_flags(sarah)
+
+        assert added == 1
+        assert [w.title for w in source.fetch(sarah, min_completion=0.0)] == ["Gravity"]
 
     def test_flags_never_add_a_second_row_for_a_title_already_played(self, sessions, sarah, plexdb_dir):
         """`watch_events` holds one row PER PLAY and the finished-show fraction counts them, so a
@@ -157,7 +161,8 @@ class TestPlexDbFlags:
             sessions, _FakeUpstream([_item(55, "Played", days_ago=1)]), min_completion=0.0, flags=reader
         )
 
-        source.fetch(sarah, min_completion=0.0)
+        source.fetch(sarah, min_completion=0.0)  # stores the real play
+        source.reconcile_flags(sarah)  # the flag for the same title must not add a second row
 
         with sessions() as s:
             uid = s.query(User).filter_by(slug="sarah").one().id
@@ -169,8 +174,8 @@ class TestPlexDbFlags:
 
         assert source.fetch(sarah, min_completion=0.0) == []
 
-    def test_an_unreadable_database_never_fails_the_run(self, sessions, sarah, tmp_path: Path):
-        """It's someone's live 2 GB production database — a bad path must degrade, not break a run."""
+    def test_an_unreadable_database_never_fails_the_action(self, sessions, sarah, tmp_path: Path):
+        """It's someone's live 2 GB production database — a bad path must degrade, not raise."""
         from shortlist.engine.clients.plex_db import PlexDbReader
 
         source = StoreHistorySource(
@@ -180,16 +185,16 @@ class TestPlexDbFlags:
             flags=PlexDbReader(tmp_path / "does-not-exist"),
         )
 
+        assert source.reconcile_flags(sarah) == 0, "a bad path degrades to a no-op, not an exception"
         got = source.fetch(sarah, min_completion=0.0)
-
         assert [w.title for w in got] == ["Played"], "the API-sourced history must survive intact"
 
     def test_re_running_does_not_duplicate_flags(self, sessions, sarah, plexdb_dir):
         reader = self._reader(plexdb_dir, [(100, 9587, "Gravity", 2013, self.MOVIE_TYPE, 1, 1728609330)])
         source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0, flags=reader)
 
-        source.fetch(sarah, min_completion=0.0)
-        source.fetch(sarah, min_completion=0.0)
+        source.reconcile_flags(sarah)
+        source.reconcile_flags(sarah)
 
         assert _count(sessions) == 1
 
@@ -199,6 +204,7 @@ class TestPlexDbFlags:
         reader = self._reader(plexdb_dir, [(999, 1, "Not theirs", 2020, self.MOVIE_TYPE, 1, 100)])
         source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0, flags=reader)
 
+        assert source.reconcile_flags(sarah) == 0
         assert source.fetch(sarah, min_completion=0.0) == []
 
 
@@ -243,6 +249,7 @@ class TestOwnerAccountResolution:
             flag_account_id=lambda u: self.PMS_LOCAL_ID if u.user_type is UserType.OWNER else u.plex_account_id,
         )
 
+        assert source.reconcile_flags(owner) == 1
         assert [w.title for w in source.fetch(owner, min_completion=0.0)] == ["Gravity"]
 
     def test_without_the_resolver_a_shared_user_still_uses_their_own_id(self, sessions, sarah, tmp_path: Path):
@@ -254,4 +261,5 @@ class TestOwnerAccountResolution:
         reader = PlexDbReader(make_plex_db(tmp_path / "db2", [(100, 1, "Theirs", 2020, self.MOVIE_TYPE, 1, 100)]))
         source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0, flags=reader)
 
+        source.reconcile_flags(sarah)
         assert [w.title for w in source.fetch(sarah, min_completion=0.0)] == ["Theirs"]

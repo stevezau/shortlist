@@ -639,3 +639,64 @@ class TestRunLogBuffer:
             service._new_run_log(run_id)
         assert service.run_log(1) == [], "the oldest run's log is evicted once the cap is exceeded"
         assert service.run_log(999_999) == [], "a run that never ran this process has an empty log"
+
+
+class TestReconcileWatchedFromDb:
+    """The Tools 'reconcile watched from Plex's database' action — a manual, owner-only repair.
+
+    It never runs on a schedule (reading a live multi-gigabyte PMS database nightly is too heavy),
+    reads the database read-only, and writes only our own watch_events. The result line has to tell
+    "no database mounted" apart from "read it, nothing new".
+    """
+
+    def _service_with_source(self, sessions, tmp_path, source, monkeypatch) -> RunService:
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(
+            service, "build_context", lambda **kw: SimpleNamespace(config=EngineConfig(), history_source=source)
+        )
+        # Two enabled users, returned as lightweight profiles the reconcile iterates.
+        profiles = [SimpleNamespace(slug="sarah", history=[]), SimpleNamespace(slug="mike", history=[])]
+        monkeypatch.setattr(service, "enabled_profiles", lambda session, user_ids=None: profiles)
+        monkeypatch.setattr(service, "_reconcile_watched", lambda p: None)  # report reconcile is tested elsewhere
+        return service
+
+    def test_reports_not_configured_when_no_database_is_mounted(self, sessions, tmp_path, monkeypatch):
+        """`flags_configured` False => the UI must say "mount it first", not "nothing to add"."""
+        source = SimpleNamespace(flags_configured=False)
+        service = self._service_with_source(sessions, tmp_path, source, monkeypatch)
+
+        result = asyncio.run(service.reconcile_watched_from_db())
+
+        assert result == {"configured": False, "users": 0, "added": 0}
+
+    def test_sums_added_events_across_users(self, sessions, tmp_path, monkeypatch):
+        added_by_slug = {"sarah": 3, "mike": 2}
+        source = SimpleNamespace(
+            flags_configured=True,
+            reconcile_flags=lambda profile: added_by_slug[profile.slug],
+            fetch=lambda profile, min_completion: [],
+        )
+        service = self._service_with_source(sessions, tmp_path, source, monkeypatch)
+
+        result = asyncio.run(service.reconcile_watched_from_db())
+
+        assert result == {"configured": True, "users": 2, "added": 5}
+
+    def test_one_users_torn_read_does_not_abort_the_sweep(self, sessions, tmp_path, monkeypatch):
+        """A live database can tear mid-read for one account — the others must still reconcile."""
+
+        def reconcile(profile):
+            if profile.slug == "sarah":
+                raise RuntimeError("database disk image is malformed")
+            return 4
+
+        source = SimpleNamespace(
+            flags_configured=True,
+            reconcile_flags=reconcile,
+            fetch=lambda profile, min_completion: [],
+        )
+        service = self._service_with_source(sessions, tmp_path, source, monkeypatch)
+
+        result = asyncio.run(service.reconcile_watched_from_db())
+
+        assert result == {"configured": True, "users": 2, "added": 4}, "mike still counted; sarah skipped"

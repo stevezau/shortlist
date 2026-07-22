@@ -21,7 +21,7 @@
   delivering as the run happens (seeded from the server so a reload replays it); per-user diffs
   grouped by row then library ("added X to Movies, Y to TV Shows"), each library showing its own
   ranked picks; errors as first-class rows with copy-for-GitHub buttons, LLM token usage.
-- **Logs** — what this instance has been doing, with a level filter (this level *and louder*), a
+- **Logs** — what this instance has been doing, with a level filter (this level _and louder_), a
   text filter, live follow, **Copy**, and **Download .zip** for attaching to a bug report. Tokens,
   API keys and passwords are stripped out server-side before anything reaches the page or the zip,
   so it's safe to share. The file keeps the last 10 × 10 MB and always records at DEBUG, regardless
@@ -158,7 +158,7 @@ Settings → Recommendations has three more dials (each per-row overridable):
 ### If a watched title still gets recommended
 
 Almost always one cause: **Plex's history only records what someone actually _played_.** A title
-*marked* watched — ticked off without playing it, or a whole season marked at once — leaves no play
+_marked_ watched — ticked off without playing it, or a whole season marked at once — leaves no play
 record anywhere in Plex's API, so Shortlist can't see it and may recommend it back. On one real
 server that hid **13,201** of a user's watched titles behind the ~1,000 the API reported.
 
@@ -170,9 +170,17 @@ volumes:
   - /path/to/plex/.../Plug-in Support/Databases:/plexdb:ro
 ```
 
-and that's it — mounting it at `/plexdb` switches it on. (Settings → Advanced has a path field if
-your layout differs, with a **Test** button.) One read covers every account on the server. The database is opened read-only and Shortlist never writes to
-it — it only reads which items each account has watched.
+and that's it — mounting it at `/plexdb` makes it available. (Settings → Advanced has a path field
+if your layout differs, with a **Test** button.) One read covers every account on the server. The
+database is opened read-only and Shortlist never writes to it — it only reads which items each
+account has watched.
+
+Then go to **Tools → Reconcile watched from Plex** and run it. Reading the database is a manual
+action, not part of every nightly run — scanning a live multi-gigabyte database every night, for
+marks people add rarely, would be needlessly heavy. The reconcile tells you how many watched titles
+it found that the play history had missed. Run it once now, and again whenever watched state drifts;
+because Plex's API still can't see marks, anything you mark watched later stays hidden until you
+reconcile again.
 
 This is off unless you set it: it needs a deliberate mount, and it can't work if Shortlist runs on a
 different machine to Plex.

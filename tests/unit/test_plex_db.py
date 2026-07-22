@@ -205,10 +205,41 @@ class TestEpisodesFoldIntoTheirShow:
             parents={self.EP1: self.SEASON_KEY, self.EP2: self.SEASON_KEY, self.SEASON_KEY: self.SHOW_KEY},
         )
 
-    def test_a_marked_season_becomes_the_show_once(self, tmp_path: Path):
+    def test_every_marked_episode_counts_under_the_show(self, tmp_path: Path):
+        """One event per episode, keyed by the SHOW — a show is only excluded once ~10 of its
+        episodes are watched, so collapsing a marked season to one event leaves it below the bar."""
         got = PlexDbReader(self._marked_season(tmp_path)).watched_for(self.MOO)
 
-        assert [(w.rating_key, w.title) for w in got] == [(self.SHOW_KEY, "#TextMeWhenYouGetHome")]
+        assert len(got) == 2, "two marked episodes are two watches, not one"
+        assert {w.rating_key for w in got} == {self.SHOW_KEY}
+        assert {w.title for w in got} == {"#TextMeWhenYouGetHome"}
+
+    def test_episodes_marked_in_one_go_still_land_as_distinct_events(self, tmp_path: Path):
+        """A bulk mark stamps a whole season at one time — SFLIX has 330 South Park episodes sharing
+        8 timestamps. `watch_events` dedups on (user, ratingKey, watched_at), so identical stamps
+        would collapse 330 watches into 8 and leave the show looking unwatched."""
+        db = make_plex_db(
+            tmp_path,
+            [
+                (None, self.SHOW_KEY, "Show", 2019, SHOW, 0, None),
+                (None, self.SEASON_KEY, "S1", 2019, SEASON, 0, None),
+                *[(self.MOO, 500 + i, f"Ep{i}", 2019, EPISODE, 1, 1728609330) for i in range(13)],
+            ],
+            parents={**{500 + i: self.SEASON_KEY for i in range(13)}, self.SEASON_KEY: self.SHOW_KEY},
+        )
+
+        got = PlexDbReader(db).watched_for(self.MOO)
+
+        assert len({w.last_viewed_at for w in got}) == 13, "one identical stamp must not collapse them"
+
+    def test_the_spread_is_stable_across_reads(self, tmp_path: Path):
+        """A run-time or random offset would insert 13 fresh rows on every single sync."""
+        db = self._marked_season(tmp_path)
+
+        first = sorted(w.last_viewed_at for w in PlexDbReader(db).watched_for(self.MOO))
+        second = sorted(w.last_viewed_at for w in PlexDbReader(db).watched_for(self.MOO))
+
+        assert first == second
 
     def test_it_never_emits_an_episode_title(self, tmp_path: Path):
         """Episode names reaching `distinct_recent` would make the AI prompt read

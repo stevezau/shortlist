@@ -33,7 +33,7 @@ from loguru import logger
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, sessionmaker
 
-from shortlist.engine.clients.plex_db import PlexDbReader
+from shortlist.engine.clients.plex_db import PlexDbReader, WatchedFlag
 from shortlist.engine.history import HistorySource
 from shortlist.engine.models import MediaType, UserProfile, WatchedItem
 from shortlist.server.db.models import User, WatchEvent, utcnow
@@ -72,12 +72,30 @@ class StoreHistorySource:
         # source already does; injected so this stays a pure store with no Plex client of its own.
         self._flag_account_id = flag_account_id
 
+    @property
+    def flags_configured(self) -> bool:
+        """Whether a PMS database is mounted for the reconcile — so the Tools action can tell "not
+        set up, mount it" apart from "read it, nothing new to add"."""
+        return self._flags is not None
+
     def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
         # `since` is ignored on the read: the store already holds the complete history; the engine
         # wants everything, and the incremental window is an internal sync detail.
+        #
+        # NOTE: this does NOT read the PMS database. That is `reconcile_flags`, a deliberate one-off
+        # the owner runs from Tools — not every run. Reading someone's live multi-gigabyte production
+        # database, opening its WAL and scanning every account's marks, is too heavy and too invasive
+        # to do nightly for a payload (new marks) most users produce rarely; a mark also can't be seen
+        # by the history API, so the reconcile is a repair to run when watched state drifts, not a
+        # feed. See `reconcile_flags`.
         self._sync(user)
-        self._sync_flags(user)
         return self._load(user, min_completion=min_completion)
+
+    def reconcile_flags(self, user: UserProfile) -> int:
+        """Fill watched-history gaps from the PMS database for one user; return the number of events
+        added. A no-op (returns 0) unless the owner has mounted their Plex database — see
+        `_sync_flags`. This is the on-demand Tools action, invoked by the owner, never by a run."""
+        return self._sync_flags(user)
 
     def _sync(self, user: UserProfile) -> None:
         """Pull plays newer than the user's watermark and upsert them; advance the watermark.
@@ -149,44 +167,63 @@ class StoreHistorySource:
                 since.isoformat() if since else "full backfill",
             )
 
-    def _sync_flags(self, user: UserProfile) -> None:
-        """Fill gaps from the PMS database's watched flags — the only source that sees marks.
+    def _sync_flags(self, user: UserProfile) -> int:
+        """Fill gaps from the PMS database's watched flags — the only source that sees marks. Returns
+        the number of events added.
 
         GAPS ONLY: a ratingKey the play history already covers is skipped entirely, so a flag can
         never add a second row for a title that was genuinely played. That matters because
         `watch_events` holds one row per PLAY and the finished-show fraction counts them; a flag is
         "watched at least once", not another play.
 
-        Fail-soft like the API sync: an unreadable database leaves whatever is already stored. It is
-        someone's live 2 GB PMS database — never a reason to fail their run.
+        Fail-soft: an unreadable database leaves whatever is already stored and returns 0. It is
+        someone's live 2 GB PMS database — never a reason to fail the action.
         """
         if self._flags is None:
-            return
+            return 0
         with self._sessions() as session:
             row = session.query(User).filter_by(slug=user.slug).first()
             if row is None:
-                return
+                return 0
             try:
                 account_id = self._flag_account_id(user) if self._flag_account_id else row.plex_account_id
                 watched = self._flags.watched_for(account_id)
             except Exception as e:
-                # As wide as `_sync`'s: an opt-in convenience must never fail somebody's run. A
-                # permission-denied mount raises OSError, not PlexDbUnavailable, and a torn read on
-                # a live database raises sqlite3.DatabaseError.
+                # A permission-denied mount raises OSError, not PlexDbUnavailable, and a torn read on
+                # a live database raises sqlite3.DatabaseError — degrade on all of them.
                 logger.warning(
                     "{}: could not read watched flags from the Plex database ({}: {})",
                     user.slug,
                     type(e).__name__,
                     e,
                 )
-                return
+                return 0
             if not watched:
-                return
-            known = {rk for (rk,) in session.query(WatchEvent.rating_key).filter_by(user_id=row.id)}
-            missing = [flag for flag in watched if flag.rating_key not in known]
+                return 0
+            # "Already stored" means different things by media type, so the dedup key does too:
+            #   * a MOVIE is a single watch — skip if its ratingKey is stored AT ALL, so a mark
+            #     never adds a second row for a title the play history already played (the finished
+            #     check is set membership, and the store holds one row per play, not per mark);
+            #   * a SHOW arrives as one event per marked EPISODE, and the finished-show fraction
+            #     COUNTS those events — so each must survive as its own row, keyed on
+            #     (ratingKey, watched_at). The episode-timestamp spread in `plex_db` is what keeps a
+            #     bulk-marked season from collapsing to one event under that key.
+            stored = {
+                (rk, at)
+                for rk, at in session.query(WatchEvent.rating_key, WatchEvent.watched_at).filter_by(user_id=row.id)
+            }
+            played_keys = {rk for (rk, _at) in stored}
+
+            def already_stored(flag: WatchedFlag) -> bool:
+                if flag.media_type == MediaType.MOVIE.value:
+                    return flag.rating_key in played_keys
+                return (flag.rating_key, flag.last_viewed_at or _FLAG_FALLBACK_AT) in stored
+
+            missing = [flag for flag in watched if not already_stored(flag)]
             if not missing:
                 logger.debug("{}: Plex flags add nothing — all {} already stored", user.slug, len(watched))
-                return
+                return 0
+            added = 0
             try:
                 for i, flag in enumerate(missing):
                     stmt = (
@@ -205,21 +242,22 @@ class StoreHistorySource:
                         )
                         .on_conflict_do_nothing(index_elements=["user_id", "rating_key", "watched_at"])
                     )
-                    session.execute(stmt)
+                    added += session.execute(stmt).rowcount or 0
                     if (i + 1) % 2000 == 0:
                         session.commit()
                 session.commit()
             except Exception as e:
                 session.rollback()
                 logger.warning(
-                    "{}: writing Plex watched flags failed ({}) — retried next run", user.slug, type(e).__name__
+                    "{}: writing Plex watched flags failed ({}) — retry the reconcile", user.slug, type(e).__name__
                 )
-                return
+                return 0
             logger.info(
                 "{}: +{} watched title(s) from the Plex database that the play history never saw",
                 user.slug,
-                len(missing),
+                added,
             )
+            return added
 
     def _load(self, user: UserProfile, *, min_completion: float) -> list[WatchedItem]:
         with self._sessions() as session:

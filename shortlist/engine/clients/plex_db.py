@@ -54,16 +54,29 @@ _WATCHED_SQL = f"""
            CASE WHEN mi.metadata_type = {_EPISODE} THEN COALESCE(sh.year, mi.year) ELSE mi.year END
                AS year,
            mi.metadata_type AS metadata_type,
-           MAX(s.view_count) AS view_count,
-           MAX(s.last_viewed_at) AS last_viewed_at
+           mi.id AS item_id,
+           s.view_count AS view_count,
+           s.last_viewed_at AS last_viewed_at
       FROM metadata_item_settings s
       JOIN metadata_items mi ON mi.guid = s.guid
       LEFT JOIN metadata_items se ON se.id = mi.parent_id
       LEFT JOIN metadata_items sh ON sh.id = se.parent_id
      WHERE s.account_id = ? AND s.view_count > 0
        AND mi.metadata_type IN ({_MOVIE}, {_SHOW}, {_EPISODE})
-     GROUP BY rating_key, mi.metadata_type
 """
+
+# A show is only treated as watched once ~10 of its episodes are (`rows._watched_titles`), which is
+# relative to the show's length — so a marked show has to arrive as MANY events, not one. Episodes
+# are therefore kept as separate rows under the show's key, exactly as a real episode play is stored.
+#
+# The snag: `watch_events` dedups on (user, ratingKey, watched_at), and a bulk mark stamps a whole
+# season at once — SFLIX has 330 marked South Park episodes sharing 8 timestamps, and 278 Big Bang
+# Theory episodes sharing 4. Keying on the raw timestamp would collapse 330 watches into 8 and leave
+# the show below the bar. Each episode's timestamp is therefore spread deterministically by its own
+# item id, so the rows stay distinct AND identical on every re-sync (a random or run-time offset
+# would insert duplicates on every run). The drift is under an hour on a date that is already only
+# "when it was marked", and nothing reads these timestamps for anything finer.
+_MARK_SPREAD_SECONDS = 3600
 
 
 @dataclass(frozen=True)
@@ -171,28 +184,35 @@ class PlexDbReader:
             except sqlite3.Error as e:
                 raise PlexDbUnavailable(f"reading watched flags failed: {type(e).__name__}") from e
 
-        # An episode row and a show-level row can both resolve to the same show, and the same title
-        # in two libraries shares a guid — so collapse to one flag per ratingKey, keeping the
-        # strongest evidence.
-        best: dict[int, WatchedFlag] = {}
+        # One flag per (title, item): a movie once, a show once per marked EPISODE. The same title
+        # in two libraries shares a guid, so the join can repeat an item — dedup on (key, item).
+        seen: set[tuple[int, int]] = set()
+        out: list[WatchedFlag] = []
         for row in rows:
             media = _media_type_of(row["metadata_type"])
             if media is None:
                 continue
-            key = int(row["rating_key"])
-            flag = WatchedFlag(
-                rating_key=key,
-                title=row["title"] or "",
-                year=row["year"],
-                media_type=media,
-                view_count=int(row["view_count"] or 0),
-                last_viewed_at=_epoch_to_dt(row["last_viewed_at"]),
+            key, item = int(row["rating_key"]), int(row["item_id"])
+            if (key, item) in seen:
+                continue
+            seen.add((key, item))
+            out.append(
+                WatchedFlag(
+                    rating_key=key,
+                    title=row["title"] or "",
+                    year=row["year"],
+                    media_type=media,
+                    view_count=int(row["view_count"] or 0),
+                    last_viewed_at=_epoch_to_dt(row["last_viewed_at"], spread_by=item),
+                )
             )
-            current = best.get(key)
-            if current is None or flag.view_count > current.view_count:
-                best[key] = flag
-        logger.debug("plex db: {} watched title(s) for account {}", len(best), plex_account_id)
-        return list(best.values())
+        logger.debug(
+            "plex db: {} watched event(s) across {} title(s) for account {}",
+            len(out),
+            len({f.rating_key for f in out}),
+            plex_account_id,
+        )
+        return out
 
 
 def _media_type_of(metadata_type: int | None) -> str | None:
@@ -204,12 +224,16 @@ def _media_type_of(metadata_type: int | None) -> str | None:
     return None  # seasons, artists, tracks, photos — nothing a row can recommend
 
 
-def _epoch_to_dt(value: int | None) -> datetime | None:
+def _epoch_to_dt(value: int | None, *, spread_by: int = 0) -> datetime | None:
     """Plex stores these as unix seconds. A missing or nonsense value means "watched, when unknown"
-    — worth keeping the row for, since the filter cares THAT it was watched, not when."""
+    — worth keeping the row for, since the filter cares THAT it was watched, not when.
+
+    `spread_by` offsets the timestamp deterministically by the item's own id — see
+    `_MARK_SPREAD_SECONDS` for why a bulk-marked season needs that to survive dedup.
+    """
     if not value:
         return None
     try:
-        return datetime.fromtimestamp(int(value), tz=UTC)
+        return datetime.fromtimestamp(int(value) + (spread_by % _MARK_SPREAD_SECONDS), tz=UTC)
     except (OverflowError, OSError, ValueError):
         return None
