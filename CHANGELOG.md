@@ -4,6 +4,18 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.4] - 2026-07-22
+
+### Fixed
+
+- **The run page now shows where each pick came from.** beta.3 added the "suggested by TMDB ·
+  loosely related" line, but the run detail page renders its picks with its own component — so the
+  line appeared on the user page and nowhere else, including the one screen people open to ask
+  exactly that question.
+
+Picks kept from an earlier run still show nothing, which is correct: those were written before
+provenance was recorded, so it genuinely isn't known. They gain it the first time they are rebuilt.
+
 ## [0.1.0-beta.3] - 2026-07-22
 
 Picks that actually resemble what you watched.
