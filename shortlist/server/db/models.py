@@ -243,6 +243,11 @@ class PickRow(Base):
     library: Mapped[str] = mapped_column(String(255), default="")
     title: Mapped[str] = mapped_column(String(512), default="")
     reason: Mapped[str] = mapped_column(String(255), default="")
+    # Provenance, so "why is this here?" is answerable from the UI: which source(s) surfaced the
+    # title, and how strongly they vouched for it (1.0 = top of TMDB's list for that seed, or a
+    # source with no ranking of its own). Comma-separated source ids; blank on pre-0035 rows.
+    sources: Mapped[str] = mapped_column(String(255), default="")
+    affinity: Mapped[float] = mapped_column(Float, default=1.0)
     seed_tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     seed_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

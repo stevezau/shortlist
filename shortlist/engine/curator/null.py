@@ -29,6 +29,11 @@ class NullCurator:
                     media_type=c.media_type,
                     seed_tmdb_id=seed.tmdb_id if seed else None,
                     seed_title=seed.title if seed else None,
+                    # Carried like every other curator does (see `validate_picks`). This is the
+                    # DEFAULT curator, so forgetting it here would leave most installs with no
+                    # record of where any of their picks came from.
+                    sources=sorted(c.sources),
+                    affinity=c.affinity,
                 )
             )
         return picks

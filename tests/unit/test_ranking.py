@@ -1,4 +1,8 @@
-from shortlist.engine.models import MediaType, Seed
+from types import SimpleNamespace
+
+from loguru import logger
+
+from shortlist.engine.models import Candidate, MediaType, Pick, RowSpec, Seed, UserProfile, UserType
 from shortlist.engine.ranking import pre_rank, score
 from tests.conftest import make_candidate
 
@@ -260,3 +264,164 @@ class TestFreshnessCadence:
             next(d for d in range(1, period + 1) if _is_refresh_night(f"row{n}", f"user{n}", d, 0.5)) for n in range(8)
         }
         assert len(phases) > 1
+
+
+class TestAffinityBeatsRating:
+    """The Pitt bug (beta.2 feedback): a medical drama's row filled with The Sandman, Servant,
+    Torchwood and King & Conqueror — all genuinely in TMDB's lists for it, all near the bottom.
+
+    TMDB's own ordering was the similarity signal and it was being discarded, leaving the average
+    vote as the only tiebreak. The fix is only real if a WORSE-RATED, closer title now wins.
+    """
+
+    @staticmethod
+    def _candidate(title: str, rating: float, affinity: float) -> Candidate:
+        return Candidate(
+            tmdb_id=abs(hash(title)) % 100000,
+            title=title,
+            media_type=MediaType.SHOW,
+            rating=rating,
+            affinity=affinity,
+            sources={"tmdb_similar"},
+            seeds=[Seed(tmdb_id=250307, title="The Pitt", media_type=MediaType.SHOW, weight=1.0)],
+        )
+
+    def test_a_close_match_outranks_a_better_rated_distant_one(self):
+        # Real numbers: ER is TMDB's #1 recommendation for The Pitt; Torchwood is partway down
+        # /similar, and rates higher than several of the medical dramas above it.
+        er = self._candidate("ER", rating=7.8, affinity=1.0)
+        torchwood = self._candidate("Torchwood", rating=7.3, affinity=0.43)
+        sandman = self._candidate("The Sandman", rating=7.8, affinity=0.40)
+
+        assert score(er) > score(torchwood)
+        assert score(er) > score(sandman)
+        assert [c.title for c in pre_rank([sandman, torchwood, er], keep=2)] == ["ER", "Torchwood"]
+
+    def test_rating_alone_no_longer_decides(self):
+        """The exact inversion that produced the bug: same seed, one better rated but far less
+        similar. Before affinity, the higher rating simply won."""
+        close = self._candidate("Chicago Med", rating=8.3, affinity=1.0)
+        distant = self._candidate("Traitors", rating=9.0, affinity=0.32)
+
+        assert score(close) > score(distant), "a 9.0 from the tail must not beat an 8.3 from the top"
+
+    def test_a_source_with_no_ranking_is_not_penalised(self):
+        """discover / Trakt / the LLM sources have no list position to offer. Defaulting them to 0
+        would zero them out — the same mistake the multiplicative seed weight made originally."""
+        llm_pick = Candidate(tmdb_id=1, title="AI pick", media_type=MediaType.SHOW, rating=7.0, sources={"llm_library"})
+
+        assert llm_pick.affinity == 1.0
+        assert score(llm_pick) > 0
+
+
+class TestPaddingFloor:
+    """A row is allowed to come up short. Filling it from the tail is how "Because you watched The
+    Pitt" ended up over four titles that had nothing to do with it."""
+
+    @staticmethod
+    def _pool(affinities: list[float]) -> list[Candidate]:
+        return [
+            Candidate(
+                tmdb_id=i,
+                title=f"T{i}",
+                media_type=MediaType.SHOW,
+                rating=8.0,
+                affinity=a,
+                sources={"tmdb_similar"},
+                rating_key=1000 + i,
+                seeds=[Seed(tmdb_id=250307, title="The Pitt", media_type=MediaType.SHOW, weight=1.0)],
+            )
+            for i, a in enumerate(affinities)
+        ]
+
+    def test_a_short_row_beats_a_padded_one(self):
+        from shortlist.engine.rows import _pad_picks
+
+        padded = _pad_picks([], self._pool([0.9, 0.8, 0.2, 0.1]), k=4)
+
+        assert [p.title for p in padded] == ["T0", "T1"], "the tail must not be delivered"
+
+    def test_a_source_without_a_ranking_is_still_allowed_to_fill(self):
+        """discover / Trakt / LLM picks sit at the neutral 1.0 — they are deliberate, not tail."""
+        from shortlist.engine.rows import _pad_picks
+
+        pool = self._pool([1.0, 1.0])
+        for c in pool:
+            c.sources = {"llm_library"}
+
+        assert len(_pad_picks([], pool, k=2)) == 2
+
+
+class TestRowProvenanceLogging:
+    """The log has to answer "why is this here?" on its own — the reported case was diagnosed by
+    querying TMDB by hand because nothing in the log said where a pick came from."""
+
+    @staticmethod
+    def _picks() -> list[Pick]:
+        return [
+            Pick(
+                tmdb_id=1,
+                rating_key=10,
+                title="Chicago Med",
+                rank=1,
+                reason="Because you watched The Pitt",
+                media_type=MediaType.SHOW,
+                seed_title="The Pitt",
+                sources=["tmdb_similar"],
+                affinity=0.92,
+            )
+        ]
+
+    @staticmethod
+    def _captured(fn, level="DEBUG") -> str:
+        """loguru does not route through stdlib logging, so `caplog` sees nothing — capture with a
+        real sink, exactly as the file sink the Logs view reads would."""
+        lines: list[str] = []
+        sink_id = logger.add(lines.append, level=level, format="{message}")
+        try:
+            fn()
+        finally:
+            logger.remove(sink_id)
+        return "".join(lines)
+
+    def test_it_records_the_seed_source_and_strength_of_every_pick(self):
+        from shortlist.engine.rows import _log_row_provenance
+
+        logged = self._captured(
+            lambda: _log_row_provenance(
+                UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED),
+                RowSpec(slug="picked", name_template="", size=1),
+                SimpleNamespace(title="TV Shows"),
+                self._picks(),
+                [],
+                1,
+            )
+        )
+        assert "Chicago Med" in logged
+        assert "The Pitt" in logged, "the seed must be in the log, not just the UI"
+        assert "tmdb_similar" in logged, "which source suggested it"
+        assert "0.92" in logged, "how strong the claim was"
+
+    def test_a_short_row_says_why_it_is_short(self):
+        """A deliberately-short row must not read as a failure."""
+        from shortlist.engine.rows import _log_row_provenance
+
+        pool = [
+            Candidate(tmdb_id=9, title="Torchwood", media_type=MediaType.SHOW, affinity=0.28),
+            Candidate(tmdb_id=8, title="The Sandman", media_type=MediaType.SHOW, affinity=0.26),
+        ]
+
+        logged = self._captured(
+            lambda: _log_row_provenance(
+                UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED),
+                RowSpec(slug="picked", name_template="", size=5),
+                SimpleNamespace(title="TV Shows"),
+                self._picks(),
+                pool,
+                5,
+            ),
+            level="INFO",
+        )
+
+        assert "too loosely related" in logged
+        assert "Torchwood" in logged, "naming the closest rejection makes the cut auditable"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from typing import ClassVar, Protocol
 from urllib.parse import urlencode
 
 from loguru import logger
@@ -63,16 +63,39 @@ class TmdbClient:
     def ping(self) -> bool:
         return bool(self._get("/configuration"))
 
-    def suggestions(self, tmdb_id: int, media_type: MediaType) -> list[dict]:
-        """Pooled /recommendations + /similar results for one seed title."""
+    # How much each endpoint's vouching is worth, and how fast that decays down its list.
+    #
+    # `/recommendations` is built from what people actually watch together and is reliably good at
+    # the top; `/similar` is genre+keyword matching and gets noisy fast — for "The Pitt" (a medical
+    # drama) it returns Torchwood and The Sandman partway down. Pooling the two and forgetting where
+    # each title sat cost us the whole signal: position IS the similarity claim, and without it the
+    # only thing left to rank on was TMDB's average rating, which is how a well-rated but unrelated
+    # show beat an obviously-similar one.
+    _ENDPOINT_WEIGHT: ClassVar[dict[str, float]] = {"recommendations": 1.0, "similar": 0.6}
+    _POSITION_DECAY = 0.5  # the bottom of a list is worth half its top
+
+    def suggestions(self, tmdb_id: int, media_type: MediaType) -> list[tuple[dict, float]]:
+        """Pooled /recommendations + /similar for one seed, each with an affinity in (0, 1].
+
+        Affinity is "how strongly TMDB vouched for this title for this seed": which endpoint it came
+        from, and how near the top of that endpoint's list it sat. A title both endpoints return
+        keeps the better of the two.
+
+        Returns:
+            ``(item, affinity)`` pairs, best first.
+        """
         kind = "movie" if media_type is MediaType.MOVIE else "tv"
-        pooled: dict[int, dict] = {}
-        for endpoint in ("recommendations", "similar"):
-            data = self._get(f"/{kind}/{tmdb_id}/{endpoint}")
-            for item in data.get("results", []):
-                pooled.setdefault(item["id"], item)
+        pooled: dict[int, tuple[dict, float]] = {}
+        for endpoint, weight in self._ENDPOINT_WEIGHT.items():
+            results = self._get(f"/{kind}/{tmdb_id}/{endpoint}").get("results", [])
+            last = max(len(results) - 1, 1)
+            for position, item in enumerate(results):
+                affinity = weight * (1 - self._POSITION_DECAY * position / last)
+                previous = pooled.get(item["id"])
+                if previous is None or affinity > previous[1]:
+                    pooled[item["id"]] = (item, affinity)
         logger.debug("TMDB suggestions for {} {}: {} pooled", kind, tmdb_id, len(pooled))
-        return list(pooled.values())
+        return sorted(pooled.values(), key=lambda pair: -pair[1])
 
     def search(self, title: str, media_type: MediaType, *, year: int | None = None) -> dict | None:
         """Resolve a free-text title to its best TMDB match, or None if nothing matches.

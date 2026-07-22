@@ -1,6 +1,14 @@
 from types import SimpleNamespace
 
-from shortlist.engine.candidates import GatherStats, _slice_for_llm, filter_candidates, gather_candidates
+import pytest
+
+from shortlist.engine.candidates import (
+    GatherStats,
+    _slice_for_llm,
+    filter_candidates,
+    gather_candidates,
+    genre_coherence,
+)
 from shortlist.engine.clients.search import SearchResult
 from shortlist.engine.curator import NullCurator
 from shortlist.engine.curator.base import parse_web_titles
@@ -53,12 +61,27 @@ def seed(tmdb_id: int, title: str = "Seed") -> Seed:
     return Seed(tmdb_id=tmdb_id, title=title, media_type=MediaType.MOVIE, weight=1.0)
 
 
+def _ranked(items: list[dict], affinity: float = 1.0) -> list[tuple[dict, float]]:
+    """`TmdbClient.suggestions` returns (item, affinity) pairs — affinity being how near the top of
+    TMDB's list the title sat. These tests predate that and don't care, so they use the neutral 1.0.
+    """
+    return [(item, affinity) for item in items]
+
+
 class TestGatherCandidates:
     def test_pools_and_tags_with_all_suggesting_seeds(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 42, "title": "Shared Pick", "genre_ids": [18], "vote_average": 8.0, "release_date": "2020-01-01"},
-            {"id": 42 + tid, "title": f"Only {tid}", "genre_ids": [], "vote_average": 6.0},
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [
+                {
+                    "id": 42,
+                    "title": "Shared Pick",
+                    "genre_ids": [18],
+                    "vote_average": 8.0,
+                    "release_date": "2020-01-01",
+                },
+                {"id": 42 + tid, "title": f"Only {tid}", "genre_ids": [], "vote_average": 6.0},
+            ]
+        )
         pool = gather_candidates(mock_tmdb, [seed(1), seed(2)])
         shared = next(c for c in pool if c.tmdb_id == 42)
         assert shared.seed_frequency == 2
@@ -71,9 +94,11 @@ class TestGatherCandidates:
         # under each, so the parts can exceed the unique total.
         from loguru import logger
 
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 42, "title": "Both", "genre_ids": [], "vote_average": 8.0},
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [
+                {"id": 42, "title": "Both", "genre_ids": [], "vote_average": 8.0},
+            ]
+        )
         trakt = _FakeTrakt([{"tmdb_id": 42, "title": "Both", "year": 2020, "genres": []}])
 
         lines: list[str] = []
@@ -93,9 +118,9 @@ class TestGatherCandidates:
         assert mock_tmdb.genre_names.call_count == 1
 
     def test_discover_source_widens_the_pool_with_taste_genres(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 100, "title": "Similar", "genre_ids": [18], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 100, "title": "Similar", "genre_ids": [18], "vote_average": 7.0}]
+        )
         mock_tmdb.genre_ids_for.side_effect = lambda tid, mt: [18, 28]
         mock_tmdb.discover.side_effect = lambda mt, gids, **kw: [
             {"id": 200, "title": "Discovered", "genre_ids": [18], "vote_average": 8.5}
@@ -115,9 +140,9 @@ class TestGatherCandidates:
         assert {c.tmdb_id for c in pool} == {5}
 
     def test_discover_failure_keeps_the_similar_pool(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "Similar", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "Similar", "genre_ids": [], "vote_average": 7.0}]
+        )
         mock_tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
         mock_tmdb.discover.side_effect = RuntimeError("TMDB 503")
         # Discover blows up, but it's only a "widen" source — the tmdb_similar pool must survive.
@@ -125,9 +150,9 @@ class TestGatherCandidates:
         assert {c.tmdb_id for c in pool} == {1}
 
     def test_empty_sources_falls_back_to_default(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "Similar", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "Similar", "genre_ids": [], "vote_average": 7.0}]
+        )
         # Toggling every source off still yields the baseline, never an empty pool.
         pool = gather_candidates(mock_tmdb, [seed(1)], sources=[])
         assert {c.tmdb_id for c in pool} == {1}
@@ -138,7 +163,7 @@ class TestGatherCandidates:
         assert mock_tmdb.discover.called is False
 
     def test_llm_library_source_proposes_owned_titles(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
         catalog = {
             MediaType.MOVIE: [
                 {"tmdb_id": 500, "rating_key": 1, "title": "Owned A", "year": 2020, "genres": ["Drama"]},
@@ -156,9 +181,9 @@ class TestGatherCandidates:
         assert {c.tmdb_id for c in pool} == {500}  # only the curator's pick from the owned library
 
     def test_llm_library_failure_keeps_the_other_sources(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
         catalog = {MediaType.MOVIE: [{"tmdb_id": 5, "rating_key": 1, "title": "X", "year": 2020, "genres": []}]}
         pool = gather_candidates(
             mock_tmdb,
@@ -171,9 +196,9 @@ class TestGatherCandidates:
         assert {c.tmdb_id for c in pool} == {1}  # similar survives; the LLM source's failure is swallowed
 
     def test_llm_library_is_a_noop_without_a_real_curator(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
         catalog = {MediaType.MOVIE: [{"tmdb_id": 5, "rating_key": 1, "title": "X", "year": 2020, "genres": []}]}
         # NullCurator isn't AI -> the source no-ops (matches the UI gate); only tmdb_similar contributes.
         pool = gather_candidates(
@@ -187,7 +212,7 @@ class TestGatherCandidates:
         assert {c.tmdb_id for c in pool} == {1}
 
     def test_trakt_source_adds_related_titles(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
         trakt = _FakeTrakt([{"tmdb_id": 700, "title": "Related", "year": 2019, "genres": ["drama"]}])
         s = seed(1)
         pool = gather_candidates(mock_tmdb, [s], sources=["trakt"], trakt=trakt)
@@ -197,9 +222,9 @@ class TestGatherCandidates:
         assert s in cand.seeds  # provenance kept — this is a real "because you watched X"
 
     def test_trakt_failure_keeps_the_other_sources(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
 
         class _Boom:
             def related(self, *a):
@@ -209,7 +234,7 @@ class TestGatherCandidates:
         assert {c.tmdb_id for c in pool} == {1}
 
     def test_llm_web_source_resolves_proposed_titles_via_tmdb_search(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
         mock_tmdb.genre_names.return_value = {}
         # A movie resolves, a SHOW resolves, and a hallucinated title doesn't (so it's dropped).
         resolved = {
@@ -236,9 +261,9 @@ class TestGatherCandidates:
         assert next(c for c in pool if c.tmdb_id == 900).media_type is MediaType.SHOW
 
     def test_llm_web_is_a_noop_without_a_real_curator(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
         # NullCurator has no web search -> the source no-ops (matching the UI gate); search never runs.
         pool = gather_candidates(
             mock_tmdb, [seed(1)], sources=["tmdb_similar", "llm_web"], curator=NullCurator(), profile=object()
@@ -247,9 +272,9 @@ class TestGatherCandidates:
         assert not mock_tmdb.search.called
 
     def test_llm_web_failure_keeps_the_other_sources(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
 
         class _Boom:
             supports_native_web_search = True
@@ -313,7 +338,7 @@ class TestLlmWebBackends:
     """The auto|native|exa backend matrix for the llm_web source (public-app: works on every provider)."""
 
     def _tmdb(self, mock_tmdb, resolved):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
         mock_tmdb.genre_names.return_value = {}
         mock_tmdb.search.side_effect = lambda title, mt, year=None: resolved.get(title)
         return mock_tmdb
@@ -380,9 +405,9 @@ class TestLlmWebBackends:
     def test_native_mode_without_a_native_provider_is_a_noop_not_a_failure(self, mock_tmdb):
         """web_search_mode=native + Ollama: the source can't run, so it's skipped — the OTHER source
         still contributes and no phantom 'source failed' is raised (attempted must not include it)."""
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
         search = _FakeSearch([make_result("x", "y")])
         curator = _NonNativeCurator("[]")
 
@@ -400,9 +425,9 @@ class TestLlmWebBackends:
 
     def test_blocked_when_no_native_and_no_search(self, mock_tmdb):
         """auto + non-native provider + NO Exa key: llm_web simply can't run; tmdb_similar carries it."""
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 2, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 2, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
         curator = _NonNativeCurator("[]")
         pool = gather_candidates(
             mock_tmdb,
@@ -418,9 +443,9 @@ class TestLlmWebBackends:
     def test_exa_mode_without_a_search_key_is_a_noop_not_a_failure(self, mock_tmdb):
         """web_search_mode=exa but no Exa client configured: llm_web can't run, so it's skipped and
         never registers as attempted — tmdb_similar still carries the pool, no phantom failure."""
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 3, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 3, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
         curator = _NativeCurator()  # native-capable, but exa mode forces the (absent) Exa backend
         pool = gather_candidates(
             mock_tmdb,
@@ -437,9 +462,9 @@ class TestLlmWebBackends:
     def test_heuristic_curator_never_runs_llm_web_even_with_a_search_key(self, mock_tmdb):
         """The engine mirror of the frontend gate: NullCurator (heuristic mode) has no model to pick
         titles, so llm_web contributes nothing even with an Exa key — and doesn't false-fail the run."""
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 4, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 4, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
         search = _FakeSearch([make_result("2024 picks", "Dune")])
         pool = gather_candidates(
             mock_tmdb,
@@ -472,7 +497,7 @@ class TestPerTitleWebSearchCache:
     title many users watched is searched once server-wide."""
 
     def _tmdb(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
         mock_tmdb.genre_names.return_value = {}
         mock_tmdb.search.side_effect = lambda title, mt, year=None: None  # resolution isn't what we're testing
         return mock_tmdb
@@ -641,7 +666,7 @@ class TestGatherStats:
     """
 
     def test_native_web_tokens_are_recorded(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
         mock_tmdb.genre_names.return_value = {}
         mock_tmdb.search.side_effect = lambda title, mt, year=None: {
             "id": 77,
@@ -664,7 +689,7 @@ class TestGatherStats:
         assert stats.exa_searches == 0  # the native tool doesn't use Exa
 
     def test_exa_path_counts_a_search_and_its_completion_tokens(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
         mock_tmdb.genre_names.return_value = {}
         mock_tmdb.search.side_effect = lambda title, mt, year=None: {
             "id": 55,
@@ -696,7 +721,7 @@ class TestGatherStats:
         assert stats.exa_searches == 1  # the search request itself, billed per search
 
     def test_llm_library_tokens_are_recorded(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: []
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
         catalog = {
             MediaType.MOVIE: [{"tmdb_id": 500, "rating_key": 1, "title": "Owned A", "year": 2020, "genres": ["Drama"]}]
         }
@@ -719,9 +744,9 @@ class TestGatherStats:
         assert stats.exa_searches == 0
 
     def test_tmdb_only_sources_record_no_ai_cost(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
-            {"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}
-        ]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
+            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
+        )
         stats = GatherStats()
         gather_candidates(mock_tmdb, [seed(1)], sources=["tmdb_similar"], stats=stats)
         assert stats.tokens_by_source == {} and stats.exa_searches == 0
@@ -790,3 +815,138 @@ class TestSeedsComeFromTheRowsOwnLibraries:
         kept = _history_for_row(ctx, history, RowSpec(slug="movies", name_template="", size=10, library_keys=["1"]))
 
         assert [w.title for w in kept] == ["Match of the Day"]
+
+
+class TestTmdbAffinity:
+    """TMDB's ordering is the similarity signal — pooling it away is what produced the bug where a
+    medical drama's row filled with fantasy (beta.2 feedback)."""
+
+    @staticmethod
+    def _client(monkeypatch, recommendations: list[str], similar: list[str]):
+        from shortlist.engine.clients.tmdb import TmdbClient
+
+        client = TmdbClient.__new__(TmdbClient)
+        pages = {
+            "recommendations": [{"id": 100 + i, "name": t} for i, t in enumerate(recommendations)],
+            "similar": [{"id": 200 + i, "name": t} for i, t in enumerate(similar)],
+        }
+        monkeypatch.setattr(type(client), "_get", lambda self, path, **kw: {"results": pages[path.rsplit("/", 1)[-1]]})
+        return client
+
+    def test_recommendations_outrank_similar_and_the_top_outranks_the_tail(self, monkeypatch):
+        """Real shape of the reported case: /recommendations leads with medical dramas, /similar
+        trails off into Torchwood."""
+        client = self._client(
+            monkeypatch,
+            recommendations=["ER", "Chicago Med", "Grey's Anatomy", "Servant"],
+            similar=["Presidio Med", "St. Elsewhere", "MDs", "Torchwood"],
+        )
+
+        ranked = client.suggestions(250307, MediaType.SHOW)
+
+        by_title = {item.get("name"): affinity for item, affinity in ranked}
+        assert by_title["ER"] > by_title["Servant"], "position within an endpoint must count"
+        assert by_title["Presidio Med"] < by_title["ER"], "/similar is noisier than /recommendations"
+        assert by_title["Torchwood"] == min(by_title.values())
+        assert ranked[0][0].get("name") == "ER", "returned best-first"
+
+    def test_a_title_in_both_lists_keeps_its_strongest_claim(self, monkeypatch):
+        client = self._client(monkeypatch, recommendations=["Shared"], similar=["Shared"])
+        monkeypatch.setattr(type(client), "_get", lambda self, path, **kw: {"results": [{"id": 7, "name": "Shared"}]})
+
+        ranked = client.suggestions(1, MediaType.SHOW)
+
+        assert len(ranked) == 1
+        assert ranked[0][1] == 1.0, "the /recommendations claim beats the /similar one"
+
+    def test_every_affinity_stays_in_range(self, monkeypatch):
+        client = self._client(monkeypatch, recommendations=[f"R{i}" for i in range(20)], similar=[])
+
+        assert all(0 < affinity <= 1.0 for _item, affinity in client.suggestions(1, MediaType.SHOW))
+
+
+class TestGenreCoherence:
+    """Position alone doesn't separate a medical drama from a fantasy series.
+
+    TMDB tags The Pitt simply "Drama", and so is nearly everything it suggests — so genre OVERLAP
+    discriminates nothing. What separates them is the genres a candidate has that the seed does not:
+    Torchwood and The Sandman are also "Sci-Fi & Fantasy", and that is the entire difference.
+    """
+
+    DRAMA, SCIFI, MYSTERY, ACTION, REALITY = 18, 10765, 9648, 10759, 10764
+
+    def test_a_candidate_inside_the_seeds_genres_is_untouched(self):
+        # ER, Chicago Med, Grey's Anatomy — all plain "Drama", exactly like The Pitt.
+        assert genre_coherence({self.DRAMA}, [self.DRAMA]) == 1.0
+
+    def test_a_foreign_genre_costs_more_the_more_of_the_title_it_is(self):
+        servant = genre_coherence({self.DRAMA}, [self.DRAMA, self.MYSTERY])
+        torchwood = genre_coherence({self.DRAMA}, [self.SCIFI, self.ACTION, self.DRAMA])
+
+        assert servant > torchwood, "one foreign genre in two beats two in three"
+        assert 0.5 <= torchwood < 1.0
+
+    def test_it_never_drops_below_half(self):
+        """It shades the ranking; it must not be able to veto a title on its own."""
+        assert genre_coherence({self.DRAMA}, [self.SCIFI, self.REALITY]) == 0.5
+
+    def test_no_genres_on_either_side_means_no_opinion(self):
+        assert genre_coherence(set(), [self.DRAMA]) == 1.0
+        assert genre_coherence({self.DRAMA}, []) == 1.0
+
+    def test_the_reported_row_is_separated_from_the_medical_dramas(self):
+        """The whole point, in the reporter's own numbers: the two fantasy shows must end up
+        materially below the medical dramas, not merely a hair behind."""
+        er = genre_coherence({self.DRAMA}, [self.DRAMA])
+        sandman = genre_coherence({self.DRAMA}, [self.SCIFI, self.DRAMA, self.ACTION])
+
+        assert er - sandman >= 0.3
+
+
+class TestAffinityAcrossSources:
+    """The cell that was wrong: a title found by BOTH a ranked and an unranked source.
+
+    `Candidate.affinity` defaults to 1.0 meaning "no ranking information" — which is
+    indistinguishable from a source claiming a perfect match. So a tail suggestion that
+    `tmdb_discover` (sorted by popularity, i.e. exactly the well-known-but-unrelated titles) also
+    returned had its measured position overwritten and sailed back to the top of the row, undoing
+    the fix entirely for anyone who turned that source on.
+    """
+
+    TAIL_ID = 900
+
+    def _gather(self, mock_tmdb, sources: list[str]):
+        # One TMDB suggestion, deliberately at the bottom of /similar; discover returns the same id.
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
+            ({"id": self.TAIL_ID, "title": "The Sandman", "genre_ids": [], "vote_average": 7.9}, 0.22)
+        ]
+        mock_tmdb.discover.side_effect = lambda mt, gids, **kw: [
+            {"id": self.TAIL_ID, "title": "The Sandman", "genre_ids": [], "vote_average": 7.9}
+        ]
+        mock_tmdb.genre_ids_for.return_value = [18]
+        pool = gather_candidates(mock_tmdb, [seed(1)], sources=sources)
+        return next(c for c in pool if c.tmdb_id == self.TAIL_ID)
+
+    def test_a_measured_position_survives_an_unranked_source_finding_it_too(self, mock_tmdb):
+        ranked_only = self._gather(mock_tmdb, ["tmdb_similar"])
+        both = self._gather(mock_tmdb, ["tmdb_similar", "tmdb_discover"])
+
+        assert ranked_only.affinity == pytest.approx(0.22)
+        assert both.affinity == pytest.approx(0.22), "an unranked source must not restore the neutral 1.0"
+        assert both.sources == {"tmdb_similar", "tmdb_discover"}, "it still competes in both shares"
+
+    def test_an_unranked_source_alone_stays_neutral(self, mock_tmdb):
+        """discover has no list position to offer, so it must not be penalised for lacking one."""
+        discover_only = self._gather(mock_tmdb, ["tmdb_discover"])
+
+        assert discover_only.affinity == 1.0
+
+    def test_two_seeds_keep_the_strongest_claim(self, mock_tmdb):
+        mock_tmdb.genre_ids_for.return_value = [18]
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: [
+            ({"id": self.TAIL_ID, "title": "T", "genre_ids": [], "vote_average": 7.0}, 0.3 if tid == 1 else 0.9)
+        ]
+
+        pool = gather_candidates(mock_tmdb, [seed(1), seed(2)], sources=["tmdb_similar"])
+
+        assert next(c for c in pool if c.tmdb_id == self.TAIL_ID).affinity == pytest.approx(0.9)

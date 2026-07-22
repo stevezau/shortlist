@@ -5,7 +5,11 @@ Two rules, both learned the hard way:
 1. Seed provenance ADDS to a title's score, it does not multiply it. When the score was
    ``seed_frequency x rating x weight``, every candidate from a seedless source — tmdb_discover,
    llm_library, llm_web — scored exactly 0 and sorted below the worst seeded title on the list.
-2. Each source gets a fair SHARE of the pool handed to the curator. Ranking alone cannot fix this:
+2. Rating is not similarity. Without `affinity` the only thing separating two single-seed
+   candidates was TMDB's average vote — so a well-rated but unrelated show beat an obviously
+   similar one, and a row seeded by a medical drama filled up with fantasy and sci-fi. Affinity
+   carries "how near the top of TMDB's list for THIS seed was it", which is the actual claim.
+3. Each source gets a fair SHARE of the pool handed to the curator. Ranking alone cannot fix this:
    30 seeds x TMDB suggestions is hundreds of seeded candidates, so a single global sort fills
    every slot with tmdb_similar however good the rest are, and the other sources — including the
    LLM calls we paid for — never reach the curator at all.
@@ -27,7 +31,7 @@ def score(candidate: Candidate) -> float:
     """
     seed_weight = max((s.weight for s in candidate.seeds), default=0.0)
     rating = candidate.rating or 5.0  # unrated titles get a neutral prior, not zero
-    return (1 + candidate.seed_frequency) * rating * (1.0 + seed_weight)
+    return (1 + candidate.seed_frequency) * rating * (1.0 + seed_weight) * candidate.affinity
 
 
 def _sort_key(candidate: Candidate) -> tuple:
