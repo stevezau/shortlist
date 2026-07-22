@@ -19,6 +19,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
 import { PickList } from "@/components/pick-list";
+import { provenanceLabel } from "@/lib/pick-provenance";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
@@ -176,7 +177,8 @@ function rankClass(rank: number): string {
   return "text-muted-foreground";
 }
 
-/** One ranked pick: rank, a status dot (green = new this run), title, and its reason (one line). */
+/** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
+ *  came from. */
 function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
   return (
     <li className="flex items-baseline gap-3 py-1.5">
@@ -196,10 +198,20 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
         aria-label={isNew ? "new this run" : "kept"}
         title={isNew ? "New this run" : "Kept from last run"}
       />
-      <span className="min-w-0 flex-1 truncate text-sm">
-        <span className="font-medium">{pick.title}</span>
-        {pick.reason && (
-          <span className="text-muted-foreground"> — {pick.reason}</span>
+      <span className="min-w-0 flex-1 text-sm">
+        <span className="block truncate">
+          <span className="font-medium">{pick.title}</span>
+          {pick.reason && (
+            <span className="text-muted-foreground"> — {pick.reason}</span>
+          )}
+        </span>
+        {/* Where it came from. This page has its own pick renderer rather than using PickList, so
+            the provenance line has to be repeated here — it is the page people open to ask exactly
+            this question. */}
+        {provenanceLabel(pick) && (
+          <span className="block truncate text-xs text-muted-foreground/80">
+            {provenanceLabel(pick)}
+          </span>
         )}
       </span>
     </li>

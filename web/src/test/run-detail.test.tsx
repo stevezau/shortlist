@@ -104,6 +104,8 @@ describe("RunDetailPage — grouped by library", () => {
               title: "Saving Private Ryan",
               reason: "war epic",
               seed_title: "Pressure",
+              sources: ["tmdb_similar"],
+              affinity: 0.42,
             },
           ],
         },
@@ -140,6 +142,11 @@ describe("RunDetailPage — grouped by library", () => {
       screen.getByRole("button", { name: /TV Shows/ }),
     ).toBeInTheDocument();
     expect(screen.getByText(/war epic/)).toBeInTheDocument();
+    // This page is where "why did it pick that?" gets asked, and it has its OWN pick renderer
+    // rather than using PickList — so the provenance line has to be asserted here separately.
+    expect(
+      screen.getByText(/suggested by TMDB · loosely related/),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/survival series/)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /TV Shows/ }));
