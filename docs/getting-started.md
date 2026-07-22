@@ -8,7 +8,8 @@
 - **Plex Pass** on the server owner's account (label restrictions are a Pass feature).
 - A **TMDB API key** (free: themoviedb.org → Settings → API).
 - Optional: **Tautulli** for deeper watch history; **an LLM API key** (Anthropic/OpenAI/Google)
-  or a local **Ollama** — Shortlist is fully functional with none of these (heuristic mode).
+  or a **local server** (Ollama, llama.cpp, LM Studio, vLLM, LocalAI) — Shortlist is fully
+  functional with none of these (heuristic mode).
 
 ## Install (Docker)
 
@@ -47,7 +48,7 @@ The wizard opens on a short welcome screen, then walks (the progress bar reads "
 2. **Recommendations & history** — where picks come from (TMDB, Trakt, AI, web search) and
    where watch history comes from: point at Tautulli if you run it; Plex's own history works
    without it.
-3. **Choose your curator** — Claude / GPT / Gemini / Ollama / **None** (the built-in picker).
+3. **Choose your curator** — Claude / GPT / Gemini / Local (OpenAI-compatible) / **None**.
    Keys are yours, stored encrypted, redacted after save.
 4. **Pick your users** — everyone you share with, with history-depth and new-viewer badges.
 5. **Make it yours** — row name, row size, and when rows refresh (each row runs on its own
@@ -79,5 +80,9 @@ label exclusion, which is why the wizard surfaces your version before you begin.
 
 ## The one honest caveat
 
-Plex cannot hide collections from the **server owner** — your own Home shows every user's
-row. Watch on a separate (Home) account if that bothers you.
+You're in the user list too, so you can give yourself a row like anyone else — on a one-person
+server that's the whole point.
+
+What Plex cannot do is hide collections from the **server owner**: your own Home shows every user's
+row, not just yours. If you share the server with other people and want a clean Home, watch on a
+Plex Home user and keep the admin account for administration.

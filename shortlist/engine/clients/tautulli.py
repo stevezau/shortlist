@@ -32,6 +32,26 @@ class TautulliClient:
         self._cmd("status")
         return True
 
+    def friendly_names(self) -> dict[int, str]:
+        """plex account id -> the friendly name Tautulli shows for them, for accounts that have one.
+
+        Tautulli is where most people have already renamed "mrjohnpoz" to something human, so it's a
+        better default row title than the Plex username — but only a DEFAULT: Shortlist's own
+        nickname always wins. Entries whose friendly name is just the username again are dropped, so
+        an untouched Tautulli install contributes nothing.
+        """
+        rows = self._cmd("get_users").get("data", [])
+        names: dict[int, str] = {}
+        for row in rows:
+            try:
+                account_id = int(row.get("user_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            friendly = (row.get("friendly_name") or "").strip()
+            if account_id and friendly and friendly != (row.get("username") or "").strip():
+                names[account_id] = friendly
+        return names
+
     def get_history(self, plex_account_id: int, *, since_ts: int | None = None, page_size: int = 1000) -> list[dict]:
         """History rows for one user, most recent first — fully paginated, optionally only since a time.
 

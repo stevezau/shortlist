@@ -50,6 +50,7 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
         slug: "moohouse",
         status: "ok",
         error: null,
+        reason: null,
         duration_ms: 335000,
         llm_tokens: 5030,
         diff: {},
@@ -318,6 +319,7 @@ describe("RunDetailPage — grouped by library", () => {
           slug: "moohouse",
           status: "ok",
           error: null,
+          reason: null,
           duration_ms: 1000,
           llm_tokens: 0,
           diff: {},
@@ -372,5 +374,104 @@ describe("RunDetailPage — grouped by library", () => {
     expect(
       screen.getByText(/made room for the new picks above/i),
     ).toBeInTheDocument();
+  });
+});
+
+
+function skippedUser(username: string, i: number) {
+  return {
+    username,
+    slug: username,
+    status: "skipped",
+    error: null,
+    reason: "There are no per-person rows to build.",
+    duration_ms: 0,
+    llm_tokens: 0,
+    diff: {},
+    picks: [],
+    breakdown: [],
+    id: i,
+  };
+}
+
+describe("RunDetail — a skipped person is not a success", () => {
+  it("groups skipped apart from succeeded when a run has all three outcomes", async () => {
+    // The same "count says success, row says skipped" bug, one level down: grouping on
+    // `error === null` put skipped people under the "Succeeded" heading.
+    const r = run([]);
+    r.stats = { users_ok: 1, users_error: 1, users_skipped: 1, titles_requested: 0 };
+    r.users = [
+      { ...skippedUser("sarah", 1), status: "ok", reason: null },
+      { ...skippedUser("mike", 2), error: "boom", status: "error", reason: null },
+      skippedUser("canary", 3),
+    ] as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail();
+
+    expect(await screen.findByText(/Succeeded · 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Skipped · 1/i)).toBeInTheDocument();
+    expect(screen.getByText(/Failed · 1/i)).toBeInTheDocument();
+  });
+
+  it("does not claim 'all succeeded' when everyone was skipped", async () => {
+    // The contradiction this fixes: three rows badged "Skipped" under a header reading
+    // "3 · all succeeded", because the stats only ever counted error vs non-error.
+    const r = run([]);
+    r.stats = { users_ok: 0, users_error: 0, users_skipped: 3, titles_requested: 0 };
+    r.users = ["sarah", "mike", "canary"].map((u, i) =>
+      skippedUser(u, i),
+    ) as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail();
+
+    // Both surfaces that used to say "succeeded": the People tile's hint and the list summary.
+    expect(
+      await screen.findByText(/3 skipped, built nothing/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/3 skipped — nothing was built/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("all succeeded")).toBeNull();
+    // …and the person panel explains WHY rather than leaving them on "Working on this person…".
+    expect(
+      await screen.findByText(/no per-person rows to build/i),
+    ).toBeInTheDocument();
+  });
+});
+
+
+describe("RunDetail — a failed run says why", () => {
+  it("explains a refused share filter instead of showing a bare 'Failed'", async () => {
+    // The reason was always recorded, but lived only in stats.error which nothing rendered — so a
+    // beta user with this exact failure had to read container logs to find out (issue #1).
+    const r = run([]);
+    r.status = "error";
+    r.error = "privacy sync for LisaPlex1234: RuntimeError: plex.tv rejected…";
+    r.promotion_blockers = [
+      "LisaPlex1234 (plex account 12345): plex.tv rejected the share-filter update for account 12345: HTTP 400",
+    ];
+    getRun.mockResolvedValue(r);
+
+    renderDetail();
+
+    expect(
+      await screen.findByText(/Plex wouldn’t accept a share filter/i),
+    ).toBeInTheDocument();
+    // The operator needs the account and the status, not a euphemism.
+    expect(screen.getByText(/HTTP 400/)).toBeInTheDocument();
+    expect(screen.getByText(/plex account 12345/)).toBeInTheDocument();
+    // …and the People tile must not call it a clean sweep.
+    expect(screen.queryByText("all succeeded")).toBeNull();
+    expect(screen.getByText("built, but not promoted")).toBeInTheDocument();
+  });
+
+  it("stays quiet on a clean run", async () => {
+    getRun.mockResolvedValue(run([]));
+    renderDetail();
+    // The tiles only render once a run has finished — wait for one, then assert no alarm.
+    expect(await screen.findByText("all succeeded")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

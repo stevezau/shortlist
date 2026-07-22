@@ -78,8 +78,22 @@ export function StepUsers() {
       <div className="rounded-lg border border-primary/40 bg-primary/10 p-4 text-sm">
         <p className="font-medium text-primary">Heads up, server owner</p>
         <p className="mt-1 text-muted-foreground">
-          Plex cannot hide collections from the server owner — your own Home
-          will show every user's row. Tip: watch on a non-owner account.
+          {/* Read from the switch's ACTUAL state: the pre-select only fires when nobody is enabled
+              yet, so a returning owner arrives switched OFF and must not be told otherwise. */}
+          {users?.find((user) => user.user_type === "owner")?.enabled ? (
+            <>
+              You&rsquo;re in this list too, switched on like everyone else —
+              turn yourself off below if you&rsquo;d rather not have a row.
+            </>
+          ) : (
+            <>
+              You&rsquo;re in this list too — switch yourself on below to get a
+              row of your own.
+            </>
+          )}{" "}
+          What Plex can&rsquo;t do is hide <em>other</em> people&rsquo;s rows
+          from you: your Home shows every row on the server. Tip: watch on a
+          Plex Home user and keep this account for administration.
         </p>
       </div>
 

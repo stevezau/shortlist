@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PMS 1.43.3 GET /accounts — recorded from a live 80-account server (2026-07-21), trimmed to the
+     rows that matter and with names/ids sanitized. Structure and field names are verbatim.
+
+     The load-bearing facts this pins (plex-safety rule 11):
+       * id="0" is PMS's nameless "Local" bucket — plays from clients that were never signed in.
+       * id="1" is the SERVER OWNER, as a LOCAL account named after their plex.tv USERNAME
+         ("s_flix" here) — NOT their title ("SFLIX_Admin"), and NOT their plex.tv account id, which
+         does not appear in this list at all. Their history lives under accountID=1; asking for it
+         by their plex.tv id returns zero rows.
+       * Everyone else — shared users and Home/managed profiles alike — is listed under their own
+         plex.tv account id. -->
+<MediaContainer size="4" identifier="com.plexapp.system.accounts">
+<Account id="0" key="/accounts/0" name="" defaultAudioLanguage="en" autoSelectAudio="1" defaultSubtitleLanguage="en" subtitleMode="1" thumb="" />
+<Account id="1" key="/accounts/1" name="s_flix" defaultAudioLanguage="en" autoSelectAudio="1" defaultSubtitleLanguage="en" subtitleMode="2" thumb="" />
+<Account id="555000100" key="/accounts/555000100" name="sarah" defaultAudioLanguage="en" autoSelectAudio="0" defaultSubtitleLanguage="en" subtitleMode="0" thumb="" />
+<Account id="555000200" key="/accounts/555000200" name="kid" defaultAudioLanguage="en" autoSelectAudio="1" defaultSubtitleLanguage="en" subtitleMode="1" thumb="" />
+</MediaContainer>

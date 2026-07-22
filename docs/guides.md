@@ -8,8 +8,11 @@
 - **Rows** — create, edit, and reorder your rows. Each card shows who sees it and how it
   differs from the defaults (sources, libraries, curation style, placement). This is where
   the whole multi-row feature lives — see "Naming a row" and "Row placement" below.
-- **Users** — enable/disable each person or **Enable all / Disable all** at once, pause
-  someone (keeps their row, skips them on runs), set a request tag, add per-row overrides
+- **Users** — everyone the server is shared with, plus you (badged `owner` — plex.tv's user list
+  leaves the owner out, so Shortlist adds you itself). **Sync from Plex** pulls the roster again
+  after you invite someone new (or to pick up your own owner row on an install that predates it).
+  Enable/disable each person or **Enable all / Disable all** at once, pause someone (keeps their
+  row, skips them on runs), set a request tag, add per-row overrides
   (size, curation style, mute), and see each user's restriction status. Opening a person shows
   their recent watch history (distinct titles, with season/episode numbers for TV), their picks
   grouped by row (long lists collapse behind a "show more"), and a **Run now** button to rebuild
@@ -18,6 +21,11 @@
   delivering as the run happens (seeded from the server so a reload replays it); per-user diffs
   grouped by row then library ("added X to Movies, Y to TV Shows"), each library showing its own
   ranked picks; errors as first-class rows with copy-for-GitHub buttons, LLM token usage.
+- **Logs** — what this instance has been doing, with a level filter (this level *and louder*), a
+  text filter, live follow, **Copy**, and **Download .zip** for attaching to a bug report. Tokens,
+  API keys and passwords are stripped out server-side before anything reaches the page or the zip,
+  so it's safe to share. The file keeps the last 10 × 10 MB and always records at DEBUG, regardless
+  of the console level in Settings → Advanced.
 - **Requests** — the approval inbox for titles your picks wanted but the library doesn't have
   yet. Approve to send to Radarr/Sonarr, or reject so they never come back (see "Requests" below).
 - **Settings** — organised into a grouped sidebar sub-nav so it doesn't read as one long wall:
@@ -44,7 +52,11 @@ the row is built:
   "✨ Movies Picked for You" in your Movies library and "✨ TV Shows Picked for You" in your TV
   library. This is the default row name, so a server with several libraries gets distinct titles
   instead of two identical "Picked for You" rows.
-- `{user}` — the person's name. `{user}'s picks` becomes "Sarah's picks".
+- `{user}` — the person's name. `{user}'s picks` becomes "Sarah's picks". That name is their
+  **nickname** if you've set one (Users → open someone → "What to call them"), otherwise whatever
+  Tautulli calls them, otherwise their Plex username — which is often a handle nobody uses. Changing
+  a nickname renames their existing rows on Plex; it never changes their label, so their privacy is
+  unaffected.
 - `{top_seed}` — the title that most drove their recommendations. `Because you watched {top_seed}`
   becomes "Because you watched The Bear".
 
@@ -85,7 +97,7 @@ Each row can have its own artwork on Plex. In the **Row editor** → **Poster**,
   works on any setup. Use `{user}`, `{library_name}`, and `{top_seed}` to personalise the text.
 - **AI image** — an image generated from your text and **Art style**, using your AI provider's image
   model. This reuses your AI curator's key, so it's available when that provider is **OpenAI** or
-  **Google** (Anthropic and Ollama can't generate images — use a Text poster or Upload instead).
+  **Google** (Anthropic and local servers can't generate images — use a Text poster or Upload instead).
 
 Hit **Preview** to see a sample before saving. Generated images are made once and reused across
 runs (they refresh when you change the text or style), so posters don't slow a run down or cost per
@@ -331,6 +343,12 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 
 ## Troubleshooting
 
+- **A run says "skipped" and no collections were made** — a skip is always a configuration
+  outcome, and the run page now says which one. The two common ones: _every enabled row is a
+  **shared** row_, so there is no per-person row to build for anybody (add one under Rows), or a
+  **shared row can't reach its threshold** — a shared row is built only from titles several people
+  have watched, so it needs at least 2 enabled users with viewing in common and will skip forever
+  below that. Make it a per-person row instead if you want one person to get it.
 - **A user says they can see someone else's row** — run Shortlist again (Run now): every run
   re-merges the `label!=` exclusions into each account's share filters. Check whether the share
   was edited by hand in plex.tv (Shortlist re-merges but never deletes filter conditions it

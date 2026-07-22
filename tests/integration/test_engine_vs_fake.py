@@ -387,6 +387,85 @@ def test_two_per_person_rows_share_one_label_and_are_both_hidden(fakes, tmp_path
     assert "Shortlist_mike" in remote[201].filters["filterMovies"]
 
 
+def test_the_owners_own_row_is_built_from_their_history_and_hidden_from_everyone_else(fakes, tmp_path):
+    """The server owner as a row-owning user (issue #1 — plex.tv's user list never returns them).
+
+    Two things have to hold at once, and only one of them is about the owner's own account:
+      * their row is built from THEIR watch history — which PMS files under a local account id, not
+        the plex.tv id every other user is found by;
+      * every other account excludes the owner's label, exactly like any other user's row. The owner
+        is the one account Plex cannot restrict, so nothing is written to their own filter — that
+        skip must not be mistaken for "this row needs no hiding".
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=PlexHistorySource(plex),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    owner = UserProfile(
+        username=state.owner_username,
+        plex_account_id=state.owner_account_id,
+        user_type=UserType.OWNER,
+    )
+    sarah = UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)
+
+    report = engine_run(ctx, [owner, sarah])
+
+    assert report.ok, [(u.username, u.error) for u in report.users]
+    by_slug = {u.slug: u for u in report.users}
+    # Their seeded history was found: a cold start here would mean we asked PMS for the wrong id and
+    # got an empty list back, which looks like a working row but is really the popular-titles row.
+    assert by_slug["steve"].status == "ok"
+
+    owned = plex.owned_collections()
+    assert owned["steve"].label == "Shortlist_steve"
+    for rating_key in owned["steve"].rating_keys:
+        collection = state.collections[rating_key]
+        assert collection.item_keys
+        assert collection.promoted_own_home  # it does reach the owner's own Home
+        assert state.filterable(collection)
+
+    # The load-bearing half: everyone else's share filter hides it, in BOTH media types.
+    remote = {u.id: u for u in plextv.list_users()}
+    assert state.owner_account_id not in remote  # plex.tv genuinely never lists the owner
+    for account_id in (201, 202, 203):
+        for field_name in ("filterMovies", "filterTelevision"):
+            assert "Shortlist_steve" in remote[account_id].filters[field_name], (
+                f"account {account_id} can see the owner's row in {field_name}"
+            )
+    # And nothing was written to the OWNER's own share (rule 5 — Plex cannot restrict them). The
+    # fake 404s a filter write for an account it does not know, and the owner is not one of its
+    # users, so an attempt to restrict them would have failed the run rather than passing quietly.
+    assert state.owner_account_id not in state.users
+    assert report.error is None
+
+
+def test_the_owners_history_is_never_confused_with_a_shared_users(fakes, tmp_path):
+    """The owner resolves to a DIFFERENT PMS account id than their plex.tv one, so the mapping has
+    to be per-person — get it wrong and the owner's row is someone else's picks."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+
+    owner_items = PlexHistorySource(plex).fetch(
+        UserProfile(username=state.owner_username, plex_account_id=state.owner_account_id, user_type=UserType.OWNER),
+        min_completion=0.7,
+    )
+    sarah_items = PlexHistorySource(plex).fetch(
+        UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED),
+        min_completion=0.7,
+    )
+
+    assert owner_items, "the owner's history came back empty — PMS was asked for the wrong account"
+    assert {i.title for i in owner_items}.isdisjoint({i.title for i in sarah_items})
+
+
 def _watch(state: FakePlexState, account_id: int, rating_key: int) -> None:
     """Record that an account watched a title (used to create shared-history overlap in tests)."""
     state.history.append(FakeHistoryEntry(account_id=account_id, rating_key=rating_key, viewed_at=1_752_100_000))
@@ -463,10 +542,93 @@ def test_a_solo_watched_title_never_reaches_a_shared_row(fakes, tmp_path):
     plex = PlexClient(pms_url, state.owner_token)
     plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
     # min_watchers=1 is even floored to 2 in the engine, so a lone watcher still can't get through.
-    _ctx, _users, _report = _run(
+    _ctx, _users, report = _run(
         plex, plextv, tmp_path, [RowSpec(slug="popular", name_template="Popular", size=6, shared=True, min_watchers=1)]
     )
     assert not _shared_rows(plex, "shortlist__shared_popular")
+
+    # …and it SAYS why. A silent "skipped" is what made a beta user file the working behaviour as a
+    # bug (issue #3), so the reason has to travel with the report, not just the server log.
+    skipped = next(u for u in report.users if u.slug == "shared_popular")
+    assert skipped.status == "skipped"
+    assert skipped.error is None, "a skip is not a failure — the UI counts every error as a failed user"
+    assert "2 or more of the 3 people" in skipped.reason
+
+
+def test_a_run_scoped_to_one_person_leaves_shared_rows_alone(fakes, tmp_path):
+    """ "Run now" for one person hands the engine a SUBSET of the roster. A shared row must not be
+    built from it — three selected people's overlap is not "popular on this server", and the row is
+    published to everyone — and the engine must not judge the row against that subset either, or it
+    reports "only 1 person is in this row's audience, it can never build" about a healthy row.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    _watch(state, 202, 301)  # sarah + mike overlap, so the row WOULD build on a full run
+    spec = RowSpec(slug="popular", name_template="Popular", size=6, shared=True)
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12, rows=[spec], users_scoped=True
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=PlexHistorySource(plex),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+
+    report = engine_run(ctx, [UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)])
+
+    assert not _shared_rows(plex, "shortlist__shared_popular"), "a subset of the roster built a public row"
+    # Not reported at all — the same silence as a row that's out of scope for a per-row run. A
+    # "skipped, it can never build" line here would be a lie about a row that builds fine.
+    assert not [u for u in report.users if u.slug == "shared_popular"]
+
+
+def test_a_shared_row_that_can_never_build_says_so_instead_of_just_skipping(fakes, tmp_path):
+    """The exact configuration from issue #3: one enabled user and a shared row. The 2-watcher floor
+    is then arithmetically unreachable, so the row is skipped every single run — and the report has
+    to say that it CAN'T work, not merely that it didn't.
+
+    `users_scoped` stays False here on purpose: this is a FULL run of a one-person server, where
+    "only 1 person is in this row's audience" is the literal truth. The scoped-run counterpart is
+    the test above."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[RowSpec(slug="popular", name_template="Popular", size=6, shared=True)],
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=PlexHistorySource(plex),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    only_user = [UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED)]
+
+    report = engine_run(ctx, only_user)
+
+    shared = next(u for u in report.users if u.slug == "shared_popular")
+    assert shared.status == "skipped"
+    assert "at least 2 people with overlapping viewing" in shared.reason
+    assert "can never build" in shared.reason
+    # "in this row's audience and active in runs", never "enabled" — the audience is already
+    # narrowed by enabled AND paused, so "only 1 is enabled" would contradict the Users page.
+    assert "in this row's audience and active in runs" in shared.reason
+    assert "enabled users" not in shared.reason
+    # And the one enabled person is told why THEY got nothing: their only row is a shared row.
+    sarah = next(u for u in report.users if u.slug == "sarah")
+    assert sarah.status == "skipped"
+    assert "no per-person rows" in sarah.reason.lower()
+    assert "shared" in sarah.reason.lower()
 
 
 def test_shared_row_restricted_to_a_subset_is_hidden_from_the_rest(fakes, tmp_path):

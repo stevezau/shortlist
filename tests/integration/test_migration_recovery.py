@@ -76,6 +76,7 @@ def test_a_crash_before_the_default_seed_still_seeds_it(tmp_path: Path):
     it (the initial migration's seed is guarded by 'collections is empty', not by the version stamp)."""
     db_session.run_migrations(tmp_path)
     engine = db_session.make_engine(tmp_path)
+    head = _version(engine)
     with engine.begin() as conn:
         conn.execute(sa.text("DELETE FROM collections"))  # seed lost
         conn.execute(sa.text("DELETE FROM alembic_version"))  # stamp never written (crash before it)
@@ -83,5 +84,30 @@ def test_a_crash_before_the_default_seed_still_seeds_it(tmp_path: Path):
     db_session.run_migrations(tmp_path)
 
     with engine.connect() as conn:
-        assert _version(engine) == "0001"
+        assert _version(engine) == head  # the real head, not a literal a new migration invalidates
         assert [r[0] for r in conn.execute(sa.text("SELECT slug FROM collections")).fetchall()] == ["picked"]
+
+
+def test_no_migration_is_numbered_inside_the_reserved_squashed_range(tmp_path: Path):
+    """Revisions 0002-0028 belong to the squashed pre-release migrations, and `_heal_squashed_revision`
+    re-stamps any DB carrying one of them BACK to 0001. A post-baseline migration numbered in that
+    range is therefore un-stamped and replayed on every boot — silently survivable only while the
+    migration happens to be idempotent, and corrupting the moment one does a backfill or a drop.
+    """
+    live = {rev for rev, _ in REVISIONS} - {"0001"}
+    assert not (live & db_session._SQUASHED_REVISIONS), (
+        f"migration(s) {sorted(live & db_session._SQUASHED_REVISIONS)} sit in the reserved "
+        "0002-0028 range and will be re-stamped backward on every boot — number new ones from 0029"
+    )
+
+
+def test_booting_twice_leaves_the_stamp_alone(tmp_path: Path):
+    """The consequence the range guards against, asserted directly: a second boot on an up-to-date DB
+    must be a no-op, not a heal-and-replay."""
+    db_session.run_migrations(tmp_path)
+    engine = db_session.make_engine(tmp_path)
+    head = _version(engine)
+
+    db_session.run_migrations(tmp_path)
+
+    assert _version(engine) == head

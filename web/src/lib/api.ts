@@ -26,6 +26,7 @@ import type {
   RunCreated,
   RunDetail,
   RunLogEntry,
+  LogPage,
   RunRequest,
   RunsSummary,
   RowOverridePatch,
@@ -232,6 +233,22 @@ export const api = {
 
   getRunLog: (id: number): Promise<RunLogEntry[]> =>
     request(`/api/runs/${id}/log`),
+
+  /** The app's own log file, filtered server-side. Every line is redacted before it is sent. */
+  getLogs: (params: {
+    level: string;
+    q: string;
+    limit: number;
+  }): Promise<LogPage> =>
+    request(
+      `/api/system/logs?level=${encodeURIComponent(params.level)}&q=${encodeURIComponent(
+        params.q,
+      )}&limit=${params.limit}`,
+    ),
+
+  /** Where the browser downloads the redacted log zip from (a plain link — the session cookie
+   *  authenticates it, so it needs no fetch/blob dance). */
+  logsDownloadUrl: (): string => apiUrl("/api/system/logs/download"),
 
   startRun: (body: RunRequest = {}): Promise<RunCreated> =>
     request("/api/runs", { method: "POST", body: JSON.stringify(body) }),

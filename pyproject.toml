@@ -7,6 +7,11 @@ name = "shortlist"
 description = "A private, AI-curated 'Picked for You' row for every user on your Plex server"
 readme = "README.md"
 license = "MIT"
+# A genuine floor (3.12 syntax/stdlib is used), NOT a support claim: the shipped
+# artifact is one Docker image built FROM python:3.12-slim, and CI tests only 3.12.
+# Deliberately left open-ended rather than capped at <3.13 — a hard cap makes
+# `pip install -e .` fail outright for contributors on a newer interpreter, and the
+# code runs fine on them. The classifiers below state what's actually tested.
 requires-python = ">=3.12"
 dynamic = ["version"]
 authors = [{ name = "Steven Adams" }]
@@ -15,7 +20,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
     "plexapi>=4.17",

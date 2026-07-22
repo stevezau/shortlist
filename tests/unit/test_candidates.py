@@ -733,3 +733,60 @@ class TestGatherStats:
         stats.add_tokens("curate", 5)
         stats.add_tokens("curate", 3)
         assert stats.tokens_by_source == {"curate": 8}
+
+
+class TestSeedsComeFromTheRowsOwnLibraries:
+    """A row's libraries used to narrow only DELIVERY, never what was searched.
+
+    So a Movies row on a server whose owner mostly watches sport spent every seed slot on sport,
+    TMDB returned more sport, the library intersection threw it away, and the row came back thin
+    and reported "ok" (issue #1 follow-up).
+    """
+
+    def _ctx(self, movie_keys: dict[int, int], sport_keys: dict[int, int]):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(section_index={"1": movie_keys, "9": sport_keys})
+
+    @staticmethod
+    def _watch(title: str, rating_key: int):
+        from tests.conftest import make_watched
+
+        return make_watched(title, rating_key=rating_key)
+
+    def test_only_watches_from_the_rows_libraries_are_kept(self):
+        from shortlist.engine.models import RowSpec
+        from shortlist.engine.rows import _history_for_row
+
+        ctx = self._ctx(movie_keys={10: 100}, sport_keys={20: 200})
+        history = [
+            self._watch("Heat", 100),
+            self._watch("Match of the Day", 200),
+        ]
+
+        kept = _history_for_row(ctx, history, RowSpec(slug="movies", name_template="", size=10, library_keys=["1"]))
+
+        assert [w.title for w in kept] == ["Heat"], "a sport watch must not seed a Movies row"
+
+    def test_an_unpinned_row_still_sees_everything(self):
+        from shortlist.engine.models import RowSpec
+        from shortlist.engine.rows import _history_for_row
+
+        ctx = self._ctx(movie_keys={10: 100}, sport_keys={20: 200})
+        history = [self._watch("Heat", 100), self._watch("Match of the Day", 200)]
+
+        kept = _history_for_row(ctx, history, RowSpec(slug="all", name_template="", size=10))
+
+        assert len(kept) == 2
+
+    def test_a_row_whose_libraries_hold_nothing_they_watched_falls_back(self):
+        """A weak row beats no row — and it's exactly what this person got before the filter."""
+        from shortlist.engine.models import RowSpec
+        from shortlist.engine.rows import _history_for_row
+
+        ctx = self._ctx(movie_keys={}, sport_keys={20: 200})
+        history = [self._watch("Match of the Day", 200)]
+
+        kept = _history_for_row(ctx, history, RowSpec(slug="movies", name_template="", size=10, library_keys=["1"]))
+
+        assert [w.title for w in kept] == ["Match of the Day"]

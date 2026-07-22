@@ -193,6 +193,10 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, entries: list[
             plex_account_id=user.plex_account_id,
             user_type=UserType(user.user_type),
             slug=user.slug,
+            # Without this a `{user}` row renders to the PLEX username here and to the nickname at
+            # delivery — so the reconcile would compute the wrong "new" title and either rename to
+            # something no run will ever write, or decide nothing changed and leave a stale copy.
+            nickname=user.nickname or user.friendly_name,
         )
         marker = row_marker(user.plex_account_id)
         for old_display, library_title in old_titles.items():

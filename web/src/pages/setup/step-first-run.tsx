@@ -36,6 +36,7 @@ function countsLine(counts: Record<string, number>): string {
 interface UserProgress {
   stage: string;
   counts: Record<string, number>;
+  reason?: string | null;
 }
 
 function StageTrail({ stage }: { stage: string }) {
@@ -85,7 +86,11 @@ function ProgressCard({
     const seconds = progress.counts.seconds;
     detail = `row built — ${picks} picks${seconds ? ` in ${seconds}s` : ""}`;
   } else if (stage === "skipped") {
-    detail = "skipped — not in any enabled row";
+    // The engine says WHY (no per-person row enabled, not in an audience, muted…). The old copy
+    // hardcoded one of those reasons and stated it as fact for all of them (issue #3).
+    detail = progress?.reason
+      ? `skipped — ${progress.reason.charAt(0).toLowerCase()}${progress.reason.slice(1)}`
+      : "skipped — no row was due for them in this run";
   } else if (stage === "error") {
     detail =
       "failed — the rest of the run continues; detail is on the Runs page";
@@ -103,6 +108,9 @@ function ProgressCard({
             {active && <StageTrail stage={stage ?? ""} />}
           </div>
           <p
+            // The line is truncated to keep the card one row tall, so the full text — a skip reason
+            // is a whole sentence — stays reachable on hover.
+            title={detail}
             className={cn(
               "truncate text-sm",
               stage === "error" ? "text-destructive" : "text-muted-foreground",
@@ -156,6 +164,7 @@ export function StepFirstRun({ complete }: StepProps) {
         [event.user]: {
           stage: event.stage,
           counts: event.counts,
+          reason: event.reason ?? null,
         },
       })),
     onRunFinished: (event) => {

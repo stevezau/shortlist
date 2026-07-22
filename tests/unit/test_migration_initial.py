@@ -16,6 +16,19 @@ from shortlist.server.db.models import Base
 from shortlist.server.db.session import make_engine, run_migrations
 
 
+def _head_revision() -> str:
+    """The newest migration's revision id, read from the scripts themselves — so these tests assert
+    "migrated all the way" rather than pinning a literal that every new migration invalidates."""
+    from alembic.config import Config as AlembicConfig
+    from alembic.script import ScriptDirectory
+
+    from shortlist.server.db.session import ALEMBIC_DIR
+
+    cfg = AlembicConfig()
+    cfg.set_main_option("script_location", str(ALEMBIC_DIR))
+    return ScriptDirectory.from_config(cfg).get_current_head()
+
+
 def _columns(db_path: str) -> dict[str, set[str]]:
     conn = sqlite3.connect(db_path)
     try:
@@ -53,7 +66,7 @@ def test_initial_migration_schema_matches_the_models(tmp_path: Path):
 def test_a_db_stamped_at_a_squashed_revision_is_healed_not_crashed(tmp_path: Path):
     # The maintainer's pre-release DB is stamped at a now-removed revision (e.g. 0028). Booting must
     # re-stamp it to the baseline, not crash on "Can't locate revision".
-    run_migrations(tmp_path)  # full schema, stamped at 0001
+    run_migrations(tmp_path)  # full schema, stamped at head
     db = tmp_path / "shortlist.db"
     conn = sqlite3.connect(db)
     conn.execute("update alembic_version set version_num = '0028'")  # a squashed-away revision
@@ -65,7 +78,12 @@ def test_a_db_stamped_at_a_squashed_revision_is_healed_not_crashed(tmp_path: Pat
     conn = sqlite3.connect(db)
     version = conn.execute("select version_num from alembic_version").fetchone()[0]
     conn.close()
-    assert version == "0001"  # stamped forward to the baseline, schema untouched
+    # Healed to the baseline, then carried on to HEAD like any other DB. Asserted against the real
+    # head rather than a literal, so adding a migration never breaks this test's meaning — plus the
+    # observable consequence, because "stamped at head" is also true of a heal that stamped straight
+    # there and ran no DDL at all.
+    assert version == _head_revision()
+    assert "reason" in _columns(str(db))["run_users"], "healed to head without applying the migrations"
 
 
 def test_an_incomplete_db_at_a_squashed_revision_is_not_silently_healed(tmp_path: Path):
@@ -89,3 +107,77 @@ def test_an_incomplete_db_at_a_squashed_revision_is_not_silently_healed(tmp_path
     version = conn.execute("select version_num from alembic_version").fetchone()[0]
     conn.close()
     assert version == "0028"  # left as-is, NOT rewritten to 0001
+
+
+class TestOllamaProviderMerge:
+    """0032 was a no-op on every real database; 0034 is the one that does the work.
+
+    The bug it fixes was invisible to a test that seeds raw SQL, because the wrong shape is exactly
+    what the broken migration assumed. So these seed through `SettingsStore` itself — whatever the
+    app actually writes is what the migration has to read.
+    """
+
+    @staticmethod
+    def _seed_at_0031(config_dir: Path, *, provider: str = "ollama") -> None:
+        from alembic import command
+        from alembic.config import Config as AlembicConfig
+
+        from shortlist.server.db.session import ALEMBIC_DIR, db_url
+        from shortlist.server.settings_store import SettingsStore
+
+        cfg = AlembicConfig()
+        cfg.set_main_option("script_location", str(ALEMBIC_DIR))
+        cfg.set_main_option("sqlalchemy.url", db_url(config_dir))
+        command.upgrade(cfg, "0031")  # the revision an instance running `dev` sat at
+
+        engine = make_engine(config_dir)
+        from sqlalchemy.orm import Session
+
+        with Session(engine) as session:
+            store = SettingsStore(session)
+            store.set("curator.provider", provider)
+            if provider == "ollama":
+                store.set("curator.ollama_url", "http://nas:11434")
+            session.commit()
+
+    @staticmethod
+    def _read(config_dir: Path, key: str):
+        from sqlalchemy.orm import Session
+
+        from shortlist.server.settings_store import SettingsStore
+
+        with Session(make_engine(config_dir)) as session:
+            return SettingsStore(session).get(key)
+
+    def test_an_ollama_instance_is_carried_onto_the_merged_provider(self, tmp_path: Path):
+        self._seed_at_0031(tmp_path)
+
+        run_migrations(tmp_path)
+
+        assert self._read(tmp_path, "curator.provider") == "openai_compatible"
+        assert self._read(tmp_path, "curator.openai_base_url") == "http://nas:11434/v1"
+
+    def test_settings_stay_readable_afterwards(self, tmp_path: Path):
+        """The half-fix that only corrected the READ would store an unwrapped string here, and every
+        later `SettingsStore.get` — for any key — would raise TypeError."""
+        self._seed_at_0031(tmp_path)
+
+        run_migrations(tmp_path)
+
+        from sqlalchemy.orm import Session
+
+        from shortlist.server.settings_store import SettingsStore
+
+        with Session(make_engine(tmp_path)) as session:
+            assert SettingsStore(session).all_public()["curator.provider"] == "openai_compatible"
+
+    def test_an_instance_on_another_provider_is_left_alone(self, tmp_path: Path):
+        """Seeded at 0031 like the others, NOT by migrating to head first: a DB already stamped at
+        head replays nothing, so 0034 would never run and the test would pass with its guard
+        deleted."""
+        self._seed_at_0031(tmp_path, provider="anthropic")
+
+        run_migrations(tmp_path)
+
+        assert self._read(tmp_path, "curator.provider") == "anthropic"
+        assert not self._read(tmp_path, "curator.openai_base_url"), "nothing else may be written either"

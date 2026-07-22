@@ -27,6 +27,8 @@ export const queryKeys = {
   session: ["auth", "session"] as const,
   setupState: ["setup", "state"] as const,
   apiToken: ["api-token"] as const,
+  logs: (level: string, q: string, limit: number) =>
+    ["logs", level, q, limit] as const,
 };
 
 export function useSession() {
@@ -267,6 +269,8 @@ export function useCuratorModels(
       api.getCuratorModels({
         provider: params.provider,
         api_key: params.apiKey || undefined,
+        // Sent under the legacy field name the endpoint still accepts; it feeds the one
+        // local/self-hosted provider's base URL either way.
         ollama_url: params.ollamaUrl || undefined,
       }),
     enabled,
@@ -437,5 +441,24 @@ export function useClearRequests() {
     mutationFn: (ids: number[]) => api.clearRequests(ids),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.requests }),
+  });
+}
+
+
+/** The app's log file. `follow` polls so a live run narrates itself without the operator reloading;
+ *  `keepPreviousData` stops the list blanking out on every poll or filter change. */
+export function useLogs(
+  level: string,
+  q: string,
+  limit: number,
+  follow: boolean,
+) {
+  return useQuery({
+    queryKey: queryKeys.logs(level, q, limit),
+    queryFn: () => api.getLogs({ level, q, limit }),
+    // Stop polling once it's failing: re-hitting a broken endpoint every 3s buys nothing and
+    // buries the real error under a stream of identical ones. The error state offers Retry.
+    refetchInterval: (query) => (follow && !query.state.error ? 3000 : false),
+    placeholderData: (previous) => previous,
   });
 }

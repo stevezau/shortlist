@@ -106,6 +106,11 @@ def _choose_no_curator(page: Page) -> None:
     expect(page.get_by_text("Built-in picker ready — no AI, no keys, no cloud.")).to_be_visible(timeout=LOAD)
 
 
+#: Everyone step 4 offers: the three accounts plex.tv shares the server with, plus the owner —
+#: whom plex.tv's user list never returns and Shortlist has to add itself (issue #1).
+WIZARD_USERS = ("sarah", "mike", "canary", "steve")
+
+
 def _pick_users(page: Page, *usernames: str) -> None:
     """Step 4: users sync from plex.tv on entry; enable the named ones."""
     page.get_by_role("button", name="Next").click()
@@ -114,16 +119,16 @@ def _pick_users(page: Page, *usernames: str) -> None:
     # The owner caveat is a design requirement, not decoration: the owner CANNOT be hidden
     # from, and they must learn that here rather than from their own Home screen tonight.
     expect(page.get_by_text("Heads up, server owner")).to_be_visible()
-    expect(page.get_by_text(re.compile("Plex cannot hide collections from the server owner"))).to_be_visible()
+    expect(page.get_by_text(re.compile("hide .*other.* people.s rows from you"))).to_be_visible()
 
-    for username in ("sarah", "mike", "canary"):
+    for username in WIZARD_USERS:
         expect(page.get_by_role("cell", name=username, exact=True)).to_be_visible(timeout=LOAD)
 
     # First sync pre-selects everyone (so the default click-through builds rows), so wait for that
     # to land, then turn OFF anyone this test doesn't want enabled.
-    for username in ("sarah", "mike", "canary"):
+    for username in WIZARD_USERS:
         expect(page.get_by_role("switch", name=f"Give {username} a row")).to_be_checked(timeout=LOAD)
-    for username in ("sarah", "mike", "canary"):
+    for username in WIZARD_USERS:
         if username not in usernames:
             toggle = page.get_by_role("switch", name=f"Give {username} a row")
             toggle.click()
@@ -248,9 +253,12 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     assert run["stats"]["users_ok"] == 3
 
 
-def test_choosing_ollama_as_the_curator_saves_its_url(fresh_page: Page, fresh_app: ShortlistApp, fake_plex):
-    """Ollama takes a URL and no key. That key used to be unknown to the settings store, so the
-    whole payload 422'd — taking curator.provider down with it and blocking setup entirely."""
+def test_choosing_a_local_curator_saves_its_url(fresh_page: Page, fresh_app: ShortlistApp, fake_plex):
+    """A self-hosted server takes a URL and no key. That key used to be unknown to the settings
+    store, so the whole payload 422'd — taking curator.provider down with it and blocking setup.
+
+    One card now covers Ollama, llama.cpp, LM Studio, vLLM and LocalAI: they all speak the same
+    OpenAI-compatible API, so a card per runtime was one capability wearing several hats."""
     page, app = fresh_page, fresh_app
     pms_url, _, _ = fake_plex
     stub_plex_pin(page, app)
@@ -259,18 +267,18 @@ def test_choosing_ollama_as_the_curator_saves_its_url(fresh_page: Page, fresh_ap
     _connect_plex(page, pms_url)
     _skip_history(page)
 
-    page.get_by_role("button", name=re.compile(r"^Ollama\b")).click()
-    page.get_by_label("Ollama URL").fill("http://127.0.0.1:11434")
+    page.get_by_role("button", name=re.compile(r"^Local")).click()
+    page.get_by_label("Server URL").fill("http://127.0.0.1:11434")
     page.get_by_role("button", name="Save & test").click()
 
     for _ in range(20):
         settings = app.api("GET", "/api/settings").json()
-        if settings.get("curator.provider") == "ollama":
+        if settings.get("curator.provider") == "openai_compatible":
             break
         page.wait_for_timeout(250)
     settings = app.api("GET", "/api/settings").json()
-    assert settings["curator.provider"] == "ollama"
-    assert settings["curator.ollama_url"] == "http://127.0.0.1:11434"
+    assert settings["curator.provider"] == "openai_compatible"
+    assert settings["curator.openai_base_url"] == "http://127.0.0.1:11434"
 
 
 def test_wizard_resumes_on_the_same_step_after_a_reload(fresh_page: Page, fresh_app: ShortlistApp, fake_plex):

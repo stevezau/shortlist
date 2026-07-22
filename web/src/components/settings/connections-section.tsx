@@ -135,16 +135,23 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               label: "API key",
               kind: "password",
               showIf: (v) =>
+                // A local server needs no key, but a hosted gateway (OpenRouter) does — so the
+                // field stays and the backend substitutes a placeholder when it's left blank.
                 !["none", "ollama"].includes(v["curator.provider"] ?? ""),
               // Link straight to the selected provider's key page (Anthropic/OpenAI/Google console).
               helpUrl: (v) => findProvider(v["curator.provider"] ?? "")?.keyUrl,
             },
             {
-              key: "curator.ollama_url",
-              label: "Ollama URL",
+              // One field for every self-hosted runtime. `/v1` is appended server-side when the URL
+              // is a bare host, so the address people know their server by just works.
+              key: "curator.openai_base_url",
+              label: "Server URL",
               kind: "text",
               placeholder: "http://localhost:11434",
-              showIf: (v) => v["curator.provider"] === "ollama",
+              showIf: (v) =>
+                ["openai_compatible", "ollama"].includes(
+                  v["curator.provider"] ?? "",
+                ),
             },
           ]}
         />

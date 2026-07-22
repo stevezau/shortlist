@@ -7,6 +7,8 @@ worse than no button at all.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from playwright.sync_api import Page, expect
 
@@ -54,6 +56,36 @@ class TestConnectionCards:
 
 
 class TestDefaults:
+    def test_a_local_ai_server_can_be_pointed_at_from_settings(self, page: Page, app: ShortlistApp):
+        """The wizard is only walked once; everyone who adds a local AI server later does it HERE.
+
+        Covers the whole path an existing owner takes: pick the provider, get a URL field at all,
+        type the address their server is known by, and have it persist under the right key (#7).
+        """
+        page.goto("/settings")
+        title = page.get_by_text("AI curator").first
+        expect(title).to_be_visible(timeout=LOAD)
+        # Scope to the AI-curator card: every connection card has an identical Edit/Test pair.
+        card = title.locator('xpath=ancestor::div[contains(@class,"rounded")][1]')
+        card.get_by_role("button", name=re.compile("^(Edit|Set up)$")).first.click()
+
+        # "Provider" renders as a segmented group, not a <select> — pick the option by its label.
+        page.get_by_label("Provider").get_by_role("button", name=re.compile(r"^Local")).click()
+        # The URL field must APPEAR — without it there is no way to say where the server is.
+        url = page.get_by_label("Server URL")
+        expect(url).to_be_visible(timeout=LOAD)
+        url.fill("http://llama.local:8080")
+        page.get_by_role("button", name="Save").first.click()
+
+        for _ in range(20):
+            settings = app.api("GET", "/api/settings").json()
+            if settings.get("curator.provider") == "openai_compatible":
+                break
+            page.wait_for_timeout(250)
+        settings = app.api("GET", "/api/settings").json()
+        assert settings["curator.provider"] == "openai_compatible"
+        assert settings["curator.openai_base_url"] == "http://llama.local:8080"
+
     def test_row_name_and_size_survive_a_reload(self, page: Page, app: ShortlistApp):
         _open_settings(page)
 

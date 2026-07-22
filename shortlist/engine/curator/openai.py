@@ -28,12 +28,14 @@ class OpenAICurator:
     supports_native_web_search = True  # Responses API web_search tool (see recommend_web)
     last_tokens = ThreadLocalTokens()  # per-thread, so parallel per-user curation doesn't race
 
-    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, timeout: float = 60.0):
+    def __init__(self, api_key: str, model: str = DEFAULT_MODEL, timeout: float = 60.0, base_url: str | None = None):
         try:
             import openai
         except ImportError as e:
             raise ImportError("OpenAI provider needs `pip install shortlist[openai]`") from e
-        self._client = openai.OpenAI(api_key=api_key, timeout=timeout, max_retries=2)
+        # `base_url` points the same client at any server speaking the OpenAI API — llama.cpp,
+        # LM Studio, vLLM, LocalAI, OpenRouter (issue #7). None keeps OpenAI's own endpoint.
+        self._client = openai.OpenAI(api_key=api_key, timeout=timeout, max_retries=2, base_url=base_url)
         self._model = model
 
     def ping(self) -> str:
@@ -59,14 +61,7 @@ class OpenAICurator:
         log_curate_request(self.name, self._model, system, user, len(candidates), k)
         started = time.monotonic()
         try:
-            r = self._client.chat.completions.create(
-                model=self._model,
-                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {"name": "picks", "strict": True, "schema": picks_schema()},
-                },
-            )
+            r = self._chat(system, user)
         except openai.OpenAIError as e:
             raise CuratorError(f"OpenAI error: {e}") from e
         usage = getattr(r, "usage", None)
@@ -79,6 +74,21 @@ class OpenAICurator:
         picks = validate_picks(data.get("picks", []), candidates, k, self.name)
         log_curate_response(self.name, self._model, len(picks), self.last_tokens, time.monotonic() - started, text)
         return picks
+
+    def _chat(self, system: str, user: str):
+        """One chat completion asking for the picks schema.
+
+        Split out so a provider that speaks the same API but not all of its extensions can override
+        just the request shape and keep the parsing, validation and token accounting above.
+        """
+        return self._client.chat.completions.create(
+            model=self._model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {"name": "picks", "strict": True, "schema": picks_schema()},
+            },
+        )
 
     def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
         """Propose up to k titles to watch next via the Responses API web-search tool (``llm_web``).

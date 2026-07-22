@@ -14,6 +14,7 @@ import pytest
 import shortlist.server.services.run_service as run_service_mod
 from shortlist.engine.models import (
     CollectionDiff,
+    EngineConfig,
     FilterSnapshot,
     MediaType,
     Pick,
@@ -29,6 +30,16 @@ from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
+
+
+def _fake_ctx() -> SimpleNamespace:
+    """Stands in for an EngineContext in tests that stub out the engine entirely.
+
+    It carries the attributes `_execute` SETS on a real context (`config`, `cancelled`,
+    `on_user_done`) — a bare SimpleNamespace() silently diverged from the real shape and turned a
+    new assignment into an AttributeError swallowed by the run's error handling.
+    """
+    return SimpleNamespace(config=EngineConfig())
 
 
 @pytest.fixture
@@ -132,10 +143,41 @@ class TestRunExecution:
         assert service._cancels[7].is_set()  # the engine's cooperative cancel flag is now set
         assert service.cancel_run(7) is False  # already cancelling — not signalled again
 
+    def test_a_skipped_user_is_counted_as_skipped_not_as_a_success(self, sessions, tmp_path, monkeypatch):
+        """A skipped person built nothing. Folding them into `users_ok` is what made a run where
+        EVERY person was skipped report "3 succeeded · all succeeded" over three "Skipped" rows —
+        the summary contradicting the rows right beneath it (issue #3 follow-up)."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        report = RunReport(
+            started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+            dry_run=False,
+            users=[
+                UserRunReport(username="sarah", slug="sarah", status="skipped", reason="No per-person rows."),
+                UserRunReport(username="mike", slug="mike", status="ok", diff=CollectionDiff(added=["Movie"])),
+            ],
+        )
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+
+        assert run.stats["users_skipped"] == 1
+        assert run.stats["users_ok"] == 1, "the skipped user must not be counted as a success"
+        assert run.stats["users_error"] == 0
+        assert run.status == "ok"  # a skip is not a failure — the run itself is still fine
+        with sessions() as session:
+            rows = {r.user.username: (r.status, r.reason) for r in session.query(RunUser).all()}
+        assert rows["sarah"] == ("skipped", "No per-person rows.")
+
     def test_run_persists_report_picks_and_events(self, sessions, tmp_path, monkeypatch):
         bus = EventBus()
         service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
-        monkeypatch.setattr(service, "build_context", lambda **kw: SimpleNamespace())
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
 
         async def scenario():
@@ -147,6 +189,7 @@ class TestRunExecution:
         assert run.stats == {
             "users_ok": 1,
             "users_error": 1,
+            "users_skipped": 0,
             "dry_run": False,
             "rows_swept": 0,
             "shares_updated": 0,
@@ -157,6 +200,7 @@ class TestRunExecution:
             "llm_tokens_by_step": {},
             "exa_searches": 0,
             "error": None,
+            "promotion_blockers": [],
         }
         with sessions() as session:
             run_users = session.query(RunUser).filter_by(run_id=run.id).all()
@@ -177,7 +221,7 @@ class TestRunExecution:
 
         def fake_build_context(**kw):
             captured["dry_run"] = kw.get("dry_run")
-            return SimpleNamespace()
+            return _fake_ctx()
 
         monkeypatch.setattr(service, "build_context", fake_build_context)
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report(dry_run=True))
@@ -266,7 +310,7 @@ class TestRunExecution:
         shared row produced an errored run with nothing to show for it."""
         bus = EventBus()
         service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
-        monkeypatch.setattr(service, "build_context", lambda **kw: SimpleNamespace())
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         shared = UserRunReport(
             username="Popular on this server",
@@ -294,10 +338,38 @@ class TestRunExecution:
             assert events[0].message["picks"] == 1
         assert run.status == "ok"
 
+    def test_a_skipped_shared_row_is_counted_as_skipped_and_still_audited(self, sessions, tmp_path, monkeypatch):
+        """A shared row has no RunUser row, so this event is the only record of its outcome (rule 10)
+        — and a row that built nothing must not inflate the run's success count."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        shared = UserRunReport(
+            username="Shared · popular",
+            slug="shared_popular",
+            status="skipped",
+            reason="A shared row needs at least 2 people with overlapping viewing.",
+            counts=StageCounts(),
+        )
+        report = RunReport(started_at=datetime.now(UTC), finished_at=datetime.now(UTC), users=[shared])
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: report)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+
+        assert run.stats["users_skipped"] == 1
+        assert run.stats["users_ok"] == 0 and run.stats["users_error"] == 0
+        with sessions() as session:
+            events = session.query(Event).filter_by(scope="run.shared").all()
+            assert len(events) == 1, "a shared row's outcome must still be audited"
+            assert "at least 2 people" in events[0].message["reason"]
+
     def test_a_failed_shared_row_makes_the_run_an_error(self, sessions, tmp_path, monkeypatch):
         bus = EventBus()
         service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
-        monkeypatch.setattr(service, "build_context", lambda **kw: SimpleNamespace())
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         shared = UserRunReport(
             username="Popular",
@@ -332,7 +404,7 @@ class TestRunExecution:
 
         bus = EventBus()
         service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
-        monkeypatch.setattr(service, "build_context", lambda **kw: SimpleNamespace())
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         # The `sessions` fixture already seeds sarah.
         # We recommended tmdb 1 to sarah in this run; she then watched it. Title 2 she never watched,
@@ -389,7 +461,7 @@ class TestRunExecution:
 
         bus = EventBus()
         service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
-        monkeypatch.setattr(service, "build_context", lambda **kw: SimpleNamespace())
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
 
         why = RequestWhy(user="Sarah", row="Sarah's Picks", seed="Blade Runner", source="tmdb_similar")
         sent = MissingTitle(42, "Dune", MediaType.MOVIE, 2021, rating=8.5, vote_count=900, demand=4, why=[why])
@@ -427,7 +499,7 @@ class TestRunExecution:
     def test_dry_run_persists_no_picks(self, sessions, tmp_path, monkeypatch):
         bus = EventBus()
         service = RunService(sessions, bus, tmp_path, SecretBox(tmp_path))
-        monkeypatch.setattr(service, "build_context", lambda **kw: SimpleNamespace())
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
         monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report(dry_run=True))
 
         async def scenario():

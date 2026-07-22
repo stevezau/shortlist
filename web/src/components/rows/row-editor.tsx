@@ -73,6 +73,50 @@ function DefaultRowCuration({ settings }: { settings: Settings }) {
 }
 
 /** The add/edit-a-row dialog. `collection` is null when adding. */
+/**
+ * A shared row is built only from titles SEVERAL people have watched, so one whose audience holds
+ * fewer enabled people than its threshold can never produce anything — it just reports "skipped"
+ * every run. Say so here, where it can still be fixed, rather than leaving someone to read a silent
+ * skip as a broken app (issue #3).
+ */
+function SharedRowReachWarning({
+  users,
+  audience,
+  audienceUserIds,
+  minWatchers,
+}: {
+  users: User[];
+  audience: "everyone" | "subset";
+  audienceUserIds: number[];
+  minWatchers: number;
+}) {
+  // Unknown user list (still loading) — say nothing rather than cry wolf.
+  if (users.length === 0) return null;
+  // The engine's audience is enabled AND not paused (a paused user is dropped before any row is
+  // built), so counting only `enabled` would stay silent on a row that genuinely cannot build.
+  const reach = users.filter(
+    (user) =>
+      user.enabled &&
+      !user.prefs?.paused &&
+      (audience === "everyone" || audienceUserIds.includes(user.id)),
+  ).length;
+  if (reach >= minWatchers) return null;
+  return (
+    <p
+      role="status"
+      className="rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
+    >
+      This row can’t build yet: it needs {minWatchers} people with viewing in
+      common, but{" "}
+      {reach === 0
+        ? "nobody in its audience is active in runs"
+        : `only ${reach} of them ${reach === 1 ? "is" : "are"} active in runs`}{" "}
+      (enabled and not paused). Add more people to the audience, or make this a
+      per-person row so each of them gets their own.
+    </p>
+  );
+}
+
 export function RowEditor({
   collection,
   users,
@@ -226,6 +270,12 @@ export function RowEditor({
                 Keeps one person’s viewing from ever showing up in a shared row.
                 2 is a good default.
               </p>
+              <SharedRowReachWarning
+                users={users}
+                audience={input.audience}
+                audienceUserIds={input.audience_user_ids}
+                minWatchers={input.min_watchers}
+              />
             </div>
           )}
 

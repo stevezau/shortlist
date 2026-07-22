@@ -6,6 +6,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from shortlist.engine.history import (
     FallbackHistorySource,
     PlexHistorySource,
@@ -13,7 +15,7 @@ from shortlist.engine.history import (
     derive_seeds,
     distinct_recent,
 )
-from shortlist.engine.models import MediaType
+from shortlist.engine.models import MediaType, UserType
 from tests.conftest import make_profile, make_watched
 
 
@@ -90,6 +92,143 @@ class TestPlexHistorySource:
         assert items[0].episode_title == "Pilot"
         call = mock_plex._server.history.call_args
         assert call.kwargs["accountID"] == 555000100
+
+    def test_a_shared_user_is_asked_for_by_their_plex_tv_id_without_reading_pms_accounts(self, mock_plex):
+        """PMS lists shared users under their plex.tv id, so they cost no extra `/accounts` read."""
+        mock_plex._server.history.return_value = []
+
+        PlexHistorySource(mock_plex).fetch(make_profile(account_id=555000100), min_completion=0.7)
+
+        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000100
+        mock_plex._server.systemAccounts.assert_not_called()
+
+    def test_the_owners_history_is_asked_for_by_the_id_pms_files_it_under(self, mock_plex):
+        """The owner is not in PMS's account table under their plex.tv id — asking for that id
+        returns nothing, and their 'personalized' row would quietly be built from an empty history."""
+        mock_plex._server.systemAccounts.return_value = [
+            SimpleNamespace(id=0, name=""),
+            SimpleNamespace(id=1, name="steve"),  # the owner, as a LOCAL PMS account
+            SimpleNamespace(id=555000100, name="sarah"),
+        ]
+        mock_plex._server.history.return_value = []
+
+        PlexHistorySource(mock_plex).fetch(
+            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
+            min_completion=0.7,
+        )
+
+        assert mock_plex._server.history.call_args.kwargs["accountID"] == 1
+
+    def test_an_owner_pms_already_knows_by_plex_tv_id_is_left_alone(self, mock_plex):
+        """An exact id match wins over the name, so a server that does file the owner under their
+        plex.tv id keeps working — and two accounts sharing a display name can't cross wires."""
+        mock_plex._server.systemAccounts.return_value = [
+            SimpleNamespace(id=1, name="steve"),
+            SimpleNamespace(id=555000001, name="steve"),
+        ]
+        mock_plex._server.history.return_value = []
+
+        PlexHistorySource(mock_plex).fetch(
+            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
+            min_completion=0.7,
+        )
+
+        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
+
+    def test_an_unreadable_account_list_raises_rather_than_reporting_an_empty_history(self, mock_plex):
+        """Falling back to the plex.tv id here would return ZERO rows — indistinguishable from "this
+        person has never watched anything". The incremental sync banks that as a successful empty
+        pull and advances the watermark, so one hiccup on the owner's first run would leave their
+        history permanently un-backfilled. Raising keeps the watermark (the sync fails soft)."""
+        mock_plex._server.systemAccounts.side_effect = RuntimeError("PMS said no")
+
+        with pytest.raises(RuntimeError, match="could not read PMS accounts"):
+            PlexHistorySource(mock_plex).fetch(
+                make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
+                min_completion=0.7,
+            )
+
+        mock_plex._server.history.assert_not_called()
+
+    def test_a_single_name_match_on_a_known_roster_account_is_refused(self, mock_plex):
+        """The residual attribution risk: the owner renames themselves, PMS's local row keeps the old
+        name, and ANOTHER account now carries the new one — a single, confident, wrong match. Every
+        non-owner is listed under their plex.tv id, so a candidate that IS a known account can't be
+        the owner's local row."""
+        mock_plex._server.systemAccounts.return_value = [
+            SimpleNamespace(id=1, name="old-name"),
+            SimpleNamespace(id=555000100, name="steve"),  # sarah, who just renamed herself
+        ]
+        mock_plex._server.history.return_value = []
+
+        PlexHistorySource(mock_plex, roster_account_ids=frozenset({555000100, 555000200})).fetch(
+            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
+            min_completion=0.7,
+        )
+
+        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
+
+    def test_a_managed_user_is_asked_for_by_their_plex_tv_id(self, mock_plex):
+        """The third cell of the user_type matrix. PMS lists Home/managed profiles under their own
+        plex.tv id (recorded fixture `pms_accounts.xml.txt`), so they resolve like a shared user —
+        and must NOT go near the name match, since a Home profile's local name is owner-chosen."""
+        mock_plex._server.history.return_value = []
+
+        PlexHistorySource(mock_plex).fetch(
+            make_profile(username="kid", user_type=UserType.MANAGED, account_id=555000200),
+            min_completion=0.7,
+        )
+
+        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000200
+        mock_plex._server.systemAccounts.assert_not_called()
+
+    def test_two_accounts_sharing_the_owners_name_are_refused_rather_than_guessed(self, mock_plex):
+        """A Home profile can be given ANY local name, including the owner's. Two candidates and no
+        id match means we cannot tell which is the person — and picking the first would build the
+        owner's private row out of a managed user's viewing."""
+        mock_plex._server.systemAccounts.return_value = [
+            SimpleNamespace(id=1, name="steve"),
+            SimpleNamespace(id=555000200, name="Steve"),  # another account that carries the same name
+        ]
+        mock_plex._server.history.return_value = []
+
+        PlexHistorySource(mock_plex).fetch(
+            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
+            min_completion=0.7,
+        )
+
+        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
+
+    def test_the_nameless_local_bucket_never_wins_the_match(self, mock_plex):
+        """PMS id 0 is the 'Local' account: plays from clients that were never signed in, belonging
+        to nobody. An owner with no username must not be handed that pile of everyone's viewing."""
+        mock_plex._server.systemAccounts.return_value = [
+            SimpleNamespace(id=0, name=""),
+            SimpleNamespace(id=1, name="steve"),
+        ]
+        mock_plex._server.history.return_value = []
+
+        PlexHistorySource(mock_plex).fetch(
+            make_profile(username="", user_type=UserType.OWNER, account_id=555000001),
+            min_completion=0.7,
+        )
+
+        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
+
+    def test_an_owner_pms_has_never_heard_of_is_never_mapped_onto_another_account(self, mock_plex):
+        """No id match and no name match must mean 'empty history', never 'the nearest account'."""
+        mock_plex._server.systemAccounts.return_value = [
+            SimpleNamespace(id=1, name="someone-else"),
+            SimpleNamespace(id=555000100, name="sarah"),
+        ]
+        mock_plex._server.history.return_value = []
+
+        PlexHistorySource(mock_plex).fetch(
+            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
+            min_completion=0.7,
+        )
+
+        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
 
 
 class TestFallbackHistorySource:

@@ -669,6 +669,80 @@ class PlexClient:
         r.raise_for_status()
         return r.json().get("MediaContainer", {}).get("Hub", []) or []
 
+    def system_account_id(
+        self, plex_account_id: int, username: str, *, exclude_ids: frozenset[int] = frozenset()
+    ) -> int:
+        """The id PMS files this person's watch history under, which is not always their plex.tv id.
+
+        PMS keeps its own account table (``GET /accounts``). Shared and Home users appear in it under
+        their plex.tv account id, so they resolve to themselves and nothing changes. The server OWNER
+        is the exception: PMS knows the admin as a LOCAL account, so `history?accountID=<plex.tv id>`
+        matches no rows and the owner's row would be built from an empty history — a personalized row
+        that is silently generic (issue #1).
+
+        Recorded from a live 80-account server (SFLIX, 2026-07-21, see `tests/fixtures/`): the owner's
+        plex.tv id appears NOWHERE in `/accounts`, their local row is `id=1` named with their plex.tv
+        ``username`` (not their ``title``), and that id returns 68 history rows where the plex.tv id
+        returns 0. Every other account is listed under its plex.tv id.
+
+        Resolution is by identity, never by position — a hardcoded "the owner is id 1" would build a
+        private row out of whatever that slot happened to hold. An exact id match wins; otherwise the
+        name must match EXACTLY ONE account, because a Home profile can be given any local name the
+        owner likes and two candidates mean we cannot tell which is the person. Anything ambiguous
+        falls back to the plex.tv id, which yields an honest cold-start row rather than someone
+        else's viewing history.
+
+        Args:
+            plex_account_id: The account's plex.tv id — what every other lookup uses.
+            username: Their plex.tv username, which is what PMS names the local row after.
+            exclude_ids: Account ids known to belong to OTHER people (the rest of the roster). PMS
+                lists everyone but the owner under their plex.tv id, so any candidate that is
+                somebody else's account is by definition not the owner's local row.
+
+        Returns:
+            The account id to pass to ``history_for_account``.
+
+        Raises:
+            RuntimeError: If PMS's account list cannot be read. Returning the plex.tv id instead
+                would come back with ZERO rows, which a caller cannot tell apart from "this person
+                has never watched anything" — and an incremental sync would bank that empty answer
+                and never backfill.
+        """
+        try:
+            accounts = self._server.systemAccounts()
+        except Exception as e:
+            raise RuntimeError(f"could not read PMS accounts to locate {username or plex_account_id}: {e}") from e
+        if any(a.id == plex_account_id for a in accounts):
+            return plex_account_id
+        wanted = (username or "").strip().lower()
+        # id 0 is PMS's "Local" bucket — plays from clients that were never signed in, belonging to
+        # nobody. It is never a person, and it is name-less, so it must never win a name match.
+        matches = (
+            [
+                a.id
+                for a in accounts
+                if a.id > 0 and a.id not in exclude_ids and (a.name or "").strip().lower() == wanted
+            ]
+            if wanted
+            else []
+        )
+        if len(matches) == 1:
+            logger.debug("{}: PMS files this account's history under id {}", username, matches[0])
+            return matches[0]
+        if len(matches) > 1:
+            logger.warning(
+                "{}: {} PMS accounts share this name — refusing to guess whose history is whose",
+                username,
+                len(matches),
+            )
+        else:
+            logger.warning(
+                "{} (plex.tv account {}) is not in this server's account list — history may come back empty",
+                username,
+                plex_account_id,
+            )
+        return plex_account_id
+
     def history_for_account(self, account_id: int, *, since=None, max_results: int = 50000) -> list:
         """Plex-native watch history for one account, full depth (used by the incremental sync).
 

@@ -101,7 +101,7 @@ def render_row_name(template: str, profile: UserProfile, picks: list[Pick], libr
         return DEFAULT_ROW_NAME
     rendered = (
         template.replace("{top_seed}", top_seed)
-        .replace("{user}", profile.username)
+        .replace("{user}", profile.display_name)
         .replace("{library_name}", library_name)
     )
     # A {library_name} title with no (or a padding-adjacent) library leaves double spaces where the

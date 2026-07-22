@@ -179,6 +179,11 @@ class UserProfile:
     plex_account_id: int
     user_type: UserType
     slug: str = ""
+    # What a human should be called in a row title: their Shortlist nickname, else the friendly name
+    # Tautulli knows them by, else their Plex username. Purely cosmetic — the SLUG (and therefore the
+    # `shortlist_<slug>` label every share filter excludes) is derived from the username and never
+    # moves, so renaming someone can't strand the exclusions that keep their row private.
+    nickname: str = ""
     history: list[WatchedItem] = field(default_factory=list)
     excluded_genres: set[str] = field(default_factory=set)
     row_name_template: str | None = None
@@ -190,6 +195,11 @@ class UserProfile:
     def __post_init__(self) -> None:
         if not self.slug:
             self.slug = slugify(self.username)
+
+    @property
+    def display_name(self) -> str:
+        """What `{user}` renders as — the nickname when they have one, else their Plex username."""
+        return self.nickname.strip() or self.username
 
     @property
     def label(self) -> str:
@@ -526,6 +536,13 @@ class EngineConfig:
     # the leak-safe share-filter sync, the unhidable-row sweep, and shelf promotion all still see the
     # FULL `rows` set, so a row not built this run keeps its excludes, its placement, and its privacy.
     build_only: frozenset[str] | None = None
+    # True when the caller handed us a SUBSET of the roster ("Run now" for one person) rather than
+    # everyone. Shared rows are then not built at all: a "popular on this server" row assembled from
+    # whoever happened to be selected is not a server-wide row, and it would be published to
+    # everyone. It also stops the engine reporting "only 1 person is in this row's audience — it can
+    # never build" about a perfectly healthy 10-person row. Default False = "this IS the roster",
+    # the honest reading for a direct library caller.
+    users_scoped: bool = False
 
     def should_build(self, spec: RowSpec) -> bool:
         """Whether this run rebuilds ``spec`` (scoped run) or every row (full run)."""
@@ -607,6 +624,11 @@ class UserRunReport:
     breakdown: list[dict] = field(default_factory=list)
     privacy_synced: bool = False
     error: str | None = None
+    # Why a NON-failing outcome happened — set alongside `skipped`, never for an error. "Skipped"
+    # with no explanation sent a beta user hunting for a bug that wasn't there (issue #3): a shared
+    # row with one enabled user can never reach its 2-watcher floor, and nothing on screen said so.
+    # Distinct from `error` because the UI counts every non-null `error` as a failed user.
+    reason: str | None = None
     duration_s: float = 0.0
     # Total AI tokens this user cost this run (curate + the AI candidate sources). WAS curate-only —
     # the llm_web/llm_library spend used to be discarded, undercounting every AI-source user.
@@ -647,6 +669,11 @@ class RunReport:
     # that have since arrived on the server (bought/grabbed elsewhere) so they stop lingering.
     library_present: set[tuple[int, MediaType]] = field(default_factory=set)
     error: str | None = None  # a run-level failure (e.g. the sweep itself could not run)
+    # Why promotion was blocked this run, one entry per account whose share filter could not be
+    # written — the accounts a row would otherwise be visible to. Without these the operator sees
+    # only "promotion skipped — a privacy sync failed", which names neither the account nor the
+    # reason and sends them to the container logs (issue #1, mrjohnpoz).
+    promotion_blockers: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:

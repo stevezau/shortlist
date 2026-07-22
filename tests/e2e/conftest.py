@@ -48,6 +48,9 @@ PMS_VERSION = "1.43.3.10793"
 # a live server. Rating keys 1xx are movies, 3xx are shows.
 SARAH_WATCHED = [*range(101, 109), *range(301, 305)]
 MIKE_WATCHED = [*range(305, 317)]
+# The owner watches too — filed by PMS under its LOCAL account id, never their plex.tv one. Seeding
+# this under `owner_account_id` would make the owner look like a cold-start user forever.
+OWNER_WATCHED = [*range(109, 117), *range(313, 317)]
 
 
 def _free_port() -> int:
@@ -223,7 +226,11 @@ def reset_fake_plex(fake_plex) -> Iterator[FakePlexState]:
     state.users.clear()
     state.users.update(fresh.users)
     state.history.clear()
-    for account_id, keys in ((201, SARAH_WATCHED), (202, MIKE_WATCHED)):
+    for account_id, keys in (
+        (201, SARAH_WATCHED),
+        (202, MIKE_WATCHED),
+        (state.owner_pms_account_id, OWNER_WATCHED),
+    ):
         for offset, rating_key in enumerate(keys):
             state.history.append(
                 FakeHistoryEntry(account_id=account_id, rating_key=rating_key, viewed_at=1_752_000_000 + offset)

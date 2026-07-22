@@ -20,6 +20,7 @@ import httpx
 from loguru import logger
 
 from shortlist.engine.clients import http_retry
+from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.models import UserType
 
 PLEXTV = "https://plex.tv"
@@ -149,7 +150,14 @@ class PlexTvClient:
                     "plex.tv 429 on filter write (attempt {}); slowing to {:.1f}s/write", attempt + 1, self._pace
                 )
                 continue  # the loop-top _throttle now waits the new, larger pace before retrying
-            raise RuntimeError(f"plex.tv rejected filter update for {plex_account_id}: HTTP {r.status_code}")
+            # Carry plex.tv's own words. "HTTP 400" alone leaves the operator guessing which of
+            # their accounts plex.tv won't accept a filter for, and why (issue #1). The body is
+            # short XML/JSON; truncate it and redact in case it ever echoes the token back.
+            detail = redact(" ".join((r.text or "").split()))[:300]
+            raise RuntimeError(
+                f"plex.tv rejected the share-filter update for account {plex_account_id}: "
+                f"HTTP {r.status_code}{f' — {detail}' if detail else ''}"
+            )
         raise RuntimeError(f"plex.tv still throttling filter update for {plex_account_id} after retries")
 
     def home_users(self) -> list[dict]:

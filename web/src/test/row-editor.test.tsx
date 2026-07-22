@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowEditor } from "@/components/rows/row-editor";
 import type * as ApiModule from "@/lib/api";
-import type { Collection } from "@/lib/types";
+import type { Collection, User } from "@/lib/types";
 
 const { updateCollection } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
@@ -59,13 +59,29 @@ function row(patch: Partial<Collection> = {}): Collection {
   };
 }
 
-function renderEditor(collection: Collection) {
+function user(patch: Partial<User> = {}): User {
+  return {
+    id: 1,
+    username: "sarah",
+    slug: "sarah",
+    user_type: "shared",
+    enabled: true,
+    cold_start: false,
+    history_depth: 10,
+    last_run_at: null,
+    request_tag: "",
+    hit_rate: null,
+    ...patch,
+  };
+}
+
+function renderEditor(collection: Collection, users: User[] = []) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={client}>
-      <RowEditor collection={collection} users={[]} onClose={() => {}} />
+      <RowEditor collection={collection} users={users} onClose={() => {}} />
     </QueryClientProvider>,
   );
 }
@@ -200,5 +216,53 @@ describe("RowEditor — recent watches to search", () => {
     expect(
       (updateCollection.mock.calls.at(0)?.[1] as Collection).recent_count,
     ).toBe(10);
+  });
+});
+
+
+describe("RowEditor — a shared row that can never build", () => {
+  const sharedRow = (patch: Partial<Collection> = {}) =>
+    row({ build: "shared", min_watchers: 2, ...patch });
+  const warning = () =>
+    screen.queryByText(/This row can’t build yet/i);
+
+  it("warns when only one person in the audience is active in runs", () => {
+    // The exact shape of issue #3: a shared row on a server with one enabled user can never reach
+    // its 2-watcher floor, so it silently reports "skipped" every night forever.
+    renderEditor(sharedRow(), [
+      user({ id: 1, username: "sarah" }),
+      user({ id: 2, username: "mike", enabled: false }),
+    ]);
+    expect(warning()).toBeInTheDocument();
+    expect(screen.getByText(/only 1 of them is active in runs/i)).toBeInTheDocument();
+  });
+
+  it("counts a PAUSED user as inactive — the engine drops them before any row is built", () => {
+    renderEditor(sharedRow(), [
+      user({ id: 1, username: "sarah" }),
+      user({ id: 2, username: "mike", prefs: { paused: true } }),
+    ]);
+    expect(warning()).toBeInTheDocument();
+  });
+
+  it("says nobody rather than 'only 0' when the audience is empty", () => {
+    renderEditor(sharedRow({ audience: "subset", audience_user_ids: [] }), [
+      user({ id: 1, username: "sarah" }),
+      user({ id: 2, username: "mike" }),
+    ]);
+    expect(screen.getByText(/nobody in its audience is active in runs/i)).toBeInTheDocument();
+  });
+
+  it("stays quiet once the row can actually build", () => {
+    renderEditor(sharedRow(), [
+      user({ id: 1, username: "sarah" }),
+      user({ id: 2, username: "mike" }),
+    ]);
+    expect(warning()).toBeNull();
+  });
+
+  it("stays quiet on a per-person row, which has no watcher floor at all", () => {
+    renderEditor(row({ build: "per_person" }), [user({ id: 1 })]);
+    expect(warning()).toBeNull();
   });
 });

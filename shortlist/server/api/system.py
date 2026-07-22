@@ -8,16 +8,18 @@ import platform
 import secrets as pysecrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from loguru import logger
 from pydantic import BaseModel
 
 import shortlist
+from shortlist.logging_config import normalize_level
 from shortlist.server.auth import API_TOKEN_KEY, API_TOKEN_PREFIX, require_owner
 from shortlist.server.db.models import Collection, Event, RestrictionSnapshotRow, User, iso_utc
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.scheduler import rebuild_schedule
+from shortlist.server.services import log_reader
 from shortlist.server.settings_store import SettingsStore
 
 _TOKEN_CREATED_KEY = "api.token_created_at"
@@ -90,6 +92,39 @@ async def image_provider(request: Request) -> dict:
     with request.app.state.sessions() as session:
         store = SettingsStore(session, request.app.state.secrets)
         return image_provider_status(store)
+
+
+@router.get("/logs", dependencies=[Depends(require_owner)])
+async def logs(request: Request, level: str = "DEBUG", q: str = "", limit: int = 1000) -> dict:
+    """The rotating log file, parsed and filtered — so a problem can be diagnosed from the app
+    instead of `docker logs`.
+
+    Every line is redacted before it leaves the server: this view exists to be copied and shared
+    (that is what the export button is for), so it must never be the thing that leaks a token.
+    """
+    return await asyncio.get_running_loop().run_in_executor(
+        None,
+        lambda: log_reader.read_lines(
+            request.app.state.config_dir,
+            level=normalize_level(level),
+            query=q,
+            limit=max(1, min(limit, 5000)),
+        ),
+    )
+
+
+@router.get("/logs/download", dependencies=[Depends(require_owner)])
+async def logs_download(request: Request) -> Response:
+    """Every log file as a redacted zip — the attachment for a bug report."""
+    payload = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: log_reader.build_zip(request.app.state.config_dir)
+    )
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    return Response(
+        content=payload,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="shortlist-logs-{stamp}.zip"'},
+    )
 
 
 @router.get("/debug", dependencies=[Depends(require_owner)], response_class=PlainTextResponse)

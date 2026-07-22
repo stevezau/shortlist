@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -20,7 +21,8 @@ from shortlist.engine.models import MediaType, OwnedRow, UserType
 from tests.conftest import fake_media_item
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
-USERS_XML = (FIXTURES / "plextv_users.xml").read_text()
+USERS_XML = (FIXTURES / "plextv_users.xml.txt").read_text()
+ACCOUNTS_XML = (FIXTURES / "pms_accounts.xml.txt").read_text()
 
 
 class _MemoryCache:
@@ -304,6 +306,45 @@ class TestTautulliClient:
             TautulliClient("http://taut.test", "SUPERSECRETKEY").get_history(100)
         assert "SUPERSECRETKEY" not in str(excinfo.value)
         assert "502" in str(excinfo.value)
+
+
+class TestSystemAccountId:
+    """Resolution driven by the RECORDED `/accounts` response, parsed by real plexapi.
+
+    The whole owner feature rests on what a real server returns here, so this replays the recording
+    rather than a hand-built list: on the live server the owner's plex.tv id was absent from this
+    document entirely, their local row was named after their plex.tv USERNAME, and that row's id was
+    the only one with any of their history under it (SFLIX, 2026-07-21).
+    """
+
+    def _accounts(self, mock_plex: PlexClient) -> None:
+        from plexapi.server import SystemAccount
+
+        root = ET.fromstring(ACCOUNTS_XML)
+        mock_plex._server.systemAccounts.return_value = [
+            SystemAccount(mock_plex._server, el) for el in root.findall("Account")
+        ]
+
+    def test_the_owner_resolves_to_their_local_pms_account(self, mock_plex: PlexClient):
+        self._accounts(mock_plex)
+        # 5245144-style plex.tv id: nowhere in the recorded document.
+        assert mock_plex.system_account_id(555000001, "s_flix") == 1
+
+    def test_the_match_is_case_insensitive_on_the_recorded_name(self, mock_plex: PlexClient):
+        self._accounts(mock_plex)
+        assert mock_plex.system_account_id(555000001, "S_FLIX") == 1
+
+    def test_the_owners_title_does_not_match_only_their_username_does(self, mock_plex: PlexClient):
+        """plex.tv returns BOTH `username` ("S_FLIX") and `title` ("SFLIX_Admin"); PMS names the
+        local account after the username. Passing the title finds nothing — which is why the sync
+        stores `username` first."""
+        self._accounts(mock_plex)
+        assert mock_plex.system_account_id(555000001, "SFLIX_Admin") == 555000001
+
+    def test_everyone_else_is_already_listed_under_their_plex_tv_id(self, mock_plex: PlexClient):
+        self._accounts(mock_plex)
+        assert mock_plex.system_account_id(555000100, "sarah") == 555000100  # shared
+        assert mock_plex.system_account_id(555000200, "kid") == 555000200  # managed/Home
 
 
 class TestPlexClient:

@@ -10,6 +10,12 @@ export interface User {
   id: number;
   username: string;
   slug: string;
+  /** The owner's override for what to call them in a row title; "" = fall back. */
+  nickname?: string;
+  /** What Tautulli calls them, when it has its own name for them. The blank-nickname fallback. */
+  friendly_name?: string;
+  /** nickname → friendly_name → username, resolved server-side. */
+  display_name?: string;
   user_type: UserType;
   enabled: boolean;
   cold_start: boolean;
@@ -193,6 +199,7 @@ export const PROMPT_TONES = [
 export type PromptTone = (typeof PROMPT_TONES)[number];
 
 export interface UserPatch {
+  nickname?: string;
   enabled?: boolean;
   request_tag?: string;
   prefs?: UserPrefs;
@@ -217,6 +224,8 @@ export interface ApiTokenCreated {
 export interface RunStats {
   users_ok: number;
   users_error: number;
+  /** Built nothing, but nothing went wrong (no row was due for them). Absent on legacy runs. */
+  users_skipped?: number;
   /** Titles added to rows across all users this run. */
   titles_added?: number;
   /** Titles rotated out of rows across all users this run. */
@@ -240,6 +249,10 @@ export interface Run {
   status: string;
   dry_run: boolean;
   stats: RunStats;
+  /** Why the run failed, when the failure belongs to no single person. Null on a clean run. */
+  error?: string | null;
+  /** Accounts whose share filter Plex refused — the reason nothing was promoted. */
+  promotion_blockers?: string[];
 }
 
 export interface Pick {
@@ -338,6 +351,8 @@ export interface RunUserResult {
   slug: string;
   status: string;
   error: string | null;
+  /** Why a `skipped` result happened, in plain English. Null unless skipped (and on legacy runs). */
+  reason: string | null;
   duration_ms: number;
   llm_tokens: number;
   /** This user's AI tokens split by where they went: { curate, llm_web, llm_library }. */
@@ -502,6 +517,8 @@ export interface RunUserStageEvent {
   user: string;
   stage: string;
   counts: Record<string, number>;
+  /** Why this user was skipped — kept out of `counts`, which is a tally of numbers. */
+  reason?: string | null;
   /** Present on run-scoped stage events; lets a run page ignore other runs' events. */
   run_id?: number | null;
   /** ISO timestamp the server stamped the stage, when available. */
@@ -515,6 +532,7 @@ export interface RunLogEntry {
   user: string;
   stage: string;
   counts: Record<string, number>;
+  reason?: string | null;
 }
 
 /** Event `run.finished`. */
@@ -685,4 +703,23 @@ export interface RequestSendResult {
   sent: number;
   dry_run: boolean;
   outcomes: RequestSendOutcome[];
+}
+
+
+/** One parsed line from the rotating log file (GET /api/system/logs). A traceback is folded into
+ *  the entry it belongs to, so `message` can span several lines. */
+export interface LogLine {
+  ts: string | null;
+  level: string;
+  source: string;
+  message: string;
+}
+
+export interface LogPage {
+  lines: LogLine[];
+  /** How many lines matched the filter before the newest-N cap was applied. */
+  total_matched: number;
+  truncated: boolean;
+  /** The file these came from, or null when the instance has not written any logs yet. */
+  file: string | null;
 }

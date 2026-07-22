@@ -65,6 +65,12 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(255))
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     avatar_url: Mapped[str] = mapped_column(String(512), default="")
+    # What to call this person in a row title. `nickname` is the owner's own override and always
+    # wins; `friendly_name` is whatever Tautulli knows them as, refreshed on each user sync. Neither
+    # touches `slug`, so the `shortlist_<slug>` label every share filter excludes never moves —
+    # renaming someone is cosmetic by construction and can't strand their privacy exclusions.
+    nickname: Mapped[str] = mapped_column(String(255), default="")
+    friendly_name: Mapped[str] = mapped_column(String(255), default="")
     user_type: Mapped[str] = mapped_column(String(16), default="shared")  # shared | managed | owner
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     cold_start: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -194,6 +200,10 @@ class RunUser(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Why a non-failing outcome happened (a `skipped` row that could not build). NOT an error: the
+    # UI counts every non-null `error` as a failed user, which is how "skipped" ended up on screen
+    # with no explanation at all (issue #3). NULL on legacy rows.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     llm_tokens: Mapped[int] = mapped_column(Integer, default=0)
     # `llm_tokens` split by WHERE it went: {"curate": N, "llm_web": M, "llm_library": P}. {} on legacy

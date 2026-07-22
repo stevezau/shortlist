@@ -42,6 +42,9 @@ def make_session_factory(engine) -> sessionmaker[Session]:
 # never "any unknown revision" — so it can only ever fire for this one squash transition. Gating on
 # "unknown" would also (wrongly) fire on a post-release image rollback, where the DB is stamped NEWER
 # than the running code; that must take the normal upgrade path, not be re-stamped backward.
+# NOTE: this reserves 0002-0028 forever. A post-baseline migration numbered inside the range would
+# be treated as a squashed revision and re-stamped BACKWARD to 0001 on every boot, replaying it each
+# time — so new migrations start at 0029.
 _SQUASHED_REVISIONS = frozenset(f"{i:04d}" for i in range(2, 29))  # 0002..0028
 
 

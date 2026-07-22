@@ -3,9 +3,11 @@ import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
+import { OwnerNote } from "@/components/owner-note";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { RecentRuns } from "@/components/user-detail/recent-runs";
 import { UserDetailHeader } from "@/components/user-detail/user-detail-header";
+import { UserNickname } from "@/components/user-detail/user-nickname";
 import { UserRequestTag } from "@/components/user-detail/user-request-tag";
 import { UserRowsSection } from "@/components/user-detail/user-row-card";
 import { WatchHistory } from "@/components/user-detail/watch-history";
@@ -24,6 +26,8 @@ function UserDetailBody({ user }: { user: User }) {
     <div className="space-y-8">
       <UserDetailHeader user={user} />
 
+      {user.user_type === "owner" && <OwnerNote />}
+
       <section className="space-y-3">
         <SectionHeading>Their personal rows</SectionHeading>
         <p className="text-sm text-muted-foreground">
@@ -33,6 +37,11 @@ function UserDetailBody({ user }: { user: User }) {
           they&rsquo;re the same for everyone and are managed under Rows.
         </p>
         <UserRowsSection user={user} />
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeading>What to call them</SectionHeading>
+        <UserNickname user={user} />
       </section>
 
       <section className="space-y-3">

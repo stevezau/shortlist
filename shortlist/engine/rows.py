@@ -67,6 +67,50 @@ def effective_row_sources(spec: RowSpec, default_sources: list[str]) -> tuple[st
     return tuple(sorted(spec.candidate_sources or default_sources))
 
 
+def _sections_of(ctx: EngineContext, library_keys: list) -> dict[int, str]:
+    """ratingKey -> section key, for the given libraries (all of them when none are pinned).
+
+    Built by inverting the per-section tmdb->ratingKey index the run already holds, so it costs no
+    extra Plex reads. Lets a WATCHED title be traced back to the library it lives in.
+    """
+    wanted = {str(k) for k in library_keys}
+    out: dict[int, str] = {}
+    for section_key, index in ctx.section_index.items():
+        if wanted and str(section_key) not in wanted:
+            continue
+        for rating_key in index.values():
+            out[rating_key] = str(section_key)
+    return out
+
+
+def _history_for_row(ctx: EngineContext, history: list[WatchedItem], spec: RowSpec) -> list[WatchedItem]:
+    """The watches that should SEED this row: the ones from the libraries it delivers into.
+
+    A row's libraries used to narrow only what could be delivered, never what was searched — so a
+    Movies row on a server whose owner mostly watches sport and TV spent all `max_seeds` slots on
+    titles it could never deliver, TMDB returned more of the same, the library intersection threw
+    nearly all of it away, and the row came back thin and reported "ok" (issue #1 follow-up).
+
+    Filtering BEFORE `derive_seeds` is what makes the fix work: the seed budget is then filled from
+    the relevant watches, looking as far back through the history as it needs to.
+
+    Falls back to the unfiltered history when nothing survives — a weak row beats no row, and that
+    is exactly what this person would have got before.
+    """
+    by_media = _media_filter(history, spec.media)
+    if not spec.library_keys:
+        return by_media
+    sections = _sections_of(ctx, spec.library_keys)
+    in_library = [w for w in by_media if w.rating_key is not None and w.rating_key in sections]
+    if in_library:
+        return in_library
+    logger.debug(
+        "row '{}': nothing in this person's history comes from its libraries — seeding from all of it",
+        spec.slug,
+    )
+    return by_media
+
+
 def _media_filter(items: list, media: str) -> list:
     """Keep only items of the row's media type ('both' keeps everything)."""
     if media == "both":
@@ -274,6 +318,9 @@ def _candidate_pool(
     # recommendation you've finished is the exact thing the row shouldn't surface. Falls back to the
     # seed set for callers that don't compute the full breakdown (e.g. shared rows).
     watched_ids = watched_exclusions if watched_exclusions is not None else {(s.tmdb_id, s.media_type) for s in seeds}
+    # Blocked titles ride along with the watched exclusions — same "don't surface this" machinery —
+    # but UNCONDITIONALLY: a watched-cap above 0 re-admits finished titles, and "stop suggesting
+    # this" must not be re-admitted by it (issue #5).
     gather_stats = candidates_mod.GatherStats()
     pool = candidates_mod.gather_candidates(
         ctx.tmdb,
@@ -351,6 +398,30 @@ def _is_muted(user: UserProfile, spec: RowSpec) -> bool:
     return bool(override and override.muted)
 
 
+def _why_no_rows(user: UserProfile, cfg: EngineConfig) -> str:
+    """Plain-English reason this person had no per-person row to build.
+
+    "Skipped" on its own reads as a bug — a beta user turned their only row into a shared row, saw
+    every user skipped with no collections created, and filed it as broken (issue #3). The answer is
+    always in the configuration, so say which part of it.
+    """
+    per_person = cfg.per_person_rows()
+    if not per_person:
+        shared = len(cfg.shared_rows())
+        return (
+            f"There are no per-person rows to build. Every enabled row ({shared}) is a SHARED row, which is "
+            "built once for the whole server from what several people have watched — not per person. "
+            "Add a per-person row (Rows → New row) to give people their own."
+            if shared
+            else "No rows are enabled, so there was nothing to build."
+        )
+    if not any(_in_audience(user, spec) for spec in per_person):
+        return "This person isn't in the audience of any per-person row."
+    if all(_is_muted(user, spec) for spec in per_person if _in_audience(user, spec)):
+        return "Every per-person row they're in is muted for this person."
+    return "None of this person's rows were due to rebuild in this run."
+
+
 def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, diff: CollectionDiff) -> None:
     """Remove this user's rows that were muted or disabled since the last run.
 
@@ -400,7 +471,12 @@ def _run_user(
         if _in_audience(user, spec) and not _is_muted(user, spec) and cfg.should_build(spec)
     ]
     if not specs:
-        return False  # nothing to build for this user this run (not in audience, muted, or out of scope)
+        # Mark the STATUS too, not just the live event: the pipeline's terminal event said "skipped"
+        # while the persisted row kept its default "pending", so a reload showed a user stuck
+        # mid-run forever.
+        user_report.status = "skipped"
+        user_report.reason = _why_no_rows(user, cfg)
+        return False
     # The adapter puts the Phase-A global+per-user recipe on the profile; a row with its own recipe
     # overrides it for that row only.
     base_prompt = user.prompt
@@ -417,7 +493,6 @@ def _run_user(
     Pool = tuple[list[Candidate], list[Candidate], list[Candidate]]
     pool_cache: dict[tuple, Pool] = {}
     pool_failures: dict[tuple, str] = {}  # pool key -> why every source for it failed
-    seeds: list = []
     # This person's watched breakdown, filled in the non-cold branch and read by pools_for: watched
     # movie tmdb_ids, and show tmdb_id -> episode-play count (for the finished-show fraction). The
     # derived set of FINISHED (tmdb_id, media_type) titles is computed once the breakdown is in.
@@ -473,7 +548,7 @@ def _run_user(
             try:
                 pool_cache[key], gather_stats = _candidate_pool(
                     ctx,
-                    seeds,
+                    seeds_for(spec),
                     row_library_index(ctx, spec, library_index),
                     excluded_genres=user.excluded_genres,
                     profile=user,
@@ -499,8 +574,21 @@ def _run_user(
         user_report.status = "cold_start"
     else:
         resolve = _rating_key_resolver(seed_index)
-        seeds = derive_seeds(user.history, resolve, max_seeds=cfg.max_seeds)
-        user_report.counts.seeds = len(seeds)
+        seed_cache: dict[tuple, list] = {}
+
+        def seeds_for(spec: RowSpec) -> list:
+            """This row's seeds, from the watches its own libraries hold. Memoised per (media,
+            libraries) so rows that target the same thing derive them once."""
+            key = (spec.media, tuple(sorted(str(k) for k in spec.library_keys)))
+            if key not in seed_cache:
+                relevant = _history_for_row(ctx, user.history, spec)
+                seed_cache[key] = derive_seeds(relevant, resolve, max_seeds=cfg.max_seeds)
+            return seed_cache[key]
+
+        # Reported as the widest seed set any of this person's rows uses — the "both media, every
+        # library" case when they have one, so the number still means "how much of their history fed
+        # tonight's rows" rather than one arbitrary row's slice.
+        user_report.counts.seeds = max((len(seeds_for(spec)) for spec in specs), default=0)
         # Full watched breakdown (not just the seeds): every watched movie, and each show's
         # episode-play count. History is already completion-filtered, so this is meaningful watches.
         for item in user.history:
@@ -514,7 +602,7 @@ def _run_user(
         # The finished-title set, derived once: read by pools_for (0% hard-exclude) and the per-row
         # watched cap (>0). Mutated in place so the pools_for closure sees it.
         watched_titles |= _watched_titles(watched_movies, show_plays, ctx.episode_counts, cfg.watched_show_pct)
-        _pipeline._emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": len(seeds)})
+        _pipeline._emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": user_report.counts.seeds})
         for spec in specs:  # build every row's pool up front so counts and demand see them all
             pools_for(spec)
         # Only if EVERY row's sources are down do we know nothing about this person: that's a failed
@@ -559,7 +647,7 @@ def _run_user(
                     # Provenance for the inbox: this row surfaced it for this user, seeded by the
                     # strongest history title behind the candidate ("because you watched …").
                     seed_title = c.top_seed.title if c.top_seed else ""
-                    row_name = row_template.replace("{user}", user.username).replace(
+                    row_name = row_template.replace("{user}", user.display_name).replace(
                         "{top_seed}", seed_title or "your favourites"
                     )
                     # {library_name} renders as the library this title's media type lands in; blank (an
@@ -814,6 +902,11 @@ def _run_shared(
         agg = None
     finally:
         user_report.duration_s = round(time.monotonic() - started, 2)
+        # A shared row has no per-user terminal event, so a skip left the activity feed showing it
+        # mid-flight forever and its reason nowhere on screen (issue #3). Emit its outcome like any
+        # other participant in the run.
+        if user_report.status == "skipped":
+            _pipeline._emit(ctx, slug, "skipped", {}, user_report.reason)
     return user_report, agg
 
 
@@ -838,6 +931,7 @@ def _shared_row(
     audience = [u for u in users if spec.audience is None or u.plex_account_id in spec.audience]
     if not audience:
         user_report.status = "skipped"
+        user_report.reason = "Nobody in this row's audience is enabled, so there was no history to build it from."
         return None
 
     base_resolve = _rating_key_resolver(seed_index)
@@ -876,6 +970,25 @@ def _shared_row(
     )
     if not agg_history:
         user_report.status = "skipped"
+        # The commonest cause by far is a shared row whose audience is smaller than the floor, where
+        # it is arithmetically unreachable — so say which it is rather than leaving someone to
+        # conclude the app is broken (issue #3).
+        #
+        # "in this row's audience" is the honest phrase, NOT "enabled": `users` has already been
+        # narrowed to people who are enabled AND not paused, then narrowed again by spec.audience.
+        # Saying "only 1 user is enabled" to someone looking at ten enabled users on the Users page
+        # is exactly the kind of confidently-wrong explanation that sends them back to the tracker.
+        who = f"{len(audience)} {'person' if len(audience) == 1 else 'people'}"
+        user_report.reason = (
+            f"No title has been watched by {threshold} or more of the {who} in this row's audience yet. "
+            f"A shared row is built only from titles several people have watched, so it needs {threshold} "
+            f"of them with some viewing in common."
+            if len(audience) >= threshold
+            else f"A shared row needs at least {threshold} people with overlapping viewing, but only {who} "
+            f"{'is' if len(audience) == 1 else 'are'} in this row's audience and active in runs (enabled, "
+            f"not paused) — so it can never build. Add more people to the audience, or make this a "
+            f"per-person row so each of them gets their own."
+        )
         logger.info("shared row '{}': no title watched by >= {} people yet", spec.slug, threshold)
         return None
 

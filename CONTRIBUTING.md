@@ -37,7 +37,7 @@ pnpm -C web dev                   # Vite on :5173, proxies /api to :5959
   a release. Pushing to `master` builds nothing on its own.
 - **Releases** are cut by pushing a semver tag (`vX.Y.Z`, or `vX.Y.Z-beta.N` for pre-releases). CI
   builds **`:latest`** + **`:X.Y.Z`** from the tag. Bump `shortlist/__init__.py` first, then tag.
-- **Publish gate:** the image is only pushed after lint, tests (3.12 + 3.13), the web build, and the
+- **Publish gate:** the image is only pushed after lint, tests (Python 3.12), the web build, and the
   Playwright e2e suite all pass in the same run — a red suite never ships an image.
 
 Image tags: `:dev` (latest dev build) · `:latest` (latest stable release) · `:X.Y.Z` (pinned).

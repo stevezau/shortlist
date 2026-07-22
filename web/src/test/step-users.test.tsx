@@ -99,3 +99,53 @@ describe("StepUsers select all/none", () => {
     expect(setAllUsersEnabled).toHaveBeenCalledWith(true);
   });
 });
+
+
+describe("StepUsers — the owner's own line", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+    syncUsers.mockClear();
+    patchUser.mockReset();
+    setAllUsersEnabled.mockClear();
+  });
+
+  const OWNER: User = {
+    ...SARAH,
+    id: 9,
+    username: "steve",
+    slug: "steve",
+    user_type: "owner",
+  };
+
+  it("tells a returning owner to switch THEMSELVES on when their row is off", async () => {
+    // The pre-select only fires when nobody is enabled, so an owner arriving at an already-configured
+    // install sees their own switch OFF — and must not be told they're already on.
+    getUsers.mockResolvedValue([SARAH, { ...OWNER, enabled: false }]);
+    renderStep();
+
+    expect(
+      await screen.findByText(/switch yourself on below to get a row of your own/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/switched on like everyone else/i)).toBeNull();
+  });
+
+  it("tells a first-time owner they're already on, since the step switched them on", async () => {
+    getUsers.mockResolvedValue([SARAH, OWNER]);
+    renderStep();
+
+    expect(
+      await screen.findByText(/switched on like everyone else/i),
+    ).toBeInTheDocument();
+  });
+
+  it("always carries the caveat the owner cannot opt out of", async () => {
+    getUsers.mockResolvedValue([SARAH, OWNER]);
+    renderStep();
+
+    expect(await screen.findByText(/Heads up, server owner/i)).toBeInTheDocument();
+    // The sentence is split by an <em>, so match the fragment that lives in one text node.
+    expect(
+      screen.getByText(/people.s rows from you/i),
+    ).toBeInTheDocument();
+  });
+});

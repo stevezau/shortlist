@@ -23,9 +23,15 @@ else would see those people's private rows. Nothing else in their filter is alte
 a read-modify-write merge), the original is snapshotted first, and `uninstall` restores every one
 of them byte-for-byte.
 
+**Do I get a row myself?**
+Yes. plex.tv's user list never includes the account that owns the server, so Shortlist adds you to
+the Users page separately, badged `owner`. Turn yourself on and you get a Picked-for-You row built
+from your own watch history — which is all a one-person server needs.
+
 **What can the server owner see?**
-Everything — Plex cannot restrict the owner. Your Home shows all users' rows. Use a
-separate viewing account if you want the clean experience.
+Everything — Plex cannot restrict the owner. Your Home shows all users' rows, not just yours.
+If you share the server with others and want the clean experience, watch on a Plex Home user and
+keep the admin account for administration.
 
 **Does the AI hallucinate recommendations you don't have?**
 It can't. The LLM only re-ranks candidates that are already verified to exist in your

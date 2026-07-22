@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
@@ -16,6 +20,18 @@ from shortlist.server.settings_store import SettingsStore
 pytestmark = pytest.mark.integration
 
 OWNER_ID = 555000001
+
+# plex.tv `GET /api/v2/user` — the same payload the PIN login (auth.py) and the wizard's capability
+# probe already read from a live server; `thumb` is the one key the user sync adds on top.
+OWNER_JSON = {
+    "id": OWNER_ID,
+    "uuid": "abc123",
+    "username": "steve",
+    "title": "Steve",
+    "email": "steve@example.com",
+    "thumb": "https://plex.tv/users/abc/avatar",
+    "subscription": {"active": True},
+}
 
 
 @pytest.fixture
@@ -156,6 +172,131 @@ class TestUsersApi:
         assert r.json()["enabled"] is True
         assert r.json()["prefs"]["excluded_genres"] == ["Horror"]
 
+    def test_a_nickname_changes_the_row_title_but_never_the_label(self, client: TestClient):
+        """Plex usernames are often a handle nobody uses, and `{user}` put it on a Home screen (#4).
+        The slug — and so `shortlist_<slug>`, which every other account's share filter excludes —
+        must not move, or the old exclusions would point at nothing and the row would go public."""
+        target = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+        assert target["display_name"] == "sarah"
+
+        r = client.patch(f"/api/users/{target['id']}", json={"nickname": "Sarah B"})
+
+        assert r.status_code == 200
+        assert r.json()["nickname"] == "Sarah B"
+        assert r.json()["display_name"] == "Sarah B"
+        assert r.json()["slug"] == target["slug"], "the label must not move when someone is renamed"
+
+    def test_clearing_a_nickname_falls_back_to_tautullis_name_then_plex(self, client: TestClient):
+        from shortlist.server.db.models import User
+
+        target = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+        with client.app.state.sessions() as session:
+            session.get(User, target["id"]).friendly_name = "Sazza"
+            session.commit()
+
+        client.patch(f"/api/users/{target['id']}", json={"nickname": "Sarah B"})
+        assert self._one(client, target["id"])["display_name"] == "Sarah B"
+
+        cleared = client.patch(f"/api/users/{target['id']}", json={"nickname": ""}).json()
+
+        assert cleared["nickname"] == ""
+        assert cleared["display_name"] == "Sazza", "a blank nickname falls back to Tautulli's name"
+
+    def test_a_nickname_that_collides_with_someone_else_is_refused(self, client: TestClient):
+        """`{user}` renders display_name, and only the USERNAME is unique on Plex. Two people
+        resolving to one display name ask for two collections with one title in one library, which
+        PMS refuses — so that person's row would fail every night with a generic-looking Plex
+        error. Caught at the point of entry instead, where it can be explained."""
+        users = client.get("/api/users").json()
+        sarah = next(u for u in users if u["username"] == "sarah")
+        other = next(u for u in users if u["id"] != sarah["id"])
+        client.patch(f"/api/users/{sarah['id']}", json={"nickname": "The Boss"})
+
+        r = client.patch(f"/api/users/{other['id']}", json={"nickname": "the boss"})
+
+        assert r.status_code == 409, "case differences still collide — Plex titles are not case-sensitive"
+        assert "already shows up as" in r.json()["detail"]
+        assert self._one(client, other["id"])["nickname"] == "", "the rejected name must not be stored"
+
+    @pytest.mark.parametrize("source", ["friendly_name", "username"])
+    def test_a_clash_is_caught_whichever_name_the_other_person_shows_under(self, client: TestClient, source: str):
+        """display_name has three sources (nickname → Tautulli → Plex) and any of them can be the
+        thing you collide with — the Tautulli one especially, now that a sync adopts it."""
+        from shortlist.server.db.models import User
+
+        users = client.get("/api/users").json()
+        sarah = next(u for u in users if u["username"] == "sarah")
+        other = next(u for u in users if u["id"] != sarah["id"])
+        if source == "friendly_name":
+            with client.app.state.sessions() as session:
+                session.get(User, sarah["id"]).friendly_name = "Sazza"
+                session.commit()
+            taken = "Sazza"
+        else:
+            taken = sarah["username"]
+
+        r = client.patch(f"/api/users/{other['id']}", json={"nickname": taken})
+
+        assert r.status_code == 409
+        assert f"already shows up as “{taken}”" in r.json()["detail"], "the message names what THEY show as"
+
+    def test_clearing_a_nickname_into_someone_elses_name_is_also_refused(self, client: TestClient):
+        """Clearing is the one input that reaches a colliding name without anyone typing it."""
+        from shortlist.server.db.models import User
+
+        users = client.get("/api/users").json()
+        sarah = next(u for u in users if u["username"] == "sarah")
+        other = next(u for u in users if u["id"] != sarah["id"])
+        client.patch(f"/api/users/{other['id']}", json={"nickname": "Distinct Name"})
+        with client.app.state.sessions() as session:
+            session.get(User, other["id"]).friendly_name = sarah["username"]
+            session.commit()
+
+        r = client.patch(f"/api/users/{other['id']}", json={"nickname": ""})
+
+        assert r.status_code == 409
+
+    def test_a_nickname_can_be_re_saved_without_colliding_with_itself(self, client: TestClient):
+        target = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+        client.patch(f"/api/users/{target['id']}", json={"nickname": "Sarah B"})
+
+        r = client.patch(f"/api/users/{target['id']}", json={"nickname": "Sarah B"})
+
+        assert r.status_code == 200
+
+    def _one(self, client: TestClient, user_id: int) -> dict:
+        return next(u for u in client.get("/api/users").json() if u["id"] == user_id)
+
+    def test_watch_history_is_counted_from_the_watch_mirror_not_a_run_written_pref(self, client: TestClient):
+        """`prefs["history_depth"]` is only written once a run PROCESSES someone, so a skipped user —
+        or anyone before their first successful run — read "0 titles" forever. A beta user saw 0 for
+        all 42 of his accounts while the log showed 170 events synced for one of them."""
+        from shortlist.server.db.models import User, WatchEvent
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter_by(username="sarah").one()
+            # Two plays of one show + one film = 2 distinct TITLES, not 3 events. (Distinct
+            # timestamps: (user, rating_key, watched_at) is unique, which is how the sync dedups.)
+            when = datetime(2026, 7, 21, 2, 0, tzinfo=UTC)
+            session.add_all(
+                [
+                    WatchEvent(user_id=user.id, rating_key=100, watched_at=when, media_type="show"),
+                    WatchEvent(
+                        user_id=user.id, rating_key=100, watched_at=when + timedelta(hours=1), media_type="show"
+                    ),
+                    WatchEvent(user_id=user.id, rating_key=200, watched_at=when, media_type="movie"),
+                ]
+            )
+            session.commit()
+            user_id = user.id
+
+        listed = next(u for u in client.get("/api/users").json() if u["id"] == user_id)
+        assert listed["history_depth"] == 2, "a binge is one title, and it must not need a run to show"
+
+        # The PATCH response carries the same real number, not a stale zero.
+        patched = client.patch(f"/api/users/{user_id}", json={"enabled": True}).json()
+        assert patched["history_depth"] == 2
+
     def test_patch_unknown_user_404(self, client: TestClient):
         assert client.patch("/api/users/9999", json={"enabled": True}).status_code == 404
 
@@ -229,6 +370,175 @@ class TestUsersApi:
         prefs = r.json()["prefs"]
         assert prefs["prompt_tone"] == "cinephile"
         assert prefs["prompt_guidance"] == "she loves slow burns"
+
+
+class TestUserSync:
+    """`POST /users/sync` — the roster from plex.tv, PLUS the owner, who is never in that list.
+
+    Covers the `user_type` matrix's owner cell: without this the person running Shortlist has no
+    user row at all, so a one-person server gets no rows (issue #1).
+    """
+
+    @pytest.fixture
+    def plextv(self, client: TestClient):
+        """Both plex.tv reads at the HTTP boundary, so the response SHAPES are under test too —
+        the roster from the recorded fixture, the owner from the payload above."""
+        from shortlist.server.settings_store import SettingsStore
+
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("plex.token", "owner-token")
+            session.commit()
+
+        users_xml = (Path(__file__).parent.parent / "fixtures" / "plextv_users.xml.txt").read_text()
+        with respx.mock:
+            roster = respx.get("https://plex.tv/api/users").mock(return_value=httpx.Response(200, text=users_xml))
+            whoami = respx.get("https://plex.tv/api/v2/user").mock(
+                return_value=httpx.Response(200, json=dict(OWNER_JSON))
+            )
+            yield SimpleNamespace(roster=roster, whoami=whoami)
+
+    def _users(self, client: TestClient) -> dict[str, dict]:
+        return {u["username"]: u for u in client.get("/api/users").json()}
+
+    def test_a_tautulli_rename_triggers_the_same_row_reconcile_a_nickname_does(
+        self, client: TestClient, plextv, monkeypatch
+    ):
+        """`{user}` renders the friendly name, so a Tautulli rename changes every row title — and the
+        collections already on Plex still carry the old one. Without this reconcile a multi-row user
+        keeps the stale copy alongside the new one forever: `remove_row` matches by rendered title,
+        so no sweep ever collects it."""
+        from shortlist.server.api import users as users_api
+
+        calls: list = []
+
+        async def spy(state):
+            calls.append(state)
+
+        monkeypatch.setattr(users_api, "_rename_after_nickname", spy)
+        monkeypatch.setattr(
+            users_api.TautulliClient, "friendly_names", lambda self: {555000100: "Sazza"}, raising=False
+        )
+        from shortlist.server.settings_store import SettingsStore
+
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("tautulli.url", "http://tautulli:8181")
+            session.commit()
+
+        client.post("/api/users/sync")
+
+        assert self._users(client)["sarah"]["display_name"] == "Sazza"
+        assert len(calls) == 1, "a changed display name must reconcile the rows already on Plex"
+
+    def test_a_sync_that_changes_no_name_does_no_plex_work(self, client: TestClient, plextv, monkeypatch):
+        """The reconcile does Plex I/O — it must not fire on every routine sync."""
+        from shortlist.server.api import users as users_api
+
+        calls: list = []
+
+        async def spy(state):
+            calls.append(state)
+
+        monkeypatch.setattr(users_api, "_rename_after_nickname", spy)
+
+        client.post("/api/users/sync")  # the fixture renames one account, so this one DOES reconcile
+        calls.clear()
+        client.post("/api/users/sync")
+
+        assert calls == []
+
+    def test_sync_adds_the_owner_disabled_and_badged(self, client: TestClient, plextv):
+        r = client.post("/api/users/sync")
+        assert r.status_code == 200
+        # The fixture's two accounts are both already in the DB (sarah, and 555000200 whom plex.tv
+        # now calls "kid") — so the only thing ADDED is the owner plex.tv never returns.
+        assert r.json() == {"added": 1, "updated": 2, "total": 3}
+
+        owner = self._users(client)["steve"]
+        assert owner["user_type"] == "owner"
+        assert owner["plex_account_id"] == OWNER_ID
+        assert owner["slug"] == "steve"
+        assert owner["avatar_url"] == "https://plex.tv/users/abc/avatar"
+        # Off by default: an existing install gains a user to switch on, not a row that turns up on
+        # the owner's Home unannounced.
+        assert owner["enabled"] is False
+
+    def test_the_owner_lookup_is_authenticated_as_the_stored_plex_token(self, client: TestClient, plextv):
+        """The token decides WHOSE account comes back, so sending the wrong one (or none) would
+        either 401 or identify somebody else entirely."""
+        client.post("/api/users/sync")
+
+        headers = plextv.whoami.calls.last.request.headers
+        assert headers["X-Plex-Token"] == "owner-token"
+        assert headers["X-Plex-Client-Identifier"] == client.app.state.client_id
+
+    def test_re_syncing_updates_the_owner_instead_of_duplicating_them(self, client: TestClient, plextv):
+        client.post("/api/users/sync")
+        plextv.whoami.mock(return_value=httpx.Response(200, json={**OWNER_JSON, "username": "steve-renamed"}))
+
+        r = client.post("/api/users/sync")
+
+        assert r.json()["added"] == 0  # nobody new the second time
+        by_name = self._users(client)
+        assert "steve" not in by_name
+        assert by_name["steve-renamed"]["user_type"] == "owner"
+        with client.app.state.sessions() as session:
+            assert session.query(User).filter_by(plex_account_id=OWNER_ID).count() == 1
+
+    def test_a_token_belonging_to_another_account_never_becomes_the_owner(self, client: TestClient, plextv):
+        """Fail-safe: building a row from this account's history and labelling it the owner's would
+        hand one person another's picks, so a mismatched token syncs the shared users and stops."""
+        plextv.whoami.mock(return_value=httpx.Response(200, json={**OWNER_JSON, "id": 999999}))
+
+        r = client.post("/api/users/sync")
+
+        assert r.status_code == 200
+        assert r.json()["total"] == 2  # the fixture's shared users only
+        names = self._users(client)
+        assert not any(u["user_type"] == "owner" for u in names.values())
+
+    def test_a_re_link_under_a_new_admin_demotes_the_previous_owner(self, client: TestClient, plextv):
+        """`owner` is the type `sync_user_restrictions` skips, so a stale one keeps an account
+        exempt from restriction on a server it only shares."""
+        client.post("/api/users/sync")
+        with client.app.state.sessions() as session:
+            session.query(Server).first().owner_account_id = 555000999
+            session.commit()
+        # Re-linking re-homes the whole instance: the previous admin's session stops being the
+        # owner's session, so the new admin signs in before anything else happens.
+        client.cookies.set(
+            SESSION_COOKIE,
+            session_serializer(client.app.state.session_secret).dumps(
+                {"account_id": 555000999, "username": "new-admin"}
+            ),
+        )
+        plextv.whoami.mock(
+            return_value=httpx.Response(200, json={**OWNER_JSON, "id": 555000999, "username": "new-admin"})
+        )
+
+        client.post("/api/users/sync")
+
+        by_name = self._users(client)
+        assert by_name["new-admin"]["user_type"] == "owner"
+        assert by_name["steve"]["user_type"] == "shared"  # the old owner keeps their row, loses the exemption
+
+    @pytest.mark.parametrize(
+        ("response", "why"),
+        [
+            (httpx.Response(500, text="plex.tv is having a day"), "plex.tv errors"),
+            (httpx.Response(200, json={"subscription": {"active": True}}), "the payload has no id"),
+        ],
+    )
+    def test_shared_users_still_sync_when_the_owner_lookup_fails(self, client: TestClient, plextv, response, why):
+        """The owner is a bonus on top of the roster — a bad answer on that one call must not leave
+        everybody else's list stale, whether it fails at the wire or at the payload."""
+        plextv.whoami.mock(return_value=response)
+
+        r = client.post("/api/users/sync")
+
+        assert r.status_code == 200, why
+        assert r.json()["total"] == 2, why  # both shared users still landed
+        assert "sarah" in self._users(client), why
+        assert not any(u["user_type"] == "owner" for u in self._users(client).values()), why
 
 
 class TestUserRowsApi:
@@ -307,6 +617,63 @@ class TestRunsApi:
         assert runs[0]["status"] == "error"  # no plex configured in this app instance
         detail = client.get(f"/api/runs/{run_id}")
         assert detail.status_code == 200
+
+    def test_a_skipped_users_reason_reaches_the_run_detail_without_looking_like_a_failure(self, client: TestClient):
+        """The whole point of `reason` (issue #3): "skipped" has to explain itself in the UI. It is
+        carried SEPARATELY from `error` because the run page counts every non-null error as a failed
+        user — so a skip must arrive with a reason and a null error."""
+        from shortlist.server.db.models import Run, RunUser, User
+
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user_id,
+                    status="skipped",
+                    reason="There are no per-person rows to build.",
+                )
+            )
+            session.commit()
+            run_id = run.id
+
+        result = client.get(f"/api/runs/{run_id}").json()["users"][0]
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "There are no per-person rows to build."
+        assert result["error"] is None
+
+    def test_a_failed_run_exposes_why_not_just_that_it_failed(self, client: TestClient):
+        """The reason lived only inside `stats`, which no client read — so a run that failed for a
+        run-level reason (a share filter Plex refused) surfaced as a bare "Failed" and the operator
+        had to go read container logs (issue #1)."""
+        from shortlist.server.db.models import Run
+
+        blocker = "LisaPlex1234 (plex account 12345): plex.tv rejected the share-filter update: HTTP 400"
+        with client.app.state.sessions() as session:
+            run = Run(
+                trigger="manual",
+                status="error",
+                stats={
+                    "users_ok": 1,
+                    "users_error": 0,
+                    "error": "privacy sync failed",
+                    "promotion_blockers": [blocker],
+                },
+            )
+            session.add(run)
+            session.commit()
+            run_id = run.id
+
+        detail = client.get(f"/api/runs/{run_id}").json()
+        listed = next(r for r in client.get("/api/runs").json() if r["id"] == run_id)
+
+        assert detail["error"] == "privacy sync failed"
+        assert detail["promotion_blockers"] == [blocker]
+        assert listed["error"] == "privacy sync failed"  # the list carries it too
 
     def test_cancel_a_run_that_isnt_running_returns_409(self, client: TestClient):
         # A run that already finished (or never existed) can't be cancelled — the endpoint says so
@@ -809,6 +1176,55 @@ class TestSettingsValidation:
             json={"values": {"row.size": 15, "requests.min_rating": 7.5, "requests.max_per_run": 5}},
         )
         assert r.status_code == 200
+
+
+class TestLogsApi:
+    """The in-app Logs view. Owner-only, and redacted — it exists to be copied into bug reports."""
+
+    def _write_log(self, client: TestClient, *lines: str) -> None:
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    LINE = "2026-07-21 07:27:18.100 | {level:<8} | shortlist.server.main:lifespan:168 - {message}"
+
+    def test_returns_parsed_lines_filtered_by_level(self, client: TestClient):
+        self._write_log(
+            client,
+            self.LINE.format(level="DEBUG", message="quiet"),
+            self.LINE.format(level="ERROR", message="loud"),
+        )
+
+        body = client.get("/api/system/logs?level=ERROR").json()
+
+        assert [x["message"] for x in body["lines"]] == ["loud"]
+        assert body["file"] == "shortlist.log"
+
+    def test_never_serves_a_credential(self, client: TestClient):
+        """The whole point of the view is that it gets shared, so this is the load-bearing test."""
+        self._write_log(client, self.LINE.format(level="INFO", message="GET /x?X-Plex-Token=LEAKME -> 200"))
+
+        assert "LEAKME" not in client.get("/api/system/logs").text
+
+    def test_the_zip_download_is_attached_and_redacted(self, client: TestClient):
+        import io
+        import zipfile
+
+        self._write_log(client, self.LINE.format(level="INFO", message="token: X-Plex-Token: LEAKME"))
+
+        r = client.get("/api/system/logs/download")
+
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/zip"
+        assert "attachment; filename=" in r.headers["content-disposition"]
+        archive = zipfile.ZipFile(io.BytesIO(r.content))
+        assert "LEAKME" not in archive.read("logs/shortlist.log").decode()
+
+    def test_logs_are_owner_only(self, client: TestClient):
+        """Logs describe the whole server and name every user on it — they are not public."""
+        client.cookies.delete(SESSION_COOKIE)
+        assert client.get("/api/system/logs").status_code == 401
+        assert client.get("/api/system/logs/download").status_code == 401
 
 
 class TestSettingsApi:

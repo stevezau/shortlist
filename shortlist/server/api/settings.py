@@ -118,7 +118,9 @@ VALIDATORS = {
     "recommendations.freshness": _bounded_float(0.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
     "log.level": _one_of("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"),
-    "curator.provider": _one_of("anthropic", "openai", "google", "ollama", "none"),
+    # "ollama" stays accepted: it is the pre-merge name for openai_compatible, and an instance
+    # configured before the merge still has it stored.
+    "curator.provider": _one_of("anthropic", "openai", "openai_compatible", "google", "ollama", "none"),
     "curator.prompt_tone": _one_of("balanced", "warm", "concise", "cinephile", "playful"),
     "requests.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     "requests.min_rating": _bounded_float(0.0, 10.0),
@@ -336,7 +338,10 @@ async def curator_models(request: Request, body: CuratorModelsRequest | None = N
     overrides = {
         "curator.provider": body.provider,
         "curator.api_key": body.api_key,
+        # The picker sends a local server's URL under the pre-merge field name; it feeds the one
+        # local/OpenAI-compatible provider's base URL, so set both keys from it.
         "curator.ollama_url": body.ollama_url,
+        "curator.openai_base_url": body.ollama_url,
     }
     state = request.app.state
     with state.sessions() as session:

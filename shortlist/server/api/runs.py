@@ -29,6 +29,11 @@ def _run_summary(run: Run) -> dict:
         "status": run.status,
         "dry_run": run.dry_run,
         "stats": run.stats or {},
+        # WHY a run failed. It was only ever inside `stats`, which nothing rendered — so a run that
+        # failed for a run-level reason (a refused share filter, a sweep that could not run) showed
+        # "Failed" and nothing else, and the operator had to read container logs (issue #1).
+        "error": (run.stats or {}).get("error"),
+        "promotion_blockers": (run.stats or {}).get("promotion_blockers") or [],
     }
 
 
@@ -94,6 +99,9 @@ async def get_run(run_id: int, request: Request) -> dict:
                     "slug": run_user.user.slug,
                     "status": run_user.status,
                     "error": run_user.error,
+                    # Why a `skipped` result happened — an explanation, not a failure (NULL on
+                    # legacy rows and on every non-skipped result).
+                    "reason": run_user.reason,
                     "duration_ms": run_user.duration_ms,
                     "llm_tokens": run_user.llm_tokens,
                     # Where this user's AI tokens went ({} on legacy rows), and Exa searches (billed

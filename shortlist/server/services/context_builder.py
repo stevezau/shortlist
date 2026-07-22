@@ -71,13 +71,22 @@ def _prompt_from_recipe(recipe: dict) -> PromptConfig:
 
 
 def curator_kwargs(get: Callable[[str], object]) -> dict:
-    """Assemble ``make_curator`` kwargs from settings. Ollama takes a base_url and no key (a key
-    would be rejected by its ctor); every other provider takes an api_key; an optional model applies
-    to all. The single source of truth the runtime context and the settings 'Test' probe both build
-    from — so a change to how a provider is configured can't drift between them."""
+    """Assemble ``make_curator`` kwargs from settings. A local/OpenAI-compatible server takes a
+    base_url and an OPTIONAL key; every other provider takes an api_key; an optional model applies
+    to all.
+
+    The single source of truth the runtime context and the settings 'Test' probe both build from —
+    so a change to how a provider is configured can't drift between them."""
     kwargs: dict = {}
-    if get("curator.provider") == "ollama":
-        kwargs["base_url"] = get("curator.ollama_url")
+    provider = get("curator.provider")
+    if provider in ("openai_compatible", "ollama"):
+        # A local server usually wants no key at all, but a hosted gateway (OpenRouter) does — so
+        # the key is passed when set and the curator substitutes a placeholder when it isn't.
+        # `curator.ollama_url` is read as a fallback for instances configured before the two
+        # providers were merged, whose URL still lives under the old key.
+        kwargs["base_url"] = get("curator.openai_base_url") or get("curator.ollama_url")
+        if get("curator.api_key"):
+            kwargs["api_key"] = get("curator.api_key")
     elif get("curator.api_key"):
         kwargs["api_key"] = get("curator.api_key")
     if get("curator.model"):
@@ -122,7 +131,7 @@ class ContextBuilder:
             # native provider tools still work without it — only Ollama depends on it).
             exa_key = store.get("exa.apikey")
             search = ExaClient(exa_key) if exa_key else None
-            history = self._history_source(store, plex)
+            history = self._history_source(store, plex, session)
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get))
             # Build the poster studio only if a row actually renders a poster from text (built-in or
@@ -168,10 +177,14 @@ class ContextBuilder:
             # by account id, because a name can change and two names can slugify alike.
             known_slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
 
-        def progress(slug: str, stage: str, counts: dict) -> None:
+        def progress(slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
             # Runs in the engine's executor thread. One entry both STREAMS (SSE, live) and, via
             # log_sink, lands in the run's in-memory activity log so a page reload can replay it.
+            # `reason` is kept OUT of `counts`, which is a map of numbers the UI renders as a
+            # "113 history · 40 seeds" tally — a sentence in there would render as garbage.
             entry = {"ts": iso_utc(utcnow()), "run_id": run_id, "user": slug, "stage": stage, "counts": counts}
+            if reason:
+                entry["reason"] = reason
             if log_sink is not None:
                 log_sink(entry)
             if loop is not None:
@@ -239,14 +252,19 @@ class ContextBuilder:
             return self._build_requests(store), tmdb
 
     @staticmethod
-    def _history_source(store: SettingsStore, plex: PlexClient):
-        """The watch-history source: Tautulli-with-Plex-fallback when Tautulli is set, else Plex."""
+    def _history_source(store: SettingsStore, plex: PlexClient, session: Session):
+        """The watch-history source: Tautulli-with-Plex-fallback when Tautulli is set, else Plex.
+
+        The roster's account ids go to the Plex source so it can resolve the OWNER's local PMS
+        account without ever landing on somebody else's — see PlexClient.system_account_id.
+        """
+        roster = frozenset(row[0] for row in session.query(User.plex_account_id).all())
         if store.get("tautulli.url"):
             return FallbackHistorySource(
                 TautulliSource(TautulliClient(store.get("tautulli.url"), store.get("tautulli.apikey"))),
-                PlexHistorySource(plex),
+                PlexHistorySource(plex, roster_account_ids=roster),
             )
-        return PlexHistorySource(plex)
+        return PlexHistorySource(plex, roster_account_ids=roster)
 
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         """Recent watches for one user, newest first — the same source that feeds recommendations.
@@ -267,7 +285,7 @@ class ContextBuilder:
                 user_type=UserType(user.user_type),
                 slug=user.slug,
             )
-            history = self._history_source(store, PlexClient(plex_url, plex_token))
+            history = self._history_source(store, PlexClient(plex_url, plex_token), session)
         # A lower completion bar than a run uses: this is "what they've been watching", not seeds.
         # Distinct titles, newest first: a show's episodes collapse to the one show (keeping its most
         # recent episode's detail), so a binge shows as one entry and the list reflects real variety —
@@ -376,6 +394,8 @@ class ContextBuilder:
                     plex_account_id=user.plex_account_id,
                     user_type=UserType(user.user_type),
                     slug=user.slug,
+                    # The owner's own nickname wins; Tautulli's friendly name is only the default.
+                    nickname=user.nickname or user.friendly_name,
                     excluded_genres=set(prefs.get("excluded_genres") or []),
                     row_name_template=prefs.get("row_name_tpl"),
                     prompt=self._resolve_prompt(store, prefs),

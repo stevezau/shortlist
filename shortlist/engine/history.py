@@ -9,7 +9,7 @@ from loguru import logger
 
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.tautulli import TautulliClient
-from shortlist.engine.models import MediaType, Seed, UserProfile, WatchedItem
+from shortlist.engine.models import MediaType, Seed, UserProfile, UserType, WatchedItem
 
 
 def _as_int(value: object) -> int | None:
@@ -105,13 +105,27 @@ class TautulliSource:
 class PlexHistorySource:
     """Zero-config fallback: PMS /status/sessions/history/all per accountID with the owner token."""
 
-    def __init__(self, client: PlexClient):
+    def __init__(self, client: PlexClient, *, roster_account_ids: frozenset[int] = frozenset()):
         self._client = client
+        # Every plex.tv account id Shortlist knows. Used only to resolve the OWNER's local PMS
+        # account: anything in here demonstrably belongs to someone else, so it can never be it.
+        self._roster_account_ids = roster_account_ids
 
     def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
         # PMS history rows carry no completion percentage; presence in history is the signal.
         items = []
-        for entry in self._client.history_for_account(user.plex_account_id, since=since):
+        # Only the owner is asked for: every other account is in PMS's table under the id we already
+        # hold, so this spends a `/accounts` read on the one person it can be wrong for.
+        account_id = (
+            self._client.system_account_id(
+                user.plex_account_id,
+                user.username,
+                exclude_ids=self._roster_account_ids - {user.plex_account_id},
+            )
+            if user.user_type is UserType.OWNER
+            else user.plex_account_id
+        )
+        for entry in self._client.history_for_account(account_id, since=since):
             is_episode = entry.type == "episode"
             media_type = MediaType.SHOW if is_episode else MediaType.MOVIE
             title = getattr(entry, "grandparentTitle", None) or getattr(entry, "title", "")

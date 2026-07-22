@@ -36,6 +36,60 @@ def _wait_until(condition: Callable[[], bool], message: str, timeout_s: float = 
     raise AssertionError(message)
 
 
+class TestTheOwnerIsAUserToo:
+    """The person running Shortlist gets a row like anyone else (issue #1).
+
+    plex.tv's `/api/users` returns everyone the server is shared WITH and never its owner, so
+    before this the owner had no user row at all — and a one-person server built nothing.
+    """
+
+    def test_a_server_where_only_the_owner_is_enabled_still_builds_a_row(
+        self, page: Page, app: ShortlistApp, reset_fake_plex
+    ):
+        """The solo-server case end to end: sync finds the owner, and a run gives them real picks
+        from their own watch history — not the popular-titles fallback, which is what an empty
+        history would silently produce."""
+        state = reset_fake_plex
+        app.api("POST", "/api/users/sync")
+
+        owner = _users_by_name(app)[state.owner_username]
+        assert owner["user_type"] == "owner"
+        assert owner["enabled"] is False  # arrives switched off, like every other new user
+
+        for user in _users_by_name(app).values():
+            app.api("PATCH", f"/api/users/{user['id']}", json={"enabled": user["id"] == owner["id"]})
+        run = build_real_rows(app)
+
+        rows = [c for c in state.collections.values() if any(lbl.lower() == "shortlist_steve" for lbl in c.labels)]
+        assert rows, "the owner is the only enabled user and got no row at all"
+        for collection in rows:
+            assert collection.item_keys
+            assert collection.promoted_own_home, "the owner's row never reached the owner's own Home"
+        assert run["stats"]["users_ok"] == 1
+
+        # Their picks come from THEIR history — PMS files the owner's plays under a local account
+        # id, so asking by plex.tv id returns nothing and this row would be the cold-start one.
+        page.goto(f"/users/{owner['id']}")
+        expect(page.get_by_role("heading", name=state.owner_username)).to_be_visible(timeout=LOAD)
+        expect(page.get_by_text("New viewer")).to_have_count(0)
+
+    def test_the_owners_row_is_excluded_on_every_other_share(self, app: ShortlistApp, reset_fake_plex):
+        """The owner's own filter is never written (Plex cannot restrict them) — that must not be
+        mistaken for 'this row needs no hiding'. Everyone else still has to exclude it."""
+        state = reset_fake_plex
+        app.api("POST", "/api/users/sync")
+        owner = _users_by_name(app)[state.owner_username]
+        app.api("PATCH", f"/api/users/{owner['id']}", json={"enabled": True})
+
+        build_real_rows(app)
+
+        for account_id, user in state.users.items():
+            for field_name in ("filterMovies", "filterTelevision"):
+                assert "Shortlist_steve" in user.filters[field_name], (
+                    f"account {account_id} can see the owner's row in {field_name}"
+                )
+
+
 class TestUsers:
     def test_disabling_a_user_persists_and_leaves_the_others_alone(self, page: Page, app: ShortlistApp):
         page.goto("/users")

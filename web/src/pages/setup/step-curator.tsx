@@ -76,8 +76,10 @@ export function StepCurator({ data, update }: StepProps) {
       await api.putSettings({
         "curator.provider": provider.id,
         ...(provider.needsKey ? { "curator.api_key": apiKey } : {}),
-        // The backend keeps a dedicated key for the Ollama endpoint URL.
-        ...(provider.needsUrl ? { "curator.ollama_url": ollamaUrl } : {}),
+        // Each URL-taking provider stores its endpoint under its own setting key.
+        ...(provider.needsUrl && provider.urlKey
+          ? { [provider.urlKey]: ollamaUrl }
+          : {}),
         ...(provider.defaultModel ? { "curator.model": model } : {}),
       });
       if (provider.id === "none")
@@ -173,11 +175,14 @@ export function StepCurator({ data, update }: StepProps) {
             )}
             {selected.needsUrl && (
               <div className="space-y-2">
-                <Label htmlFor={ollamaId}>Ollama URL</Label>
+                <Label htmlFor={ollamaId}>
+                  {selected.urlLabel ?? "Server URL"}
+                </Label>
                 <Input
                   id={ollamaId}
                   value={ollamaUrl}
                   onChange={(event) => setOllamaUrl(event.target.value)}
+                  placeholder={selected.urlPlaceholder}
                   autoComplete="off"
                 />
               </div>

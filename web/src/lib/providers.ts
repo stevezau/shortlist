@@ -14,6 +14,11 @@ export interface CuratorProviderInfo {
   defaultModel: string;
   needsKey: boolean;
   needsUrl: boolean;
+  /** Which setting the URL is stored under — each URL-taking provider has its own. */
+  urlKey?: "curator.ollama_url" | "curator.openai_base_url";
+  /** What to call that URL field, and an example of the shape it wants. */
+  urlLabel?: string;
+  urlPlaceholder?: string;
   /** Where the owner gets an API key (the wizard links to its host). */
   keyUrl?: string;
   /** One-line cost/what-it-is blurb for the wizard's provider cards. */
@@ -52,13 +57,19 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     cost: "Pennies per night on the Flash tier — bring your own API key.",
   },
   {
-    id: "ollama",
-    label: "Ollama",
+    // ONE entry for every self-hosted runtime: Ollama, llama.cpp, LM Studio, vLLM, LocalAI — and
+    // hosted gateways like OpenRouter. They all speak the same OpenAI-compatible API, so a card
+    // per runtime was one capability wearing several hats (issue #7).
+    id: "openai_compatible",
+    label: "Local / OpenAI-compatible",
     glyph: "ollama",
-    defaultModel: "llama3.3",
+    defaultModel: "",
     needsKey: false,
     needsUrl: true,
-    cost: "Free and fully local — no key, just a URL to your Ollama server.",
+    urlKey: "curator.openai_base_url",
+    urlLabel: "Server URL",
+    urlPlaceholder: "http://localhost:11434",
+    cost: "Free and fully local — Ollama, llama.cpp, LM Studio, vLLM or LocalAI. Just the URL of your server. (Also works with any OpenAI-compatible gateway, e.g. OpenRouter.)",
   },
   {
     id: "none",

@@ -21,6 +21,9 @@ DEFAULTS: dict[str, Any] = {
     "curator.provider": "none",
     "curator.model": "",
     "curator.ollama_url": "http://localhost:11434",  # Ollama needs a URL, not a key
+    # Any server speaking the OpenAI API (llama.cpp, LM Studio, vLLM, LocalAI, OpenRouter): its
+    # root, usually ending in /v1. Used only when curator.provider is openai_compatible.
+    "curator.openai_base_url": "",
     # Global curation recipe (the LLM prompt), overridable per user via prefs.
     "curator.prompt_tone": "balanced",
     "curator.prompt_guidance": "",

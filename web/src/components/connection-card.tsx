@@ -98,11 +98,16 @@ export function ConnectionCard({
   // never pair the old key with the new provider, and typing a key never refetches per keystroke.
   const provider = values["curator.provider"] ?? "";
   const enteredKey = values["curator.api_key"] ?? "";
-  const enteredUrl = values["curator.ollama_url"] ?? "";
+  // A local/self-hosted server's "credential" is its URL, not a key. `curator.ollama_url` is the
+  // pre-merge key, read as a fallback so an instance configured before the merge still lists models.
+  const enteredUrl =
+    values["curator.openai_base_url"] ?? values["curator.ollama_url"] ?? "";
   const hasModelField = fields.some((f) => f.kind === "model");
   const formGeneration = `${provider} ${enteredKey} ${enteredUrl}`;
   const settled = useDebouncedValue(formGeneration, 500) === formGeneration;
-  const credential = provider === "ollama" ? enteredUrl : enteredKey;
+  const credential = ["openai_compatible", "ollama"].includes(provider)
+    ? enteredUrl
+    : enteredKey;
   const models = useCuratorModels(
     { provider, apiKey: enteredKey, ollamaUrl: enteredUrl },
     editing &&

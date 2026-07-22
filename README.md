@@ -43,8 +43,10 @@ labeled collection excluded on every other account's share, so only its owner ev
 **Personalized discovery**
 
 - 👤 **A private row for every user** — built from _their_ watch history, visible only to them. One
-  container serves your whole server.
-- 🧠 **Smart picks, no hallucinations** — an optional LLM (Claude / GPT / Gemini / local Ollama)
+  container serves your whole server. **Including you**: the server owner gets a row like anyone
+  else, so Shortlist is just as useful on a one-person server.
+- 🧠 **Smart picks, no hallucinations** — an optional LLM (Claude / GPT / Gemini, or any local
+  server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI)
   curates and explains the picks, but only ever from titles verified to exist in your library.
   **Works with zero AI too** (heuristic mode) — no keys required.
 - 🌐 **Finds what to watch next from everywhere** — pools candidates from TMDB, Trakt, your own

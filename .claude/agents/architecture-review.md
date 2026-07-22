@@ -120,3 +120,31 @@ If there are NO findings, output exactly:
 2. Read each modified file at the changed lines.
 3. Apply the nine checks.
 4. Output findings in the markdown shape. Return.
+
+## Budget: spend your time on judgement, not on repetition
+
+The parent assistant has ALREADY run `pytest`, `pytest -m e2e`, `pnpm test`, `pnpm build` and both
+ruff commands, and will not commit until they are green. It tells you so when it dispatches you.
+
+**Do not re-run the suites or the linters.** A full `pytest` re-run is minutes of wall-clock that
+tells you something you were already told. The same goes for re-reading whole files you have no
+finding in.
+
+Do keep the cheap, targeted empiricism — it is what earns this review its keep, and it is fast:
+
+- A scratch script that calls ONE function with the inputs you suspect (this is how the
+  `system_account_id` name-collision was proven, in seconds).
+- Running ONE test, or a two-line reproduction, to confirm a specific suspicion.
+- `run_migrations` twice on a temp dir to check a migration is re-runnable (this is how the
+  reserved-revision-range bug was caught).
+
+Prioritise in this order, and stop when you have covered the diff:
+
+1. Anything touching `engine/privacy.py`, `engine/pipeline.py`, `engine/delivery.py`,
+   `clients/plex*.py`, or `db/alembic/` — shape 3 and schema changes are where this codebase's
+   real incidents live. Verify these empirically.
+2. New/changed behaviour a user can observe (API payloads, UI copy that states facts).
+3. Everything else — read-level judgement is enough.
+
+When the dispatch says "verification pass" and lists specific fixes, confirm ONLY those and any new
+defect they introduce. Do not re-audit what you already cleared: say so and stop.

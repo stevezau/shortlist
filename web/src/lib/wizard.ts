@@ -6,7 +6,14 @@ import type { SetupState } from "./types";
 export const TOTAL_STEPS = 7;
 
 export type CuratorProvider =
-  "anthropic" | "openai" | "google" | "ollama" | "none";
+  | "anthropic"
+  | "openai"
+  // Every self-hosted runtime (Ollama, llama.cpp, LM Studio, vLLM, LocalAI) plus hosted OpenAI-API
+  // gateways. "ollama" is its pre-merge name, still stored on instances configured before it.
+  | "openai_compatible"
+  | "google"
+  | "ollama"
+  | "none";
 
 /** The wizard's persisted blob — round-tripped through /api/setup/state. */
 export interface WizardData {

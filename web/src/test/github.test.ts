@@ -23,6 +23,7 @@ function makeResult(overrides: Partial<RunUserResult> = {}): RunUserResult {
     slug: "sarah",
     status: "error",
     error: "TMDB 401 Unauthorized",
+    reason: null,
     duration_ms: 1200,
     llm_tokens: 0,
     diff: {},

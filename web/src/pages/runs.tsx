@@ -147,6 +147,14 @@ function RunRow({ run }: { run: Run }) {
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           <span>
             {run.stats.users_ok} ok
+            {/* A skipped person built nothing but nothing went wrong — counting them as "ok" made a
+                run where everyone was skipped read as a clean success. */}
+            {(run.stats.users_skipped ?? 0) > 0 && (
+              <span className="text-warning">
+                {" "}
+                · {run.stats.users_skipped} skipped
+              </span>
+            )}
             {run.stats.users_error > 0 && (
               <span className="text-destructive">
                 {" "}

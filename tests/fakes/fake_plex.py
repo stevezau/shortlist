@@ -119,7 +119,12 @@ class FakePlexState:
     friendly_name: str = "FakePlex"
     version: str = "1.43.3.10793"
     owner_token: str = "owner-token"
-    owner_account_id: int = 555000001
+    owner_account_id: int = 555000001  # the owner's plex.tv id
+    owner_username: str = "steve"
+    # PMS keeps its own account table and files the OWNER's watch history under a local id, not
+    # their plex.tv one — so `accountID=<owner_account_id>` matches nothing. Shared users are listed
+    # under their plex.tv id, which is why only the owner needs resolving.
+    owner_pms_account_id: int = 1
     pms_url: str = "http://127.0.0.1:32400"  # set by the harness once the fake PMS has a port
     sections: dict[int, FakeSection] = field(default_factory=_default_sections)
     collections: dict[int, FakeCollection] = field(default_factory=dict)
@@ -289,6 +294,9 @@ def seed_state() -> FakePlexState:
     watched = {
         201: list(range(101, 109)) + list(range(301, 305)),
         202: list(range(305, 313)),
+        # The owner, under the id PMS files THEM under — never their plex.tv id. A test that seeded
+        # this under `owner_account_id` would pass while the real server returned nothing.
+        state.owner_pms_account_id: list(range(109, 117)) + list(range(313, 317)),
     }
     for account, keys in watched.items():
         for offset, key in enumerate(keys):
@@ -665,6 +673,25 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             )
         return JSONResponse({"MediaContainer": {"size": len(hub_list), "Hub": hub_list}})
 
+    @app.get("/accounts")
+    def accounts() -> Response:
+        """PMS's own account table. The owner is a LOCAL account here (not their plex.tv id), which
+        is why the owner's history has to be looked up by the id PMS files it under."""
+        root = _container(size=len(state.users) + 2)
+        _el(root, "Account", id=0, key="/accounts/0", name="", defaultAudioLanguage="", autoSelectAudio="1")
+        _el(
+            root,
+            "Account",
+            id=state.owner_pms_account_id,
+            key=f"/accounts/{state.owner_pms_account_id}",
+            name=state.owner_username,
+            defaultAudioLanguage="en",
+            autoSelectAudio="1",
+        )
+        for user in state.users.values():
+            _el(root, "Account", id=user.id, key=f"/accounts/{user.id}", name=user.username, autoSelectAudio="1")
+        return _xml(root)
+
     @app.get("/status/sessions/history/all")
     def history(request: Request) -> Response:
         account_id = request.query_params.get("accountID")
@@ -768,7 +795,9 @@ def make_fake_plextv(state: FakePlexState) -> FastAPI:
         return JSONResponse(
             {
                 "id": state.owner_account_id,
-                "username": "owner",
+                "username": state.owner_username,
+                "title": state.owner_username.title(),
+                "thumb": f"https://plex.tv/users/{state.owner_account_id}/avatar",
                 "subscription": {"active": True},
             }
         )
