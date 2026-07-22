@@ -38,8 +38,20 @@ class TestRedaction:
             ("json_tok_value", 'payload {"token": "json_tok_value"}'),
             ("json_key_value", "payload {'apikey': 'json_key_value'}"),
             ("sk-ant-api03-AAAABBBBCCCCDDDDEEEE", "curator key sk-ant-api03-AAAABBBBCCCCDDDDEEEE rejected"),
-            ("sk-proj0123456789abcdefghij", "openai key sk-proj0123456789abcdefghij rejected"),
+            # Real wire shapes, hyphens and all — an alnum-only pattern matches NEITHER of these,
+            # and the fixture that used to stand in for them (`sk-proj0123…`, no hyphen) was written
+            # to the regex rather than to any key OpenAI has issued since 2024.
+            (
+                "sk-proj-AbCdEf0123456789GhIjKlMnOpQrStUvWxYz012345",
+                "openai key sk-proj-AbCdEf0123456789GhIjKlMnOpQrStUvWxYz012345 rejected",
+            ),
+            (
+                "sk-or-v1-0123456789abcdef0123456789abcdef",
+                "openrouter rejected sk-or-v1-0123456789abcdef0123456789abcdef",
+            ),
             ("AIzaSyA0123456789abcdefghijklmnop", "google key AIzaSyA0123456789abcdefghijklmnop rejected"),
+            ("xai-0123456789abcdefghijklmnop", "xai key xai-0123456789abcdefghijklmnop rejected"),
+            ("gsk_0123456789abcdefghijklmnop", "groq key gsk_0123456789abcdefghijklmnop rejected"),
         ],
     )
     def test_every_known_credential_shape_is_stripped(self, secret: str, line: str):

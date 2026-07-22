@@ -14,7 +14,10 @@ import type { LogLine, LogPage } from "@/lib/types";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
-const LEVELS = ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR"] as const;
+// No TRACE: the rotating file sink these lines are read from is opened at DEBUG
+// (`configure_logging`), so TRACE entries never reach disk and the option could only ever show the
+// same rows as DEBUG while implying something quieter was being hidden.
+const LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"] as const;
 type Level = (typeof LEVELS)[number];
 
 const LIMIT = 1000;
@@ -65,6 +68,9 @@ function toPlainText(lines: LogLine[]): string {
 
 export function LogsPage() {
   const [level, setLevel] = useState<Level>("INFO");
+  // The next level DOWN, for the empty-state hint — suggesting a hardcoded "DEBUG" is useless
+  // advice when you are already on it, and wrong advice when you are on TRACE-like breadth.
+  const quieter = LEVELS[LEVELS.indexOf(level) - 1];
   const [search, setSearch] = useState("");
   const [follow, setFollow] = useState(true);
   const [copied, setCopied] = useState(false);
@@ -161,8 +167,8 @@ export function LogsPage() {
             title={search ? "Nothing matches that filter" : "No log lines yet"}
             hint={
               search
-                ? `No ${level}-or-louder lines contain “${search}”. Try a quieter level, or clear the filter.`
-                : `Nothing has been logged at ${level} or louder yet. Try a quieter level like DEBUG, or run something first.`
+                ? `No ${level}-or-louder lines contain “${search}”.${quieter ? ` Try ${quieter}, or clear the filter.` : " Try clearing the filter."}`
+                : `Nothing has been logged at ${level} or louder yet.${quieter ? ` Try ${quieter}, or run something first.` : " Run something first."}`
             }
           />
         }

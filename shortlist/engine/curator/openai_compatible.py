@@ -36,6 +36,18 @@ def normalize_base_url(url: str) -> str:
     return url.strip().rstrip("/")
 
 
+# Substrings of model names that cannot serve /chat/completions. A stock `ollama pull` leaves
+# several of these on a box, and they sort ahead of every chat model people actually run
+# (`all-minilm`, `bge-m3` < `llama3.3`), so picking the alphabetically-first model would reliably
+# pick one that fails at curate time — after the settings "Test" button has already passed.
+_EMBEDDING_HINTS = ("embed", "bge-", "-minilm", "all-minilm", "nomic-", "e5-", "gte-", "rerank")
+
+
+def _is_embedding_model(name: str) -> bool:
+    lowered = name.lower()
+    return any(hint in lowered for hint in _EMBEDDING_HINTS)
+
+
 class OpenAICompatibleCurator(OpenAICurator):
     name = "openai_compatible"
     # Web search is an OpenAI-hosted tool, not part of the API these servers implement. They can
@@ -84,9 +96,23 @@ class OpenAICompatibleCurator(OpenAICurator):
         except Exception as e:
             logger.debug("could not list models on the local server ({}) — sending {!r}", type(e).__name__, self._model)
             return self._model
-        if available:
-            self._model = available[0]
-            logger.info("curator: no model set, using {!r} from the server's list", self._model)
+        if not available:
+            return self._model
+        chat_capable = [m for m in available if not _is_embedding_model(m)]
+        self._model = (chat_capable or available)[0]
+        if chat_capable:
+            logger.warning(
+                "curator: no model configured — using {!r}, the first chat-capable model the server "
+                "offers. Set one in Settings if that is the wrong choice.",
+                self._model,
+            )
+        else:
+            logger.warning(
+                "curator: no model configured, and every model the server lists looks like an "
+                "embedding model — sending {!r}, which probably cannot chat. Load a chat model, or "
+                "name one in Settings.",
+                self._model,
+            )
         return self._model
 
     def _chat(self, system: str, user: str):
@@ -99,6 +125,12 @@ class OpenAICompatibleCurator(OpenAICurator):
         regardless, and `validate_picks` downstream is what actually guarantees the result is sane.
 
         The rung that worked is remembered, so a run costs one attempt per user, not three.
+
+        Only a *rejection of the shape* moves us down the ladder. A timeout or a 500 says nothing
+        about what the server supports, and the curator instance lives for the whole run — so
+        treating a blip as "json_schema unsupported" would silently drop every remaining user in the
+        night's run to a weaker guarantee. Those propagate instead, to the existing CuratorError →
+        heuristic path.
         """
         import openai
 
@@ -108,6 +140,7 @@ class OpenAICompatibleCurator(OpenAICurator):
             {"type": "json_object"},
             None,
         ]
+        unsupported = (openai.BadRequestError, openai.UnprocessableEntityError)
         last: Exception | None = None
         for index in range(self._format_from, len(formats)):
             response_format = formats[index]
@@ -118,9 +151,9 @@ class OpenAICompatibleCurator(OpenAICurator):
                     messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
                     **kwargs,
                 )
-            except openai.OpenAIError as e:
+            except unsupported as e:
                 last = e
-                logger.info(
+                logger.warning(
                     "local server rejected response_format={} ({}) — trying a simpler request",
                     (response_format or {}).get("type", "none"),
                     type(e).__name__,

@@ -39,10 +39,16 @@ _EXTRA_SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"((?:Authorization['\"]?\s*[:=]\s*['\"]?)?Bearer\s+)[A-Za-z0-9._\-]{8,}", re.I), r"\1REDACTED"),
     # JSON/dict form: `"token": "abc"`, `'apikey': 'abc'`, `"api_key": "abc"`.
     (re.compile(r"(['\"](?:token|api_?key|authToken|accessToken)['\"]\s*:\s*['\"])[^'\"]+", re.I), r"\1REDACTED"),
-    # Provider key shapes, wherever they appear: Anthropic, OpenAI, Google.
+    # Provider key shapes, wherever they appear: Anthropic, OpenAI, Google, xAI, Groq.
+    # The OpenAI pattern must allow `-` and `_` INSIDE the key, not just after `sk-`: every key
+    # issued since 2024 is `sk-proj-…`, and OpenRouter — which this provider now supports — uses
+    # `sk-or-v1-…`. An alnum-only class stops dead at the hyphen after `proj`/`or` and matches
+    # neither. Over-redaction is the safe direction here.
     (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{16,}"), "REDACTED"),
-    (re.compile(r"\bsk-[A-Za-z0-9]{20,}"), "REDACTED"),
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"), "REDACTED"),
     (re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}"), "REDACTED"),
+    (re.compile(r"\bxai-[A-Za-z0-9_\-]{20,}"), "REDACTED"),
+    (re.compile(r"\bgsk_[A-Za-z0-9_\-]{20,}"), "REDACTED"),
     # Plex tokens are 20-char alnum; catch the bare `token=`/`X-Plex-Token` path form too.
     (re.compile(r"(plex\.direct[^\s]*?token[=/])[A-Za-z0-9_\-]+", re.I), r"\1REDACTED"),
 )
@@ -148,7 +154,13 @@ def read_lines(config_dir: Path, *, level: str = "DEBUG", query: str = "", limit
     files = log_files(config_dir)
     if not files:
         return {"lines": [], "total_matched": 0, "truncated": False, "file": None}
-    entries = parse(scrub(tail_text(files[-1])))
+    # The page polls this every 3s while it is open, and scrubbing dominates the cost (~0.2s per
+    # 4 MB, on the shared default executor the nightly run also uses). 1 MB is ~7000 entries — far
+    # more than `limit` can show — so the idle poll costs a quarter as much. A SEARCH is different:
+    # it is user-initiated, one-off, and the whole point is finding something further back, so it
+    # gets the full window rather than quietly reporting "no matches" for a line 2 MB ago.
+    window = 4_000_000 if query.strip() else 1_000_000
+    entries = parse(scrub(tail_text(files[-1], max_bytes=window)))
     wanted = _at_least(level)
     needle = query.strip().lower()
     matched = [

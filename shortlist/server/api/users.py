@@ -245,6 +245,9 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
             user.enabled = patch.enabled
         if patch.nickname is not None:
             nickname = patch.nickname.strip()
+            # Checked whether it is being SET or CLEARED: clearing falls back to the Tautulli or
+            # Plex name, which is just as capable of colliding as one that was typed.
+            _reject_display_name_clash(session, user, nickname or user.friendly_name or user.username)
             renamed_slug = user.slug if nickname != (user.nickname or "") else None
             user.nickname = nickname
         if patch.request_tag is not None:
@@ -337,7 +340,43 @@ async def user_history(user_id: int, request: Request, limit: int = 25) -> list[
     return rows
 
 
-def _sync_owner(session: Session, account: dict | None, owner_account_id: int | None) -> str | None:
+def _display_names_drifted(session: Session, before: dict[int, str]) -> bool:
+    """Did any EXISTING user's `{user}` name change? New users are excluded deliberately — they have
+    no rows on Plex yet, so there is nothing to rename and no reason to make a sync do Plex I/O."""
+    return any(
+        user.id in before and (user.nickname or user.friendly_name or user.username) != before[user.id]
+        for user in session.query(User)
+    )
+
+
+def _reject_display_name_clash(session: Session, user: User, nickname: str) -> None:
+    """Refuse a nickname that renders to the same row title as somebody else's.
+
+    `{user}` renders `display_name` (nickname → Tautulli friendly name → username). Only the
+    username is unique on Plex, so two people resolving to the same display name ask for two
+    collections with one title in one library — which PMS refuses, leaving that person's row failing
+    every night with an error that reads as a generic Plex fault. Privacy is unaffected either way
+    (collections are matched on `shortlist_<slug>` before title), so this is about a legible failure,
+    not a leak: say so at the point of entry rather than in tomorrow's run log.
+    """
+    wanted = nickname.casefold()
+    for other in session.query(User).filter(User.id != user.id):
+        theirs = other.nickname or other.friendly_name or other.username
+        if theirs.casefold() == wanted:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{other.username} already shows up as “{theirs}” — pick a different name so their rows stay apart"
+                ),
+            )
+
+
+def _sync_owner(
+    session: Session,
+    account: dict | None,
+    owner_account_id: int | None,
+    friendly_names: dict[int, str] | None = None,
+) -> str | None:
     """Add (or refresh) the server owner as a user. Returns "added", "updated", or None if skipped.
 
     plex.tv's `/api/users` lists everyone the server is shared WITH and never the account that owns
@@ -365,6 +404,9 @@ def _sync_owner(session: Session, account: dict | None, owner_account_id: int | 
     # ("S_FLIX"), not their display title ("SFLIX_Admin") — and that name is how their watch history
     # is found (see PlexClient.system_account_id + tests/fixtures/pms_accounts.xml.txt).
     username = account.get("username") or account.get("title") or "owner"
+    # The owner is in Tautulli like anyone else, so their `{user}` row should honour the name set
+    # there rather than falling straight through to their Plex username.
+    friendly = (friendly_names or {}).get(owner_account_id, "")
     # Re-linking Plex under a different admin leaves the PREVIOUS owner marked `owner` forever, and
     # that type is the one `sync_user_restrictions` skips — so an account that is no longer the owner
     # must lose the badge, or it keeps its "never restricted" exemption on a server it merely shares.
@@ -383,12 +425,14 @@ def _sync_owner(session: Session, account: dict | None, owner_account_id: int | 
                 username=username,
                 slug=unique_slug(session, username),
                 avatar_url=account.get("thumb") or "",
+                friendly_name=friendly,
                 user_type=UserType.OWNER.value,
             )
         )
         return "added"
     user.username = username
     user.avatar_url = account.get("thumb") or ""
+    user.friendly_name = friendly or user.friendly_name
     user.user_type = UserType.OWNER.value  # a pre-existing row for this account was never really "shared"
     return "updated"
 
@@ -431,8 +475,10 @@ async def sync_users(request: Request) -> dict:
 
     remote, owner_account, friendly_names = await asyncio.get_running_loop().run_in_executor(None, fetch)
     added = updated = 0
-    roster = [r for r in remote if r.id != owner_account_id]  # if plex.tv ever does list the owner,
-    with state.sessions() as session:  # `_sync_owner` is the one that writes them — not both
+    # if plex.tv ever does list the owner, `_sync_owner` is the one that writes them — not both
+    roster = [r for r in remote if r.id != owner_account_id]
+    with state.sessions() as session:
+        before = {u.id: u.nickname or u.friendly_name or u.username for u in session.query(User)}
         for r in roster:
             user = session.query(User).filter_by(plex_account_id=r.id).one_or_none()
             if user is None:
@@ -455,6 +501,11 @@ async def sync_users(request: Request) -> dict:
                 # (the owner's own choice) is never touched, so an override always survives.
                 user.friendly_name = friendly_names.get(r.id, user.friendly_name)
                 updated += 1
+        # A Tautulli rename changes what `{user}` renders to, exactly like a nickname edit — and the
+        # rows already on Plex still carry the old title. Without the same reconcile `patch_user`
+        # does, a multi-row user keeps the stale copy alongside the new one forever: `remove_row`
+        # matches by rendered title, so no sweep ever collects it.
+        display_changed = _display_names_drifted(session, before)
         session.commit()
 
     # The owner gets their OWN transaction, deliberately. The roster above is the point of this
@@ -462,7 +513,7 @@ async def sync_users(request: Request) -> dict:
     # isn't shaped how we expect, a slug collision — must not roll back everybody else's update.
     with state.sessions() as session:
         try:
-            owner = _sync_owner(session, owner_account, owner_account_id)
+            owner = _sync_owner(session, owner_account, owner_account_id, friendly_names)
             session.commit()
         except Exception as e:
             # redact: a plex.tv/DB error can carry a tokened URL (rule 9), like every other handler here.
@@ -472,4 +523,8 @@ async def sync_users(request: Request) -> dict:
         added += 1
     elif owner == "updated":
         updated += 1
+    with state.sessions() as session:  # the owner's own name can drift on the same sync
+        display_changed = display_changed or _display_names_drifted(session, before)
+    if display_changed:
+        await _rename_after_nickname(state)
     return {"added": added, "updated": updated, "total": len(roster) + (1 if owner else 0)}

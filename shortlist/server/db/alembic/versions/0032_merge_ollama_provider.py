@@ -1,17 +1,15 @@
-"""Fold the Ollama curator into the one local/OpenAI-compatible provider
+"""Fold the Ollama curator into the one local/OpenAI-compatible provider — SUPERSEDED BY 0034
 
-Ollama, llama.cpp, LM Studio, vLLM and LocalAI all speak the same OpenAI-compatible API, so two
-providers meant two code paths and two cards in the UI for one capability (issue #7 discussion).
-Anyone configured as `ollama` is moved to `openai_compatible`, carrying their URL over — and gaining
-the `/v1` suffix the OpenAI API lives under, which the native Ollama client never needed.
+Kept as a no-op rather than deleted: it is already stamped on instances running `dev`, and removing
+it would strand them at a revision alembic can no longer resolve.
 
-Data-only and idempotent: it reads what is there and rewrites just that row.
+It never worked. `settings.value` holds `{"v": <value>}` (`SettingsStore.set`), and this migration
+compared the whole envelope to the bare string `"ollama"` — which never matched, so it returned early
+on every real database. Its writer had the mirror-image bug (it stored the value UNWRAPPED), so
+"fixing" the read alone would have made `row.value["v"]` raise for every setting the app reads.
+Neutered here so that half-fix can never fire; 0034 does the migration correctly against the
+envelope, and runs on the instances 0032 silently skipped.
 """
-
-import json
-
-import sqlalchemy as sa
-from alembic import op
 
 revision = "0032"
 down_revision = "0031"
@@ -19,39 +17,9 @@ branch_labels = None
 depends_on = None
 
 
-def _get(bind, key: str):
-    row = bind.execute(sa.text("select value from settings where key = :k"), {"k": key}).scalar()
-    return json.loads(row) if isinstance(row, str) else row
-
-
-def _set(bind, key: str, value) -> None:
-    bind.execute(
-        sa.text(
-            "insert into settings (key, value, updated_at) values (:k, :v, CURRENT_TIMESTAMP) "
-            "on conflict(key) do update set value = :v, updated_at = CURRENT_TIMESTAMP"
-        ),
-        {"k": key, "v": json.dumps(value)},
-    )
-
-
 def upgrade() -> None:
-    bind = op.get_bind()
-    if _get(bind, "curator.provider") != "ollama":
-        return
-    url = (_get(bind, "curator.ollama_url") or "").strip().rstrip("/")
-    if url and not url.rstrip("/").endswith(("/v1", "/api/v1")):
-        # The native Ollama API sat at the root; the OpenAI-compatible one it is moving to is at /v1.
-        url = f"{url}/v1"
-    _set(bind, "curator.provider", "openai_compatible")
-    if url:
-        _set(bind, "curator.openai_base_url", url)
+    """No-op — see the module docstring. 0034 carries the Ollama config over."""
 
 
 def downgrade() -> None:
-    """Best-effort: only an instance whose URL still looks like Ollama's default port goes back."""
-    bind = op.get_bind()
-    if _get(bind, "curator.provider") != "openai_compatible":
-        return
-    url = (_get(bind, "curator.openai_base_url") or "").strip()
-    if ":11434" in url:
-        _set(bind, "curator.provider", "ollama")
+    """No-op — 0034 owns the reverse direction too."""

@@ -692,7 +692,10 @@ class TestLocalServerCompatibility:
         — so it is stubbed here exactly as the OpenAI tests above do."""
         mod = ModuleType("openai")
         mod.OpenAIError = type("OpenAIError", (Exception,), {})
-        mod.BadRequestError = type("BadRequestError", (mod.OpenAIError,), {})
+        # The real SDK hangs every one of these off OpenAIError, which is why catching the base
+        # class here would have swallowed timeouts and 500s as "shape unsupported".
+        for name in ("BadRequestError", "UnprocessableEntityError", "APITimeoutError", "RateLimitError"):
+            setattr(mod, name, type(name, (mod.OpenAIError,), {}))
         mod.OpenAI = MagicMock()
         monkeypatch.setitem(sys.modules, "openai", mod)
         return mod
@@ -734,6 +737,50 @@ class TestLocalServerCompatibility:
         curator._chat("sys", "usr")
 
         assert tried == ["json_schema", "json_object", "json_object"], "the first rung is tried once"
+
+    def test_the_sdk_really_exports_the_names_the_ladder_narrows_to(self):
+        """Everything else here runs against a hand-built stub, which can never disprove a typo.
+        A misspelled name would raise AttributeError from `_chat` — and `curate()` catches only
+        OpenAIError, so it would escape the heuristic-degradation path entirely instead of degrading.
+        Skipped where the optional SDK isn't installed (it is, in the shipped image)."""
+        openai = pytest.importorskip("openai")
+
+        assert issubclass(openai.BadRequestError, openai.OpenAIError)
+        assert issubclass(openai.UnprocessableEntityError, openai.OpenAIError)
+
+    @pytest.mark.parametrize("failure", ["APITimeoutError", "RateLimitError"])
+    def test_a_transient_failure_does_not_downgrade_the_rest_of_the_run(self, monkeypatch, failure):
+        """A blip says nothing about what the server supports.
+
+        The curator instance lives for the whole run, and `_format_from` only moves forward — so
+        treating one timeout on user #1 as "json_schema unsupported" would silently drop users
+        #2..#48 to a weaker structured-output guarantee for the rest of the night.
+        """
+        openai = self._stub_openai(monkeypatch)
+        curator = self._curator(monkeypatch, model="local-llama")
+        curator._client = MagicMock(
+            chat=MagicMock(completions=MagicMock(create=MagicMock(side_effect=getattr(openai, failure)("blip"))))
+        )
+
+        with pytest.raises(openai.OpenAIError):
+            curator._chat("sys", "usr")
+        assert curator._format_from == 0, "a transient error must not consume a rung"
+
+    def test_an_embedding_model_is_never_auto_selected(self, monkeypatch):
+        """A stock Ollama box has several, and they sort ahead of every chat model people run —
+        so "first model the server lists" reliably picks one that cannot serve /chat/completions,
+        after the settings Test button has already passed."""
+        curator = self._curator(
+            monkeypatch, available=["all-minilm", "bge-m3", "llama3.3:70b", "nomic-embed-text", "qwen2.5:14b"]
+        )
+
+        assert curator._resolve_model() == "llama3.3:70b"
+
+    def test_an_all_embedding_server_still_sends_something(self, monkeypatch):
+        """Better a model error naming what we sent than a silent empty model field."""
+        curator = self._curator(monkeypatch, available=["all-minilm", "bge-m3"])
+
+        assert curator._resolve_model() == "all-minilm"
 
     def test_a_server_that_refuses_everything_still_raises(self, monkeypatch):
         openai = self._stub_openai(monkeypatch)

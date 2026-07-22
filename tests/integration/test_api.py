@@ -202,6 +202,68 @@ class TestUsersApi:
         assert cleared["nickname"] == ""
         assert cleared["display_name"] == "Sazza", "a blank nickname falls back to Tautulli's name"
 
+    def test_a_nickname_that_collides_with_someone_else_is_refused(self, client: TestClient):
+        """`{user}` renders display_name, and only the USERNAME is unique on Plex. Two people
+        resolving to one display name ask for two collections with one title in one library, which
+        PMS refuses — so that person's row would fail every night with a generic-looking Plex
+        error. Caught at the point of entry instead, where it can be explained."""
+        users = client.get("/api/users").json()
+        sarah = next(u for u in users if u["username"] == "sarah")
+        other = next(u for u in users if u["id"] != sarah["id"])
+        client.patch(f"/api/users/{sarah['id']}", json={"nickname": "The Boss"})
+
+        r = client.patch(f"/api/users/{other['id']}", json={"nickname": "the boss"})
+
+        assert r.status_code == 409, "case differences still collide — Plex titles are not case-sensitive"
+        assert "already shows up as" in r.json()["detail"]
+        assert self._one(client, other["id"])["nickname"] == "", "the rejected name must not be stored"
+
+    @pytest.mark.parametrize("source", ["friendly_name", "username"])
+    def test_a_clash_is_caught_whichever_name_the_other_person_shows_under(self, client: TestClient, source: str):
+        """display_name has three sources (nickname → Tautulli → Plex) and any of them can be the
+        thing you collide with — the Tautulli one especially, now that a sync adopts it."""
+        from shortlist.server.db.models import User
+
+        users = client.get("/api/users").json()
+        sarah = next(u for u in users if u["username"] == "sarah")
+        other = next(u for u in users if u["id"] != sarah["id"])
+        if source == "friendly_name":
+            with client.app.state.sessions() as session:
+                session.get(User, sarah["id"]).friendly_name = "Sazza"
+                session.commit()
+            taken = "Sazza"
+        else:
+            taken = sarah["username"]
+
+        r = client.patch(f"/api/users/{other['id']}", json={"nickname": taken})
+
+        assert r.status_code == 409
+        assert f"already shows up as “{taken}”" in r.json()["detail"], "the message names what THEY show as"
+
+    def test_clearing_a_nickname_into_someone_elses_name_is_also_refused(self, client: TestClient):
+        """Clearing is the one input that reaches a colliding name without anyone typing it."""
+        from shortlist.server.db.models import User
+
+        users = client.get("/api/users").json()
+        sarah = next(u for u in users if u["username"] == "sarah")
+        other = next(u for u in users if u["id"] != sarah["id"])
+        client.patch(f"/api/users/{other['id']}", json={"nickname": "Distinct Name"})
+        with client.app.state.sessions() as session:
+            session.get(User, other["id"]).friendly_name = sarah["username"]
+            session.commit()
+
+        r = client.patch(f"/api/users/{other['id']}", json={"nickname": ""})
+
+        assert r.status_code == 409
+
+    def test_a_nickname_can_be_re_saved_without_colliding_with_itself(self, client: TestClient):
+        target = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+        client.patch(f"/api/users/{target['id']}", json={"nickname": "Sarah B"})
+
+        r = client.patch(f"/api/users/{target['id']}", json={"nickname": "Sarah B"})
+
+        assert r.status_code == 200
+
     def _one(self, client: TestClient, user_id: int) -> dict:
         return next(u for u in client.get("/api/users").json() if u["id"] == user_id)
 
@@ -337,6 +399,52 @@ class TestUserSync:
 
     def _users(self, client: TestClient) -> dict[str, dict]:
         return {u["username"]: u for u in client.get("/api/users").json()}
+
+    def test_a_tautulli_rename_triggers_the_same_row_reconcile_a_nickname_does(
+        self, client: TestClient, plextv, monkeypatch
+    ):
+        """`{user}` renders the friendly name, so a Tautulli rename changes every row title — and the
+        collections already on Plex still carry the old one. Without this reconcile a multi-row user
+        keeps the stale copy alongside the new one forever: `remove_row` matches by rendered title,
+        so no sweep ever collects it."""
+        from shortlist.server.api import users as users_api
+
+        calls: list = []
+
+        async def spy(state):
+            calls.append(state)
+
+        monkeypatch.setattr(users_api, "_rename_after_nickname", spy)
+        monkeypatch.setattr(
+            users_api.TautulliClient, "friendly_names", lambda self: {555000100: "Sazza"}, raising=False
+        )
+        from shortlist.server.settings_store import SettingsStore
+
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("tautulli.url", "http://tautulli:8181")
+            session.commit()
+
+        client.post("/api/users/sync")
+
+        assert self._users(client)["sarah"]["display_name"] == "Sazza"
+        assert len(calls) == 1, "a changed display name must reconcile the rows already on Plex"
+
+    def test_a_sync_that_changes_no_name_does_no_plex_work(self, client: TestClient, plextv, monkeypatch):
+        """The reconcile does Plex I/O — it must not fire on every routine sync."""
+        from shortlist.server.api import users as users_api
+
+        calls: list = []
+
+        async def spy(state):
+            calls.append(state)
+
+        monkeypatch.setattr(users_api, "_rename_after_nickname", spy)
+
+        client.post("/api/users/sync")  # the fixture renames one account, so this one DOES reconcile
+        calls.clear()
+        client.post("/api/users/sync")
+
+        assert calls == []
 
     def test_sync_adds_the_owner_disabled_and_badged(self, client: TestClient, plextv):
         r = client.post("/api/users/sync")
