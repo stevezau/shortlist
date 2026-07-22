@@ -97,6 +97,10 @@ DEFAULTS: dict[str, Any] = {
     # for large TV libraries (SFLIX 2026-07-20: legit writes at 19.9s, many ERR at 20.0s then retried); 45
     # gives headroom while still failing a truly-stalled call. Raise it if big writes still time out. Advanced.
     "plex.timeout_s": 45,
+    # Path to the PMS library database (or its directory), read-only. Empty = off. The ONLY source
+    # that sees mark-as-watched — Plex's history API returns playback sessions only — but it needs
+    # Shortlist to run on the same host as Plex with the file mounted, so it can never be a default.
+    "plex.db_path": "",
     "plextv.throttle_s": 0.0,  # FLOOR between plex.tv writes; 0 = as fast as plex.tv accepts (adaptive 429 backoff)
     # How many users a run processes concurrently. Only their reads + AI curation overlap; every Plex
     # and plex.tv write stays strictly serial. 1 = fully sequential; higher = faster big runs at the

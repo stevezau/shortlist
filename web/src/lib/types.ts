@@ -397,6 +397,7 @@ export interface ConnectionTestResult {
 
 export type TestableService =
   | "plex"
+  | "plexdb"
   | "tautulli"
   | "tmdb"
   | "llm"

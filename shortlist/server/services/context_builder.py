@@ -16,6 +16,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.clients.mdblist import MdbListClient
+from shortlist.engine.clients.plex_db import PlexDbReader
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.search import ExaClient
@@ -92,6 +93,30 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
     if get("curator.model"):
         kwargs["model"] = get("curator.model")
     return kwargs
+
+
+def _pms_account_resolver(plex: PlexClient, session: Session) -> Callable[[UserProfile], int]:
+    """UserProfile -> the id PMS knows them by.
+
+    `metadata_item_settings.account_id` is the PMS-LOCAL account space, the same one
+    `history?accountID=` uses — and the owner is not in it under their plex.tv id (their local row
+    is id=1). Resolving that is exactly what `PlexHistorySource` already does; without it the owner
+    reads zero watched flags and nothing says why.
+    """
+    roster = frozenset(row[0] for row in session.query(User.plex_account_id).all())
+
+    def resolve(user: UserProfile) -> int:
+        if user.user_type is not UserType.OWNER:
+            return user.plex_account_id
+        return plex.system_account_id(user.plex_account_id, user.username, exclude_ids=roster - {user.plex_account_id})
+
+    return resolve
+
+
+def _flag_reader(store: SettingsStore) -> PlexDbReader | None:
+    """The PMS-database watched-flag reader, or None when the owner hasn't opted in."""
+    path = (store.get("plex.db_path") or "").strip()
+    return PlexDbReader(path) if path else None
 
 
 class ContextBuilder:
@@ -202,7 +227,15 @@ class ContextBuilder:
             # `history` (Plex/Tautulli) — Plex's API only returns the most recent ~200 plays, which hid
             # a heavy watcher's older watches from the already-watched filter. StoreHistorySource.fetch
             # syncs-then-reads, so it drops into the existing history_source slot unchanged.
-            history_source=StoreHistorySource(self._sessions, history, min_completion=config.min_completion),
+            history_source=StoreHistorySource(
+                self._sessions,
+                history,
+                min_completion=config.min_completion,
+                # Optional second source: watched FLAGS from the PMS database, which is the only
+                # place a mark-as-watched is visible. Off unless the owner sets `plex.db_path`.
+                flags=_flag_reader(store),
+                flag_account_id=_pms_account_resolver(plex, session),
+            ),
             curator=curator,
             snapshots=DbSnapshotStore(self._sessions),
             index_cache=DbCache(self._sessions, kind="library_index"),

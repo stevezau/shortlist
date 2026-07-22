@@ -208,7 +208,9 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         return store.all_public()
 
 
-_TESTABLE_SERVICES = frozenset({"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "llm"})
+_TESTABLE_SERVICES = frozenset(
+    {"plex", "plexdb", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "llm"}
+)
 
 
 @router.post("/test/{service}")
@@ -228,6 +230,15 @@ async def test_connection(service: str, request: Request) -> dict:
 
                 plex = PlexClient(get("plex.url"), get("plex.token"))
                 return f"Connected to {plex.server_name} (PMS {plex.version})"
+            if service == "plexdb":
+                # Without this, a one-character-wrong path saves cleanly, logs one warning per user
+                # buried in a 49-user run, and the feature silently never does anything.
+                from shortlist.engine.clients.plex_db import PlexDbReader
+
+                path = (get("plex.db_path") or "").strip()
+                if not path:
+                    return "Not set — leave empty to skip reading watched state from Plex's database"
+                return PlexDbReader(path).check()
             if service == "tautulli":
                 from shortlist.engine.clients.tautulli import TautulliClient
 

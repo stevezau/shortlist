@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 
 import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
+import { PlexDbCard } from "@/components/settings/plex-db-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { settingBool } from "@/lib/format";
@@ -53,6 +54,7 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
       <h2 id="advanced-heading" className="text-lg font-semibold">
         Advanced
       </h2>
+      <PlexDbCard settings={settings} />
       <Card>
         <CardContent className="space-y-3 pt-6">
           <div>

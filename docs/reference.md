@@ -39,6 +39,7 @@
 | `trakt.client_id`                                     | —                                  | Trakt API key; required for the `trakt` source; encrypted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `exa.apikey`                                          | —                                  | Exa web-search API key; powers the `llm_web` source for any provider (the only web-search path for a local curator); encrypted                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `plex.timeout_s`                                      | `45`                               | seconds to wait on a single PMS call before giving up and retrying. Reads are near-instant, but rebuilding a big library's collection (a TV row on a large server) legitimately takes 15-20s+, so too low a value times those out and forces a wasteful retry. Range 5-300. Advanced                                                                                                                                                                                                                                                                           |
+| `plex.db_path`                                        | `""`                               | path to the PMS library database (or its folder), read-only. The ONLY source that sees mark-as-watched — Plex's history API returns plays only. Requires Shortlist on the same host as Plex with the file mounted. Empty = off |
 | `plextv.throttle_s`                                   | `0.0`                              | FLOOR (min seconds) between plex.tv writes. `0` = fire as fast as plex.tv accepts; the client backs off adaptively on a 429 (jumps to ≥1s, doubles, capped 30s, eases back on clean writes), so 0 is safe. Range 0–60                                                                                                                                                                                                                                                                                                                                          |
 | `log.level`                                           | `DEBUG`                            | container log verbosity: `ERROR`\|`WARNING`\|`INFO`\|`DEBUG`\|`TRACE`. DEBUG (default) narrates a run in full — per-source candidate counts, AI calls with timing/tokens, cache hits, throttle waits; TRACE adds full AI prompts; INFO trims to stage narration. Applied live. TRACE reaches the container log only — the in-app Logs view reads a file sink opened at DEBUG, so it has no TRACE filter                                                                                                                                                                                                                                                                                  |
 | `run.concurrency`                                     | `4`                                | how many users a run processes at once (1–16). Only history/candidate/AI reads overlap; every Plex + plex.tv write stays serial. 1 = fully sequential                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -184,6 +185,37 @@ revoking (`DELETE /api/system/api-token`) invalidates the old token immediately.
 ```
 curl -H "Authorization: Bearer <token>" https://<host>/api/runs
 ```
+
+## Watched titles (and why one can still be recommended)
+
+Shortlist excludes what someone has already watched, from two sources that both fill the same store:
+
+| source | sees | needs |
+| --- | --- | --- |
+| Plex/Tautulli history API | titles someone **played**, with completion | nothing — always on |
+| PMS database (`plex.db_path`) | titles someone played **or marked** watched | Shortlist on the same host as Plex |
+
+The API source is the default and works everywhere. Its limit is not depth — the full history is
+synced, uncapped — but *kind*: **Plex's history API returns playback sessions only and never returns
+a mark-as-watched**, at any depth or date window. Ticking a film off, or marking a whole season,
+leaves no play record. On one real server that hid 13,201 watched titles behind the ~1,074 the API
+reported, which is how already-watched films kept reappearing in a row.
+
+Setting `plex.db_path` to the Plex database (`com.plexapp.plugins.library.db`, or the folder holding
+it) closes that gap for **every account on the server in one read**. It is opened read-only
+(`immutable=1` — SQLite takes no locks and writes nothing), and Shortlist never writes to it.
+It only fills gaps: a title the play history already covers is left alone, so flags never inflate
+the play counts the finished-show fraction depends on.
+
+Empty by default and never auto-detected — it requires a deliberate mount, and reading someone's
+Plex database should be their choice. With Docker:
+
+```yaml
+volumes:
+  - /path/to/plex/Library/Application Support/Plex Media Server/Plug-in Support/Databases:/plexdb:ro
+```
+
+then set `plex.db_path` to `/plexdb`.
 
 ## How a pick is chosen (and why a row can be short)
 

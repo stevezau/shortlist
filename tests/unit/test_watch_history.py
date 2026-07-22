@@ -117,3 +117,141 @@ def test_read_filters_by_completion_and_skips_ratingkeyless(sessions, sarah):
 
     assert {i.title for i in out} == {"Finished"}  # partial filtered out at read, keyless never stored
     assert _count(sessions) == 2  # Finished + HalfWatched stored; NoKey skipped (no ratingKey)
+
+
+class TestPlexDbFlags:
+    """The second source: watched FLAGS from the PMS database.
+
+    Plex's history API returns playback sessions only — it never returns a mark-as-watched. On SFLIX
+    that hid ~13,400 of one account's ~14,500 watched titles, which is how six films the user had
+    marked ended up recommended back to them.
+    """
+
+    MOVIE_TYPE = 1
+
+    def _reader(self, tmp_path: Path, rows):
+        from shortlist.engine.clients.plex_db import PlexDbReader
+        from tests.unit.test_plex_db import make_plex_db
+
+        return PlexDbReader(make_plex_db(tmp_path / "plexdb", rows))
+
+    @pytest.fixture
+    def plexdb_dir(self, tmp_path: Path):
+        (tmp_path / "plexdb").mkdir()
+        return tmp_path
+
+    def test_a_marked_title_reaches_the_store_and_the_filter(self, sessions, sarah, plexdb_dir):
+        """The end-to-end point: the play history knows nothing, the flag closes the gap."""
+        reader = self._reader(plexdb_dir, [(100, 9587, "Gravity", 2013, self.MOVIE_TYPE, 1, 1728609330)])
+        source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0, flags=reader)
+
+        got = source.fetch(sarah, min_completion=0.0)
+
+        assert [w.title for w in got] == ["Gravity"]
+
+    def test_flags_never_add_a_second_row_for_a_title_already_played(self, sessions, sarah, plexdb_dir):
+        """`watch_events` holds one row PER PLAY and the finished-show fraction counts them, so a
+        flag must fill gaps only — never inflate a real play count."""
+        reader = self._reader(plexdb_dir, [(100, 55, "Played", 2020, self.MOVIE_TYPE, 1, 1728609330)])
+        source = StoreHistorySource(
+            sessions, _FakeUpstream([_item(55, "Played", days_ago=1)]), min_completion=0.0, flags=reader
+        )
+
+        source.fetch(sarah, min_completion=0.0)
+
+        with sessions() as s:
+            uid = s.query(User).filter_by(slug="sarah").one().id
+            assert s.query(WatchEvent).filter_by(user_id=uid, rating_key=55).count() == 1
+
+    def test_it_is_off_unless_configured(self, sessions, sarah):
+        """No reader = the previous behaviour exactly. Reading someone's PMS database is opt-in."""
+        source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0)
+
+        assert source.fetch(sarah, min_completion=0.0) == []
+
+    def test_an_unreadable_database_never_fails_the_run(self, sessions, sarah, tmp_path: Path):
+        """It's someone's live 2 GB production database — a bad path must degrade, not break a run."""
+        from shortlist.engine.clients.plex_db import PlexDbReader
+
+        source = StoreHistorySource(
+            sessions,
+            _FakeUpstream([_item(1, "Played", days_ago=1)]),
+            min_completion=0.0,
+            flags=PlexDbReader(tmp_path / "does-not-exist"),
+        )
+
+        got = source.fetch(sarah, min_completion=0.0)
+
+        assert [w.title for w in got] == ["Played"], "the API-sourced history must survive intact"
+
+    def test_re_running_does_not_duplicate_flags(self, sessions, sarah, plexdb_dir):
+        reader = self._reader(plexdb_dir, [(100, 9587, "Gravity", 2013, self.MOVIE_TYPE, 1, 1728609330)])
+        source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0, flags=reader)
+
+        source.fetch(sarah, min_completion=0.0)
+        source.fetch(sarah, min_completion=0.0)
+
+        assert _count(sessions) == 1
+
+    def test_another_accounts_flags_are_not_borrowed(self, sessions, sarah, plexdb_dir):
+        """Keyed on plex_account_id — mapping one person's marks onto another would be far worse
+        than the bug this fixes."""
+        reader = self._reader(plexdb_dir, [(999, 1, "Not theirs", 2020, self.MOVIE_TYPE, 1, 100)])
+        source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0, flags=reader)
+
+        assert source.fetch(sarah, min_completion=0.0) == []
+
+
+class TestOwnerAccountResolution:
+    """The `user_type` matrix's owner cell, which the first version of this feature missed entirely.
+
+    `metadata_item_settings.account_id` is the PMS-LOCAL account space — the same one
+    `history?accountID=` uses — and the owner is not in it under their plex.tv id (their local row
+    is id=1). Passing the plex.tv id through matched zero rows and logged nothing, so the one person
+    who can configure this feature would have seen it silently do nothing for themselves.
+    """
+
+    MOVIE_TYPE = 1
+    PLEXTV_ID, PMS_LOCAL_ID = 218833834, 1
+
+    def test_the_owners_flags_are_read_under_their_pms_local_id(self, sessions, tmp_path: Path):
+        from shortlist.engine.clients.plex_db import PlexDbReader
+        from tests.unit.test_plex_db import make_plex_db
+
+        with sessions() as session:
+            session.add(
+                User(
+                    plex_account_id=self.PLEXTV_ID,
+                    username="S_FLIX",
+                    slug="s_flix",
+                    enabled=True,
+                    user_type=UserType.OWNER.value,
+                )
+            )
+            session.commit()
+        owner = UserProfile(username="S_FLIX", plex_account_id=self.PLEXTV_ID, user_type=UserType.OWNER, slug="s_flix")
+        (tmp_path / "db").mkdir()
+        # Only present under the LOCAL id — exactly how a real PMS records the owner.
+        reader = PlexDbReader(
+            make_plex_db(tmp_path / "db", [(self.PMS_LOCAL_ID, 9587, "Gravity", 2013, self.MOVIE_TYPE, 1, 100)])
+        )
+        source = StoreHistorySource(
+            sessions,
+            _FakeUpstream([]),
+            min_completion=0.0,
+            flags=reader,
+            flag_account_id=lambda u: self.PMS_LOCAL_ID if u.user_type is UserType.OWNER else u.plex_account_id,
+        )
+
+        assert [w.title for w in source.fetch(owner, min_completion=0.0)] == ["Gravity"]
+
+    def test_without_the_resolver_a_shared_user_still_uses_their_own_id(self, sessions, sarah, tmp_path: Path):
+        """Everyone except the owner IS in the PMS space under the id we already hold."""
+        from shortlist.engine.clients.plex_db import PlexDbReader
+        from tests.unit.test_plex_db import make_plex_db
+
+        (tmp_path / "db2").mkdir()
+        reader = PlexDbReader(make_plex_db(tmp_path / "db2", [(100, 1, "Theirs", 2020, self.MOVIE_TYPE, 1, 100)]))
+        source = StoreHistorySource(sessions, _FakeUpstream([]), min_completion=0.0, flags=reader)
+
+        assert [w.title for w in source.fetch(sarah, min_completion=0.0)] == ["Theirs"]

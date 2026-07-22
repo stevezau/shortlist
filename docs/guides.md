@@ -155,6 +155,28 @@ Settings → Recommendations has three more dials (each per-row overridable):
   looks up (one cached search each). It's the main **cost lever** on that source — lower it to spend
   fewer tokens/Exa searches.
 
+### If a watched title still gets recommended
+
+Almost always one cause: **Plex's history only records what someone actually _played_.** A title
+*marked* watched — ticked off without playing it, or a whole season marked at once — leaves no play
+record anywhere in Plex's API, so Shortlist can't see it and may recommend it back. On one real
+server that hid **13,201** of a user's watched titles behind the ~1,000 the API reported.
+
+If Shortlist runs on the same machine as Plex, you can close that gap completely. Mount the Plex
+database read-only:
+
+```yaml
+volumes:
+  - /path/to/plex/.../Plug-in Support/Databases:/plexdb:ro
+```
+
+and set **Settings → Advanced → "Read watched state from the Plex database"** to `/plexdb`. One read
+covers every account on the server. The database is opened read-only and Shortlist never writes to
+it — it only reads which items each account has watched.
+
+This is off unless you set it: it needs a deliberate mount, and it can't work if Shortlist runs on a
+different machine to Plex.
+
 ### Everything above is only the _default_ — rows override it
 
 Settings → Recommendations sets what a row uses **unless the row says otherwise**. Open any row
