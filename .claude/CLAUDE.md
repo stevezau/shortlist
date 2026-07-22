@@ -59,6 +59,24 @@ tests/fakes/      fake_plex.py — stub PMS + plex.tv; e2e runs the full wizard 
 
 See shortlist-architecture.md §2–§4 for the full tree, DB schema, and API surface.
 
+## Working economically
+
+Long sessions are the single biggest cost: every turn re-sends the whole conversation. So:
+
+- **Say when a `/clear` is due.** When the next request is a genuinely new task — a different
+  feature, a different bug, a different area — say so in one line before starting, and let the owner
+  decide. Don't nag mid-task; the cost of losing context you still need is higher than the tokens.
+- **Test what you changed, not everything, while iterating.** `pytest tests/unit/test_foo.py` (or
+  `-k`) during the edit loop; the FULL suite once before committing, plus `pnpm test`/`pnpm build`
+  when web files changed and `-m e2e` when a UI flow or the wizard changed. CI runs everything
+  regardless, so a green full suite immediately before the commit is the bar — not after each edit.
+- **Don't re-verify what a tool already told you.** No re-reading a file you just wrote, no re-running
+  a suite after a formatting-only change, no full-suite run to confirm a docs edit.
+- **Keep tool output small**: `-q`, `| tail`, targeted `grep`/`sed -n` over dumping whole files.
+- Prove a test has teeth by breaking the code when the logic is **risky or subtle** — not for every
+  test. Never use `git checkout <file>` to undo it: that wipes uncommitted work (done twice). Copy to
+  a backup first, or re-apply by hand.
+
 ## Code style
 
 - `ruff format` / `ruff check` (config in pyproject.toml), 120-char lines, 4-space indent
@@ -75,8 +93,22 @@ See shortlist-architecture.md §2–§4 for the full tree, DB schema, and API su
   stable branch, advanced only by promoting `dev` → `master` via PR at release time. Releases are cut
   by tagging `vX.Y.Z` (CI builds `:latest` + `:X.Y.Z`). Publishing is gated on lint+tests+e2e green.
 - **Conventional Commits** (`feat:`, `fix:`, `docs:`, `test:`, `chore:`)
-- **Before creating any commit, dispatch the Architecture Review agent**
-  (`.claude/agents/architecture-review.md`) against the staged diff. Block on HIGH findings.
+- **Architecture Review — by risk, not by habit.** The agent
+  (`.claude/agents/architecture-review.md`) costs ~100k tokens a run, so spend it where bugs are
+  expensive. Dispatch it, and block on HIGH findings, when the diff:
+  - touches **privacy, share filters, restrictions, or anything writing to Plex/plex.tv**;
+  - adds or changes an **Alembic migration**;
+  - touches **auth, secrets, or tokens**;
+  - reads or writes **watch history / user identity** (mapping one person's data onto another);
+  - **reads an external system's storage directly** (e.g. the PMS database);
+  - is a **`dev` → `master` release PR**, whatever it contains.
+
+  Skip it for UI-only, docs, logging, comments, test-only, and dependency-bump commits — CI and the
+  test suite already cover those, and a review there finds style, not bugs.
+
+  NOT "before the PR" alone: a `dev` push deploys to the maintainer's server and to every `:dev`
+  user, so risky code is already live by then. The 0032 migration that was a no-op on every real
+  database sat on `dev` for days before any PR existed.
 - Settings live in the DB (`settings` table via `settings_store`); env vars are one-time seeds
   migrated on first boot (infrastructure vars like `PORT`, `TZ`, `PUID/PGID`, `APP_BASE_PATH` stay live)
 - Every schema change ships an Alembic migration
