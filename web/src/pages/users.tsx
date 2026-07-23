@@ -224,10 +224,11 @@ export function UsersPage() {
                         <Link
                           to={`/users/${user.id}`}
                           className="flex items-center gap-3 rounded-sm font-medium text-foreground group-hover:text-primary"
+                          title={`Plex username: ${user.username}`}
                         >
                           <UserAvatar name={user.username} size="sm" />
                           <span className="group-hover:underline">
-                            {user.username}
+                            {user.display_name || user.username}
                           </span>
                         </Link>
                       </TableCell>
