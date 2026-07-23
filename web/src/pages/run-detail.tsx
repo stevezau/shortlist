@@ -298,6 +298,7 @@ function RunStatTiles({ run }: { run: RunDetail }) {
   const requested = s.titles_requested ?? 0;
   const tokens = s.llm_tokens ?? 0;
   const exa = s.exa_searches ?? 0;
+  const exaCacheHits = s.exa_cache_hits ?? 0;
   // "web search 467,463 · final picks 52,625 tokens" — the trailing unit makes clear these are token
   // counts, not the (separate) Exa search count shown in its own tile below.
   const stepInline = tokenStepInline(s.llm_tokens_by_step);
@@ -353,13 +354,19 @@ function RunStatTiles({ run }: { run: RunDetail }) {
           title="Total AI tokens this run cost, split by what the AI did. Turn AI sources off in Settings → Recommendations to lower it."
         />
       )}
-      {exa > 0 && (
+      {(exa > 0 || exaCacheHits > 0) && (
         <StatTile
           icon={Search}
           label="Exa searches"
           value={exa}
-          hint="web lookups · billed per search"
-          title="Number of Exa web-search requests this run made — a count, not tokens. Exa bills per search."
+          // A warm cache means most lookups aren't billed — showing only the billed "1" made a
+          // fully-cached run look like the source did nothing. The hint names what the cache served.
+          hint={
+            exaCacheHits > 0
+              ? `billed · ${exaCacheHits.toLocaleString()} from cache`
+              : "web lookups · billed per search"
+          }
+          title="Billable Exa web-search requests this run made — a count, not tokens. Exa bills per search; results are cached for two weeks and shared across everyone, so most lookups are served from cache and cost nothing."
         />
       )}
     </div>

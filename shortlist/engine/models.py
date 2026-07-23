@@ -609,6 +609,9 @@ class UserRunReport:
     # Exa web searches run for this user (the llm_web external backend). Tracked apart from tokens:
     # Exa bills per search request, not per token, so the two must never be summed together.
     exa_searches: int = 0
+    # Searches served from the shared 14-day cache instead of billed. Reported alongside exa_searches
+    # so a fully-cached run reads "1 searched · N from cache", not a bare "1" that looks like nothing ran.
+    exa_cache_hits: int = 0
 
 
 @dataclass

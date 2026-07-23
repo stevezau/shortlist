@@ -476,6 +476,7 @@ class TestPerTitleWebSearchCache:
         search = _FakeSearch([make_result("Result", "text")])
         cache = _DictCache()
         cache.set("exasearch:movie:1", "[]", 1)  # Dune already searched by a prior user this window
+        stats = GatherStats()
         gather_candidates(
             mock_tmdb,
             [seed(1, "Dune")],
@@ -484,8 +485,13 @@ class TestPerTitleWebSearchCache:
             profile=web_profile(),
             search=search,
             web_search_cache=cache,
+            stats=stats,
         )
         assert search.queries == []  # served from cache — no billable Exa search
+        # A cache hit is not a billed search, but it IS counted — else a fully-cached run reads
+        # exa_searches:0 and looks like the source did nothing (it was the cache doing the work).
+        assert stats.exa_searches == 0
+        assert stats.exa_cache_hits == 1
 
     def test_recent_count_caps_how_many_titles_are_searched(self, mock_tmdb):
         self._tmdb(mock_tmdb)

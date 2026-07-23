@@ -770,6 +770,10 @@ class RunService:
             "llm_tokens": sum(u.llm_tokens for u in report.users),
             "llm_tokens_by_step": tokens_by_step,
             "exa_searches": sum(u.exa_searches for u in report.users),
+            # Cache hits served from the shared 14-day web-search cache. Reported so the UI can read
+            # "1 searched · N from cache" — without it a fully-cached run shows a bare exa_searches:1
+            # and looks like the source did nothing (it didn't: the cache did the work).
+            "exa_cache_hits": sum(u.exa_cache_hits for u in report.users),
             "error": error or report.error,
             # Every account whose share filter Plex refused this run. These are the reason nothing
             # was promoted, so the UI can say so instead of leaving "Failed" unexplained (issue #1).

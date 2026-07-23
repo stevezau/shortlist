@@ -344,7 +344,8 @@ def _add_step_tokens(report: UserRunReport, step: str, n: int) -> None:
 
 def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats) -> None:
     """Fold a candidate-gather's AI cost into the user report: per-source tokens (also into the grand
-    total) and Exa searches. Called once per pool COMPUTATION — a cache hit re-adds nothing.
+    total), Exa searches, and Exa cache hits. Called once per pool COMPUTATION — a cache hit re-adds
+    nothing to tokens, but IS counted in exa_cache_hits so the run shows what the cache saved.
 
     This is the ONLY AI cost now — the AI is used only to FIND titles (web search). Ranking the pool
     and writing each row's reason are done in code (``picker.build_picks``), so there is no per-row
@@ -354,6 +355,7 @@ def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats) -> 
         report.llm_tokens += tokens
         _add_step_tokens(report, source, tokens)
     report.exa_searches += stats.exa_searches
+    report.exa_cache_hits += stats.exa_cache_hits
 
 
 def _in_audience(user: UserProfile, spec: RowSpec) -> bool:

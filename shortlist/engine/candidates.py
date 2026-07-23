@@ -51,10 +51,16 @@ class GatherStats:
     Keyed by source because only the AI-powered source (``llm_web``) costs tokens — the TMDB/Trakt
     sources add nothing here. ``exa_searches`` is tracked separately on purpose: Exa bills per search
     request, not per token, so it must never be folded into a token total.
+
+    ``exa_cache_hits`` counts searches served from the shared 14-day cache instead of billed. It's
+    tracked next to ``exa_searches`` so a run can show "1 searched · 793 from cache" — without it a
+    fully-cached run reads ``exa_searches: 1`` and is indistinguishable from a run that searched
+    nothing, which is precisely how a warm cache gets misread as a broken source.
     """
 
     tokens_by_source: dict[str, int] = field(default_factory=dict)
     exa_searches: int = 0
+    exa_cache_hits: int = 0
 
     def add_tokens(self, source: str, n: int) -> None:
         """Add a source's token spend (a no-op for 0, e.g. NullCurator or a skipped call)."""
@@ -148,6 +154,7 @@ def _web_via_search(
         key = f"exasearch:{seed.media_type.value}:{seed.tmdb_id}"
         cached = cache.get(key)
         if cached is not None:
+            stats.exa_cache_hits += 1  # served from the shared cache — not billed (see GatherStats)
             items = json.loads(cached)
         else:
             stats.exa_searches += 1  # a real (uncached) search — count the billable request

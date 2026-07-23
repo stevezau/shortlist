@@ -199,6 +199,7 @@ class TestRunExecution:
             "llm_tokens": 0,
             "llm_tokens_by_step": {},
             "exa_searches": 0,
+            "exa_cache_hits": 0,
             "error": None,
             "promotion_blockers": [],
         }

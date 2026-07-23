@@ -182,6 +182,27 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.getByText("46")).toBeInTheDocument();
   });
 
+  it("shows cache hits so a fully-cached run doesn't look like the source did nothing", async () => {
+    // The bug that misread SFLIX run 1: a warm shared cache means almost nothing is billed, so the
+    // tile read a bare "1" and looked broken. It must show what the cache served, not just the bill.
+    const r = run([]);
+    r.stats = {
+      users_ok: 47,
+      users_error: 0,
+      titles_requested: 0,
+      llm_tokens: 691422,
+      exa_searches: 1,
+      exa_cache_hits: 793,
+    };
+    getRun.mockResolvedValue(r);
+
+    renderDetail();
+
+    expect(await screen.findByText("Exa searches")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument(); // billed
+    expect(screen.getByText(/793 from cache/)).toBeInTheDocument();
+  });
+
   it("hides the AI/Exa tiles and reads 'all succeeded' on a clean AI-free run", async () => {
     const r = run([]);
     r.stats = {

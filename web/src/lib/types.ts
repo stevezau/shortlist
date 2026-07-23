@@ -209,6 +209,8 @@ export interface RunStats {
   llm_tokens_by_step?: Record<string, number>;
   /** Exa web searches run this run (billed per search, not per token — shown separately). */
   exa_searches?: number;
+  /** Searches served from the shared 14-day cache instead of billed — "1 searched · N from cache". */
+  exa_cache_hits?: number;
 }
 
 /** GET /api/runs — one row per pipeline run. */
