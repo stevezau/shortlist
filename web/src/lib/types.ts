@@ -317,6 +317,8 @@ export interface RunLibraryBreakdown {
 /** Per-user slice of GET /api/runs/{id}. */
 export interface RunUserResult {
   username: string;
+  /** nickname → friendly_name → username, resolved server-side (same as User.display_name). */
+  display_name?: string;
   slug: string;
   status: string;
   error: string | null;
@@ -622,6 +624,8 @@ export interface EffectivenessReport {
   trend: { week: string; watched: number }[];
   per_user: {
     username: string;
+    /** nickname → friendly_name → username, resolved server-side. */
+    display_name?: string;
     slug: string;
     delivered: number;
     watched: number;
@@ -640,6 +644,8 @@ export interface EffectivenessReport {
   }[];
   recent: {
     username: string;
+    /** nickname → friendly_name → username, resolved server-side. */
+    display_name?: string;
     title: string;
     media_type: string;
     row: string;

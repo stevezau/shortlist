@@ -90,7 +90,7 @@ def _serialize(
         # What Tautulli calls them, when it has its own name for them — the default a blank
         # nickname falls back to, shown in the UI so the field's placeholder can be honest.
         "friendly_name": user.friendly_name or "",
-        "display_name": user.nickname or user.friendly_name or user.username,
+        "display_name": user.display_name,
         "avatar_url": user.avatar_url,
         "user_type": user.user_type,
         "enabled": user.enabled,

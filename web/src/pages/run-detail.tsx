@@ -257,7 +257,8 @@ function tokenStepInline(byStep?: Record<string, number>): string {
  *  nothing rendered: the page said "Failed" and left the operator reading container logs (issue #1). */
 function RunFailureBanner({ run }: { run: RunDetail }) {
   const blockers = run.promotion_blockers ?? [];
-  if (run.status !== "error" || (!run.error && blockers.length === 0)) return null;
+  if (run.status !== "error" || (!run.error && blockers.length === 0))
+    return null;
   return (
     <div
       role="alert"
@@ -272,9 +273,11 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
         <p className="text-muted-foreground">
           Rows are only put on Home once every other account is set to hide
           them. Plex refused that change for{" "}
-          {blockers.length === 1 ? "this account" : `${blockers.length} accounts`}
-          , so the rows were built but deliberately left hidden rather than
-          risk showing one person’s row to someone else.
+          {blockers.length === 1
+            ? "this account"
+            : `${blockers.length} accounts`}
+          , so the rows were built but deliberately left hidden rather than risk
+          showing one person’s row to someone else.
         </p>
       )}
       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive">
@@ -575,7 +578,7 @@ function UserRow({
     >
       <UserAvatar name={result.username} size="sm" />
       <span className="min-w-0 flex-1 truncate font-medium">
-        {result.username}
+        {result.display_name || result.username}
       </span>
       {failed ? (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive">
@@ -627,9 +630,15 @@ function UserTabs({
   const byStatus =
     !mixed || filter === "all"
       ? results
-      : results.filter((r) => (filter === "failed" ? r.error !== null : !r.error));
+      : results.filter((r) =>
+          filter === "failed" ? r.error !== null : !r.error,
+        );
   const shown = q
-    ? byStatus.filter((r) => r.username.toLowerCase().includes(q))
+    ? byStatus.filter(
+        (r) =>
+          r.username.toLowerCase().includes(q) ||
+          (r.display_name ?? "").toLowerCase().includes(q),
+      )
     : byStatus;
   const failed = shown.filter((r) => r.error !== null);
   const ok = shown.filter(isOk);
@@ -966,10 +975,10 @@ export function RunDetailPage() {
                                   to={`/users/${userId}`}
                                   className="rounded-sm hover:text-primary hover:underline"
                                 >
-                                  {selected.username}
+                                  {selected.display_name || selected.username}
                                 </Link>
                               ) : (
-                                selected.username
+                                selected.display_name || selected.username
                               )}
                               <Badge
                                 variant={

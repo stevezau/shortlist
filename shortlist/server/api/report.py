@@ -180,7 +180,15 @@ async def effectiveness(request: Request) -> dict:
 
         per_user = _breakdown(
             per_user_raw,
-            lambda uid: {"username": users[uid].username, "slug": users[uid].slug} if uid in users else None,
+            lambda uid: (
+                {
+                    "username": users[uid].username,
+                    "display_name": users[uid].display_name,  # nickname → Tautulli → username
+                    "slug": users[uid].slug,
+                }
+                if uid in users
+                else None
+            ),
         )
         per_row = _breakdown(
             per_row_raw,
@@ -195,6 +203,7 @@ async def effectiveness(request: Request) -> dict:
         recent = [
             {
                 "username": users[p.user_id].username if p.user_id in users else "unknown",
+                "display_name": users[p.user_id].display_name if p.user_id in users else "unknown",
                 "title": p.title,
                 "media_type": p.media_type,
                 "row": row_label(p.collection_slug, p.library),

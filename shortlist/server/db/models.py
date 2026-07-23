@@ -83,6 +83,13 @@ class User(Base):
 
     run_users: Mapped[list[RunUser]] = relationship(back_populates="user")
 
+    @property
+    def display_name(self) -> str:
+        """What to call this person in the UI: owner's nickname, else the Tautulli friendly name,
+        else the bare Plex username. Same precedence `{user}` renders in a row title — keep the one
+        source of truth so the Users page, the runs view, and Plex never disagree on someone's name."""
+        return self.nickname or self.friendly_name or self.username
+
 
 class Collection(Base):
     """A curated-row definition, combining a build mode, an audience, and a recipe.

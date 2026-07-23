@@ -52,7 +52,7 @@ export function UserCard({
         <CardTitle className="flex items-center gap-2.5">
           <UserAvatar name={user.username} size="md" />
           <Link to={`/users/${user.id}`} className="rounded-sm hover:underline">
-            {user.username}
+            {user.display_name || user.username}
           </Link>
         </CardTitle>
         <div className="flex items-center gap-2">

@@ -123,6 +123,9 @@ async def get_run(run_id: int, request: Request) -> dict:
             users.append(
                 {
                     "username": run_user.user.username,
+                    # nickname → Tautulli friendly name → username; the runs view shows this so a
+                    # person reads the same in runs as on the Users page (see User.display_name).
+                    "display_name": run_user.user.display_name,
                     "slug": run_user.user.slug,
                     "status": run_user.status,
                     "error": run_user.error,

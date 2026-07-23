@@ -384,7 +384,6 @@ describe("RunDetailPage — grouped by library", () => {
   });
 });
 
-
 function skippedUser(username: string, i: number) {
   return {
     username,
@@ -406,10 +405,20 @@ describe("RunDetail — a skipped person is not a success", () => {
     // The same "count says success, row says skipped" bug, one level down: grouping on
     // `error === null` put skipped people under the "Succeeded" heading.
     const r = run([]);
-    r.stats = { users_ok: 1, users_error: 1, users_skipped: 1, titles_requested: 0 };
+    r.stats = {
+      users_ok: 1,
+      users_error: 1,
+      users_skipped: 1,
+      titles_requested: 0,
+    };
     r.users = [
       { ...skippedUser("sarah", 1), status: "ok", reason: null },
-      { ...skippedUser("mike", 2), error: "boom", status: "error", reason: null },
+      {
+        ...skippedUser("mike", 2),
+        error: "boom",
+        status: "error",
+        reason: null,
+      },
       skippedUser("canary", 3),
     ] as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
@@ -425,7 +434,12 @@ describe("RunDetail — a skipped person is not a success", () => {
     // The contradiction this fixes: three rows badged "Skipped" under a header reading
     // "3 · all succeeded", because the stats only ever counted error vs non-error.
     const r = run([]);
-    r.stats = { users_ok: 0, users_error: 0, users_skipped: 3, titles_requested: 0 };
+    r.stats = {
+      users_ok: 0,
+      users_error: 0,
+      users_skipped: 3,
+      titles_requested: 0,
+    };
     r.users = ["sarah", "mike", "canary"].map((u, i) =>
       skippedUser(u, i),
     ) as unknown as RunDetail["users"];
@@ -448,6 +462,29 @@ describe("RunDetail — a skipped person is not a success", () => {
   });
 });
 
+describe("RunDetail — shows the display name, not the bare username", () => {
+  it("renders display_name (Tautulli/nickname) instead of the Plex login when present", async () => {
+    // The runs view showed the raw Plex username even after a friendly name was synced — because
+    // the endpoint only emitted `username`. It now carries display_name (nickname → Tautulli →
+    // username); the row must render that, keeping `username` only for the avatar + search.
+    const r = run([]);
+    r.stats = { users_ok: 1, users_error: 0, titles_requested: 0 };
+    r.users = [
+      {
+        ...skippedUser("moohouse", 1),
+        status: "ok",
+        reason: null,
+        display_name: "Joe - Richard's Mate",
+      },
+    ] as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail();
+
+    expect(await screen.findByText("Joe - Richard's Mate")).toBeInTheDocument();
+    expect(screen.queryByText("moohouse")).toBeNull();
+  });
+});
 
 describe("RunDetail — a failed run says why", () => {
   it("explains a refused share filter instead of showing a bare 'Failed'", async () => {

@@ -650,6 +650,28 @@ class TestRunsApi:
         assert result["reason"] == "There are no per-person rows to build."
         assert result["error"] is None
 
+    def test_run_detail_shows_the_display_name_not_the_bare_username(self, client: TestClient):
+        """The runs view must read a person the same way the Users page does — nickname → Tautulli
+        friendly name → username (User.display_name). The bug: it only emitted `username`, so a
+        Tautulli friendly name populated after the run still showed the raw Plex login (SFLIX)."""
+        from shortlist.server.db.models import Run, RunUser, User
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).first()
+            user.nickname = ""  # no owner override — the Tautulli name should win
+            user.friendly_name = "Joe - Richard's Mate"
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=user.id, status="ok"))
+            session.commit()
+            run_id, raw_username = run.id, user.username
+
+        result = client.get(f"/api/runs/{run_id}").json()["users"][0]
+
+        assert result["username"] == raw_username  # still carried, for search + avatar
+        assert result["display_name"] == "Joe - Richard's Mate"
+
     def test_the_run_page_gets_provenance_on_the_breakdown_it_actually_renders(self, client: TestClient):
         """The run page renders the stored `breakdown` blob, NOT the picks list — so provenance
         added to the picks table alone was invisible on the one screen built to answer "why was
