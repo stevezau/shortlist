@@ -21,7 +21,6 @@ function sectionContent(settings: Settings): Record<string, ReactNode> {
   return {
     connections: <ConnectionsSection settings={settings} />,
     recommendations: <RecommendationsSection settings={settings} />,
-    curation: <CurationSection settings={settings} />,
     defaults: <DefaultsSection settings={settings} />,
     placement: <RowPlacementSection settings={settings} />,
     requests: <RequestsSection settings={settings} />,
