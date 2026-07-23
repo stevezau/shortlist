@@ -37,8 +37,7 @@ class TautulliClient:
 
         Tautulli is where most people have already renamed "mrjohnpoz" to something human, so it's a
         better default row title than the Plex username — but only a DEFAULT: Shortlist's own
-        nickname always wins. Entries whose friendly name is just the username again are dropped, so
-        an untouched Tautulli install contributes nothing.
+        nickname always wins.
         """
         rows = self._cmd("get_users").get("data", [])
         names: dict[int, str] = {}
@@ -48,7 +47,10 @@ class TautulliClient:
             except (TypeError, ValueError):
                 continue
             friendly = (row.get("friendly_name") or "").strip()
-            if account_id and friendly and friendly != (row.get("username") or "").strip():
+            # Include ALL friendly names, even if they match the username — Tautulli might have
+            # capitalization/formatting differences (e.g., "john" vs "John"), and the UI can
+            # decide whether to show it. Empty strings are still dropped.
+            if account_id and friendly:
                 names[account_id] = friendly
         return names
 
