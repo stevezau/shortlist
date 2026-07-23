@@ -76,9 +76,10 @@ export function UsersPage() {
               variant="outline"
               onClick={() => sync.mutate()}
               loading={sync.isPending}
+              title="Pull the latest users from Plex and friendly names from Tautulli (if connected)"
             >
               <RefreshCw aria-hidden="true" />
-              Sync from Plex
+              Sync users
             </Button>
             <Button
               variant="outline"
