@@ -6,11 +6,11 @@ recommendation engine is not locked to TMDB's per-seed similarity. Sources today
 
 * ``tmdb_similar`` — TMDB /recommendations + /similar for each seed (the recall baseline).
 * ``tmdb_discover`` — TMDB /discover in the genres a person's history skews toward (widens recall).
-* ``llm_library`` — the AI curator proposes owned titles from a taste-sliced library catalog.
 * ``trakt`` — Trakt's related-titles graph for each seed.
 * ``llm_web`` — a live web search proposes titles to watch next, each resolved via TMDB search.
   Backed by the curator's own web-search tool (Claude/GPT/Gemini) or an external provider (Exa),
-  chosen by ``web_search_provider`` — Exa is the only path for a local Ollama model.
+  chosen by ``web_search_provider`` — Exa is the only path for a local Ollama model. This is the
+  only AI-powered source: the providers are used to FIND titles, never to rank them.
 """
 
 from __future__ import annotations
@@ -38,11 +38,9 @@ _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the curator so the
 # Every candidate source the engine knows how to run. The owner can enable any subset globally
 # (settings ``candidates.sources``) or per row (``collections.candidate_sources``); an unknown value
 # is simply ignored by ``gather_candidates``, but the API validates against this set for good errors.
-KNOWN_SOURCES = ("tmdb_similar", "tmdb_discover", "llm_library", "trakt", "llm_web")
+KNOWN_SOURCES = ("tmdb_similar", "tmdb_discover", "trakt", "llm_web")
 DEFAULT_SOURCES = ("tmdb_similar",)
 _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
-_LLM_LIBRARY_CAP = 300  # most catalog titles to show the LLM (a big library must be sliced to fit)
-_LLM_LIBRARY_K = 40  # how many owned titles the LLM proposes as candidates
 _LLM_WEB_K = 20  # how many titles the web-search LLM proposes (each resolved to TMDB, then verified)
 
 
@@ -50,9 +48,9 @@ _LLM_WEB_K = 20  # how many titles the web-search LLM proposes (each resolved to
 class GatherStats:
     """AI cost incurred while gathering candidates, so a run can show WHERE its tokens went.
 
-    Keyed by source because only the AI-powered sources (``llm_web`` / ``llm_library``) cost tokens —
-    the TMDB/Trakt sources add nothing here. ``exa_searches`` is tracked separately on purpose: Exa
-    bills per search request, not per token, so it must never be folded into a token total.
+    Keyed by source because only the AI-powered source (``llm_web``) costs tokens — the TMDB/Trakt
+    sources add nothing here. ``exa_searches`` is tracked separately on purpose: Exa bills per search
+    request, not per token, so it must never be folded into a token total.
     """
 
     tokens_by_source: dict[str, int] = field(default_factory=dict)
@@ -207,7 +205,6 @@ def gather_candidates(
     *,
     sources: list[str] | None = None,
     curator=None,
-    catalog: dict[MediaType, list[dict]] | None = None,
     profile=None,
     trakt=None,
     search=None,
@@ -218,12 +215,12 @@ def gather_candidates(
 ) -> list[Candidate]:
     """Pool candidates from every enabled source, deduped by (tmdb_id, media_type).
 
-    ``curator``/``catalog``/``profile`` are only needed by the ``llm_library`` source and ``trakt``
-    by the Trakt source; the TMDB sources ignore them. ``search``/``web_search_mode`` drive the
-    ``llm_web`` source's external-search backend (Exa) — ``search`` is None when no key is configured.
+    ``curator``/``profile`` are only needed by the ``llm_web`` source and ``trakt`` by the Trakt
+    source; the TMDB sources ignore them. ``search``/``web_search_mode`` drive the ``llm_web``
+    source's external-search backend (Exa) — ``search`` is None when no key is configured.
 
-    Pass a ``stats`` (a :class:`GatherStats`) to have the AI token spend of the ``llm_web`` and
-    ``llm_library`` sources (and Exa searches) accumulated into it, for per-run AI accounting.
+    Pass a ``stats`` (a :class:`GatherStats`) to have the AI token spend of the ``llm_web`` source
+    (and Exa searches) accumulated into it, for per-run AI accounting.
     """
     enabled = set(sources) if sources else set(DEFAULT_SOURCES)
     stats = stats if stats is not None else GatherStats()
@@ -308,8 +305,8 @@ def gather_candidates(
             failures["tmdb_discover"] = f"{type(e).__name__}: {e}"
             logger.warning("tmdb_discover source failed ({}); continuing with the other sources", type(e).__name__)
 
-    # NullCurator isn't AI (it ranks heuristically), so "AI suggests from your library" needs a real
-    # curator; without one the source is a no-op — matching the UI, which blocks the toggle.
+    # NullCurator isn't an LLM (it's the no-AI stub), so the web-search source needs a real curator;
+    # without one it's a no-op — matching the UI, which blocks the toggle.
     llm_ready = curator is not None and not isinstance(curator, NullCurator)
     if "trakt" in enabled and trakt is not None:
         attempted.add("trakt")
@@ -354,34 +351,6 @@ def gather_candidates(
         except Exception as e:
             failures["llm_web"] = f"{type(e).__name__}: {e}"
             logger.warning("llm_web source failed ({}); continuing with the other sources", type(e).__name__)
-
-    if "llm_library" in enabled and llm_ready and catalog and profile is not None:
-        attempted.add("llm_library")
-        try:
-            # Taste = the genres already in this person's pool; used only to slice a big library down
-            # to what the LLM can read. The curator then picks the owned titles that actually fit.
-            taste = {g for c in pool.values() for g in c.genres}
-            for media_type, items in catalog.items():
-                owned = [
-                    Candidate(
-                        tmdb_id=it["tmdb_id"],
-                        title=it["title"],
-                        media_type=media_type,
-                        year=it.get("year"),
-                        genres=list(it.get("genres") or []),
-                        rating_key=it.get("rating_key"),
-                    )
-                    for it in _slice_for_llm(items, taste, _LLM_LIBRARY_CAP)
-                ]
-                chosen = {p.tmdb_id for p in curator.curate(profile, owned, _LLM_LIBRARY_K)}
-                stats.add_tokens("llm_library", getattr(curator, "last_tokens", 0))
-                for cand in owned:
-                    if cand.tmdb_id in chosen:
-                        cand.sources.add("llm_library")
-                        pool.setdefault((cand.tmdb_id, media_type), cand).sources.add("llm_library")
-        except Exception as e:
-            failures["llm_library"] = f"{type(e).__name__}: {e}"
-            logger.warning("llm_library source failed ({}); continuing with the other sources", type(e).__name__)
 
     # One source down is a degradation the other sources absorb. EVERY source down is not: we know
     # nothing about this person tonight, and returning an empty pool would report a cheerful "ok"
