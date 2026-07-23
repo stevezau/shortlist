@@ -12,6 +12,7 @@ import { LoginPage } from "@/pages/login";
 import { RequestsPage } from "@/pages/requests";
 import { RowsPage } from "@/pages/rows";
 import { RunDetailPage } from "@/pages/run-detail";
+import { RunUserTracePage } from "@/pages/run-user-trace";
 import { LogsPage } from "@/pages/logs";
 import { RunsPage } from "@/pages/runs";
 import { SettingsPage } from "@/pages/settings";
@@ -105,6 +106,10 @@ export default function App() {
             <Route path="runs" element={<RunsPage />} />
             <Route path="logs" element={<LogsPage />} />
             <Route path="runs/:id" element={<RunDetailPage />} />
+            <Route
+              path="runs/:id/trace/:userId"
+              element={<RunUserTracePage />}
+            />
             <Route path="requests" element={<RequestsPage />} />
             <Route path="tools" element={<ToolsPage />} />
             <Route path="settings" element={<SettingsPage />} />

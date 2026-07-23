@@ -14,6 +14,8 @@ export const queryKeys = {
   users: ["users"] as const,
   runs: ["runs"] as const,
   run: (id: number) => ["runs", id] as const,
+  runUserTrace: (runId: number, userId: number) =>
+    ["runs", runId, "trace", userId] as const,
   settings: ["settings"] as const,
   collections: ["collections"] as const,
   requests: ["requests"] as const,
@@ -84,6 +86,16 @@ export function useRun(id: number, enabled = true) {
   return useQuery({
     queryKey: queryKeys.run(id),
     queryFn: () => api.getRun(id),
+    enabled,
+  });
+}
+
+/** The full-pipeline trace for one user in one run — fetched on demand (the blob is large), so
+ *  callers gate it on `has_trace` and only enable it once the trace page is actually open. */
+export function useRunUserTrace(runId: number, userId: number, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.runUserTrace(runId, userId),
+    queryFn: () => api.getRunUserTrace(runId, userId),
     enabled,
   });
 }

@@ -11,6 +11,7 @@ import {
   Search,
   Shuffle,
   Sparkles,
+  Telescope,
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -19,10 +20,6 @@ import { Link, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
 import { PickList } from "@/components/pick-list";
-import {
-  RunUserTraceButton,
-  RunUserTraceDialog,
-} from "@/components/runs/run-user-trace";
 import { provenanceLabel } from "@/lib/pick-provenance";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
@@ -808,8 +805,6 @@ export function RunDetailPage() {
   // Which user's rows are on screen. Default to the first FAILED user (what you opened the page to
   // see), else the first user; keep the current pick as long as they're still in the run.
   const [selectedSlug, setSelectedSlug] = useState("");
-  // Whether the full-pipeline trace dialog is open for the selected user (lazily fetched when so).
-  const [traceOpen, setTraceOpen] = useState(false);
   useEffect(() => {
     const users = runQuery.data?.users ?? [];
     const first = users[0];
@@ -1014,9 +1009,20 @@ export function RunDetailPage() {
                                 {exaSummary(selected.exa_searches)}
                               </p>
                               {selected.has_trace && userId !== null && (
-                                <RunUserTraceButton
-                                  onClick={() => setTraceOpen(true)}
-                                />
+                                <Button
+                                  asChild
+                                  variant="outline"
+                                  size="sm"
+                                  className="gap-1.5"
+                                >
+                                  <Link to={`/runs/${run.id}/trace/${userId}`}>
+                                    <Telescope
+                                      className="h-3.5 w-3.5"
+                                      aria-hidden="true"
+                                    />
+                                    How we picked
+                                  </Link>
+                                </Button>
                               )}
                             </div>
                           </CardHeader>
@@ -1024,15 +1030,6 @@ export function RunDetailPage() {
                             <UserPanel run={run} result={selected} />
                           </CardContent>
                         </Card>
-                        {selected.has_trace && userId !== null && (
-                          <RunUserTraceDialog
-                            runId={run.id}
-                            userId={userId}
-                            name={selected.display_name || selected.username}
-                            open={traceOpen}
-                            onOpenChange={setTraceOpen}
-                          />
-                        )}
                       </div>
                     </div>
                   );
