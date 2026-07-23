@@ -72,6 +72,12 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               placeholder: "http://your-host:32400",
             },
             { key: "plex.token", label: "Plex token", kind: "password" },
+            {
+              key: "plex.db_path",
+              label: "Database path (optional)",
+              kind: "text",
+              placeholder: "/plexdb",
+            },
           ]}
         />
         <ConnectionCard

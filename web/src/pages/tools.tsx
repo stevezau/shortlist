@@ -1,11 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   DatabaseZap,
   RefreshCw,
   Users as UsersIcon,
   Wrench,
 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { MutationAlert } from "@/components/mutation-alert";
@@ -46,6 +49,7 @@ export function ToolsPage() {
 /** Fill watch history from Plex's database — the only source that sees a mark-as-watched. */
 function ReconcileWatchedCard() {
   const queryClient = useQueryClient();
+  const [setupOpen, setSetupOpen] = useState(false);
   const reconcile = useMutation({
     mutationFn: api.reconcileWatched,
     onSettled: () =>
@@ -64,12 +68,13 @@ function ReconcileWatchedCard() {
           Reconcile watched from Plex
         </CardTitle>
         <CardDescription>
-          Plex's history only records things that were <em>played</em> — never a
-          title you mark-as-watched. This reads watched state straight from
-          Plex's own database (the one source that sees marks) and fills the
-          gaps, so a film you ticked off elsewhere stops getting recommended
-          back to you. It reads the database read-only and never changes
-          anything in Plex.
+          Plex fixed a long-standing bug: items you mark-as-watched now create
+          history entries (they didn't before). But anything marked before the
+          fix is still invisible to Shortlist's usual sync. This is a{" "}
+          <strong>one-time manual sync</strong> that reads Plex's database
+          directly — the only source that sees marks — and fills those gaps.
+          After running it once, the regular nightly sync keeps everyone
+          current.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -92,17 +97,74 @@ function ReconcileWatchedCard() {
         )}
 
         {result && !result.configured && (
-          <p className="text-sm text-muted-foreground">
-            No Plex database is mounted, so there's nothing to read yet. Mount
-            it read-only and point Shortlist at it under{" "}
-            <Link
-              className="font-medium underline underline-offset-4"
-              to="/settings#connections"
-            >
-              Settings → Connections
-            </Link>
-            , then run this again.
-          </p>
+          <>
+            <p className="text-sm text-muted-foreground">
+              No Plex database is mounted yet.{" "}
+              <button
+                onClick={() => setSetupOpen(!setupOpen)}
+                className="inline-flex items-center gap-1 font-medium underline underline-offset-4"
+              >
+                How to set it up
+                {setupOpen ? (
+                  <ChevronUp className="size-3" />
+                ) : (
+                  <ChevronDown className="size-3" />
+                )}
+              </button>
+            </p>
+            {setupOpen && (
+              <div className="space-y-3 rounded-md border bg-muted/40 p-4 text-sm">
+                <div>
+                  <p className="font-medium">Docker setup (recommended)</p>
+                  <ol className="ml-4 mt-2 list-decimal space-y-1.5 text-muted-foreground">
+                    <li>
+                      Find your Plex database file. It's usually at:
+                      <ul className="ml-4 mt-1 list-disc">
+                        <li>
+                          Linux:{" "}
+                          <code className="rounded bg-background px-1 py-0.5">
+                            /var/lib/plexmediaserver/Library/Application
+                            Support/Plex Media Server/Plug-in
+                            Support/Databases/com.plexapp.plugins.library.db
+                          </code>
+                        </li>
+                        <li>
+                          macOS:{" "}
+                          <code className="rounded bg-background px-1 py-0.5">
+                            ~/Library/Application Support/Plex Media
+                            Server/Plug-in
+                            Support/Databases/com.plexapp.plugins.library.db
+                          </code>
+                        </li>
+                      </ul>
+                    </li>
+                    <li>
+                      Mount it <strong>read-only</strong> into your Shortlist
+                      container at <code>/plexdb</code>:
+                      <pre className="mt-1 rounded bg-background p-2 text-xs">
+                        {`-v /path/to/com.plexapp.plugins.library.db:/plexdb:ro`}
+                      </pre>
+                    </li>
+                    <li>
+                      Set the path in{" "}
+                      <Link
+                        className="font-medium underline underline-offset-4"
+                        to="/settings#connections"
+                      >
+                        Settings → Connections
+                      </Link>{" "}
+                      to <code>/plexdb</code>
+                    </li>
+                    <li>Come back here and run Reconcile</li>
+                  </ol>
+                </div>
+                <p className="text-xs italic">
+                  The mount is read-only — Shortlist never writes to Plex's
+                  database.
+                </p>
+              </div>
+            )}
+          </>
         )}
 
         {result?.configured && (
@@ -118,9 +180,10 @@ function ReconcileWatchedCard() {
         )}
 
         <p className="text-xs text-muted-foreground">
-          One thing to know: the history API still can't see marks, so anything
-          you mark-as-watched
-          <em> after</em> a reconcile stays invisible until you run this again.
+          <strong>Note:</strong> Plex fixed this in recent versions — new
+          mark-as-watched actions now appear in history automatically. This tool
+          is for backfilling old marks only. You shouldn't need to run it again
+          after the first time.
         </p>
       </CardContent>
     </Card>
@@ -197,13 +260,13 @@ function SyncUsersCard() {
             aria-hidden="true"
             className="size-5 text-muted-foreground"
           />
-          Sync users from Plex
+          Sync users
         </CardTitle>
         <CardDescription>
-          Re-pull everyone you share with — and yourself — from plex.tv. Use it
-          after inviting someone new so they show up in the user list without
-          waiting for the next run. This is the same action as the button on the
-          Users page.
+          Re-pull everyone you share with — and yourself — from plex.tv and
+          Tautulli (if connected). Refreshes usernames, display names/friendly
+          names, and share status. Use it after inviting someone new so they
+          show up in the user list without waiting for the next run.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">

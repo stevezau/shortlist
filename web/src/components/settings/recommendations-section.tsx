@@ -113,54 +113,22 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   return (
     <section aria-labelledby="recs-heading" className="space-y-3">
       <h2 id="recs-heading" className="text-lg font-semibold">
-        Recommendations
+        Finding titles
       </h2>
+      <p className="text-sm text-muted-foreground">
+        Where Shortlist looks for titles to suggest, and how AI enhances the
+        search. This is the <strong>default every row inherits</strong> — any
+        row can override in its editor.
+      </p>
 
+      <h3 className="pt-2 text-base font-semibold">Title sources</h3>
       <Card>
         <CardContent className="space-y-4 pt-6">
           <p className="text-sm text-muted-foreground">
-            Where Shortlist looks for titles to suggest.
-            <br />
-            It gathers from every source you turn on, keeps only titles already
-            in your library, then ranks them. More sources → wider reach.
+            Shortlist gathers from every source you enable, keeps only titles
+            already in your library, then ranks them. More sources → wider
+            reach.
           </p>
-          <p className="text-sm text-muted-foreground">
-            This is the <strong>default every row inherits</strong>. Any row can
-            use its own sources instead —{" "}
-            <Link to="/rows" className="font-medium underline">
-              Rows
-            </Link>{" "}
-            → Edit → Recommendation sources.
-          </p>
-          <div className="space-y-1.5 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
-            <p className="font-medium text-foreground">
-              Where AI is used, and what it costs
-            </p>
-            <p>
-              The <strong>TMDB</strong> sources use no AI — just the free TMDB
-              key you already added — and find most of the titles.
-            </p>
-            <p>Two sources below use your AI curator (so they cost tokens):</p>
-            <ul className="ml-4 list-disc space-y-1">
-              <li>
-                <strong>AI web search</strong> — the strongest extra in our
-                testing; surfaces acclaimed titles TMDB misses.
-              </li>
-              <li>
-                <strong>AI from library</strong> — adds the least for the most
-                cost. Turn this off first if you want to save.
-              </li>
-            </ul>
-            <p>
-              Your AI curator also makes the final pick and writes each row’s
-              short “why”.
-            </p>
-            <p>
-              Prefer no AI at all? Turn the AI sources off and set the curator
-              to <strong>None</strong> under Curation — you still get full rows,
-              ranked by score with plain reasons.
-            </p>
-          </div>
           {SIMPLE_SOURCES.map((source) => (
             <div key={source.id} className="space-y-2">
               <div className="flex items-start justify-between gap-4">
@@ -192,6 +160,28 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
         </CardContent>
       </Card>
 
+      <h3 className="pt-4 text-base font-semibold">AI enhancement</h3>
+      <div className="space-y-1.5 rounded-md border bg-muted/40 p-4 text-sm text-muted-foreground">
+        <p className="font-medium text-foreground">How AI is used</p>
+        <p>
+          The <strong>TMDB</strong> sources above use no AI — just the free TMDB
+          key — and find most titles.
+        </p>
+        <p>
+          <strong>AI web search</strong> below is optional but proven valuable:
+          it searches the web for acclaimed titles TMDB misses, using your AI
+          provider.
+        </p>
+        <p>
+          Prefer no AI at all? Leave the AI provider set to{" "}
+          <strong>None</strong> in{" "}
+          <Link to="/settings#connections" className="font-medium underline">
+            Connections
+          </Link>{" "}
+          — you still get full rows, ranked by score with plain reasons.
+        </p>
+      </div>
+
       <AiWebSearchCard
         settings={settings}
         enabled={enabled.includes("llm_web")}
@@ -200,6 +190,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
         onBackendChange={setSearchBackend}
       />
 
+      <h3 className="pt-4 text-base font-semibold">Row behavior</h3>
       <Card>
         <CardContent className="space-y-4 pt-6">
           <div className="space-y-2">
