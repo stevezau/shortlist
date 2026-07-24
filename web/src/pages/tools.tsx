@@ -12,6 +12,7 @@ import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -31,12 +32,60 @@ import {
 import { useSSE } from "@/lib/sse";
 import type { SyncFinishedEvent, SyncProgressEvent } from "@/lib/types";
 
-const WATCH_SYNC_PRESETS = [
+const SYNC_PRESETS = [
   { value: "", label: "Daily" },
   { value: "17 */12 * * *", label: "12h" },
   { value: "17 */6 * * *", label: "6h" },
   { value: "17 */4 * * *", label: "4h" },
-] as const;
+];
+
+function CronPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (cron: string) => void;
+}) {
+  const matchesPreset = SYNC_PRESETS.some((p) => p.value === value);
+  const [custom, setCustom] = useState(!matchesPreset && value !== "");
+  const [draft, setDraft] = useState(value);
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted-foreground">Frequency:</span>
+      <Segmented
+        value={custom ? "__custom__" : value}
+        onChange={(v) => {
+          if (v === "__custom__") {
+            setCustom(true);
+            setDraft(value);
+          } else {
+            setCustom(false);
+            onChange(v);
+          }
+        }}
+        options={[
+          ...SYNC_PRESETS.map((p) => ({ value: p.value, label: p.label })),
+          { value: "__custom__", label: "Custom" },
+        ]}
+      />
+      {custom && (
+        <Input
+          className="h-8 w-44 font-mono text-xs"
+          placeholder="e.g. 0 */2 * * *"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => {
+            if (draft.trim()) onChange(draft.trim());
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) onChange(draft.trim());
+          }}
+        />
+      )}
+    </div>
+  );
+}
 
 /**
  * Tools — on-demand maintenance the owner runs by hand, distinct from the nightly schedule. Each
@@ -113,6 +162,17 @@ export function ToolsPage() {
         <SyncUsersCard
           progress={usersProgress}
           lastSynced={syncs.data?.users.last ?? null}
+          nextRun={syncs.data?.users.next ?? null}
+          usersCron={((settings.data ?? {})["sync.users_cron"] as string) ?? ""}
+          onCronChange={(cron) =>
+            saveSettings.mutate(
+              { "sync.users_cron": cron },
+              {
+                onSuccess: () =>
+                  queryClient.invalidateQueries({ queryKey: ["syncs"] }),
+              },
+            )
+          }
         />
       </div>
     </div>
@@ -139,8 +199,6 @@ function SyncHistoryCard({
   // This POST returns 202 the moment the sync is QUEUED — the real outcome arrives on the bus as
   // `result`. So the bar is live while events flow, then the bus result (not the POST) is the truth.
   const running = progress !== null;
-  const activePreset =
-    WATCH_SYNC_PRESETS.find((p) => p.value === watchCron)?.value ?? watchCron;
 
   return (
     <Card>
@@ -176,17 +234,7 @@ function SyncHistoryCard({
             <RefreshCw aria-hidden="true" />
             Sync history
           </Button>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Frequency:</span>
-            <Segmented
-              value={activePreset}
-              onChange={onCronChange}
-              options={WATCH_SYNC_PRESETS.map((p) => ({
-                value: p.value,
-                label: p.label,
-              }))}
-            />
-          </div>
+          <CronPicker value={watchCron} onChange={onCronChange} />
         </div>
         {running && (
           <div className="flex flex-col gap-1.5">
@@ -247,9 +295,15 @@ function SyncHistoryCard({
 function SyncUsersCard({
   progress,
   lastSynced,
+  nextRun,
+  usersCron,
+  onCronChange,
 }: {
   progress: SyncProgressEvent | null;
   lastSynced: string | null;
+  nextRun: string | null;
+  usersCron: string;
+  onCronChange: (cron: string) => void;
 }) {
   const queryClient = useQueryClient();
   const sync = useMutation({
@@ -261,7 +315,6 @@ function SyncUsersCard({
   // This POST awaits the whole sync, so `sync.data` is the authoritative result. The bus events just
   // drive the live bar while it's in flight: an indeterminate "fetch" phase, then a "save" count.
   const running = sync.isPending;
-
   return (
     <Card>
       <CardHeader>
@@ -278,15 +331,17 @@ function SyncUsersCard({
           names, and share status. Use it after inviting someone new so they
           show up in the user list without waiting for the next run.
         </CardDescription>
-        {lastSynced && (
+        {(lastSynced || nextRun) && (
           <p className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
             <Clock className="size-3.5 shrink-0" aria-hidden="true" />
-            <span>Last synced {timeAgo(lastSynced)}</span>
+            {lastSynced && <span>Last synced {timeAgo(lastSynced)}</span>}
+            {lastSynced && nextRun && <span aria-hidden="true">·</span>}
+            {nextRun && <span>Next: {timeUntil(nextRun)}</span>}
           </p>
         )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div>
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="outline"
             onClick={() => sync.mutate()}
@@ -295,6 +350,7 @@ function SyncUsersCard({
             <UsersIcon aria-hidden="true" />
             Sync users
           </Button>
+          <CronPicker value={usersCron} onChange={onCronChange} />
         </div>
         {running && (
           <div className="flex flex-col gap-1.5">

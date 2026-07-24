@@ -886,5 +886,5 @@ export interface LogPage {
 /** Sync schedule info for the Tools page — when each sync last ran and next fires. */
 export interface SyncsInfo {
   watched: { last: string | null; next: string | null; cron: string };
-  users: { last: string | null };
+  users: { last: string | null; next: string | null; cron: string };
 }

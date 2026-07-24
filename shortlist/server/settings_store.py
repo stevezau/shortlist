@@ -64,6 +64,8 @@ DEFAULTS: dict[str, Any] = {
     "runs.retention": 3,
     # The cron expression for the daily watch-history sync. Blank = the default (04:17 daily).
     "sync.watch_cron": "",
+    # The cron expression for the user-list sync (plex.tv + Tautulli). Blank = the default (daily 04:47).
+    "sync.users_cron": "",
     # Notification ids the owner dismissed. Each id encodes its state (run id / version), so the same
     # alert stays hidden but a new failure or a newer release surfaces again. Capped to the newest 100.
     "notifications.dismissed": [],

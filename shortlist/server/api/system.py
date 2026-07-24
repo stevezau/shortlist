@@ -40,22 +40,28 @@ async def version() -> dict:
 @router.get("/syncs", dependencies=[Depends(require_owner)])
 async def syncs(request: Request) -> dict:
     """When each sync last ran and when it next fires — for the Tools page "last synced" lines."""
-    from shortlist.server.scheduler import WATCH_SYNC_JOB_ID
+    from shortlist.server.scheduler import USER_SYNC_JOB_ID, WATCH_SYNC_JOB_ID
 
     with request.app.state.sessions() as session:
         store = SettingsStore(session)
         last_watched = store.get("report.watch_synced_at")
         last_users = store.get("report.users_synced_at")
         watch_cron = store.get("sync.watch_cron")
+        users_cron = store.get("sync.users_cron")
     scheduler = getattr(request.app.state, "scheduler", None)
-    job = scheduler.get_job(WATCH_SYNC_JOB_ID) if scheduler else None
+    watch_job = scheduler.get_job(WATCH_SYNC_JOB_ID) if scheduler else None
+    users_job = scheduler.get_job(USER_SYNC_JOB_ID) if scheduler else None
     return {
         "watched": {
             "last": last_watched,
-            "next": iso_utc(job.next_run_time) if job and job.next_run_time else None,
+            "next": iso_utc(watch_job.next_run_time) if watch_job and watch_job.next_run_time else None,
             "cron": watch_cron or "",
         },
-        "users": {"last": last_users},
+        "users": {
+            "last": last_users,
+            "next": iso_utc(users_job.next_run_time) if users_job and users_job.next_run_time else None,
+            "cron": users_cron or "",
+        },
     }
 
 

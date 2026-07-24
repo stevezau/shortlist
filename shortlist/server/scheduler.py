@@ -20,7 +20,9 @@ _JOB_PREFIX = "row-schedule::"
 # effectiveness report stays fresh (hit rate, recent watches) even for rows that only run weekly, or
 # users with no scheduled row. Read-only: fetches history and marks hits, never writes to Plex.
 WATCH_SYNC_JOB_ID = "watch-sync"
+USER_SYNC_JOB_ID = "user-sync"
 _WATCH_SYNC_CRON = "17 4 * * *"  # 04:17 local daily — a quiet hour, offset off the top of the hour
+_USER_SYNC_CRON = "47 4 * * *"  # 04:47 local daily — 30 min after the watch sync so they don't overlap
 
 
 def _job_id(cron: str) -> str:
@@ -95,18 +97,54 @@ def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=WATCH_SYNC_JOB_ID, replace_existing=True)
 
 
+def _resolve_users_cron(app) -> str:
+    """The user sync cron, from the DB setting or the built-in default."""
+    from shortlist.server.settings_store import SettingsStore
+
+    with app.state.sessions() as session:
+        custom = SettingsStore(session).get("sync.users_cron")
+    if custom and isinstance(custom, str) and custom.strip():
+        try:
+            CronTrigger.from_crontab(custom.strip())
+            return custom.strip()
+        except ValueError:
+            logger.warning("invalid sync.users_cron {!r} — falling back to default", custom)
+    return _USER_SYNC_CRON
+
+
+def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
+    """Daily user-list reconcile — pull shared/Home users from plex.tv + Tautulli."""
+    cron = _resolve_users_cron(app)
+
+    async def fire() -> None:
+        try:
+            from starlette.requests import Request
+
+            from shortlist.server.api.users import sync_users
+
+            # Build a minimal fake request so sync_users can read app.state
+            scope = {"type": "http", "app": app, "method": "POST", "path": "/api/users/sync"}
+            request = Request(scope)
+            await sync_users(request)
+        except Exception:
+            logger.exception("daily user-sync failed")
+
+    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=USER_SYNC_JOB_ID, replace_existing=True)
+
+
 def build_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     groups = schedule_groups(app)
     _register(scheduler, app, groups)
     _register_watch_sync(scheduler, app)
-    logger.info("scheduled {} row cron group(s) + daily watch-sync", len(groups))
+    _register_user_sync(scheduler, app)
+    logger.info("scheduled {} row cron group(s) + watch-sync + user-sync", len(groups))
     return scheduler
 
 
 def rebuild_schedule(app) -> None:
-    """Re-derive every scheduled job from the DB. Call after any row's schedule or the watch sync
-    cron changes so the live scheduler matches the settings exactly."""
+    """Re-derive every scheduled job from the DB. Call after any row's schedule or sync cron
+    changes so the live scheduler matches the settings exactly."""
     scheduler = app.state.scheduler
     groups = schedule_groups(app)
     wanted = {_job_id(cron) for cron in groups}
@@ -115,4 +153,5 @@ def rebuild_schedule(app) -> None:
             job.remove()  # a cron that no longer has any row
     _register(scheduler, app, groups)
     _register_watch_sync(scheduler, app)
-    logger.info("rebuilt schedule: {} row cron group(s) + watch-sync", len(groups))
+    _register_user_sync(scheduler, app)
+    logger.info("rebuilt schedule: {} row cron group(s) + watch-sync + user-sync", len(groups))
