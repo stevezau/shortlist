@@ -61,16 +61,16 @@ function ActivityLog({
   entries: RunLogEntry[];
   running: boolean;
 }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  // Follow the tail as new lines arrive, but don't yank the page for reduced-motion users.
+  const logRef = useRef<HTMLDivElement>(null);
+  // Follow the tail as new lines arrive by scrolling the log box ITSELF — never scrollIntoView,
+  // which walks up and scrolls the whole page too, yanking it to the bottom every time a user
+  // completes. Only auto-follow when the operator is already near the bottom, so scrolling up to
+  // read an earlier line isn't fought on the next update.
   useEffect(() => {
-    const reduce = window.matchMedia?.(
-      "(prefers-reduced-motion: reduce)",
-    )?.matches;
-    endRef.current?.scrollIntoView?.({
-      block: "nearest",
-      behavior: reduce ? "auto" : "smooth",
-    });
+    const box = logRef.current;
+    if (!box) return;
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    if (nearBottom) box.scrollTop = box.scrollHeight;
   }, [entries.length]);
 
   return (
@@ -86,6 +86,7 @@ function ActivityLog({
       </CardHeader>
       <CardContent>
         <div
+          ref={logRef}
           className="max-h-72 space-y-1 overflow-y-auto rounded-md bg-muted/40 p-3 font-mono text-xs"
           role="log"
           aria-live="polite"
@@ -98,7 +99,6 @@ function ActivityLog({
           ) : (
             entries.map((entry, i) => <LogLine key={i} entry={entry} />)
           )}
-          <div ref={endRef} />
         </div>
       </CardContent>
     </Card>

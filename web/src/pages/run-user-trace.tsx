@@ -9,14 +9,16 @@ import {
   AlertTriangle,
   ArrowRight,
   Check,
+  ChevronRight,
   Globe,
   History,
   Search,
   Sparkles,
   X,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
@@ -335,14 +337,21 @@ function LibraryTabs({
             aria-selected={selected}
             onClick={() => onSelect(lib.key)}
             className={cn(
-              "-mb-px rounded-t-md border-b-2 px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "-mb-px flex items-center gap-2 rounded-t-md border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               selected
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
             {lib.label}
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-0.5 text-xs font-medium tabular-nums",
+                selected
+                  ? "bg-primary/10 text-primary"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
               {lib.delivered.reduce((n, b) => n + b.picks.length, 0) || "—"}
             </span>
           </button>
@@ -354,15 +363,34 @@ function LibraryTabs({
 
 // ── One library's whole flow ──────────────────────────────────────────────────
 
+interface FlowStepDef {
+  /** Stable per-library id, used for the anchor and scroll-spy. */
+  id: string;
+  n: number;
+  icon: LucideIcon;
+  /** Short label for the left rail. */
+  rail: string;
+  /** A count shown as a chip next to the rail label and step title (omit to hide). */
+  count?: number;
+  title: string;
+  subtitle?: string;
+  body: ReactNode;
+}
+
 function LibraryFlow({ lib }: { lib: LibraryView }) {
-  return (
-    <div className="space-y-4">
-      <FlowStep
-        n={1}
-        icon={History}
-        title={`What they watched in ${lib.label}`}
-      >
-        {lib.watched.length > 0 ? (
+  const searchNoun = mediaLabel(lib.media).toLowerCase();
+  const placesSearched = lib.sources.length + (lib.web ? 1 : 0);
+  const deliveredCount = lib.delivered.reduce((n, b) => n + b.picks.length, 0);
+  const steps: FlowStepDef[] = [
+    {
+      id: `${lib.key}-watched`,
+      n: 1,
+      icon: History,
+      rail: "Watched",
+      count: lib.watched.length,
+      title: `What they watched in ${lib.label}`,
+      body:
+        lib.watched.length > 0 ? (
           <ul className="flex flex-wrap gap-1.5">
             {lib.watched.map((w, i) => (
               <li key={`${w.title}-${i}`}>
@@ -378,89 +406,206 @@ function LibraryFlow({ lib }: { lib: LibraryView }) {
             No recent watches recorded here — seeds may come from a shared media
             type.
           </Muted>
-        )}
-      </FlowStep>
-
-      <FlowStep
-        n={2}
-        icon={Sparkles}
-        title="Titles we searched from"
-        subtitle="The watches that best represent their taste — watched most, and most recently. Each one becomes a search seed."
-      >
-        {lib.seeds.length > 0 ? (
+        ),
+    },
+    {
+      id: `${lib.key}-seeds`,
+      n: 2,
+      icon: Sparkles,
+      rail: "Seeds",
+      count: lib.seeds.length,
+      title: "Titles we searched from",
+      subtitle:
+        "The watches that best represent their taste — watched most, and most recently. Each one becomes a search seed.",
+      body:
+        lib.seeds.length > 0 ? (
           <SeedList seeds={lib.seeds} />
         ) : (
           <Muted>No seeds derived for this library.</Muted>
-        )}
-      </FlowStep>
-
-      <FlowStep
-        n={3}
-        icon={Search}
-        title="Where we searched, and every title in and out"
-        subtitle={
-          lib.sharedSearch
-            ? `We search for ${mediaLabel(lib.media).toLowerCase()} candidates by taste, not by library — so these results are shared across your ${mediaLabel(lib.media).toLowerCase()} libraries. Each title shows whether it made this library’s shortlist or why it fell out.`
-            : "Each place we looked, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn’t."
-        }
-      >
+        ),
+    },
+    {
+      id: `${lib.key}-searched`,
+      n: 3,
+      icon: Search,
+      rail: "Searched",
+      count: placesSearched,
+      title: "Where we searched, and every title in and out",
+      subtitle: lib.sharedSearch
+        ? `We search for ${searchNoun} candidates by taste, not by library — so these results are shared across your ${searchNoun} libraries. Each title shows whether it made this library’s shortlist or why it fell out.`
+        : "Each place we looked, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn’t.",
+      body: (
         <SourcesFlow
           sources={lib.sources}
           web={lib.web}
           discoverGenres={lib.discoverGenres}
         />
-      </FlowStep>
-
-      <FlowStep
-        n={4}
-        icon={ArrowRight}
-        title={`What we put in ${lib.label}, and why`}
-      >
-        {lib.delivered.length > 0 ? (
+      ),
+    },
+    {
+      id: `${lib.key}-delivered`,
+      n: 4,
+      icon: ArrowRight,
+      rail: "Delivered",
+      count: deliveredCount,
+      title: `What we put in ${lib.label}, and why`,
+      body:
+        lib.delivered.length > 0 ? (
           <DeliveredList delivered={lib.delivered} />
         ) : (
           <Muted>Nothing was delivered to this library this run.</Muted>
-        )}
-      </FlowStep>
+        ),
+    },
+  ];
+
+  const active = useScrollSpy(steps.map((s) => s.id));
+
+  return (
+    <div className="flex gap-6">
+      <StepRail steps={steps} active={active} />
+      <div className="min-w-0 flex-1 space-y-4">
+        {steps.map((step) => (
+          <FlowStep key={step.id} step={step} />
+        ))}
+      </div>
     </div>
   );
 }
 
-/** One numbered stage in the vertical flow, with a connector down to the next. */
-function FlowStep({
-  n,
-  icon: Icon,
-  title,
-  subtitle,
-  children,
-}: {
-  n: number;
-  icon: typeof History;
-  title: string;
-  subtitle?: string;
-  children: ReactNode;
-}) {
+/** The left "what step are we at" rail — a connected vertical stepper: numbered dots joined by a
+ *  spine, sticky, click-to-jump, highlighting the step currently in view. */
+function StepRail({ steps, active }: { steps: FlowStepDef[]; active: string }) {
+  const activeIndex = steps.findIndex((s) => s.id === active);
   return (
-    <section className="relative rounded-xl border p-5">
-      <div className="mb-3 flex items-start gap-3">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-          <Icon className="h-4 w-4" aria-hidden="true" />
+    <nav
+      aria-label="Steps"
+      className="sticky top-6 hidden h-fit w-44 shrink-0 flex-col md:flex"
+    >
+      {steps.map((step, i) => {
+        const on = step.id === active;
+        const done = i < activeIndex;
+        const last = i === steps.length - 1;
+        return (
+          <a
+            key={step.id}
+            href={`#${step.id}`}
+            aria-current={on ? "true" : undefined}
+            className="group relative flex gap-3 rounded-md py-1 pl-1 pr-2 focus-visible:outline-none"
+          >
+            {/* The spine + numbered dot. The connector reaches from this dot to the next. */}
+            <div className="relative flex w-7 shrink-0 flex-col items-center">
+              {!last && (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute left-1/2 top-7 h-[calc(100%-1.25rem)] w-px -translate-x-1/2",
+                    done ? "bg-primary/40" : "bg-border",
+                  )}
+                />
+              )}
+              <span
+                className={cn(
+                  "z-10 flex h-7 w-7 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
+                  on
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : done
+                      ? "border-primary/40 bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground group-hover:border-primary/40 group-hover:text-foreground",
+                )}
+              >
+                {step.n}
+              </span>
+            </div>
+            <div className="min-w-0 flex-1 py-1">
+              <span
+                className={cn(
+                  "flex items-center gap-1.5 text-sm transition-colors",
+                  on
+                    ? "font-medium text-foreground"
+                    : "text-muted-foreground group-hover:text-foreground",
+                )}
+              >
+                {step.rail}
+                {step.count !== undefined && step.count > 0 && (
+                  <span className="text-xs text-muted-foreground">
+                    {step.count}
+                  </span>
+                )}
+              </span>
+            </div>
+          </a>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** One numbered stage in the vertical flow. Its `id` anchors the rail's scroll-spy + jump links. */
+function FlowStep({ step }: { step: FlowStepDef }) {
+  const Icon = step.icon;
+  return (
+    <section
+      id={step.id}
+      className="scroll-mt-6 rounded-xl border bg-card p-5 shadow-sm transition-shadow target:ring-2 target:ring-primary/40 hover:shadow-md"
+    >
+      <div className="mb-4 flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary ring-1 ring-inset ring-primary/20">
+          <Icon className="h-4 w-4" aria-hidden={true} />
         </span>
-        <div className="min-w-0 space-y-0.5">
-          <h2 className="text-base font-semibold tracking-tight">
-            <span className="mr-1.5 text-muted-foreground">{n}.</span>
-            {title}
+        <div className="min-w-0 flex-1 space-y-1">
+          <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+            {step.title}
+            {step.count !== undefined && step.count > 0 && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-muted-foreground">
+                {step.count}
+              </span>
+            )}
           </h2>
-          {subtitle && (
-            <p className="max-w-2xl text-sm text-muted-foreground">
-              {subtitle}
+          {step.subtitle && (
+            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              {step.subtitle}
             </p>
           )}
         </div>
       </div>
-      <div className="pl-11">{children}</div>
+      <div className="sm:pl-12">{step.body}</div>
     </section>
   );
+}
+
+/** Track which step section is currently in view, so the rail can highlight it. Returns the id of
+ *  the topmost section whose heading has scrolled into (or above) the top of the viewport. */
+function useScrollSpy(ids: string[]): string {
+  const key = ids.join(",");
+  const [active, setActive] = useState(ids[0] ?? "");
+  useEffect(() => {
+    // Guard for environments without the API (jsdom under vitest, very old browsers): the rail
+    // still renders and jump-links work; it just won't auto-highlight the step in view.
+    if (typeof IntersectionObserver === "undefined") return;
+    const sections = ids
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => el !== null);
+    if (sections.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        // The step whose top is nearest just below the rail offset wins. Prefer intersecting
+        // sections; among them, the one closest to the top of the viewport.
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+        if (visible[0]) setActive(visible[0].target.id);
+      },
+      // A band near the top of the viewport: a section is "active" once its top passes into the
+      // top ~30% and until it leaves — so the rail tracks the heading you're reading.
+      { rootMargin: "-10% 0px -70% 0px", threshold: 0 },
+    );
+    sections.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+    // Re-bind when the set of step ids changes (i.e. a different library tab).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return active;
 }
 
 function Muted({ children }: { children: ReactNode }) {
@@ -472,36 +617,41 @@ function Muted({ children }: { children: ReactNode }) {
 function SeedList({ seeds }: { seeds: TraceSeed[] }) {
   const max = Math.max(...seeds.map((s) => s.weight), 0.0001);
   return (
-    <div className="space-y-3">
+    <div className="space-y-3.5">
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
         <span
-          className="h-1.5 w-8 rounded-full bg-primary/70"
+          className="h-2 w-8 rounded-full bg-gradient-to-r from-primary/40 to-primary"
           aria-hidden="true"
         />
         Longer bar = a stronger influence on tonight’s picks (watched more often
         and more recently).
       </p>
-      <ul className="space-y-2.5">
-        {seeds.map((s) => (
-          <li key={`${s.media}-${s.tmdb_id}`} className="space-y-1">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="truncate text-sm">{s.title}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {seedWhy(s)}
-              </span>
-            </div>
-            <div
-              className="h-1.5 overflow-hidden rounded-full bg-muted"
-              role="img"
-              aria-label={`Influence relative to top title: ${Math.round((s.weight / max) * 100)}%`}
-            >
+      <ul className="space-y-3">
+        {seeds.map((s) => {
+          const pct = Math.round((s.weight / max) * 100);
+          return (
+            <li key={`${s.media}-${s.tmdb_id}`} className="space-y-1.5">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="truncate text-sm font-medium">{s.title}</span>
+                {seedWhy(s) && (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {seedWhy(s)}
+                  </span>
+                )}
+              </div>
               <div
-                className="h-full rounded-full bg-primary/70"
-                style={{ width: `${Math.max(6, (s.weight / max) * 100)}%` }}
-              />
-            </div>
-          </li>
-        ))}
+                className="h-2 overflow-hidden rounded-full bg-muted"
+                role="img"
+                aria-label={`Influence relative to top title: ${pct}%`}
+              >
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-primary/50 to-primary transition-all"
+                  style={{ width: `${Math.max(4, pct)}%` }}
+                />
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -563,19 +713,26 @@ function SourceCard({
     .reduce((n, [, c]) => n + c, 0);
 
   return (
-    <div className="rounded-lg border">
+    <div className="overflow-hidden rounded-lg border bg-background">
       <div className="flex items-start justify-between gap-3 p-3">
-        <div className="min-w-0 space-y-0.5">
+        <div className="min-w-0 space-y-1">
           <p className="text-sm font-medium">{sourceLabel(src.source)}</p>
           {failed ? (
             <p className="text-xs text-destructive">
               Couldn’t reach it{src.detail ? ` — ${src.detail}` : ""}
             </p>
+          ) : kept > 0 || droppedCount > 0 ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="inline-flex items-center gap-1 text-success">
+                <Check className="h-3 w-3" aria-hidden="true" />
+                {kept} kept
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>{droppedCount} dropped</span>
+            </p>
           ) : (
             <p className="text-xs text-muted-foreground">
-              {kept > 0 || droppedCount > 0
-                ? `Kept ${kept} · dropped ${droppedCount}`
-                : `Contributed ${src.contributed.toLocaleString()}`}
+              Contributed {src.contributed.toLocaleString()}
             </p>
           )}
         </div>
@@ -599,9 +756,13 @@ function SourceCard({
         )}
 
       {queries.length > 0 && (
-        <details className="border-t">
-          <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
-            Follow it title by title →
+        <details className="group border-t">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight
+              className="h-3.5 w-3.5 transition-transform group-open:rotate-90"
+              aria-hidden="true"
+            />
+            Follow it title by title
           </summary>
           <ul className="space-y-3 border-t px-3 py-3">
             {queries.map((q, i) => (
@@ -793,7 +954,7 @@ function DeliveredList({ delivered }: { delivered: RunLibraryBreakdown[] }) {
           {delivered.length > 1 && (
             <p className="text-sm font-medium">{b.row_title}</p>
           )}
-          <ol className="space-y-1.5">
+          <ol className="divide-y rounded-lg border bg-background">
             {b.picks.map((p) => (
               <DeliveredPick key={p.rank} pick={p} />
             ))}
@@ -807,21 +968,17 @@ function DeliveredList({ delivered }: { delivered: RunLibraryBreakdown[] }) {
 function DeliveredPick({ pick }: { pick: Pick }) {
   const prov = provenanceLabel(pick);
   return (
-    <li className="flex items-baseline gap-3 text-sm">
-      <span className="w-7 shrink-0 text-right font-semibold tabular-nums text-muted-foreground">
-        #{pick.rank}
+    <li className="flex items-start gap-3 p-3 text-sm">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold tabular-nums text-primary">
+        {pick.rank}
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="font-medium">{pick.title}</span>
-        {pick.reason && (
-          <span className="text-muted-foreground"> — {pick.reason}</span>
-        )}
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <p className="font-medium leading-tight">{pick.title}</p>
+        {pick.reason && <p className="text-muted-foreground">{pick.reason}</p>}
         {prov && (
-          <span className="block truncate text-xs text-muted-foreground/80">
-            {prov}
-          </span>
+          <p className="truncate text-xs text-muted-foreground/80">{prov}</p>
         )}
-      </span>
+      </div>
     </li>
   );
 }
