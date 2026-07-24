@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -613,6 +614,32 @@ class TestFilterCandidates:
         )
 
         assert [c.title for c in kept] == ["Some Show"]
+
+    def test_records_drop_reasons_without_changing_the_kept_list(self):
+        """The optional `dropped` out-list is pure observation: the kept list is identical whether or
+        not a caller passes it, and each drop is labelled with the reason it fell out — the data the
+        trace needs to show every title in and out."""
+        cands = [
+            make_candidate(10, "Kept"),
+            make_candidate(99, "Off-server"),
+            make_candidate(20, "Watched"),
+            make_candidate(30, "Horror", genres=["Horror"]),
+        ]
+        kwargs = dict(
+            watched_tmdb_ids={(20, MediaType.MOVIE)},
+            excluded_genres={"horror"},
+            recent_pick_ids=set(),
+        )
+        without = filter_candidates([replace(c) for c in cands], self._index(), **kwargs)
+        dropped: list[tuple] = []
+        with_obs = filter_candidates([replace(c) for c in cands], self._index(), dropped=dropped, **kwargs)
+
+        assert [c.tmdb_id for c in without] == [c.tmdb_id for c in with_obs] == [10]  # kept list unchanged
+        assert {c.tmdb_id: reason for c, reason in dropped} == {
+            99: "not_in_your_libraries",
+            20: "already_watched",
+            30: "excluded_genre",
+        }
 
 
 class TestGatherStats:

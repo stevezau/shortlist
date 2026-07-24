@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from shortlist.engine import rows as rows_mod
 from shortlist.engine.candidates import GatherStats, gather_candidates
 from shortlist.engine.clients.search import SearchResult
-from shortlist.engine.models import MediaType, RowSpec, Seed, UserRunReport, WatchedItem
+from shortlist.engine.models import Candidate, MediaType, RowSpec, Seed, UserRunReport, WatchedItem
 
 
 def make_result(title: str, text: str = "") -> SearchResult:
@@ -78,9 +78,10 @@ class TestGatherTraceSources:
         assert by_source["trakt"]["contributed"] == 0
         assert "trakt 503" in by_source["trakt"]["detail"]  # the real reason, for the operator
         # The seeded source records what each seed searched for and what came back, so the operator can
-        # follow a TMDB query the way they can an AI web search.
+        # follow a TMDB query the way they can an AI web search. Each return carries its tmdb_id so the
+        # disposition pass can mark it kept/dropped precisely.
         assert by_source["tmdb_similar"]["queries"][0]["seed"] == "Arrival"
-        assert by_source["tmdb_similar"]["queries"][0]["returned"] == ["S"]
+        assert by_source["tmdb_similar"]["queries"][0]["returned"] == [{"tmdb_id": 10, "title": "S"}]
 
     def test_per_seed_query_sample_is_bounded(self, mock_tmdb):
         mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
@@ -227,3 +228,80 @@ class TestRecordGatherTrace:
         report = _report()
         rows_mod._record_gather(report, GatherStats(), pool_label="movie · Movies")
         assert "gathers" not in report.trace  # nothing to show -> nothing recorded
+
+
+class TestStampDisposition:
+    """rows._stamp_disposition: stamps each recorded return with its FATE and tallies per source.
+
+    Covers every fate cell in one pass (bug shape 8 — the key-derivation branches, especially the
+    movie/show media hint and the ranked-vs-in_library relationship, must each be exercised)."""
+
+    def test_stamps_every_fate_including_the_show_media_branch(self):
+        def cand(tmdb_id: int, media: MediaType = MediaType.MOVIE) -> Candidate:
+            return Candidate(tmdb_id=tmdb_id, title=f"t{tmdb_id}", media_type=media)
+
+        kept_movie = cand(10)
+        cutoff_movie = cand(11)  # in library, but lost the pre-rank cut
+        kept_show = cand(50, MediaType.SHOW)
+        # Delivery-side lists: ranked is the pre-rank survivors, in_library ⊇ ranked.
+        ranked = [kept_movie, kept_show]
+        in_library = [kept_movie, cutoff_movie, kept_show]
+        dropped = [
+            (cand(20), "already_watched"),
+            (cand(21), "not_in_your_libraries"),
+            (cand(22), "excluded_genre"),
+        ]
+
+        stats = GatherStats()
+        stats.trace["sources"] = [
+            {
+                "source": "tmdb_similar",
+                "status": "ok",
+                "contributed": 3,
+                "detail": "",
+                "queries": [
+                    {
+                        "seed": "Toy Story",
+                        "media": "movie",
+                        "total": 6,
+                        "returned": [
+                            {"tmdb_id": 10, "title": "kept"},
+                            {"tmdb_id": 11, "title": "cutoff"},
+                            {"tmdb_id": 20, "title": "watched"},
+                            {"tmdb_id": 21, "title": "not-in-lib"},
+                            {"tmdb_id": 22, "title": "excluded"},
+                            {"tmdb_id": 99, "title": "phantom"},  # never pooled -> not_returned
+                        ],
+                    },
+                    {
+                        "seed": "Breaking Bad",
+                        "media": "show",
+                        "total": 1,
+                        "returned": [{"tmdb_id": 50, "title": "kept-show"}],
+                    },
+                ],
+            }
+        ]
+
+        rows_mod._stamp_disposition(stats, dropped=dropped, in_library=in_library, ranked=ranked)
+
+        movie_q, show_q = stats.trace["sources"][0]["queries"]
+        fates = {r["title"]: r["fate"] for r in movie_q["returned"]}
+        assert fates == {
+            "kept": "kept",
+            "cutoff": "lost_ranking_cutoff",
+            "watched": "already_watched",
+            "not-in-lib": "not_in_your_libraries",
+            "excluded": "excluded_genre",
+            "phantom": "not_returned",
+        }
+        # The show-media branch must key on MediaType.SHOW, not fall through to a movie mismatch.
+        assert show_q["returned"][0]["fate"] == "kept"
+        assert stats.trace["sources"][0]["disposition"] == {
+            "kept": 2,
+            "lost_ranking_cutoff": 1,
+            "already_watched": 1,
+            "not_in_your_libraries": 1,
+            "excluded_genre": 1,
+            "not_returned": 1,
+        }

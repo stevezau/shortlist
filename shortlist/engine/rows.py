@@ -257,6 +257,57 @@ def _rating_key_resolver(seed_index: dict[int, int]) -> Callable[[WatchedItem], 
     return resolve
 
 
+def _stamp_disposition(
+    gather_stats: candidates_mod.GatherStats,
+    *,
+    dropped: list[tuple[Candidate, str]],
+    in_library: list[Candidate],
+    ranked: list[Candidate],
+) -> None:
+    """Annotate the gather trace with each candidate's FATE, so the operator can follow every title
+    from a source's returns to the row (or to the reason it fell out).
+
+    Reads only the lists selection already produced (``dropped`` from filter_candidates, ``in_library``,
+    ``ranked``) — it computes nothing new about which candidates win and mutates none of them. Two
+    things are written onto ``gather_stats.trace``:
+
+    * a per-source ``disposition`` tally: ``{kept, already_watched, not_in_your_libraries,
+      excluded_genre, lost_ranking_cutoff}`` counts, and
+    * a ``fate``/``fate_reason`` on each already-recorded per-seed return, keyed by tmdb_id.
+
+    A candidate that survived filtering but lost the ``candidates_pre_rank`` cut is
+    ``lost_ranking_cutoff``; one that made the pre-rank is ``kept`` (whether or not it ends in the
+    final row — the per-library row build, downstream of here, decides that and is traced separately
+    by the delivered-picks stage).
+    """
+    ranked_ids = {(c.tmdb_id, c.media_type) for c in ranked}
+    in_library_ids = {(c.tmdb_id, c.media_type) for c in in_library}
+    drop_reason: dict[tuple[int, MediaType], str] = {}
+    for cand, reason in dropped:
+        drop_reason.setdefault((cand.tmdb_id, cand.media_type), reason)
+
+    def fate_of(tmdb_id: int, media: MediaType) -> str:
+        key = (tmdb_id, media)
+        if key in ranked_ids:
+            return "kept"
+        if key in in_library_ids:
+            return "lost_ranking_cutoff"  # survived filtering but lost the pre-rank cut
+        # Defensive fallback: a returned id with no matching pooled candidate. Shouldn't occur —
+        # every returned title is added to the pool, so it resolves to a real fate above.
+        return drop_reason.get(key, "not_returned")
+
+    for source in gather_stats.trace.get("sources", []):
+        tally: dict[str, int] = {}
+        for query in source.get("queries", []):
+            qmedia = MediaType.SHOW if query.get("media") == "show" else MediaType.MOVIE
+            for ret in query.get("returned", []):
+                verdict = fate_of(int(ret.get("tmdb_id") or 0), qmedia)
+                ret["fate"] = verdict
+                tally[verdict] = tally.get(verdict, 0) + 1
+        if tally:
+            source["disposition"] = tally
+
+
 def row_library_index(
     ctx: EngineContext,
     spec: RowSpec,
@@ -329,12 +380,16 @@ def _candidate_pool(
         recent_count=recent_count if recent_count is not None else ctx.config.recent_count,
         stats=gather_stats,
     )
+    # `dropped` collects (candidate, reason) as filter_candidates works — observation only, it does
+    # not change which candidates are kept.
+    dropped: list[tuple[Candidate, str]] = []
     valid = candidates_mod.filter_candidates(
         pool,
         library_index,
         watched_tmdb_ids=watched_ids,
         excluded_genres=excluded_genres,
         recent_pick_ids=set(),
+        dropped=dropped,
     )
     in_library = _media_filter(valid, media)
     # Pre-rank EACH media type to its own cap, not the mixed pool to one cap — otherwise a 'both'
@@ -343,6 +398,10 @@ def _candidate_pool(
     kinds = [MediaType.MOVIE, MediaType.SHOW] if media == "both" else [MediaType(media)]
     cap = ctx.config.candidates_pre_rank
     ranked = [c for kind in kinds for c in ranking.pre_rank([x for x in in_library if x.media_type is kind], cap)]
+    # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
+    # entirely from the lists selection already produced above — so the trace can follow every title
+    # in and out without altering a single delivered pick.
+    _stamp_disposition(gather_stats, dropped=dropped, in_library=in_library, ranked=ranked)
     return (pool, in_library, ranked), gather_stats
 
 
@@ -419,6 +478,10 @@ def _record_history_trace(
             "library": library_of_seed(s),
             "tmdb_id": s.tmdb_id,
             "weight": round(s.weight, 3),
+            # The two ingredients behind the weight, so the UI can say "watched 4x, last seen 3 days
+            # ago" instead of an opaque bar — this is what makes the influence bar legible.
+            "watch_count": s.watch_count,
+            "recency_days": s.recency_days,
         }
         for s in sorted(seeds, key=lambda s: s.weight, reverse=True)
     ]

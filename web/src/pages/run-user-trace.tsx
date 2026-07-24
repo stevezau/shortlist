@@ -1,33 +1,42 @@
-/** "How we picked for {name}" — the full pipeline for one person in one run, laid out as a flow you
- *  can step through: what they watched → the titles we searched from → where we looked → what the AI
- *  searched and proposed. A dedicated page (not a dialog) so nothing clips and each stage is its own
- *  panel instead of one long scroll. The trace blob is large, so it's fetched on demand for this page
- *  only. */
+/** "How we picked for {name}" — the whole run for one person, as ONE connected flow you can read
+ *  top to bottom, per library. A server can have several libraries (Movies, 4K Movies, TV Shows,
+ *  custom-named), so real library NAMES are the tabs; picking a tab shows that library's run end to
+ *  end: what they watched there → the seeds we pulled from it (and why each one mattered) → every
+ *  place we searched, each title in and out with the reason it stayed or fell → what we finally put
+ *  in the row and why. If the run failed for this person, the error leads. The trace blob is large,
+ *  so it's fetched on demand for this page only. */
 import {
+  AlertTriangle,
+  ArrowRight,
+  Check,
   Globe,
   History,
-  type LucideIcon,
   Search,
   Sparkles,
+  X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { sourceLabel } from "@/lib/pick-provenance";
+import { provenanceLabel, sourceLabel } from "@/lib/pick-provenance";
 import { useRunUserTrace } from "@/lib/queries";
 import type {
+  Pick,
+  RunLibraryBreakdown,
   RunUserTrace,
   RunUserTraceResponse,
-  TraceGather,
+  TraceFate,
+  TraceReturn,
   TraceSeed,
+  TraceSeedQuery,
   TraceSource,
+  TraceWatch,
   TraceWeb,
-  TraceWebSearch,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -50,7 +59,7 @@ export function RunUserTracePage() {
         <QueryBoundary
           query={query}
           skeleton={<TraceSkeleton />}
-          isEmpty={(d) => !d.trace || Object.keys(d.trace).length === 0}
+          isEmpty={(d) => isEmptyTrace(d)}
           empty={
             <EmptyState
               title="Nothing was recorded for this person"
@@ -65,30 +74,29 @@ export function RunUserTracePage() {
   );
 }
 
+/** A trace is worth showing if it has ANY stage, an error to explain, or a delivered ending. */
+function isEmptyTrace(d: RunUserTraceResponse): boolean {
+  const t = d.trace ?? {};
+  const hasStages = Boolean(
+    t.history || (t.seeds ?? []).length || (t.gathers ?? []).length,
+  );
+  return !hasStages && !d.error && (d.breakdown ?? []).length === 0;
+}
+
 function TraceSkeleton() {
   return (
-    <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
-      <Skeleton className="h-72 w-full" />
-      <Skeleton className="h-96 w-full" />
+    <div className="space-y-4">
+      <Skeleton className="h-10 w-96" />
+      <Skeleton className="h-[28rem] w-full" />
     </div>
   );
 }
 
-/** One clickable step in the pipeline flow. */
-interface Stage {
-  id: string;
-  label: string;
-  icon: LucideIcon;
-  /** One-word count shown under the label in the nav, e.g. "42 watches". */
-  summary: string;
-  render: () => ReactNode;
-}
-
-function TraceView({ data }: { data: RunUserTraceResponse }) {
+export function TraceView({ data }: { data: RunUserTraceResponse }) {
   const name = data.display_name || data.username;
-  const stages = buildStages(data.trace);
-  const [active, setActive] = useState(stages[0]?.id ?? "");
-  const current = stages.find((s) => s.id === active) ?? stages[0];
+  const libraries = useMemo(() => buildLibraries(data), [data]);
+  const [active, setActive] = useState(libraries[0]?.key ?? "");
+  const current = libraries.find((l) => l.key === active) ?? libraries[0];
 
   return (
     <div className="space-y-6">
@@ -97,526 +105,724 @@ function TraceView({ data }: { data: RunUserTraceResponse }) {
           How we picked for {name}
         </h1>
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Every step tonight’s picks went through, in order. Click a step to see
-          exactly what happened.
+          The whole run for this person, one library at a time — from what they
+          watched all the way to what we put in their row.
         </p>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)] lg:items-start">
-        <StageFlow
-          stages={stages}
-          active={current?.id ?? ""}
-          onSelect={setActive}
+      {data.error && <ErrorBanner error={data.error} />}
+      {data.reason && !data.error && <SkipBanner reason={data.reason} />}
+
+      {libraries.length === 0 ? (
+        <EmptyState
+          title="No per-library detail for this run"
+          hint="We recorded an outcome but not the per-library flow — this run predates library-level tracing."
         />
-        <div className="min-w-0">{current?.render()}</div>
+      ) : (
+        <>
+          <LibraryTabs
+            libraries={libraries}
+            active={current?.key ?? ""}
+            onSelect={setActive}
+          />
+          {current && <LibraryFlow lib={current} />}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ErrorBanner({ error }: { error: string }) {
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4">
+      <AlertTriangle
+        className="mt-0.5 h-5 w-5 shrink-0 text-destructive"
+        aria-hidden="true"
+      />
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-destructive">
+          This run failed for this person
+        </p>
+        <p className="text-sm text-muted-foreground">
+          The stages below show how far we got before it stopped.
+        </p>
+        <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
+          {error}
+        </pre>
       </div>
     </div>
   );
 }
 
-/** The pipeline as a connected, numbered flow — the left rail on desktop, a scrollable strip on
- *  mobile. Selecting a step swaps the panel on the right. */
-function StageFlow({
-  stages,
+function SkipBanner({ reason }: { reason: string }) {
+  return (
+    <div className="rounded-lg border bg-muted/40 p-4 text-sm">
+      <span className="font-medium">Skipped this person — </span>
+      <span className="text-muted-foreground">{reason}</span>
+    </div>
+  );
+}
+
+// ── Per-library model ─────────────────────────────────────────────────────────
+// The engine trace is keyed by stage (history/seeds/gathers) with a library NAME on each watch and
+// seed, and its search sources work per media TYPE (movies vs shows), not per named library. So a
+// library tab is assembled here: its watches/seeds by name, the sources for its media type, and the
+// delivered picks whose breakdown targets it.
+
+interface LibraryView {
+  key: string;
+  label: string;
+  /** movie | show | both — how this library's candidate SEARCH is scoped (search is per-type). */
+  media: string;
+  watched: TraceWatch[];
+  seeds: TraceSeed[];
+  sources: TraceSource[];
+  web: TraceWeb | null;
+  discoverGenres: Record<string, string[]>;
+  delivered: RunLibraryBreakdown[];
+  /** True when search is shared with other libraries of the same media type (be honest about it). */
+  sharedSearch: boolean;
+}
+
+function buildLibraries(data: RunUserTraceResponse): LibraryView[] {
+  const trace: RunUserTrace = data.trace ?? {};
+  const watches = trace.history?.recent ?? [];
+  const seeds = trace.seeds ?? [];
+  const gathers = trace.gathers ?? [];
+  const breakdown = data.breakdown ?? [];
+
+  // Every library name we know about, in a stable first-seen order: delivered rows first (the
+  // outcome), then any library that only shows up in watches/seeds.
+  const order: string[] = [];
+  const seen = new Set<string>();
+  const remember = (label: string) => {
+    if (label && !seen.has(label)) {
+      seen.add(label);
+      order.push(label);
+    }
+  };
+  for (const b of breakdown) remember(b.library_title);
+  for (const w of watches) remember(w.library || mediaGroupLabel(w.media));
+  for (const s of seeds) remember(s.library || mediaGroupLabel(s.media));
+
+  // Which media type each library holds — inferred from its own watches/seeds, so we can attach the
+  // right (per-type) search sources. A library with only movie watches is a movie library.
+  const mediaOf = new Map<string, Set<string>>();
+  const note = (label: string, media: string) => {
+    if (!label) return;
+    const set = mediaOf.get(label) ?? new Set<string>();
+    set.add(media);
+    mediaOf.set(label, set);
+  };
+  for (const w of watches) note(w.library || mediaGroupLabel(w.media), w.media);
+  for (const s of seeds) note(s.library || mediaGroupLabel(s.media), s.media);
+  for (const b of breakdown) {
+    for (const p of b.picks) note(b.library_title, p.media_type ?? "");
+  }
+
+  // How many named libraries share each media type — for the honest "search shared across your movie
+  // libraries" note.
+  const libsPerMedia = new Map<string, number>();
+  for (const [, medias] of mediaOf) {
+    for (const m of medias) libsPerMedia.set(m, (libsPerMedia.get(m) ?? 0) + 1);
+  }
+
+  return order.map((label) => {
+    const medias = mediaOf.get(label) ?? new Set<string>();
+    const primaryMedia =
+      medias.size === 1 ? ([...medias][0] ?? "both") : "both";
+    const libWatches = watches.filter(
+      (w) => (w.library || mediaGroupLabel(w.media)) === label,
+    );
+    const libSeeds = seeds.filter(
+      (s) => (s.library || mediaGroupLabel(s.media)) === label,
+    );
+    // A gather is relevant to this library if its pool covers this library's media type. Union the
+    // sources across those gathers, keeping only the per-return rows for this library's media.
+    const relevant = gathers.filter((g) => poolCoversMedia(g.pool, medias));
+    const sources = mergeSourcesForMedia(
+      relevant.flatMap((g) => g.sources ?? []),
+      medias,
+    );
+    const web = relevant.map((g) => g.web).find(Boolean) ?? null;
+    const discoverGenres: Record<string, string[]> = {};
+    for (const g of relevant) {
+      for (const [m, names] of Object.entries(g.discover_genres ?? {})) {
+        if (medias.size === 0 || medias.has(m)) discoverGenres[m] = names;
+      }
+    }
+    const sharedSearch = [...medias].some(
+      (m) => (libsPerMedia.get(m) ?? 0) > 1,
+    );
+    return {
+      key: label,
+      label,
+      media: primaryMedia,
+      watched: libWatches,
+      seeds: libSeeds,
+      sources,
+      web,
+      discoverGenres,
+      delivered: breakdown.filter((b) => b.library_title === label),
+      sharedSearch,
+    };
+  });
+}
+
+/** A gather pool is labelled "{media} · {sources}"; it covers a library if its media part overlaps
+ *  the library's media types (or is "both"). Blank/legacy pools are treated as covering everything. */
+function poolCoversMedia(pool: string, medias: Set<string>): boolean {
+  const media = pool.split(" · ")[0]?.trim() ?? "";
+  if (!media || media === "both" || medias.size === 0) return true;
+  return medias.has(media);
+}
+
+/** Union the same source across gathers into one row, keeping only the per-return rows whose media
+ *  belongs to this library, and re-tallying disposition from those rows so the counts match. */
+function mergeSourcesForMedia(
+  sources: TraceSource[],
+  medias: Set<string>,
+): TraceSource[] {
+  const byName = new Map<string, TraceSource>();
+  for (const src of sources) {
+    const queries = (src.queries ?? [])
+      .filter((q) => medias.size === 0 || medias.has(q.media))
+      .map((q) => ({ ...q }));
+    const existing = byName.get(src.source);
+    if (existing) {
+      existing.queries = [...(existing.queries ?? []), ...queries];
+      existing.contributed += src.contributed;
+    } else {
+      byName.set(src.source, { ...src, queries });
+    }
+  }
+  // Re-tally disposition from the (possibly filtered) queries so per-tab counts are truthful.
+  for (const src of byName.values()) {
+    const tally: Record<string, number> = {};
+    for (const q of src.queries ?? []) {
+      for (const r of q.returned)
+        if (r.fate) tally[r.fate] = (tally[r.fate] ?? 0) + 1;
+    }
+    if (Object.keys(tally).length > 0) src.disposition = tally;
+  }
+  return [...byName.values()];
+}
+
+// ── Tabs ────────────────────────────────────────────────────────────────────
+
+function LibraryTabs({
+  libraries,
   active,
   onSelect,
 }: {
-  stages: Stage[];
+  libraries: LibraryView[];
   active: string;
-  onSelect: (id: string) => void;
+  onSelect: (key: string) => void;
 }) {
   return (
-    <nav
-      aria-label="Pipeline steps"
-      className="flex gap-2 overflow-x-auto pb-2 lg:sticky lg:top-4 lg:flex-col lg:overflow-visible lg:pb-0"
+    <div
+      role="tablist"
+      aria-label="Libraries"
+      className="flex flex-wrap gap-2 border-b pb-px"
     >
-      {stages.map((stage, i) => {
-        const Icon = stage.icon;
-        const selected = stage.id === active;
-        const last = i === stages.length - 1;
+      {libraries.map((lib) => {
+        const selected = lib.key === active;
         return (
           <button
-            key={stage.id}
+            key={lib.key}
             type="button"
-            onClick={() => onSelect(stage.id)}
-            aria-current={selected ? "step" : undefined}
+            role="tab"
+            aria-selected={selected}
+            onClick={() => onSelect(lib.key)}
             className={cn(
-              "relative flex shrink-0 items-center gap-3 rounded-lg border p-3 text-left transition-colors lg:w-full",
+              "-mb-px rounded-t-md border-b-2 px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               selected
-                ? "border-primary/50 bg-primary/5"
-                : "border-transparent hover:bg-muted/60",
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
-            {/* The connecting line down the flow (desktop only). */}
-            {!last && (
-              <span
-                aria-hidden="true"
-                className="absolute left-[27px] top-[46px] hidden h-[calc(100%-30px)] w-px bg-border lg:block"
-              />
-            )}
-            <span
-              className={cn(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                selected
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground",
-              )}
-            >
-              <Icon className="h-4 w-4" aria-hidden="true" />
-            </span>
-            <span className="min-w-0">
-              <span
-                className={cn(
-                  "block truncate text-sm font-medium",
-                  selected ? "text-foreground" : "text-foreground/80",
-                )}
-              >
-                {stage.label}
-              </span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {stage.summary}
-              </span>
+            {lib.label}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              {lib.delivered.reduce((n, b) => n + b.picks.length, 0) || "—"}
             </span>
           </button>
         );
       })}
-    </nav>
-  );
-}
-
-/** Consistent heading + intro line for the panel on the right. */
-function Panel({
-  title,
-  intro,
-  children,
-}: {
-  title: string;
-  intro: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="space-y-4 rounded-xl border p-5">
-      <div className="space-y-1">
-        <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-        <p className="max-w-2xl text-sm text-muted-foreground">{intro}</p>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function buildStages(trace: RunUserTrace): Stage[] {
-  const stages: Stage[] = [];
-  const history = trace.history;
-  const seeds = trace.seeds ?? [];
-  const gathers = trace.gathers ?? [];
-  const gathersWithSources = gathers.filter(
-    (g) => (g.sources ?? []).length > 0,
-  );
-  const webGathers = gathers.filter((g) => g.web);
-
-  if (history) {
-    stages.push({
-      id: "history",
-      label: "What they watched",
-      icon: History,
-      summary: `${history.total.toLocaleString()} recent watches`,
-      render: () => <HistoryPanel history={history} />,
-    });
-  }
-  if (seeds.length > 0) {
-    stages.push({
-      id: "starting",
-      label: "Titles we searched from",
-      icon: Sparkles,
-      summary: `${seeds.length} title${seeds.length === 1 ? "" : "s"}`,
-      render: () => <SeedsPanel seeds={seeds} />,
-    });
-  }
-  if (gathersWithSources.length > 0) {
-    stages.push({
-      id: "sources",
-      label: "Where we looked",
-      icon: Search,
-      summary: `${countSources(gathersWithSources)} sources`,
-      render: () => <SourcesPanel gathers={gathersWithSources} />,
-    });
-  }
-  if (webGathers.length > 0) {
-    stages.push({
-      id: "web",
-      label: "AI web search",
-      icon: Globe,
-      summary: `${countWebProposed(webGathers)} suggestions`,
-      render: () => <WebPanel gathers={webGathers} />,
-    });
-  }
-  return stages;
-}
-
-function countSources(gathers: TraceGather[]): number {
-  const names = new Set<string>();
-  for (const g of gathers) for (const s of g.sources ?? []) names.add(s.source);
-  return names.size;
-}
-
-function countWebProposed(gathers: TraceGather[]): number {
-  let n = 0;
-  for (const g of gathers) {
-    const web = g.web;
-    if (!web) continue;
-    n += new Set([...(web.native_proposed ?? []), ...(web.proposed ?? [])])
-      .size;
-  }
-  return n;
-}
-
-// ── Panels ──────────────────────────────────────────────────────────────────
-
-function HistoryPanel({
-  history,
-}: {
-  history: NonNullable<RunUserTrace["history"]>;
-}) {
-  const groups = groupByLibrary(history.recent);
-  return (
-    <Panel
-      title="What they watched"
-      intro="We start from what this person has actually been watching on your server, split by library. These are their most recent plays."
-    >
-      <div className="flex flex-wrap gap-3">
-        <Stat value={history.total} label="recent watches" />
-        <Stat value={history.watched_movies} label="movies finished" />
-        <Stat value={history.watched_shows} label="shows played" />
-      </div>
-      <div className="space-y-4">
-        {groups.map((g) => (
-          <div key={g.label} className="space-y-2">
-            <GroupHeading
-              label={g.label}
-              count={g.items.length}
-              unit="recent"
-            />
-            <ul className="flex flex-wrap gap-1.5">
-              {g.items.map((w, i) => (
-                <li key={`${w.title}-${i}`}>
-                  <Badge variant="secondary" className="font-normal">
-                    {w.title}
-                    {w.year ? ` (${w.year})` : ""}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
-/** A library group heading: the real library name (or a media-type fallback) plus a count. */
-function GroupHeading({
-  label,
-  count,
-  unit,
-}: {
-  label: string;
-  count: number;
-  unit: string;
-}) {
-  return (
-    <p className="text-sm font-medium">
-      {label}{" "}
-      <span className="font-normal text-muted-foreground">
-        · {count} {unit}
-      </span>
-    </p>
-  );
-}
-
-function Stat({ value, label }: { value: number; label: string }) {
-  return (
-    <div className="rounded-lg border bg-muted/30 px-4 py-3">
-      <p className="text-2xl font-semibold tabular-nums">
-        {value.toLocaleString()}
-      </p>
-      <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   );
 }
 
-function SeedsPanel({ seeds }: { seeds: TraceSeed[] }) {
-  // Normalise the bar to the strongest seed so it always reads as "relative to their top title",
-  // never as an absolute score the operator has to interpret.
-  const max = Math.max(...seeds.map((s) => s.weight), 0.0001);
-  const groups = groupByLibrary(seeds);
+// ── One library's whole flow ──────────────────────────────────────────────────
+
+function LibraryFlow({ lib }: { lib: LibraryView }) {
   return (
-    <Panel
-      title="Titles we searched from"
-      intro="From their history we pick the titles that best represent their taste — favouring what they watched recently and often — then look for things like them, per library."
-    >
+    <div className="space-y-4">
+      <FlowStep
+        n={1}
+        icon={History}
+        title={`What they watched in ${lib.label}`}
+      >
+        {lib.watched.length > 0 ? (
+          <ul className="flex flex-wrap gap-1.5">
+            {lib.watched.map((w, i) => (
+              <li key={`${w.title}-${i}`}>
+                <Badge variant="secondary" className="font-normal">
+                  {w.title}
+                  {w.year ? ` (${w.year})` : ""}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Muted>
+            No recent watches recorded here — seeds may come from a shared media
+            type.
+          </Muted>
+        )}
+      </FlowStep>
+
+      <FlowStep
+        n={2}
+        icon={Sparkles}
+        title="Titles we searched from"
+        subtitle="The watches that best represent their taste — watched most, and most recently. Each one becomes a search seed."
+      >
+        {lib.seeds.length > 0 ? (
+          <SeedList seeds={lib.seeds} />
+        ) : (
+          <Muted>No seeds derived for this library.</Muted>
+        )}
+      </FlowStep>
+
+      <FlowStep
+        n={3}
+        icon={Search}
+        title="Where we searched, and every title in and out"
+        subtitle={
+          lib.sharedSearch
+            ? `We search for ${mediaLabel(lib.media).toLowerCase()} candidates by taste, not by library — so these results are shared across your ${mediaLabel(lib.media).toLowerCase()} libraries. Each title shows whether it made this library’s shortlist or why it fell out.`
+            : "Each place we looked, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn’t."
+        }
+      >
+        <SourcesFlow
+          sources={lib.sources}
+          web={lib.web}
+          discoverGenres={lib.discoverGenres}
+        />
+      </FlowStep>
+
+      <FlowStep
+        n={4}
+        icon={ArrowRight}
+        title={`What we put in ${lib.label}, and why`}
+      >
+        {lib.delivered.length > 0 ? (
+          <DeliveredList delivered={lib.delivered} />
+        ) : (
+          <Muted>Nothing was delivered to this library this run.</Muted>
+        )}
+      </FlowStep>
+    </div>
+  );
+}
+
+/** One numbered stage in the vertical flow, with a connector down to the next. */
+function FlowStep({
+  n,
+  icon: Icon,
+  title,
+  subtitle,
+  children,
+}: {
+  n: number;
+  icon: typeof History;
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="relative rounded-xl border p-5">
+      <div className="mb-3 flex items-start gap-3">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <Icon className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 space-y-0.5">
+          <h2 className="text-base font-semibold tracking-tight">
+            <span className="mr-1.5 text-muted-foreground">{n}.</span>
+            {title}
+          </h2>
+          {subtitle && (
+            <p className="max-w-2xl text-sm text-muted-foreground">
+              {subtitle}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="pl-11">{children}</div>
+    </section>
+  );
+}
+
+function Muted({ children }: { children: ReactNode }) {
+  return <p className="text-sm text-muted-foreground">{children}</p>;
+}
+
+// ── Stage 2: seeds, with the "why" spelled out ────────────────────────────────
+
+function SeedList({ seeds }: { seeds: TraceSeed[] }) {
+  const max = Math.max(...seeds.map((s) => s.weight), 0.0001);
+  return (
+    <div className="space-y-3">
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
         <span
           className="h-1.5 w-8 rounded-full bg-primary/70"
           aria-hidden="true"
         />
-        Longer bar = watched more recently and more often, so it shaped
-        tonight’s picks more.
+        Longer bar = a stronger influence on tonight’s picks (watched more often
+        and more recently).
       </p>
-      <div className="space-y-4">
-        {groups.map((g) => (
-          <div key={g.label} className="space-y-2">
-            <GroupHeading
-              label={g.label}
-              count={g.items.length}
-              unit={g.items.length === 1 ? "title" : "titles"}
-            />
-            <ul className="space-y-2">
-              {g.items.map((s) => (
-                <li key={`${s.media}-${s.tmdb_id}`} className="space-y-1">
-                  <span className="block truncate text-sm">{s.title}</span>
-                  <div
-                    className="h-1.5 overflow-hidden rounded-full bg-muted"
-                    role="img"
-                    aria-label={`Influence relative to top title: ${Math.round(
-                      (s.weight / max) * 100,
-                    )}%`}
-                  >
-                    <div
-                      className="h-full rounded-full bg-primary/70"
-                      style={{
-                        width: `${Math.max(6, (s.weight / max) * 100)}%`,
-                      }}
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
+      <ul className="space-y-2.5">
+        {seeds.map((s) => (
+          <li key={`${s.media}-${s.tmdb_id}`} className="space-y-1">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="truncate text-sm">{s.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {seedWhy(s)}
+              </span>
+            </div>
+            <div
+              className="h-1.5 overflow-hidden rounded-full bg-muted"
+              role="img"
+              aria-label={`Influence relative to top title: ${Math.round((s.weight / max) * 100)}%`}
+            >
+              <div
+                className="h-full rounded-full bg-primary/70"
+                style={{ width: `${Math.max(6, (s.weight / max) * 100)}%` }}
+              />
+            </div>
+          </li>
         ))}
-      </div>
-    </Panel>
+      </ul>
+    </div>
   );
 }
 
-function SourcesPanel({ gathers }: { gathers: TraceGather[] }) {
+/** "watched 4×, 3 days ago" from the weight ingredients — or "" on legacy runs that lack them. */
+function seedWhy(s: TraceSeed): string {
+  if (s.watch_count === undefined && s.recency_days === undefined) return "";
+  const times = s.watch_count === undefined ? "" : `watched ${s.watch_count}×`;
+  const when =
+    s.recency_days === undefined
+      ? ""
+      : s.recency_days <= 0
+        ? "most recently"
+        : `${s.recency_days} day${s.recency_days === 1 ? "" : "s"} ago`;
+  return [times, when].filter(Boolean).join(", ");
+}
+
+// ── Stage 3: sources, each title in and out ───────────────────────────────────
+
+function SourcesFlow({
+  sources,
+  web,
+  discoverGenres,
+}: {
+  sources: TraceSource[];
+  web: TraceWeb | null;
+  discoverGenres: Record<string, string[]>;
+}) {
+  const hasAny = sources.length > 0 || web;
+  if (!hasAny) return <Muted>No candidate sources ran for this library.</Muted>;
   return (
-    <Panel
-      title="Where we looked"
-      intro="Every place we searched for candidates and what each one turned up. Expand a source to follow it title by title — exactly what we asked for and what came back. If one failed, the reason is shown so you can tell an empty result from an outage."
-    >
-      <div className="space-y-5">
-        {gathers.map((gather, i) => (
-          <div key={gather.pool || i} className="space-y-3">
-            {gathers.length > 1 && (
-              <p className="text-sm font-medium">{poolTitle(gather.pool)}</p>
-            )}
-            <ul className="space-y-2">
-              {(gather.sources ?? []).map((src) => (
-                <SourceRow key={src.source} src={src} />
-              ))}
-            </ul>
-            {gather.discover_genres &&
-              Object.keys(gather.discover_genres).length > 0 && (
-                <p className="text-sm text-muted-foreground">
-                  We also pulled titles popular in the genres they watch most:{" "}
-                  {Object.entries(gather.discover_genres)
-                    .map(
-                      ([media, genres]) =>
-                        `${mediaLabel(media)} — ${genres.join(", ") || "none"}`,
-                    )
-                    .join("; ")}
-                  .
-                </p>
-              )}
-          </div>
-        ))}
-      </div>
-    </Panel>
+    <div className="space-y-3">
+      {sources.map((src) => (
+        <SourceCard
+          key={src.source}
+          src={src}
+          discoverGenres={discoverGenres}
+        />
+      ))}
+      {web && <WebSourceCard web={web} />}
+    </div>
   );
 }
 
-function SourceRow({ src }: { src: TraceSource }) {
+function SourceCard({
+  src,
+  discoverGenres,
+}: {
+  src: TraceSource;
+  discoverGenres: Record<string, string[]>;
+}) {
   const failed = src.status === "failed";
   const queries = src.queries ?? [];
-  const status = failed ? (
-    <span className="text-destructive">
-      Couldn’t reach it{src.detail ? ` — ${src.detail}` : ""}
-    </span>
-  ) : src.contributed > 0 ? (
-    `Found ${src.contributed.toLocaleString()} candidate${
-      src.contributed === 1 ? "" : "s"
-    }`
-  ) : (
-    "Nothing new this time"
-  );
-  const header = (
-    <>
-      <div className="min-w-0 space-y-0.5 text-left">
-        <p className="text-sm font-medium">{sourceLabel(src.source)}</p>
-        <p className="text-xs text-muted-foreground">{status}</p>
-      </div>
-      <Badge
-        variant={failed ? "destructive" : "secondary"}
-        className="shrink-0"
-      >
-        {failed ? "Failed" : src.contributed.toLocaleString()}
-      </Badge>
-    </>
-  );
+  const disp = src.disposition ?? {};
+  const kept = disp.kept ?? 0;
+  const droppedCount = Object.entries(disp)
+    .filter(([fate]) => fate !== "kept")
+    .reduce((n, [, c]) => n + c, 0);
 
-  // With no per-seed detail (discover, or a source that failed), it's a static row. With detail,
-  // it's an expandable <details> so the operator can follow each seed's query and results.
-  if (queries.length === 0) {
-    return (
-      <li className="flex items-start justify-between gap-3 rounded-lg border p-3">
-        {header}
-      </li>
-    );
-  }
   return (
-    <li className="rounded-lg border">
-      <details>
-        <summary className="flex cursor-pointer items-start justify-between gap-3 p-3 [&::-webkit-details-marker]:hidden">
-          {header}
-        </summary>
-        <div className="space-y-2 border-t px-3 py-3">
-          <p className="text-xs text-muted-foreground">
-            Searched for each title below and got these back:
-          </p>
-          <ul className="space-y-2">
-            {queries.map((q, i) => (
-              <li key={`${q.seed}-${i}`} className="text-sm">
-                <p className="flex items-center gap-1.5">
-                  <Search
-                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                    aria-hidden="true"
-                  />
-                  <span className="font-medium">{q.seed}</span>
-                  <Badge variant="outline" className="shrink-0 font-normal">
-                    {mediaLabel(q.media)}
-                  </Badge>
-                </p>
-                <p className="mt-0.5 pl-5 text-xs text-muted-foreground">
-                  {q.returned.length > 0
-                    ? q.returned.join(", ")
-                    : "nothing returned"}
-                  {q.total > q.returned.length
-                    ? ` +${(q.total - q.returned.length).toLocaleString()} more`
-                    : ""}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </details>
-    </li>
-  );
-}
-
-function WebPanel({ gathers }: { gathers: TraceGather[] }) {
-  return (
-    <Panel
-      title="AI web search"
-      intro="For a broader net, the AI searches the web using their taste, then proposes titles. We check each one against TMDB — anything with no real match is dropped as a likely invention."
-    >
-      <div className="space-y-6">
-        {gathers.map((gather, i) => (
-          <WebGather key={gather.pool || i} web={gather.web!} />
-        ))}
-      </div>
-    </Panel>
-  );
-}
-
-function WebGather({ web }: { web: TraceWeb }) {
-  const proposed = [
-    ...new Set([...(web.native_proposed ?? []), ...(web.proposed ?? [])]),
-  ];
-  const resolved = new Set(web.resolved ?? []);
-  const unresolved = new Set(web.unresolved ?? []);
-  return (
-    <div className="space-y-5">
-      {web.searches && web.searches.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium">What it searched for</p>
-          <div className="space-y-2">
-            {web.searches.map((s, i) => (
-              <WebSearchRow key={i} search={s} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {proposed.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium">
-            Titles the AI suggested{" "}
-            <span className="font-normal text-muted-foreground">
-              — struck-through ones had no real match and were dropped
-            </span>
-          </p>
-          <ul className="flex flex-wrap gap-1.5">
-            {proposed.map((title, i) => {
-              const dropped = unresolved.has(title) && !resolved.has(title);
-              return (
-                <li key={`${title}-${i}`}>
-                  <Badge
-                    variant={dropped ? "outline" : "secondary"}
-                    className={cn(
-                      "font-normal",
-                      dropped && "text-muted-foreground line-through",
-                    )}
-                  >
-                    {title}
-                  </Badge>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      )}
-
-      {web.rag_user && (
-        <details className="rounded-lg border bg-muted/20 p-3 text-sm">
-          <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground">
-            See the exact instructions the AI was given
-          </summary>
-          {web.rag_system && (
-            <pre className="mt-3 whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
-              {web.rag_system}
-            </pre>
+    <div className="rounded-lg border">
+      <div className="flex items-start justify-between gap-3 p-3">
+        <div className="min-w-0 space-y-0.5">
+          <p className="text-sm font-medium">{sourceLabel(src.source)}</p>
+          {failed ? (
+            <p className="text-xs text-destructive">
+              Couldn’t reach it{src.detail ? ` — ${src.detail}` : ""}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {kept > 0 || droppedCount > 0
+                ? `Kept ${kept} · dropped ${droppedCount}`
+                : `Contributed ${src.contributed.toLocaleString()}`}
+            </p>
           )}
-          <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
-            {web.rag_user}
-          </pre>
+        </div>
+        <Badge
+          variant={failed ? "destructive" : "secondary"}
+          className="shrink-0"
+        >
+          {failed ? "Failed" : src.contributed.toLocaleString()}
+        </Badge>
+      </div>
+
+      {src.source === "tmdb_discover" &&
+        Object.keys(discoverGenres).length > 0 && (
+          <p className="border-t px-3 py-2 text-xs text-muted-foreground">
+            Popular titles in the genres they watch most:{" "}
+            {Object.entries(discoverGenres)
+              .map(([m, gs]) => `${mediaLabel(m)} — ${gs.join(", ") || "none"}`)
+              .join("; ")}
+            .
+          </p>
+        )}
+
+      {queries.length > 0 && (
+        <details className="border-t">
+          <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            Follow it title by title →
+          </summary>
+          <ul className="space-y-3 border-t px-3 py-3">
+            {queries.map((q, i) => (
+              <SeedQueryRow key={`${q.seed}-${i}`} query={q} />
+            ))}
+          </ul>
         </details>
       )}
     </div>
   );
 }
 
-function WebSearchRow({ search }: { search: TraceWebSearch }) {
+function SeedQueryRow({ query }: { query: TraceSeedQuery }) {
   return (
-    <div className="rounded-lg border p-3">
-      <p className="flex flex-wrap items-center gap-2 text-sm">
+    <li className="text-sm">
+      <div className="flex items-center gap-1.5">
         <Search
           className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
           aria-hidden="true"
         />
-        <span className="italic">“{search.query}”</span>
-        {search.cached && (
-          <Badge variant="secondary" className="shrink-0 text-[10px]">
-            reused an earlier search
-          </Badge>
-        )}
-      </p>
-      {search.returned.length > 0 && (
-        <p className="mt-1.5 text-xs text-muted-foreground">
-          Turned up: {search.returned.join(", ")}
+        <span className="text-muted-foreground">Searched from</span>
+        <span className="font-medium">{query.seed}</span>
+        <Badge variant="outline" className="shrink-0 font-normal">
+          {mediaLabel(query.media)}
+        </Badge>
+      </div>
+      {query.returned.length > 0 ? (
+        <ul className="mt-1.5 space-y-1 pl-5">
+          {query.returned.map((r, i) => (
+            <ReturnRow key={`${r.tmdb_id}-${i}`} ret={r} />
+          ))}
+          {query.total > query.returned.length && (
+            <li className="text-xs text-muted-foreground">
+              +{(query.total - query.returned.length).toLocaleString()} more not
+              shown
+            </li>
+          )}
+        </ul>
+      ) : (
+        <p className="mt-0.5 pl-5 text-xs text-muted-foreground">
+          nothing returned
         </p>
       )}
+    </li>
+  );
+}
+
+function ReturnRow({ ret }: { ret: TraceReturn }) {
+  const kept = ret.fate === "kept";
+  return (
+    <li className="flex items-center gap-2 text-xs">
+      {ret.fate === undefined ? (
+        <span className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      ) : kept ? (
+        <Check
+          className="h-3.5 w-3.5 shrink-0 text-success"
+          aria-hidden="true"
+        />
+      ) : (
+        <X
+          className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+      )}
+      <span
+        className={cn(
+          "truncate",
+          !kept && ret.fate !== undefined && "text-muted-foreground",
+        )}
+      >
+        {ret.title}
+      </span>
+      {ret.fate !== undefined && !kept && (
+        <span className="shrink-0 text-muted-foreground/80">
+          {fateLabel(ret.fate)}
+        </span>
+      )}
+    </li>
+  );
+}
+
+function WebSourceCard({ web }: { web: TraceWeb }) {
+  const proposed = [
+    ...new Set([...(web.native_proposed ?? []), ...(web.proposed ?? [])]),
+  ];
+  const resolved = new Set(web.resolved ?? []);
+  const unresolved = new Set(web.unresolved ?? []);
+  return (
+    <div className="rounded-lg border">
+      <div className="flex items-center gap-2 p-3">
+        <Globe
+          className="h-4 w-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <p className="text-sm font-medium">{sourceLabel("llm_web")}</p>
+        <Badge variant="secondary" className="ml-auto shrink-0">
+          {proposed.length}
+        </Badge>
+      </div>
+      <div className="space-y-4 border-t p-3">
+        {web.searches && web.searches.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground">
+              What it searched the web for
+            </p>
+            <ul className="space-y-1.5">
+              {web.searches.map((s, i) => (
+                <li key={i} className="text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Search
+                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="italic">“{s.query}”</span>
+                    {s.cached && (
+                      <Badge
+                        variant="secondary"
+                        className="shrink-0 text-[10px]"
+                      >
+                        reused an earlier search
+                      </Badge>
+                    )}
+                  </div>
+                  {s.returned.length > 0 && (
+                    <span className="mt-0.5 block pl-5 text-xs text-muted-foreground">
+                      Turned up: {s.returned.join(", ")}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {proposed.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-muted-foreground">
+              Titles the AI suggested — struck-through ones had no real match
+              and were dropped
+            </p>
+            <ul className="flex flex-wrap gap-1.5">
+              {proposed.map((title, i) => {
+                const dropped = unresolved.has(title) && !resolved.has(title);
+                return (
+                  <li key={`${title}-${i}`}>
+                    <Badge
+                      variant={dropped ? "outline" : "secondary"}
+                      className={cn(
+                        "font-normal",
+                        dropped && "text-muted-foreground line-through",
+                      )}
+                    >
+                      {title}
+                    </Badge>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {web.rag_user && (
+          <details className="rounded-lg border bg-muted/20 p-3 text-sm">
+            <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground">
+              See the exact instructions the AI was given
+            </summary>
+            {web.rag_system && (
+              <pre className="mt-3 whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
+                {web.rag_system}
+              </pre>
+            )}
+            <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
+              {web.rag_user}
+            </pre>
+          </details>
+        )}
+      </div>
     </div>
+  );
+}
+
+// ── Stage 4: delivered picks, with reasons ────────────────────────────────────
+
+function DeliveredList({ delivered }: { delivered: RunLibraryBreakdown[] }) {
+  return (
+    <div className="space-y-4">
+      {delivered.map((b, i) => (
+        <div key={`${b.row_slug}-${i}`} className="space-y-2">
+          {delivered.length > 1 && (
+            <p className="text-sm font-medium">{b.row_title}</p>
+          )}
+          <ol className="space-y-1.5">
+            {b.picks.map((p) => (
+              <DeliveredPick key={p.rank} pick={p} />
+            ))}
+          </ol>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DeliveredPick({ pick }: { pick: Pick }) {
+  const prov = provenanceLabel(pick);
+  return (
+    <li className="flex items-baseline gap-3 text-sm">
+      <span className="w-7 shrink-0 text-right font-semibold tabular-nums text-muted-foreground">
+        #{pick.rank}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="font-medium">{pick.title}</span>
+        {pick.reason && (
+          <span className="text-muted-foreground"> — {pick.reason}</span>
+        )}
+        {prov && (
+          <span className="block truncate text-xs text-muted-foreground/80">
+            {prov}
+          </span>
+        )}
+      </span>
+    </li>
   );
 }
 
@@ -630,39 +836,27 @@ function mediaLabel(media: string): string {
   return media;
 }
 
-/** The heading for one media type when the real library name is unknown (legacy runs, before the
- *  trace recorded it). NOT used when a library name is present — that always wins. */
+/** Media-type heading when a real library name is unknown (legacy runs). Never wins over a name. */
 function mediaGroupLabel(media: string): string {
   if (media === "movie") return "Movies";
   if (media === "show") return "TV Shows";
   return media || "Other";
 }
 
-interface LibraryGroup<T> {
-  label: string;
-  items: T[];
-}
-
-/** Group watches/seeds by their REAL Plex library name (a server can have several movie or TV
- *  libraries, custom-named — so grouping by media type alone would merge distinct libraries). Falls
- *  back to a media-type heading only for items with no recorded library (legacy runs). Input order is
- *  preserved within each group, and groups appear in first-seen order. */
-function groupByLibrary<T extends { library: string; media: string }>(
-  items: T[],
-): LibraryGroup<T>[] {
-  const groups = new Map<string, LibraryGroup<T>>();
-  for (const item of items) {
-    const label = item.library || mediaGroupLabel(item.media);
-    const existing = groups.get(label);
-    if (existing) existing.items.push(item);
-    else groups.set(label, { label, items: [item] });
+/** Why a returned title didn't make the shortlist, in plain words. */
+function fateLabel(fate: TraceFate): string {
+  switch (fate) {
+    case "already_watched":
+      return "already watched";
+    case "not_in_your_libraries":
+      return "not in your libraries";
+    case "excluded_genre":
+      return "excluded genre";
+    case "lost_ranking_cutoff":
+      return "lost the ranking cut";
+    case "not_returned":
+      return "found by another source";
+    default:
+      return "";
   }
-  return [...groups.values()];
-}
-
-/** The pool label the engine emits is "{media} · {source ids}"; only the media part is worth
- *  showing as a heading — the sources are listed in full below it. */
-function poolTitle(pool: string): string {
-  const media = pool.split(" · ")[0]?.trim() ?? pool;
-  return mediaLabel(media);
 }

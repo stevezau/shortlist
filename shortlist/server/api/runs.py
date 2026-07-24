@@ -170,11 +170,20 @@ async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dic
         run_user = session.get(RunUser, (run_id, user_id))
         if run_user is None:
             raise HTTPException(status_code=404, detail="no such user in this run")
+        # The delivered ending of the flow — what each library's row ended up with, and why — lives on
+        # the picks table + breakdown blob, not in the trace dict. Join it here so the trace page can
+        # show "what we built per library" as the last stage without a second fetch.
+        picks = session.query(PickRow).filter_by(run_id=run_id, user_id=run_user.user_id).order_by(PickRow.rank).all()
         return {
             "username": run_user.user.username,
             "display_name": run_user.user.display_name,
             "status": run_user.status,
+            # Surfaced so the trace page can explain a failed/skipped person, not just show partial
+            # stages: `error` for a failure, `reason` for a (non-failing) skip.
+            "error": run_user.error,
+            "reason": run_user.reason,
             "trace": run_user.trace or {},
+            "breakdown": _with_provenance(run_user.breakdown or [], picks),
         }
 
 

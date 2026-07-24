@@ -752,6 +752,59 @@ class TestRunsApi:
 
         assert "sources" not in entry or entry["sources"] == []
 
+    def test_the_trace_endpoint_carries_the_error_and_the_delivered_ending(self, client: TestClient):
+        """The trace page must be able to explain a FAILED person and show what each library's row
+        ended up with — so the trace endpoint returns `error`/`reason` and the per-library breakdown
+        (the delivered ending of the flow), not just the partial stage trace."""
+        from shortlist.server.db.models import PickRow, Run, RunUser, User
+
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user_id,
+                    status="error",
+                    error="RuntimeError: every candidate source failed",
+                    trace={"history": {"total": 3, "recent": [], "watched_movies": 3, "watched_shows": 0}},
+                    breakdown=[
+                        {
+                            "row_slug": "picked",
+                            "row_title": "Picked",
+                            "library_key": "1",
+                            "library_title": "Movies",
+                            "picks": [{"rank": 1, "title": "Dune", "tmdb_id": 55, "media_type": "movie"}],
+                        }
+                    ],
+                )
+            )
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=user_id,
+                    tmdb_id=55,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    title="Dune",
+                    sources="tmdb_similar",
+                    affinity=0.9,
+                )
+            )
+            session.commit()
+            run_id = run.id
+
+        payload = client.get(f"/api/runs/{run_id}/users/{user_id}/trace").json()
+
+        assert payload["status"] == "error"
+        assert "every candidate source failed" in payload["error"]
+        # The delivered ending is present and provenance-enriched from the picks table.
+        assert payload["breakdown"][0]["library_title"] == "Movies"
+        assert payload["breakdown"][0]["picks"][0]["sources"] == ["tmdb_similar"]
+
     def test_a_failed_run_exposes_why_not_just_that_it_failed(self, client: TestClient):
         """The reason lived only inside `stats`, which no client read — so a run that failed for a
         run-level reason (a share filter Plex refused) surfaced as a bare "Failed" and the operator

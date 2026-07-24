@@ -363,13 +363,33 @@ export interface TraceSeed {
   library: string;
   tmdb_id: number;
   weight: number;
+  /** The two ingredients behind `weight` — so the influence bar reads "watched 4×, 3 days ago". */
+  watch_count?: number;
+  recency_days?: number;
+}
+
+/** What happened to a candidate a source returned: kept into the pool, or dropped and why. */
+export type TraceFate =
+  | "kept"
+  | "already_watched"
+  | "not_in_your_libraries"
+  | "excluded_genre"
+  | "lost_ranking_cutoff"
+  | "not_returned";
+
+/** One title a source returned for a seed, tagged with its fate through selection. */
+export interface TraceReturn {
+  tmdb_id: number;
+  title: string;
+  /** Kept/dropped verdict (absent on legacy runs recorded before disposition tracking). */
+  fate?: TraceFate;
 }
 
 /** One seed's query against a source: what it searched for and a sample of what came back. */
 export interface TraceSeedQuery {
   seed: string;
   media: string;
-  returned: string[];
+  returned: TraceReturn[];
   /** Total returned before the `returned` sample was capped — so the UI can say "+N more". */
   total: number;
 }
@@ -382,6 +402,8 @@ export interface TraceSource {
   detail: string;
   /** Per-seed query sample (seeded TMDB/Trakt sources only; empty for discover/llm_web). */
   queries?: TraceSeedQuery[];
+  /** Fate tally across this source's returned sample: {kept, already_watched, ...} counts. */
+  disposition?: Record<string, number>;
 }
 
 /** One Exa search: the query sent for a seed and the titles it returned. */
@@ -429,7 +451,13 @@ export interface RunUserTraceResponse {
   username: string;
   display_name?: string;
   status: string;
+  /** Why the run failed for this person (null unless status is "error"). */
+  error: string | null;
+  /** Plain-English reason a non-failing person was skipped (null otherwise). */
+  reason: string | null;
   trace: RunUserTrace;
+  /** The delivered ending: per-(row, library) picks with reasons. [] on legacy runs. */
+  breakdown: RunLibraryBreakdown[];
 }
 
 /** POST /api/runs body. */

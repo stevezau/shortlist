@@ -208,7 +208,16 @@ def derive_seeds(
             continue
         recency_days = (newest - max(i.watched_at for i in items)).days
         recency_weight = max(0.25, 1.0 - recency_days / 90)  # linear decay over ~3 months
-        seeds.append(Seed(tmdb_id=tmdb_id, title=title, media_type=media_type, weight=len(items) * recency_weight))
+        seeds.append(
+            Seed(
+                tmdb_id=tmdb_id,
+                title=title,
+                media_type=media_type,
+                weight=len(items) * recency_weight,
+                watch_count=len(items),
+                recency_days=recency_days,
+            )
+        )
     seeds.sort(key=lambda s: s.weight, reverse=True)
 
     # Guarantee each media type the person watches a share of the seed budget. Otherwise the global

@@ -69,6 +69,11 @@ class Seed:
     title: str
     media_type: MediaType
     weight: float = 1.0  # recency/frequency weight
+    # The two ingredients behind `weight` (weight = watch_count x recency decay), kept so the trace
+    # can explain a seed's influence in plain terms ("watched 4x, last 3 days ago") instead of a bare
+    # number. Display only — ranking reads `weight`, never these.
+    watch_count: int = 1
+    recency_days: int = 0  # days between this title's most-recent watch and the newest watch overall
 
 
 @dataclass

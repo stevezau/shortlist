@@ -325,10 +325,12 @@ def gather_candidates(
         genres_for(media_type)
 
     # Per-source, per-seed "what we asked for → what came back" records for the trace, so the operator
-    # can follow a TMDB/Trakt query the same way they can an AI web search. Bounded to a sample.
+    # can follow a TMDB/Trakt query the same way they can an AI web search. Each returned title carries
+    # its tmdb_id so the disposition pass (in _candidate_pool) can mark it kept/dropped precisely, not
+    # by fuzzy title match. Bounded to a sample.
     seed_queries: dict[str, list[dict]] = {}
 
-    def _record_seed_query(source: str, seed: Seed, returned: list[str]) -> None:
+    def _record_seed_query(source: str, seed: Seed, returned: list[tuple[int, str]]) -> None:
         rows = seed_queries.setdefault(source, [])
         if len(rows) >= _TRACE_SEEDS_SAMPLE:
             return
@@ -336,7 +338,7 @@ def gather_candidates(
             {
                 "seed": seed.title,
                 "media": seed.media_type.value,
-                "returned": returned[:_TRACE_RETURNS_SAMPLE],
+                "returned": [{"tmdb_id": tid, "title": title} for tid, title in returned[:_TRACE_RETURNS_SAMPLE]],
                 "total": len(returned),
             }
         )
@@ -346,11 +348,11 @@ def gather_candidates(
         try:
             for seed in seeds:
                 seed_genres = _seed_genre_ids(tmdb, seed)
-                returned: list[str] = []
+                returned: list[tuple[int, str]] = []
                 for item, affinity in tmdb.suggestions(seed.tmdb_id, seed.media_type):
                     coherence = genre_coherence(seed_genres, item.get("genre_ids") or [])
                     add(item, seed.media_type, "tmdb_similar", affinity * coherence).seeds.append(seed)
-                    returned.append(item.get("title") or item.get("name") or "")
+                    returned.append((int(item.get("id") or 0), item.get("title") or item.get("name") or ""))
                 _record_seed_query("tmdb_similar", seed, returned)
         except Exception as e:
             # The only source that used to have no isolation: a TMDB hiccup here killed the user's
@@ -390,7 +392,7 @@ def gather_candidates(
                         item["tmdb_id"], item["title"], seed.media_type, item.get("year"), item.get("genres"), "trakt"
                     )
                     cand.seeds.append(seed)
-                    returned.append(item["title"])
+                    returned.append((int(item["tmdb_id"]), item["title"]))
                 _record_seed_query("trakt", seed, returned)
         except Exception as e:
             failures["trakt"] = f"{type(e).__name__}: {e}"
@@ -490,6 +492,7 @@ def filter_candidates(
     watched_tmdb_ids: set[tuple[int, MediaType]],
     excluded_genres: set[str],
     recent_pick_ids: set[tuple[int, MediaType]],
+    dropped: list[tuple[Candidate, str]] | None = None,
 ) -> list[Candidate]:
     """Intersect with the library and drop watched/excluded/stale titles.
 
@@ -503,16 +506,24 @@ def filter_candidates(
         watched_tmdb_ids: (tmdb_id, media_type) this user has already watched.
         excluded_genres: Per-user genre exclusions (case-insensitive).
         recent_pick_ids: (tmdb_id, media_type) recommended within the last N runs (staleness guard).
+        dropped: Optional out-list; each dropped candidate is appended as ``(candidate, reason)`` for
+            the run trace. Purely observational — it never changes which candidates are kept.
     """
     excluded = {g.lower() for g in excluded_genres}
     kept = []
     for c in candidates:
         rating_key = library_index.get(c.media_type, {}).get(c.tmdb_id)
         if rating_key is None:
+            if dropped is not None:
+                dropped.append((c, "not_in_your_libraries"))
             continue
         if (c.tmdb_id, c.media_type) in watched_tmdb_ids or (c.tmdb_id, c.media_type) in recent_pick_ids:
+            if dropped is not None:
+                dropped.append((c, "already_watched"))
             continue
         if excluded and any(g.lower() in excluded for g in c.genres):
+            if dropped is not None:
+                dropped.append((c, "excluded_genre"))
             continue
         c.rating_key = rating_key
         kept.append(c)
