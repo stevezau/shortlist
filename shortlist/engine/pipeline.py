@@ -22,7 +22,7 @@ import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
-from shortlist.engine.clients.plextv import PlexTvClient
+from shortlist.engine.clients.plextv import FilterWriteRefused, PlexTvClient
 from shortlist.engine.clients.poster import PosterArtist
 from shortlist.engine.clients.search import WebSearchProvider
 from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
@@ -557,6 +557,11 @@ def _privacy_sync_phase(
                     to_verify[user.plex_account_id] = {field: after for field, (_before, after) in written.items()}
             if user_report is not None:
                 user_report.privacy_synced = bool(written)
+        except FilterWriteRefused as e:
+            # plex.tv permanently refused the write (422). Live-verified: restricted accounts see
+            # zero collections/hubs regardless — Plex's own restriction profile is a stricter gate
+            # than a label exclude. Safe to skip without blocking promotion for everyone else (#14).
+            logger.warning("{}: plex.tv refused filter write ({}), skipping — promotion not blocked", user.username, e)
         except Exception as e:
             # One user's filter not being written means the rows are not private. Nothing gets
             # promoted this run — including for users whose own sync succeeded.

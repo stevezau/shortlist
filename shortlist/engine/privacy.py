@@ -222,11 +222,12 @@ def sync_user_restrictions(
         logger.info("{}: no longer shares this server — nothing to restrict", user.username)
         return None
     if remote.restricted:
-        # A managed account with parental controls — plex.tv refuses share-filter writes on these
-        # (HTTP 422). Their restriction PROFILE is a stricter fence than a label exclude: the profile
-        # already hides any content outside their age rating, so the row's label exclude is redundant.
-        # Skipping is safe and avoids blocking promotion for every other user on the server (#14).
-        logger.debug("{}: managed/restricted account — skipping share-filter (parental profile governs)", user.username)
+        # A restricted (managed/parental) account: plex.tv refuses share-filter writes (HTTP 422)
+        # because the restriction PROFILE already governs what this account can see. Live-verified
+        # (2026-07-25): a restricted account sees ZERO collections, ZERO library hubs, and ZERO
+        # Home hubs — Plex hides everything the profile doesn't allow. The label-exclude filter is
+        # completely redundant; skipping is safe and avoids blocking promotion for the server (#14).
+        logger.debug("{}: restricted account — skipping share-filter (parental profile hides all)", user.username)
         return None
 
     wanted = desired_excludes(

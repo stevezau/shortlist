@@ -27,6 +27,15 @@ PLEXTV = "https://plex.tv"
 CLIENT_ID = "shortlist"
 
 
+class FilterWriteRefused(RuntimeError):
+    """plex.tv permanently refused a share-filter write (HTTP 422).
+
+    Distinct from transient errors (429, 5xx, network): a 422 means plex.tv will NEVER accept this
+    write for this account in its current state (e.g. accounts with parental restriction profiles).
+    The pipeline catches this separately so it doesn't block promotion for every other user (#14).
+    """
+
+
 @dataclass(frozen=True)
 class PlexTvUser:
     """One row from plex.tv /api/users (shared or Home user)."""
@@ -182,10 +191,13 @@ class PlexTvClient:
             # their accounts plex.tv won't accept a filter for, and why (issue #1). The body is
             # short XML/JSON; truncate it and redact in case it ever echoes the token back.
             detail = redact(" ".join((r.text or "").split()))[:300]
-            raise RuntimeError(
+            msg = (
                 f"plex.tv rejected the share-filter update for account {plex_account_id}: "
                 f"HTTP {r.status_code}{f' — {detail}' if detail else ''}"
             )
+            if r.status_code == 422:
+                raise FilterWriteRefused(msg)
+            raise RuntimeError(msg)
         raise RuntimeError(f"plex.tv still throttling filter update for {plex_account_id} after retries")
 
     def home_users(self) -> list[dict]:
