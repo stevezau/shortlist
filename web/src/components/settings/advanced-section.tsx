@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 
+import { NumberPresets } from "@/components/number-presets";
 import { SaveStatus } from "@/components/save-status";
 import { Segmented } from "@/components/segmented";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,9 +12,17 @@ import type { Settings } from "@/lib/types";
 const LEVELS = ["ERROR", "WARNING", "INFO", "DEBUG", "TRACE"] as const;
 type Level = (typeof LEVELS)[number];
 
-const CONCURRENCY = [1, 2, 4, 8] as const;
-const RETENTION = [0, 50, 100, 250] as const; // 0 = keep every run
-const TIMEOUTS = [20, 30, 45, 60, 90] as const; // seconds per Plex call
+// Preset chips for the three number knobs; each also takes a "Custom…" value within the bounds the
+// API validates (run.concurrency 1–16, runs.retention 0–10000, plex.timeout_s 5–300 — settings.py).
+const CONCURRENCY = [1, 2, 4, 8].map((n) => ({ value: n, label: String(n) }));
+const RETENTION = [0, 50, 100, 250].map((n) => ({
+  value: n,
+  label: n === 0 ? "All" : String(n), // 0 = keep every run
+}));
+const TIMEOUTS = [20, 30, 45, 60, 90].map((n) => ({
+  value: n,
+  label: `${n}s`,
+}));
 
 /** Power-user knobs: log verbosity + run concurrency. Both auto-save and apply live — no restart. */
 export function AdvancedSection({ settings }: { settings: Settings }) {
@@ -25,15 +34,9 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
       ? settings["log.level"]
       : "DEBUG"
   ) as Level;
-  const concurrency = String(
-    (settings["run.concurrency"] as number | undefined) ?? 4,
-  );
-  const retention = String(
-    (settings["runs.retention"] as number | undefined) ?? 100,
-  );
-  const timeout = String(
-    (settings["plex.timeout_s"] as number | undefined) ?? 45,
-  );
+  const concurrency = (settings["run.concurrency"] as number | undefined) ?? 4;
+  const retention = (settings["runs.retention"] as number | undefined) ?? 100;
+  const timeout = (settings["plex.timeout_s"] as number | undefined) ?? 45;
   const hideSharedFromDisabled = settingBool(
     settings,
     "privacy.hide_shared_from_disabled",
@@ -86,14 +89,14 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
               through people one after another.
             </p>
           </div>
-          <Segmented<string>
+          <NumberPresets
             value={concurrency}
             ariaLabel="Run concurrency"
-            options={CONCURRENCY.map((n) => ({
-              value: String(n),
-              label: String(n),
-            }))}
-            onChange={(value) => save({ "run.concurrency": Number(value) })}
+            presets={CONCURRENCY}
+            min={1}
+            max={16}
+            unit="people at once"
+            onChange={(value) => save({ "run.concurrency": value })}
           />
           <div className="border-t pt-4">
             <p className="font-medium">Plex request timeout</p>
@@ -108,14 +111,14 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
               up on a stalled server faster.
             </p>
           </div>
-          <Segmented<string>
+          <NumberPresets
             value={timeout}
             ariaLabel="Plex request timeout"
-            options={TIMEOUTS.map((n) => ({
-              value: String(n),
-              label: `${n}s`,
-            }))}
-            onChange={(value) => save({ "plex.timeout_s": Number(value) })}
+            presets={TIMEOUTS}
+            min={5}
+            max={300}
+            unit="seconds"
+            onChange={(value) => save({ "plex.timeout_s": value })}
           />
           <div className="border-t pt-4">
             <p className="font-medium">Runs kept</p>
@@ -129,14 +132,14 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
               won&rsquo;t cost you any stats.
             </p>
           </div>
-          <Segmented<string>
+          <NumberPresets
             value={retention}
             ariaLabel="Runs kept"
-            options={RETENTION.map((n) => ({
-              value: String(n),
-              label: n === 0 ? "All" : String(n),
-            }))}
-            onChange={(value) => save({ "runs.retention": Number(value) })}
+            presets={RETENTION}
+            min={0}
+            max={10000}
+            unit="runs (0 = keep all)"
+            onChange={(value) => save({ "runs.retention": value })}
           />
           <div className="flex items-start justify-between gap-4 border-t pt-4">
             <div className="space-y-0.5">

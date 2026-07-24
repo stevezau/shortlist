@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -71,6 +71,33 @@ describe("AdvancedSection", () => {
     await userEvent.click(screen.getByRole("button", { name: "60s" }));
     await waitFor(() =>
       expect(putSettings).toHaveBeenCalledWith({ "plex.timeout_s": 60 }),
+    );
+  });
+
+  it("opens the custom input when a stored value matches no preset", () => {
+    // 120s is not one of the timeout chips — the Custom… input must show it, not silently drop it.
+    renderSection({ "plex.timeout_s": 120 });
+    const input = screen.getByLabelText(
+      /Plex request timeout \(custom value\)/,
+    );
+    expect((input as HTMLInputElement).value).toBe("120");
+  });
+
+  it("auto-saves a typed custom timeout as a number", async () => {
+    renderSection({});
+    // Each of the three number knobs has its own Custom… — scope to the timeout group so the click
+    // and the input both target the timeout, not concurrency or retention.
+    const group = screen.getByRole("group", { name: "Plex request timeout" });
+    await userEvent.click(
+      within(group).getByRole("button", { name: "Custom…" }),
+    );
+    const input = within(group).getByLabelText(
+      /Plex request timeout \(custom value\)/,
+    );
+    await userEvent.clear(input);
+    await userEvent.type(input, "150");
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith({ "plex.timeout_s": 150 }),
     );
   });
 });
