@@ -216,8 +216,15 @@ class RunService:
                 with self._sessions() as session:
                     run = session.get(Run, run_id)
                     run.status = "running"
-                    session.commit()
                     profiles = self.enabled_profiles(session, user_ids)
+                    run.stats = {
+                        **(run.stats or {}),
+                        "expected_users": [
+                            {"slug": p.slug, "username": p.username, "display_name": p.nickname or p.username}
+                            for p in profiles
+                        ],
+                    }
+                    session.commit()
                 ctx = self.build_context(
                     dry_run=dry_run,
                     loop=loop,

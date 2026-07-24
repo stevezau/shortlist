@@ -182,7 +182,31 @@ async def get_run(run_id: int, request: Request) -> dict:
                     "has_trace": bool(run_user.trace),
                 }
             )
-        return {**_run_summary(run), "users": users}
+        # Users who haven't finished yet show as "pending" so the UI can pre-populate the list
+        # during a live run instead of only showing people after they complete.
+        completed_slugs = {ru.user.slug for ru in run.users}
+        expected = (run.stats or {}).get("expected_users", [])
+        pending = [
+            {
+                "username": u["username"],
+                "display_name": u.get("display_name", u["username"]),
+                "slug": u["slug"],
+                "status": "pending",
+                "error": None,
+                "reason": None,
+                "duration_ms": None,
+                "llm_tokens": 0,
+                "llm_tokens_by_step": {},
+                "exa_searches": 0,
+                "diff": {},
+                "picks": [],
+                "breakdown": [],
+                "has_trace": False,
+            }
+            for u in expected
+            if u["slug"] not in completed_slugs
+        ]
+        return {**_run_summary(run), "users": users + pending}
 
 
 @router.get("/{run_id}/users/{user_id}/trace")
