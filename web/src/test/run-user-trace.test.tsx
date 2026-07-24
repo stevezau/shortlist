@@ -95,9 +95,11 @@ describe("TraceView", () => {
     );
   });
 
-  it("spells out why each seed mattered from its watch count and recency", () => {
+  it("tags each seed with recency only — no play-count, since frequency no longer scores", () => {
     render(<TraceView data={okTrace()} />);
-    expect(screen.getByText(/watched 4×, 3 days ago/)).toBeTruthy();
+    expect(screen.getByText(/3 days ago/)).toBeTruthy();
+    // ×count is deliberately gone (recency alone weights a seed now).
+    expect(screen.queryByText(/watched 4×/)).toBeNull();
   });
 
   it("shows each returned title's fate — kept, or the plain reason it was dropped", async () => {
@@ -140,7 +142,7 @@ describe("TraceView", () => {
     // recent is empty but the full-history counts say 18 movies — the tab must say 18, not 0/4.
     render(<TraceView data={okTrace()} />);
     const watched = screen
-      .getByText(/What they watched in Movies/)
+      .getByText(/What they watched recently in Movies/)
       .closest("section") as HTMLElement;
     expect(within(watched).getByText(/Watched 18 movies here/)).toBeTruthy();
   });
@@ -172,7 +174,7 @@ describe("TraceView", () => {
     expect(
       within(
         screen
-          .getByText(/What they watched in 4K Movies/)
+          .getByText(/What they watched recently in 4K Movies/)
           .closest("section") as HTMLElement,
       ).getByText(/Watched 6 movies here/),
     ).toBeTruthy();
@@ -215,5 +217,40 @@ describe("TraceView", () => {
     ).toBeTruthy();
     expect(within(searched).getByText(/Step 1/)).toBeTruthy();
     expect(within(searched).getByText(/Step 2/)).toBeTruthy();
+  });
+
+  it("overlays the request outcome onto a 'not in your libraries' drop", async () => {
+    const data = okTrace();
+    const query = data.trace.gathers?.[0]?.sources?.[0]?.queries?.[0];
+    if (!query) throw new Error("fixture must have a seed query");
+    query.returned = [
+      { tmdb_id: 1000, title: "Toy Story 5", fate: "not_in_your_libraries" },
+      { tmdb_id: 1001, title: "Hoppers", fate: "not_in_your_libraries" },
+    ];
+    data.requests = {
+      "1000:movie": {
+        status: "sent",
+        detail: "",
+        arr_slug: "toy-story-5",
+        excluded: false,
+      },
+      "1001:movie": {
+        status: "pending",
+        detail: "",
+        arr_slug: null,
+        excluded: false,
+      },
+    };
+    render(<TraceView data={data} />);
+    const searched = screen
+      .getByText(/Where we searched/)
+      .closest("section") as HTMLElement;
+    await userEvent.click(
+      within(searched).getByText(/Follow it title by title/),
+    );
+    expect(
+      within(searched).getByText(/requested from Sonarr\/Radarr/),
+    ).toBeTruthy();
+    expect(within(searched).getByText(/queued for your approval/)).toBeTruthy();
   });
 });

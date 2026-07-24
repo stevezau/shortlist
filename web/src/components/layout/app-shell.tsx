@@ -277,8 +277,11 @@ export function AppShell() {
         </div>
       )}
 
-      {/* Desktop sidebar. Hidden on mobile (the drawer replaces it). */}
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r bg-card/40 backdrop-blur md:flex">
+      {/* Desktop sidebar. Hidden on mobile (the drawer replaces it). `z-30` matters: the sidebar's
+          `backdrop-blur` opens its own stacking context, and the notification panel (w-80) overflows
+          the w-60 rail into <main>. Without a z-index here, <main> — a later sibling — paints its text
+          OVER that overflow (the "text shows behind the panel" bug). Elevating the whole rail fixes it. */}
+      <aside className="sticky top-0 z-30 hidden h-screen w-60 shrink-0 flex-col border-r bg-card/40 backdrop-blur md:flex">
         <div className="flex items-center justify-between px-5 py-5">
           <Wordmark />
           <NotificationBell align="left" />

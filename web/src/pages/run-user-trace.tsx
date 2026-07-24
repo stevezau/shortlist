@@ -11,7 +11,6 @@ import {
   Check,
   ChevronRight,
   Clock,
-  Download,
   Globe,
   History,
   Search,
@@ -886,7 +885,7 @@ function SeedQueryRow({
       {query.returned.length > 0 ? (
         <ul className="mt-1.5 space-y-1 pl-5">
           {query.returned.map((r, i) => (
-            <ReturnRow key={`${r.tmdb_id}-${i}`} ret={r} />
+            <ReturnRow key={`${r.tmdb_id}-${i}`} ret={r} media={query.media} />
           ))}
           {query.total > query.returned.length && (
             <li className="text-xs text-muted-foreground">
@@ -904,8 +903,13 @@ function SeedQueryRow({
   );
 }
 
-function ReturnRow({ ret }: { ret: TraceReturn }) {
+function ReturnRow({ ret, media }: { ret: TraceReturn; media: string }) {
   const kept = ret.fate === "kept";
+  // A title we couldn't show because no library held it may still have been requested from
+  // Sonarr/Radarr — overlay that outcome so the drop reads "→ requested from Radarr", not a dead end.
+  const request = useRequestOutcome(ret.tmdb_id, media);
+  const showRequest =
+    ret.fate === "not_in_your_libraries" && request !== undefined;
   return (
     <li className="flex items-center gap-2 text-xs">
       {ret.fate === undefined ? (
@@ -934,7 +938,43 @@ function ReturnRow({ ret }: { ret: TraceReturn }) {
           {fateLabel(ret.fate)}
         </span>
       )}
+      {showRequest && request && (
+        <span className="shrink-0 text-muted-foreground/80" aria-hidden="true">
+          →
+        </span>
+      )}
+      {showRequest && request && <RequestOutcomeTag request={request} />}
     </li>
+  );
+}
+
+/** The "→ requested from Radarr" tail on a not-in-your-libraries drop. Says what actually happened:
+ *  sent = the request went to Sonarr/Radarr; pending = it's queued for the owner to approve;
+ *  rejected = the owner dismissed it. `excluded` titles are flagged (approving is a no-op until the
+ *  owner clears the arr's import-exclusion list). */
+function RequestOutcomeTag({ request }: { request: TraceRequestOutcome }) {
+  if (request.status === "sent") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 text-success">
+        <Check className="h-3 w-3" aria-hidden="true" />
+        requested from Sonarr/Radarr
+      </span>
+    );
+  }
+  if (request.status === "pending") {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 text-muted-foreground">
+        <Clock className="h-3 w-3" aria-hidden="true" />
+        {request.excluded
+          ? "queued — but on the arr’s exclusion list"
+          : "queued for your approval"}
+      </span>
+    );
+  }
+  return (
+    <span className="shrink-0 text-muted-foreground/80">
+      you dismissed this request
+    </span>
   );
 }
 
