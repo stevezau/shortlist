@@ -232,6 +232,58 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, entries: list[
                 entries.append({"user": user.slug, "old": old_display, "new": new_display, "libraries": libraries})
 
 
+def reconcile_row_rename_iter(state, *, slug: str, new_template: str):
+    """Like _reconcile_row_rename but YIELDS one dict per user renamed (for SSE streaming).
+
+    Yields: {"user": slug, "display_name": str, "old": old_title, "new": new_title, "libraries": [...]}
+    for each user actually renamed. Skipped users (title unchanged, no collections) are not yielded.
+    At the end yields {"done": True, "total": n} as the terminal event.
+    """
+    with state.sessions() as session:
+        titles_by_user = _delivered_titles_by_user(session, slug)
+        users = session.query(User).all()
+    dry_run = force_dry_run()
+    ctx = state.run_service.build_context(dry_run=dry_run)
+    total = 0
+    for user in users:
+        old_titles = titles_by_user.get(user.id, {})
+        if not old_titles:
+            continue
+        override = (user.prefs or {}).get("row_name_tpl") if slug == DEFAULT_SLUG else None
+        effective_template = override or new_template
+        profile = UserProfile(
+            username=user.username,
+            plex_account_id=user.plex_account_id,
+            user_type=UserType(user.user_type),
+            slug=user.slug,
+            nickname=user.nickname or user.friendly_name,
+        )
+        marker = row_marker(user.plex_account_id)
+        for old_display, library_title in old_titles.items():
+            new_display = render_row_name(effective_template, profile, [], library_name=library_title)
+            if new_display == DEFAULT_ROW_NAME or old_display == new_display:
+                continue
+            libraries = rename_row_collections(
+                ctx.plex,
+                ctx.config,
+                label=f"{ctx.config.label_prefix}_{user.slug}",
+                marker=marker,
+                old_display=old_display,
+                new_display=new_display,
+                dry_run=dry_run,
+            )
+            if libraries:
+                total += 1
+                yield {
+                    "user": user.slug,
+                    "display_name": profile.display_name,
+                    "old": old_display,
+                    "new": new_display,
+                    "libraries": libraries,
+                }
+    yield {"done": True, "total": total}
+
+
 async def run_row_rename(state, *, slug: str, new_template: str, scope: str) -> tuple[list[dict], str | None]:
     """Run ``_reconcile_row_rename`` in an executor and audit it with per-user old→new detail (rule 10).
     Best-effort — a Plex outage is logged, never fatal to the PATCH. Returns ``(rename_entries, error)``."""

@@ -12,6 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import func
+from starlette.responses import StreamingResponse
 
 from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.models import dedupe_slug, slugify
@@ -423,6 +424,63 @@ async def delete_collection(collection_id: int, request: Request) -> None:
             session.delete(collection)
             session.commit()
     rebuild_schedule(request.app)  # the deleted row's cron job (if any) must stop firing
+
+
+class RenameRequest(BaseModel):
+    name_template: str
+
+
+@router.post("/{collection_id}/rename")
+async def rename_collection_stream(collection_id: int, body: RenameRequest, request: Request) -> StreamingResponse:
+    """Rename this row's collections on Plex, streaming SSE events as each user's collection is
+    renamed. Returns a text/event-stream: one 'rename' event per user, then a 'done' event."""
+    import asyncio
+    import json
+    from queue import Empty, Queue
+
+    with request.app.state.sessions() as session:
+        collection = session.get(Collection, collection_id)
+        if collection is None:
+            raise HTTPException(status_code=404, detail="row not found")
+        slug = collection.slug
+        # Persist the new template on the collection itself FIRST (so the next run uses it too).
+        if body.name_template.strip():
+            collection.name_template = body.name_template.strip()
+            if slug == DEFAULT_SLUG:
+                SettingsStore(session).set("row.name_template", body.name_template.strip())
+            session.commit()
+
+    state = request.app.state
+    q: Queue = Queue()
+
+    def _run():
+        try:
+            for event in reconcile.reconcile_row_rename_iter(state, slug=slug, new_template=body.name_template.strip()):
+                q.put(event)
+        except Exception as e:
+            q.put({"error": f"{type(e).__name__}: {e}"})
+        finally:
+            q.put(None)  # sentinel
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run)
+
+    async def generate():
+        while True:
+            try:
+                event = q.get(timeout=0.1)
+            except Empty:
+                await asyncio.sleep(0.05)
+                continue
+            if event is None:
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 class CleanupRequest(BaseModel):

@@ -8,7 +8,7 @@ import {
   Users as UsersIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +48,7 @@ export function RowCard({
   users: User[];
   onEdit: () => void;
 }) {
+  const navigate = useNavigate();
   const save = useSaveCollection();
   const remove = useDeleteCollection();
   const settings = useSettings();
@@ -65,7 +66,10 @@ export function RowCard({
         ...toInput(collection),
         name_template: renameTo,
       }),
-    onSuccess: () => setRenameOpen(false),
+    onSuccess: () => {
+      setRenameOpen(false);
+      navigate(`/rows/${collection.id}/rename`);
+    },
   });
   // A dry-run first (what WOULD be removed), then the real removal on confirm.
   const preview = useMutation({
@@ -361,13 +365,8 @@ export function RowCard({
           {rename.isError && (
             <MutationAlert
               error={rename.error}
-              fallback="Couldn't rename. Check the Plex connection."
+              fallback="Couldn't save the new name. Check the connection."
             />
-          )}
-          {rename.isSuccess && (
-            <p className="text-sm text-success">
-              Renamed — the collections on Plex now use the new name.
-            </p>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenameOpen(false)}>
