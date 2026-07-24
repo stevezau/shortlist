@@ -418,6 +418,16 @@ export interface TraceWebSearch {
   returned: string[];
 }
 
+/** One title the AI proposed from the web search, resolved to a real TMDB id, tagged with whether it
+ *  made the library's shortlist (kept) or the reason it fell out — the same fate a TMDB/Trakt return
+ *  carries. Hallucinations (no TMDB match) never reach here; they stay in `unresolved`. */
+export interface TraceWebProposal {
+  title: string;
+  tmdb_id: number;
+  media: string;
+  fate?: TraceFate;
+}
+
 /** The web-search (llm_web) detail of a gather: what was searched and what the LLM proposed. */
 export interface TraceWeb {
   mode: string;
@@ -428,6 +438,8 @@ export interface TraceWeb {
   native_proposed?: string[];
   resolved?: string[];
   unresolved?: string[];
+  /** Resolved proposals with their fate through selection — kept into the row, or why they dropped. */
+  proposals?: TraceWebProposal[];
 }
 
 /** One candidate pool a user's rows gathered (usually one, shared across rows). */

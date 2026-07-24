@@ -22,10 +22,16 @@
   delivering as the run happens (seeded from the server so a reload replays it); per-user diffs
   grouped by row then library ("added X to Movies, Y to TV Shows"), each library showing its own
   ranked picks; errors as first-class rows with copy-for-GitHub buttons, LLM token usage. Open a
-  person and click **View trace** to see the full pipeline for them: the watch history and seeds it
-  started from, every candidate source's query and what it returned, the exact web-search queries and
-  the prompt the AI searched from, and which proposed titles resolved to a real match vs. were dropped
-  as hallucinations.
+  person and click **How we picked** to read the full pipeline for them as one flow, per library:
+  the watch history and seeds it started from → every candidate source's query and what it returned,
+  each title tagged with whether it made the shortlist or the plain reason it fell out (already
+  watched, not in your libraries, lost the ranking cut) → **how the shortlist was ordered** (the
+  plain-code score plus the two fair-share passes — no AI ranks) → what was finally delivered and
+  why. The AI web-search card shows the exact Exa queries and the prompt the model searched from,
+  and marks each proposed title kept vs. dropped — or struck through when it resolved to no real
+  match (a hallucination). Long lists of returned titles expand in place. A **cold-start** user (too
+  little history to search from) gets the same page, showing the highest-rated titles pulled from the
+  server as their fallback.
 - **Logs** — what this instance has been doing, with a level filter (this level _and louder_), a
   text filter, live follow, **Copy**, and **Download .zip** for attaching to a bug report. Tokens,
   API keys and passwords are stripped out server-side before anything reaches the page or the zip,

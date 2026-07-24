@@ -145,6 +145,9 @@ class TestGatherTraceWeb:
         # The resolved/unresolved split makes hallucinations visible in the UI.
         assert any("Real Film" in t for t in web["resolved"])
         assert any("Made Up" in t for t in web["unresolved"])
+        # Each RESOLVED proposal carries its tmdb_id + media so the disposition pass can stamp a
+        # per-title kept/dropped fate; a hallucination has no id, so it never reaches `proposals`.
+        assert web["proposals"] == [{"title": web["resolved"][0], "tmdb_id": 800, "media": "movie"}]
 
 
 class TestRecordHistoryTrace:
@@ -333,3 +336,31 @@ class TestStampDisposition:
             "excluded_genre": 1,
             "not_returned": 1,
         }
+
+    def test_stamps_web_proposals_kept_vs_dropped(self):
+        # The AI web source records proposals under trace["web"], not as per-seed `queries`, so its
+        # kept-vs-dropped fate is stamped separately. Each resolved proposal must learn whether it made
+        # the shortlist (kept) or fell out (a drop reason / lost the pre-rank cut).
+        def cand(tmdb_id: int, media: MediaType = MediaType.MOVIE) -> Candidate:
+            return Candidate(tmdb_id=tmdb_id, title=f"t{tmdb_id}", media_type=media)
+
+        kept = cand(800)
+        watched = cand(801)
+        kept_show = cand(802, MediaType.SHOW)
+        ranked = [kept, kept_show]
+        in_library = [kept, kept_show]
+        dropped = [(watched, "already_watched")]
+
+        stats = GatherStats()
+        stats.trace["web"] = {
+            "proposals": [
+                {"title": "Kept Film", "tmdb_id": 800, "media": "movie"},
+                {"title": "Watched Film", "tmdb_id": 801, "media": "movie"},
+                {"title": "Kept Show", "tmdb_id": 802, "media": "show"},
+            ]
+        }
+
+        rows_mod._stamp_disposition(stats, dropped=dropped, in_library=in_library, ranked=ranked)
+
+        fates = {p["title"]: p["fate"] for p in stats.trace["web"]["proposals"]}
+        assert fates == {"Kept Film": "kept", "Watched Film": "already_watched", "Kept Show": "kept"}

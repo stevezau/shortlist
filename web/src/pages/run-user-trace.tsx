@@ -13,6 +13,7 @@ import {
   Clock,
   Globe,
   History,
+  ListOrdered,
   Search,
   X,
 } from "lucide-react";
@@ -439,6 +440,10 @@ function LibraryFlow({ lib }: { lib: LibraryView }) {
   const placesSearched = lib.sources.length + (hasWeb ? 1 : 0);
   const totalWatched = lib.watchedMovies + lib.watchedShows;
   const deliveredCount = lib.delivered.reduce((n, b) => n + b.picks.length, 0);
+  // Cold start pulls the highest-rated titles on the server, so there's no seed, no search fan-out, and
+  // no taste-based ranking to explain — the flow says that plainly instead of implying a search that
+  // never ran. Detected from the only source being `cold_start`.
+  const isCold = lib.sources.some((s) => s.source === "cold_start");
   // Seeds are now pure-recency: the distinct titles someone watched most recently, newest first —
   // which is exactly what the old "what they watched" panel showed. So the two panels were identical
   // and are merged into one. Seeds are the richer object (they carry recency + drive the search), so
@@ -450,34 +455,40 @@ function LibraryFlow({ lib }: { lib: LibraryView }) {
       <WatchList watched={lib.watched} />
     ) : (
       <Muted>
-        No recent watches recorded here — seeds may come from a shared media
-        type.
+        {isCold
+          ? "Too little watch history here to search from — so we fell back to what's popular on the server (below)."
+          : "No recent watches recorded here — seeds may come from a shared media type."}
       </Muted>
     );
-  const steps: FlowStepDef[] = [
+  // Steps are numbered by position so the ranking step can be omitted for cold start without leaving a
+  // gap in the sequence.
+  const defs: Omit<FlowStepDef, "n">[] = [
     {
       id: `${lib.key}-watched`,
-      n: 1,
       icon: History,
       rail: "Watched recently",
       count: lib.seeds.length || totalWatched || lib.watched.length,
       title: `What they watched recently in ${lib.label}`,
-      subtitle:
-        totalWatched > 0
+      subtitle: isCold
+        ? `${watchedSummary(lib) || "Not enough watched here yet"} — too little to recommend from, so this is a cold start.`
+        : totalWatched > 0
           ? `${watchedSummary(lib)}. Their most recent are below — what someone reached for lately is the best signal of what to recommend tonight, so each becomes a search seed for the step below.`
           : "Their most recent watches, newest first — each becomes a search seed for the step below.",
       body: recentBody,
     },
     {
       id: `${lib.key}-searched`,
-      n: 2,
       icon: Search,
-      rail: "Searched",
-      count: placesSearched,
-      title: "Where we searched, and every title in and out",
-      subtitle: lib.sharedSearch
-        ? `Each title above fans out to every place we look for ${searchNoun}s. We search by taste, not by library, so these results are shared across your ${searchNoun} libraries — each title shows whether it made this library's shortlist or why it fell out.`
-        : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.`,
+      rail: isCold ? "Popular titles" : "Searched",
+      count: isCold ? deliveredCount : placesSearched,
+      title: isCold
+        ? `What we pulled for ${lib.label}`
+        : "Where we searched, and every title in and out",
+      subtitle: isCold
+        ? "With too little history to search from, we pulled the highest-rated titles on this server."
+        : lib.sharedSearch
+          ? `Each title above fans out to every place we look for ${searchNoun}s. We search by taste, not by library, so these results are shared across your ${searchNoun} libraries — each title shows whether it made this library's shortlist or why it fell out.`
+          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.`,
       body: (
         <SourcesFlow
           sources={lib.sources}
@@ -487,9 +498,23 @@ function LibraryFlow({ lib }: { lib: LibraryView }) {
         />
       ),
     },
+    // How the shortlist was ORDERED — the step that used to be missing entirely. Not shown for cold
+    // start (no taste ranking runs; the picks are just the top-rated titles, in rating order).
+    ...(isCold
+      ? []
+      : [
+          {
+            id: `${lib.key}-ranked`,
+            icon: ListOrdered,
+            rail: "Ordered",
+            title: "How we ordered the shortlist",
+            subtitle:
+              "Everything that made the shortlist above is scored and ordered in plain code — no AI decides the order. Here's exactly how.",
+            body: <RankingExplainer lib={lib} />,
+          },
+        ]),
     {
       id: `${lib.key}-delivered`,
-      n: 3,
       icon: ArrowRight,
       rail: "Delivered",
       count: deliveredCount,
@@ -502,6 +527,7 @@ function LibraryFlow({ lib }: { lib: LibraryView }) {
         ),
     },
   ];
+  const steps: FlowStepDef[] = defs.map((def, i) => ({ ...def, n: i + 1 }));
 
   const active = useScrollSpy(steps.map((s) => s.id));
 
@@ -883,23 +909,68 @@ function SeedQueryRow({
         </Badge>
       </div>
       {query.returned.length > 0 ? (
-        <ul className="mt-1.5 space-y-1 pl-5">
-          {query.returned.map((r, i) => (
-            <ReturnRow key={`${r.tmdb_id}-${i}`} ret={r} media={query.media} />
-          ))}
-          {query.total > query.returned.length && (
-            <li className="text-xs text-muted-foreground">
-              +{(query.total - query.returned.length).toLocaleString()} more not
-              shown
-            </li>
-          )}
-        </ul>
+        <ReturnList
+          returned={query.returned}
+          total={query.total}
+          media={query.media}
+        />
       ) : (
         <p className="mt-0.5 pl-5 text-xs text-muted-foreground">
           nothing returned
         </p>
       )}
     </li>
+  );
+}
+
+const _RETURN_PREVIEW = 6; // titles shown before "show the rest" — enough to read the mix at a glance
+
+/** A source's returned titles: a short preview, an expander for the rest of what was recorded, and —
+ *  only when the source genuinely returned more than we recorded — an honest "+N more not recorded"
+ *  tail. The old dead "+N more not shown" line conflated "collapsed, click to see" with "beyond the
+ *  recording cap"; this separates them so nothing that WAS recorded is hidden behind an unclickable line. */
+function ReturnList({
+  returned,
+  total,
+  media,
+}: {
+  returned: TraceReturn[];
+  total: number;
+  media: string;
+}) {
+  const preview = returned.slice(0, _RETURN_PREVIEW);
+  const rest = returned.slice(_RETURN_PREVIEW);
+  const beyondCap = Math.max(0, total - returned.length);
+  return (
+    <ul className="mt-1.5 space-y-1 pl-5">
+      {preview.map((r, i) => (
+        <ReturnRow key={`${r.tmdb_id}-${i}`} ret={r} media={media} />
+      ))}
+      {rest.length > 0 && (
+        <li>
+          <details className="group">
+            <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
+              <ChevronRight
+                className="h-3 w-3 transition-transform group-open:rotate-90"
+                aria-hidden="true"
+              />
+              Show {rest.length.toLocaleString()} more
+            </summary>
+            <ul className="mt-1 space-y-1">
+              {rest.map((r, i) => (
+                <ReturnRow key={`${r.tmdb_id}-${i}`} ret={r} media={media} />
+              ))}
+            </ul>
+          </details>
+        </li>
+      )}
+      {beyondCap > 0 && (
+        <li className="text-xs text-muted-foreground/70">
+          +{beyondCap.toLocaleString()} more returned (not recorded in the
+          trace)
+        </li>
+      )}
+    </ul>
   );
 }
 
@@ -997,7 +1068,14 @@ function WebSourceCard({
   const unresolved = new Set(web?.unresolved ?? []);
   const searches = web?.searches ?? [];
   const failed = source?.status === "failed";
-  const kept = source?.disposition?.kept ?? 0;
+  // Each resolved proposal's fate (kept into the row, or why it fell out), keyed by the same label the
+  // `proposed` list uses. Absent on legacy runs — then we fall back to the plain resolved/dropped read.
+  const fateByTitle = new Map(
+    (web?.proposals ?? []).map((p) => [p.title, p.fate]),
+  );
+  const kept =
+    [...fateByTitle.values()].filter((f) => f === "kept").length ||
+    (source?.disposition?.kept ?? 0);
   const mech = webMechanism(web?.mode ?? "", searches.length > 0);
   // Exa bills per search, so a title many users watched is searched once and reused from a shared
   // cache for the rest. Surface how many actually hit Exa vs came back cached — it's the difference
@@ -1090,22 +1168,40 @@ function WebSourceCard({
               )}
               Titles the AI then suggested
               <span className="ml-1 font-normal text-muted-foreground">
-                — struck-through ones had no real match and were dropped
+                — a check made this library&rsquo;s shortlist; the rest show why
+                they didn&rsquo;t
               </span>
             </p>
             <ul className="flex flex-wrap gap-1.5">
               {proposed.map((title, i) => {
-                const dropped = unresolved.has(title) && !resolved.has(title);
+                // No TMDB match at all (a likely hallucination): struck through, no fate to show.
+                const hallucinated =
+                  unresolved.has(title) && !resolved.has(title);
+                // Resolved to a real title: its fate says whether it made the row or why it fell out.
+                const fate = fateByTitle.get(title);
+                const kept = fate === "kept";
                 return (
                   <li key={`${title}-${i}`}>
                     <Badge
-                      variant={dropped ? "outline" : "secondary"}
+                      variant={kept ? "secondary" : "outline"}
                       className={cn(
-                        "font-normal",
-                        dropped && "text-muted-foreground line-through",
+                        "gap-1 font-normal",
+                        hallucinated && "text-muted-foreground line-through",
+                        !kept && !hallucinated && "text-muted-foreground",
                       )}
                     >
+                      {kept && (
+                        <Check
+                          className="h-3 w-3 text-success"
+                          aria-hidden="true"
+                        />
+                      )}
                       {title}
+                      {!kept && !hallucinated && fate && (
+                        <span className="text-muted-foreground/80">
+                          · {fateLabel(fate)}
+                        </span>
+                      )}
                     </Badge>
                   </li>
                 );
@@ -1154,7 +1250,7 @@ function sourceRole(source: string): string {
     case "trakt":
       return "We asked Trakt for titles people who watched the same films also watched.";
     case "cold_start":
-      return "With little history to go on, we pulled what's most-watched on this server.";
+      return "With little history to go on, we pulled the highest-rated titles on this server.";
     default:
       return "We gathered candidate titles from this source.";
   }
@@ -1173,6 +1269,97 @@ function webMechanism(mode: string, hasSearches: boolean): string {
       ? "The AI model’s built-in web search AND an Exa web search, combined — the AI proposed titles from both."
       : "The AI model’s own built-in web search proposed titles directly.";
   return "The AI proposed titles to watch next from a web search.";
+}
+
+// ── Stage 3.5: how the shortlist was ordered ──────────────────────────────────
+
+/** Plain-English explanation of the ranking — the step that used to be missing. There is no AI in the
+ *  ordering (the model is used only to FIND titles); it's `ranking.score` + two fair-share passes, so
+ *  this says exactly that and grounds it in THIS library's picks: how many sources and how many
+ *  different watched titles fed the row, which is what the fair-share passes actually produce. */
+function RankingExplainer({ lib }: { lib: LibraryView }) {
+  const picks = lib.delivered.flatMap((b) => b.picks);
+  const sources = new Set<string>();
+  for (const p of picks) for (const s of p.sources ?? []) sources.add(s);
+  const seedTitles = new Set(
+    picks.map((p) => p.seed_title).filter((s): s is string => Boolean(s)),
+  );
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="space-y-2">
+        <p className="font-medium">
+          Each title gets a score from three things:
+        </p>
+        <ul className="space-y-1.5 text-muted-foreground">
+          <li className="flex gap-2">
+            <span className="text-foreground">·</span>
+            <span>
+              <span className="font-medium text-foreground">
+                How recently you watched what suggested it.
+              </span>{" "}
+              A title suggested by something you watched last week outranks one
+              from a watch a year ago.
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <span className="text-foreground">·</span>
+            <span>
+              <span className="font-medium text-foreground">
+                How closely it matches.
+              </span>{" "}
+              How near the top of the suggesting source&rsquo;s list it sat — a
+              close match beats a loose one.
+            </span>
+          </li>
+          <li className="flex gap-2">
+            <span className="text-foreground">·</span>
+            <span>
+              <span className="font-medium text-foreground">Its rating.</span> A
+              well-reviewed title edges out a poorly-reviewed one when
+              everything else is equal.
+            </span>
+          </li>
+        </ul>
+      </div>
+      <div className="space-y-1.5">
+        <p className="font-medium">
+          Then two fairness passes reshape the order:
+        </p>
+        <p className="text-muted-foreground">
+          Best-scoring title always leads. After that, each{" "}
+          <span className="font-medium text-foreground">source</span> gets a
+          fair turn, then each{" "}
+          <span className="font-medium text-foreground">title you watched</span>{" "}
+          does — so a single heavily-watched favourite can&rsquo;t swallow the
+          whole row, and the sources you paid for (like AI web search) always
+          reach it.
+        </p>
+      </div>
+      {picks.length > 0 && (sources.size > 0 || seedTitles.size > 0) && (
+        <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
+          In this row, {picks.length} pick{picks.length === 1 ? "" : "s"} came
+          from{" "}
+          <span className="font-medium text-foreground">
+            {sources.size} source{sources.size === 1 ? "" : "s"}
+          </span>
+          {seedTitles.size > 0 && (
+            <>
+              {" "}
+              and{" "}
+              <span className="font-medium text-foreground">
+                {seedTitles.size} different title
+                {seedTitles.size === 1 ? "" : "s"} you watched
+              </span>
+            </>
+          )}
+          {" — "}spread across your tastes, not stacked on one.
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground/80">
+        No AI decides this order — it&rsquo;s all plain, inspectable code.
+      </p>
+    </div>
+  );
 }
 
 // ── Stage 4: delivered picks, with reasons ────────────────────────────────────

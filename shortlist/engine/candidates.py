@@ -43,7 +43,8 @@ DEFAULT_SOURCES = ("tmdb_similar",)
 _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
 _LLM_WEB_K = 20  # how many titles the web-search LLM proposes (each resolved to TMDB, then verified)
 _TRACE_SEEDS_SAMPLE = 12  # per source, how many seeds' queries to record in the trace (display only)
-_TRACE_RETURNS_SAMPLE = 8  # per seed, how many returned titles to record in the trace (display only)
+_TRACE_RETURNS_SAMPLE = 25  # per seed, how many returned titles to record in the trace (display only —
+# the UI shows the first few and lets you expand the rest, so this is the ceiling on what "expand" reveals)
 
 
 @dataclass
@@ -420,6 +421,11 @@ def gather_candidates(
             # so a hallucinated title simply resolves to nothing rather than reaching a row.
             resolved: list[str] = []
             unresolved: list[str] = []
+            # Each resolved proposal WITH its tmdb_id + media, so the disposition pass can mark whether it
+            # made this library's shortlist (kept) or fell out (already watched / not in library / lost the
+            # ranking cut) — the same fate every TMDB/Trakt return carries. `resolved`/`unresolved` stay as
+            # bare labels for the "hallucinated, no match" strike-through; this is the richer join key.
+            proposals: list[dict] = []
             for rec in web_recommendations(
                 curator,
                 search,
@@ -436,11 +442,13 @@ def gather_candidates(
                 if found:
                     add(found, media_type, "llm_web")
                     resolved.append(_rec_label(rec))
+                    proposals.append({"title": _rec_label(rec), "tmdb_id": int(found["id"]), "media": media_type.value})
                 else:
                     unresolved.append(_rec_label(rec))  # proposed but no TMDB match — a likely hallucination
             web = stats.trace.setdefault("web", {})
             web["resolved"] = resolved
             web["unresolved"] = unresolved
+            web["proposals"] = proposals
         except Exception as e:
             failures["llm_web"] = f"{type(e).__name__}: {e}"
             logger.warning("llm_web source failed ({}); continuing with the other sources", type(e).__name__)

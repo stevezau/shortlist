@@ -304,6 +304,33 @@ class TestRun:
         assert [p.title for p in user_report.picks] == ["Top Rated"]
         assert user_report.picks[0].reason == "Popular on this server"
 
+    def test_cold_start_files_a_trace_so_the_how_we_picked_button_appears(self, ctx: EngineContext, mock_plextv):
+        # A cold user used to file picks but NO trace, so the run page showed no "How we picked" button
+        # and they read as skipped (the reported Cassie bug). The cold path must file a history stage
+        # (their thin watches, no seeds — nothing was searched) plus a synthetic cold_start gather.
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.history_source.fetch.return_value = [make_watched("Only One")]
+        ctx.history_source.fetch.side_effect = None
+        ctx.plex.top_rated.return_value = [(50, fake_media_item(1, "Top Rated", tmdb_id=50))]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        trace = report.users[0].trace
+        assert trace, "a cold user must file a trace — has_trace gates the 'How we picked' button"
+        # History stage present with the honest full count, and NO seeds (nothing was searched from them).
+        assert trace["history"]["total"] == 1
+        assert trace["seeds"] == []
+        # Exactly one synthetic cold_start gather, labelled by media, contributing the delivered picks.
+        gathers = trace["gathers"]
+        assert [g["pool"] for g in gathers] == ["movie · cold_start"]
+        assert gathers[0]["sources"][0] == {
+            "source": "cold_start",
+            "status": "ok",
+            "contributed": 1,
+            "detail": "",
+        }
+
     def test_dry_run_makes_zero_plex_writes(self, ctx: EngineContext, mock_plextv):
         ctx.config.dry_run = True
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)

@@ -310,6 +310,14 @@ def _stamp_disposition(
         if tally:
             source["disposition"] = tally
 
+    # The web-search source records its proposals under trace["web"], not as per-seed `queries`, so it
+    # needs the same fate stamp separately: which AI-proposed titles made this library's shortlist vs
+    # fell out. Hallucinations (no TMDB match) never reach `proposals`, so they carry no fate — the UI
+    # still strikes them through from the `unresolved` list.
+    for proposal in gather_stats.trace.get("web", {}).get("proposals", []):
+        pmedia = MediaType.SHOW if proposal.get("media") == "show" else MediaType.MOVIE
+        proposal["fate"] = fate_of(int(proposal.get("tmdb_id") or 0), pmedia)
+
 
 def row_library_index(
     ctx: EngineContext,
@@ -434,6 +442,48 @@ def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats, *, 
     report.exa_cache_hits += stats.exa_cache_hits
     if stats.trace:
         report.trace.setdefault("gathers", []).append({"pool": pool_label or "", **stats.trace})
+
+
+def _library_resolvers(ctx: EngineContext) -> tuple[Callable[[WatchedItem], str], Callable[[object], str]]:
+    """Two lookups mapping a watch / a seed to the display NAME of the Plex library it lives in.
+
+    Both are built from data the run already holds — no extra Plex reads. A server can have several
+    movie or TV libraries with custom names, so the trace groups by real library, not media type
+    alone (a "Movies" and a "4K Movies" library must not collapse into one). Returns ``("", "")``
+    resolvers for anything unknown, which the UI falls back to a media-type label for.
+    """
+    section_titles = {str(s.key): getattr(s, "title", "") or "" for s in ctx.delivery_sections}
+    rating_key_to_section = _sections_of(ctx, [])  # ratingKey -> section key, across all libraries
+    tmdb_to_section = {  # tmdb_id -> section key (first library holding it; good enough for display)
+        tmdb_id: str(section_key) for section_key, index in ctx.section_index.items() for tmdb_id in index
+    }
+
+    def library_of_watch(item: WatchedItem) -> str:
+        return section_titles.get(rating_key_to_section.get(item.rating_key or -1, ""), "")
+
+    def library_of_seed(s) -> str:
+        return section_titles.get(tmdb_to_section.get(s.tmdb_id, ""), "")
+
+    return library_of_watch, library_of_seed
+
+
+def _record_cold_start_trace(report: UserRunReport, picks: list[Pick]) -> None:
+    """File a minimal search stage for a COLD-START user: no TMDB/Trakt search ran, so the trace has
+    no gathers — but without at least one it would be empty, the run page would show no "How we
+    picked" button, and a cold user would look like they were skipped (they weren't). One synthetic
+    ``cold_start`` source per media kind records what was pulled, so each library tab shows its own
+    "Popular on this server" step. The delivered-picks stage shows the titles themselves.
+    """
+    counts: dict[MediaType, int] = {}
+    for pick in picks:
+        counts[pick.media_type] = counts.get(pick.media_type, 0) + 1
+    for kind, count in counts.items():
+        report.trace.setdefault("gathers", []).append(
+            {
+                "pool": f"{kind.value} · cold_start",
+                "sources": [{"source": "cold_start", "status": "ok", "contributed": count, "detail": ""}],
+            }
+        )
 
 
 _TRACE_HISTORY_SAMPLE = 40  # most recent watches to record in the trace (display only — full count is in counts)
@@ -685,12 +735,42 @@ def _run_user(
             _record_gather(user_report, gather_stats, pool_label=pool_label)
         return pool_cache[key]
 
+    resolve = _rating_key_resolver(seed_index)
+    # The watched breakdown (every watched movie; each show's watched-vs-total episode counts as Plex
+    # records them for this user, marks included — one WatchedItem per title, no per-play accumulation).
+    # Filled for BOTH branches: non-cold pools read it to exclude finished titles, and either branch's
+    # trace shows "watched N movies / M shows" — honest even for a thin cold-start history.
+    for item in user.history:
+        tid = item.tmdb_id if item.tmdb_id is not None else resolve(item)
+        if tid is None:
+            continue
+        if item.media_type is MediaType.MOVIE:
+            watched_movies.add(tid)
+        else:
+            watched_shows[tid] = (item.viewed_leaf_count or item.watch_count, item.leaf_count)
+    library_of_watch, library_of_seed = _library_resolvers(ctx)
+
     if cold:
         # Enough picks for the LARGEST row this user is in; each row then takes its own k.
         base_cold = _cold_start_picks(ctx, user, cfg, k=max(spec.size for spec in specs))
         user_report.status = "cold_start"
+        # File the trace even though no TMDB/Trakt search ran: their (thin) watches as the first stage —
+        # NO seeds, because nothing was searched from them (the point of cold start) — and a synthetic
+        # cold_start search stage. Without this the trace is empty, the run page shows no "How we picked"
+        # button, and a cold user reads as skipped when they weren't (the reported Cassie bug).
+        _record_history_trace(
+            user_report,
+            user.history,
+            specs,
+            lambda _spec: [],
+            watched_movies,
+            watched_shows,
+            library_of_watch=library_of_watch,
+            library_of_seed=library_of_seed,
+        )
+        _record_cold_start_trace(user_report, base_cold)
+        _pipeline._emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": 0})
     else:
-        resolve = _rating_key_resolver(seed_index)
         seed_cache: dict[tuple, list] = {}
 
         def seeds_for(spec: RowSpec) -> list:
@@ -706,35 +786,9 @@ def _run_user(
         # library" case when they have one, so the number still means "how much of their history fed
         # tonight's rows" rather than one arbitrary row's slice.
         user_report.counts.seeds = max((len(seeds_for(spec)) for spec in specs), default=0)
-        # Full watched breakdown (not just the seeds): every watched movie, and each show's watched-
-        # vs-total episode counts as Plex records them for this user (marks included). One WatchedItem
-        # per title, so a show appears once — no per-play accumulation.
-        for item in user.history:
-            tid = item.tmdb_id if item.tmdb_id is not None else resolve(item)
-            if tid is None:
-                continue
-            if item.media_type is MediaType.MOVIE:
-                watched_movies.add(tid)
-            else:
-                watched_shows[tid] = (item.viewed_leaf_count or item.watch_count, item.leaf_count)
         # The finished-title set, derived once: read by pools_for (0% hard-exclude) and the per-row
         # watched cap (>0). Mutated in place so the pools_for closure sees it.
         watched_titles |= _watched_titles(watched_movies, watched_shows, cfg.watched_show_pct)
-        # Resolve each watch/seed to the display name of the Plex library it lives in, so the trace can
-        # group by REAL library (a server can have several movie or TV libraries, custom-named). Both
-        # maps are built from data the run already holds — no extra Plex reads.
-        section_titles = {str(s.key): getattr(s, "title", "") or "" for s in ctx.delivery_sections}
-        rating_key_to_section = _sections_of(ctx, [])  # ratingKey -> section key, across all libraries
-        tmdb_to_section = {  # tmdb_id -> section key (first library holding it; good enough for display)
-            tmdb_id: str(section_key) for section_key, index in ctx.section_index.items() for tmdb_id in index
-        }
-
-        def library_of_watch(item: WatchedItem) -> str:
-            return section_titles.get(rating_key_to_section.get(item.rating_key or -1, ""), "")
-
-        def library_of_seed(s) -> str:
-            return section_titles.get(tmdb_to_section.get(s.tmdb_id, ""), "")
-
         _record_history_trace(
             user_report,
             user.history,
