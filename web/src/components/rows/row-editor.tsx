@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { LibraryPicker } from "@/components/rows/library-picker";
@@ -82,6 +83,7 @@ export function RowEditor({
   users: User[];
   onClose: () => void;
 }) {
+  const navigate = useNavigate();
   const save = useSaveCollection();
   const [input, setInput] = useState<CollectionInput>(
     collection ? toInput(collection) : blankInput(),
@@ -117,13 +119,26 @@ export function RowEditor({
         </DialogHeader>
 
         <div className="space-y-5 py-2">
-          <div className="space-y-1">
-            <p className="text-sm font-medium">Name</p>
-            <p className="text-sm text-muted-foreground">
-              {input.name || "Picked for You"} — use the{" "}
-              <span className="font-medium">Rename</span> button on the row card
-              to change it (it renames all collections on Plex immediately).
-            </p>
+          <div className="space-y-2">
+            <Label>Name</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                value={input.name || "Picked for You"}
+                disabled
+                className="flex-1 opacity-70"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  if (collection) navigate(`/rows/${collection.id}/rename`);
+                }}
+              >
+                Rename
+              </Button>
+            </div>
           </div>
 
           <PosterField

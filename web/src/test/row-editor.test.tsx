@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowEditor } from "@/components/rows/row-editor";
@@ -80,9 +81,11 @@ function renderEditor(collection: Collection, users: User[] = []) {
     defaultOptions: { queries: { retry: false } },
   });
   render(
-    <QueryClientProvider client={client}>
-      <RowEditor collection={collection} users={users} onClose={() => {}} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <RowEditor collection={collection} users={users} onClose={() => {}} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -145,11 +148,10 @@ describe("RowEditor — the default row's name", () => {
 
   it("shows the current name read-only and points to the Rename button", () => {
     renderEditor(defaultRow());
-    // The name is displayed as text, not an editable input — renaming is via a dedicated button.
-    expect(
-      screen.getByText(/✨ \{library_name\} Picked for You/),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/Rename/)).toBeInTheDocument();
+    // The name is in a disabled input — renaming happens via the dedicated button.
+    const input = screen.getByDisplayValue("✨ {library_name} Picked for You");
+    expect(input).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Rename/ })).toBeInTheDocument();
   });
 });
 
