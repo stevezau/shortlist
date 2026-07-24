@@ -39,7 +39,10 @@ export function RowRenamePage() {
           apiUrl(`/api/collections/${collectionId}/rename`),
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "x-shortlist-csrf": "1",
+            },
             credentials: "include",
             body: JSON.stringify({
               name_template: collection!.name_template || collection!.name,
