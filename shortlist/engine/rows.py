@@ -117,16 +117,16 @@ def _media_filter(items: list, media: str) -> list:
 
 
 # How many episodes watched = the person is clearly watching this show, not discovering it. The
-# ``show_pct`` fraction alone is unreachable for a long RETURNING series: it keeps adding episodes,
-# so watched/total never hits 80% even after 160 plays (SFLIX/MooHouse Gold Rush 160/226 = 71%, and
-# even the owner's own watched count topped out at 173/226; 2026-07-20). A per-show floor catches those.
+# ``show_pct`` fraction alone is unreachable for a long RETURNING series: it keeps adding episodes, so
+# watched/total never hits 80% even for someone 160 episodes deep (SFLIX/MooHouse Gold Rush 160/226 =
+# 71%; 2026-07-20). A per-show floor catches those — someone that far in has plainly seen it, not
+# sampled it, however many unaired-then-aired seasons pushed the total up.
 #
 # The floor SCALES with series length rather than being flat. 3 episodes = "given it a real try" for a
-# limited series (issue #12: mark-as-watched doesn't appear in play history, only the PMS database sees
-# it and reconcile is manual, so plays undercount — a flat 3 was needed to stop in-progress shows
-# recurring). But 3 of a 200-episode run is 1.5%, still plainly a discovery. ``_ENGAGED_FRACTION`` lifts
-# the floor toward ~15% of length for long shows (200 eps -> 30) while ``_ENGAGED_EPISODES`` holds the
-# 3-episode minimum for short ones.
+# limited series; but 3 of a 200-episode run is 1.5%, still plainly a discovery. ``_ENGAGED_FRACTION``
+# lifts the floor toward ~15% of length for long shows (200 eps -> 30) while ``_ENGAGED_EPISODES`` holds
+# the 3-episode minimum for short ones. The counts are Plex's own per-user ``viewedLeafCount`` (marks
+# included), so this no longer has to over-count to compensate for invisible marks (was issue #12).
 _ENGAGED_EPISODES = 3
 _ENGAGED_FRACTION = 0.15
 
@@ -138,8 +138,7 @@ def _engaged_floor(total: int) -> float:
 
 def _watched_titles(
     watched_movies: set[int],
-    show_plays: dict[int, int],
-    episode_counts: dict[int, int],
+    watched_shows: dict[int, tuple[int, int | None]],
     show_pct: float,
 ) -> set[tuple[int, MediaType]]:
     """The (tmdb_id, media_type) titles this person has already watched — the ones a watched-cap counts.
@@ -149,13 +148,17 @@ def _watched_titles(
     series that keeps airing never reaches the fraction, so the floor is what catches a person 160
     episodes deep; scaling it with length stops 3 episodes of a 200-episode run counting as finished.
     For a short series the ``show_pct`` fraction is the tighter bar, so ``min`` keeps it strict there.
-    A show whose episode count is unknown is counted as watched rather than risk re-surfacing one they've
-    worked through.
+
+    Args:
+        watched_movies: tmdb_ids of watched movies (each is finished on its own).
+        watched_shows: ``tmdb_id -> (viewed_leaf_count, leaf_count)`` — the user's own watched-episode
+            count and the show's total, straight from Plex. A show whose total is unknown (None/0) is
+            counted as watched rather than risk re-surfacing one they've worked through.
+        show_pct: The finished fraction (0..1).
     """
     finished: set[tuple[int, MediaType]] = {(tid, MediaType.MOVIE) for tid in watched_movies}
-    for tid, plays in show_plays.items():
-        total = episode_counts.get(tid)
-        if not total or plays >= min(total * show_pct, _engaged_floor(total)):
+    for tid, (viewed, total) in watched_shows.items():
+        if not total or viewed >= min(total * show_pct, _engaged_floor(total)):
             finished.add((tid, MediaType.SHOW))
     return finished
 
@@ -442,7 +445,7 @@ def _record_history_trace(
     specs: list[RowSpec],
     seeds_for,
     watched_movies: set[int],
-    show_plays: dict[int, int],
+    watched_shows: dict[int, tuple[int, int | None]],
     library_of_watch=lambda _item: "",
     library_of_seed=lambda _seed: "",
 ) -> None:
@@ -456,6 +459,15 @@ def _record_history_trace(
     """
     recent = sorted(history, key=lambda i: i.watched_at, reverse=True)[:_TRACE_HISTORY_SAMPLE]
     seeds = max((seeds_for(spec) for spec in specs), key=len, default=[])
+    # True per-library watched totals over the FULL history — NOT the recent sample. The sample is
+    # time-ordered and capped, so a heavy-TV watcher's Movies tab would sample only a handful of recent
+    # movies; and a per-MEDIA total can't tell two same-type libraries apart (a "Movies" and a "4K
+    # Movies" library would show the same number). Each watch is resolved to its library and distinct
+    # titles are counted per media type (a show's episodes share one title, so they count once).
+    by_library: dict[str, dict[str, set]] = {}
+    for item in history:
+        bucket = by_library.setdefault(library_of_watch(item), {"movie": set(), "show": set()})
+        bucket[item.media_type.value].add(item.tmdb_id if item.tmdb_id is not None else item.title)
     report.trace["history"] = {
         "total": len(history),
         "recent": [
@@ -469,7 +481,10 @@ def _record_history_trace(
             for i in recent
         ],
         "watched_movies": len(watched_movies),
-        "watched_shows": len(show_plays),
+        "watched_shows": len(watched_shows),
+        "watched_by_library": {
+            lib: {"movie": len(b["movie"]), "show": len(b["show"])} for lib, b in by_library.items()
+        },
     }
     report.trace["seeds"] = [
         {
@@ -588,10 +603,11 @@ def _run_user(
     pool_cache: dict[tuple, Pool] = {}
     pool_failures: dict[tuple, str] = {}  # pool key -> why every source for it failed
     # This person's watched breakdown, filled in the non-cold branch and read by pools_for: watched
-    # movie tmdb_ids, and show tmdb_id -> episode-play count (for the finished-show fraction). The
-    # derived set of FINISHED (tmdb_id, media_type) titles is computed once the breakdown is in.
+    # movie tmdb_ids, and show tmdb_id -> (viewed episodes, total episodes) straight from Plex's own
+    # per-user counts (for the finished-show fraction). The derived set of FINISHED (tmdb_id,
+    # media_type) titles is computed once the breakdown is in.
     watched_movies: set[int] = set()
-    show_plays: dict[int, int] = {}
+    watched_shows: dict[int, tuple[int, int | None]] = {}
     watched_titles: set[tuple[int, MediaType]] = set()
 
     def effective_watched_pct(spec: RowSpec) -> float:
@@ -684,8 +700,9 @@ def _run_user(
         # library" case when they have one, so the number still means "how much of their history fed
         # tonight's rows" rather than one arbitrary row's slice.
         user_report.counts.seeds = max((len(seeds_for(spec)) for spec in specs), default=0)
-        # Full watched breakdown (not just the seeds): every watched movie, and each show's
-        # episode-play count. History is already completion-filtered, so this is meaningful watches.
+        # Full watched breakdown (not just the seeds): every watched movie, and each show's watched-
+        # vs-total episode counts as Plex records them for this user (marks included). One WatchedItem
+        # per title, so a show appears once — no per-play accumulation.
         for item in user.history:
             tid = item.tmdb_id if item.tmdb_id is not None else resolve(item)
             if tid is None:
@@ -693,10 +710,10 @@ def _run_user(
             if item.media_type is MediaType.MOVIE:
                 watched_movies.add(tid)
             else:
-                show_plays[tid] = show_plays.get(tid, 0) + 1
+                watched_shows[tid] = (item.viewed_leaf_count or item.watch_count, item.leaf_count)
         # The finished-title set, derived once: read by pools_for (0% hard-exclude) and the per-row
         # watched cap (>0). Mutated in place so the pools_for closure sees it.
-        watched_titles |= _watched_titles(watched_movies, show_plays, ctx.episode_counts, cfg.watched_show_pct)
+        watched_titles |= _watched_titles(watched_movies, watched_shows, cfg.watched_show_pct)
         # Resolve each watch/seed to the display name of the Plex library it lives in, so the trace can
         # group by REAL library (a server can have several movie or TV libraries, custom-named). Both
         # maps are built from data the run already holds — no extra Plex reads.
@@ -718,7 +735,7 @@ def _run_user(
             specs,
             seeds_for,
             watched_movies,
-            show_plays,
+            watched_shows,
             library_of_watch=library_of_watch,
             library_of_seed=library_of_seed,
         )

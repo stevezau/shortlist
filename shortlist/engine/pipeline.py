@@ -90,9 +90,6 @@ class EngineContext:
     # section key -> {tmdb_id: ratingKey}: per-library index so a row delivered into a specific
     # library uses that library's ratingKeys. Built by _build_indexes each run.
     section_index: dict[str, dict[int, int]] = field(default_factory=dict)
-    # tmdb_id -> total episode count (leafCount) for every show, so the watched-filter can tell a
-    # finished show from a sampled one or one with a new season. Built by _build_indexes.
-    episode_counts: dict[int, int] = field(default_factory=dict)
     # Every library rows may be delivered to (all movie + show sections), for resolving a row's
     # library_keys to real sections. Built by _build_indexes each run.
     delivery_sections: list = field(default_factory=list)
@@ -241,31 +238,27 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 INDEX_CACHE_TTL_S = 7 * 24 * 3600
 
 
-def _library_index(ctx: EngineContext, section) -> tuple[dict[int, int], dict[int, int]]:
-    """This section's ``(index, episodes)`` — from the cross-run cache when the library is unchanged.
+def _library_index(ctx: EngineContext, section) -> dict[int, int]:
+    """This section's ``tmdb_id -> ratingKey`` index — from the cross-run cache when unchanged.
 
     Keyed on the section + a cheap change signature (item count + last-updated); a signature change
     (a title added/removed/edited) misses and re-scans. JSON object keys are strings, so tmdb ids
     round-trip through ``str()``/``int()``. A missing signature or NullCache just always re-scans.
     """
     signature = ctx.plex.section_signature(section)
-    cache_key = f"index:{section.key}:{signature}" if signature else None
+    # v2 key: the cached payload dropped the old {"index", "episodes"} envelope for the bare index
+    # dict. A new prefix makes any old-format entry a clean miss (re-scan) instead of a parse crash.
+    cache_key = f"index2:{section.key}:{signature}" if signature else None
     if cache_key and (cached := ctx.index_cache.get(cache_key)):
-        data = json.loads(cached)
-        index = {int(k): v for k, v in data["index"].items()}
-        episodes = {int(k): v for k, v in data["episodes"].items()}
+        index = {int(k): v for k, v in json.loads(cached).items()}
         _emit(ctx, section.title, "indexed (cached)", {"items": len(index)})
-        return index, episodes
+        return index
     _emit(ctx, section.title, "indexing", {})
-    index, episodes = ctx.plex.build_library_index(section)
+    index = ctx.plex.build_library_index(section)
     if cache_key:
-        payload = {
-            "index": {str(k): v for k, v in index.items()},
-            "episodes": {str(k): v for k, v in episodes.items()},
-        }
-        ctx.index_cache.set(cache_key, json.dumps(payload), INDEX_CACHE_TTL_S)
+        ctx.index_cache.set(cache_key, json.dumps({str(k): v for k, v in index.items()}), INDEX_CACHE_TTL_S)
     _emit(ctx, section.title, "indexed", {"items": len(index)})
-    return index, episodes
+    return index
 
 
 def _build_indexes(
@@ -299,7 +292,6 @@ def _build_indexes(
     seed_index: dict[int, int] = {}
     library_index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
     section_index: dict[str, dict[int, int]] = {}
-    episode_counts: dict[int, int] = {}
     # Only when there is someone to recommend to. The indexes walk every item in every TARGETED
     # library, and are read only inside _run_user — so with no users this is thousands of PMS reads
     # thrown away, in front of the sweep, on the one path (a closed gate) where the sweep is the entire
@@ -322,15 +314,13 @@ def _build_indexes(
         index_sections = []
     for section in index_sections:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-        index, episodes = _library_index(ctx, section)
-        episode_counts.update(episodes)
+        index = _library_index(ctx, section)
         seed_index.update({rating_key: tmdb_id for tmdb_id, rating_key in index.items()})
         # Every library of a deliverable type is both a recommendation source (union) and a possible
         # delivery target (its own per-section index) — a row picks which ones under library_keys.
         library_index[kind].update(index)
         section_index[section.key] = index
     ctx.section_index = section_index
-    ctx.episode_counts = episode_counts
     ctx.delivery_sections = index_sections
     return seed_index, library_index
 

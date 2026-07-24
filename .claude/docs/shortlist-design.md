@@ -80,11 +80,12 @@ Animated mock of a Plex Home screen gaining a "✨ Picked for You" row. One butt
 
 ### Step 2 — History source
 
+- Watch history is read straight from the PMS per user via the share token (see engine step 1), so
+  it needs no configuration on this step.
 - Auto-detect **Tautulli** (common hosts/ports probe + manual URL/API-key fields; validated with a
-  test call). Copy: _"Tautulli gives Shortlist deeper, more reliable watch history. Optional."_
-- Fallback (always available, zero config): Plex's own history API (`/status/sessions/history/all`
-  per accountID with the owner token — works for invited users, verified in Curatarr's code and the
-  May audit).
+  test call), now used only for the friendlier display names it knows people by. Copy: _"Tautulli
+  supplies the friendlier display names it knows people by. Optional."_ Skip it and Shortlist uses
+  each account's Plex username.
 
 ### Step 3 — Choose your curator (LLM)
 
@@ -231,9 +232,11 @@ users are independent (`try/except` per user), shared caches across the loop.
 ```
 0. LIBRARY INDEX (once/run)  plexapi → {tmdb_id → rating_key} per section; cached in SQLite,
                              invalidated by section.totalSize change or 24h TTL
-1. HISTORY                   Tautulli get_history(user_id) [preferred] | Plex history API [fallback]
-                             → last ~30 "meaningful" watches (completion ≥ threshold), recency-weighted
-                             negative signals: dropped shows (started, <25% complete, abandoned)
+1. HISTORY                   ShareTokenWatchSource: read the PMS AS each user with the per-user server
+                             token plex.tv mints for their share (owner → admin token; managed w/o a
+                             share → switch+exchange). library/sections/{key}/all?unwatched=0 →
+                             their COMPLETE watched set incl. mark-as-watched (viewCount/viewedLeafCount),
+                             one row per distinct title; recency-weighted seeds
 2. CANDIDATES                TMDB /movie|tv/{id}/recommendations + /similar per seed → pooled,
                              tagged with seed; cached (tmdb_id, endpoint) 7 days
 3. FILTER                    ∩ library index · unwatched by this user · minus user's excluded

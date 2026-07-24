@@ -13,7 +13,9 @@ import contextlib
 import os
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import requests
 from loguru import logger
@@ -24,7 +26,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from shortlist.engine.clients import http_retry
-from shortlist.engine.models import MediaType, OwnedRow
+from shortlist.engine.models import MediaType, OwnedRow, WatchedItem
 
 # Label restrictions only apply on Home/Recommended/Related from this PMS build (PM-5174).
 MIN_PMS_VERSION = (1, 43, 2, 10687)
@@ -234,30 +236,22 @@ class PlexClient:
             by_type.setdefault(kind, section)
         return by_type
 
-    def build_library_index(self, section: LibrarySection) -> tuple[dict[int, int], dict[int, int]]:
-        """Scan a section once, returning ``(index, episodes)``.
+    def build_library_index(self, section: LibrarySection) -> dict[int, int]:
+        """Scan a section once, returning ``tmdb_id -> ratingKey`` for every TMDB-identified item.
 
-        * ``index`` — ``tmdb_id -> ratingKey`` for every TMDB-identified item.
-        * ``episodes`` — ``tmdb_id -> total episode count`` (``leafCount``); populated only for shows
-          (movies have no leafCount). The watched-filter uses it to tell a finished show from one
-          you've only sampled or that just got a new season (which grows the count).
-
-        Returned rather than mutating a passed-in dict so the whole result is a single cacheable
-        value (see the cross-run library-index cache in the pipeline).
+        The finished-show fraction no longer needs a total episode count here — the share-token watch
+        read carries each user's own ``viewedLeafCount``/``leafCount`` (marks included), so the total is
+        read per user rather than reconstructed from a server-wide index.
         """
         index: dict[int, int] = {}
-        episodes: dict[int, int] = {}
         for item in section.all():
             tmdb_id = _tmdb_guid(item)
             if tmdb_id is not None:
                 index[tmdb_id] = item.ratingKey
-                leaf = getattr(item, "leafCount", None)
-                if leaf:
-                    episodes[tmdb_id] = int(leaf)
         logger.debug(
             "library index for '{}': {} of {} items have TMDB ids", section.title, len(index), section.totalSize
         )
-        return index, episodes
+        return index
 
     def section_signature(self, section: LibrarySection) -> str | None:
         """A cheap fingerprint of a section's contents for the cross-run index cache — its item count
@@ -646,90 +640,112 @@ class PlexClient:
         r.raise_for_status()
         return r.json().get("MediaContainer", {}).get("Hub", []) or []
 
-    def system_account_id(
-        self, plex_account_id: int, username: str, *, exclude_ids: frozenset[int] = frozenset()
-    ) -> int:
-        """The id PMS files this person's watch history under, which is not always their plex.tv id.
+    # A watched-titles read for one section, paged. Plex defaults to 50 unless X-Plex-Container-Size
+    # says otherwise; a heavy watcher has thousands of watched titles, so we page rather than trust a
+    # single response to hold them all (a silent cap here would hide older watches from the
+    # already-watched filter — the very 200-row bug the share-token read exists to end).
+    _WATCHED_PAGE = 500
 
-        PMS keeps its own account table (``GET /accounts``). Shared and Home users appear in it under
-        their plex.tv account id, so they resolve to themselves and nothing changes. The server OWNER
-        is the exception: PMS knows the admin as a LOCAL account, so `history?accountID=<plex.tv id>`
-        matches no rows and the owner's row would be built from an empty history — a personalized row
-        that is silently generic (issue #1).
+    def watched_titles(self, section_key: str | int, media_type: MediaType, token: str) -> list[WatchedItem]:
+        """Every title in one library this user has watched, read from the PMS AS that user.
 
-        Recorded from a live 80-account server (SFLIX, 2026-07-21, see `tests/fixtures/`): the owner's
-        plex.tv id appears NOWHERE in `/accounts`, their local row is `id=1` named with their plex.tv
-        ``username`` (not their ``title``), and that id returns 68 history rows where the plex.tv id
-        returns 0. Every other account is listed under its plex.tv id.
+        ``unwatched=0`` filters to ``viewCount>0`` — Plex's own binary "watched" flag, which INCLUDES a
+        mark-as-watched (the playback-history API never returns marks; issue #12). ``includeGuids=1``
+        inlines each item's ``tmdb://`` GUID, so a title resolves to its tmdb_id here with no dependency
+        on the run's library index — the same on a sync as on a run (live-verified 2026-07-24: 100% of a
+        friend's watched movies carried an inline TMDB GUID).
 
-        Resolution is by identity, never by position — a hardcoded "the owner is id 1" would build a
-        private row out of whatever that slot happened to hold. An exact id match wins; otherwise the
-        name must match EXACTLY ONE account, because a Home profile can be given any local name the
-        owner likes and two candidates mean we cannot tell which is the person. Anything ambiguous
-        falls back to the plex.tv id, which yields an honest cold-start row rather than someone
-        else's viewing history.
+        A show is returned once, at the show level, carrying the user's own ``viewedLeafCount`` /
+        ``leafCount`` — so the finished-show fraction is Plex's, not a reconstruction from play counts,
+        and a bulk-marked season is counted correctly. Movies carry ``viewCount`` as ``watch_count``.
 
         Args:
-            plex_account_id: The account's plex.tv id — what every other lookup uses.
-            username: Their plex.tv username, which is what PMS names the local row after.
-            exclude_ids: Account ids known to belong to OTHER people (the rest of the roster). PMS
-                lists everyone but the owner under their plex.tv id, so any candidate that is
-                somebody else's account is by definition not the owner's local row.
+            section_key: The library section key to read.
+            media_type: Which type the section holds — selects Plex's ``type`` (1=movie, 2=show).
+            token: The server-scoped ``X-Plex-Token`` to read as (this user's, not the owner's) — a
+                live per-user credential, never logged (rule 9).
 
         Returns:
-            The account id to pass to ``history_for_account``.
-
-        Raises:
-            RuntimeError: If PMS's account list cannot be read. Returning the plex.tv id instead
-                would come back with ZERO rows, which a caller cannot tell apart from "this person
-                has never watched anything" — and an incremental sync would bank that empty answer
-                and never backfill.
+            One WatchedItem per distinct watched title, newest watch first is NOT guaranteed (callers
+            sort). Titles with no ``tmdb://`` GUID are dropped — they can never match a candidate.
         """
-        try:
-            accounts = self._server.systemAccounts()
-        except Exception as e:
-            raise RuntimeError(f"could not read PMS accounts to locate {username or plex_account_id}: {e}") from e
-        if any(a.id == plex_account_id for a in accounts):
-            return plex_account_id
-        wanted = (username or "").strip().lower()
-        # id 0 is PMS's "Local" bucket — plays from clients that were never signed in, belonging to
-        # nobody. It is never a person, and it is name-less, so it must never win a name match.
-        matches = (
-            [
-                a.id
-                for a in accounts
-                if a.id > 0 and a.id not in exclude_ids and (a.name or "").strip().lower() == wanted
-            ]
-            if wanted
-            else []
+        plex_type = 1 if media_type is MediaType.MOVIE else 2
+        items: list[WatchedItem] = []
+        start = 0
+        while True:
+            root = self._read_watched_page(section_key, plex_type, token, start)
+            entries = list(root)
+            for el in entries:
+                item = self._watched_item(el, media_type)
+                if item is not None:
+                    items.append(item)
+            total = int(root.get("totalSize") or root.get("size") or len(entries))
+            start += len(entries)
+            # Stop when this page was short (fewer than we asked for) or we've reached the reported
+            # total. An empty page also stops us — never loop forever on a server that ignores paging.
+            if not entries or start >= total:
+                break
+        logger.debug("watched read: section {} ({}) -> {} titles", section_key, media_type.value, len(items))
+        return items
+
+    def _read_watched_page(self, section_key: str | int, plex_type: int, token: str, start: int) -> ET.Element:
+        """One page of a section's watched titles as XML, read as ``token``. Retries transient reads."""
+        # Query params rather than plexapi: we need the raw per-user response as a specific token, and
+        # includeGuids inlines the TMDB id so no library index is consulted. includeToken=False keeps
+        # the OWNER's token out of the URL — we set the per-user token in the header instead (rule 9).
+        url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
+        r = http_retry.get(
+            url,
+            params={"type": plex_type, "unwatched": 0, "includeGuids": 1},
+            headers={
+                "X-Plex-Token": token,
+                "X-Plex-Container-Start": str(start),
+                "X-Plex-Container-Size": str(self._WATCHED_PAGE),
+            },
+            timeout=45,
         )
-        if len(matches) == 1:
-            logger.debug("{}: PMS files this account's history under id {}", username, matches[0])
-            return matches[0]
-        if len(matches) > 1:
-            logger.warning(
-                "{}: {} PMS accounts share this name — refusing to guess whose history is whose",
-                username,
-                len(matches),
-            )
-        else:
-            logger.warning(
-                "{} (plex.tv account {}) is not in this server's account list — history may come back empty",
-                username,
-                plex_account_id,
-            )
-        return plex_account_id
+        r.raise_for_status()
+        return ET.fromstring(r.text)
 
-    def history_for_account(self, account_id: int, *, since=None, max_results: int = 50000) -> list:
-        """Plex-native watch history for one account, full depth (used by the incremental sync).
-
-        The old 200-row cap hid a heavy watcher's older plays from the already-watched filter, so a
-        title watched thousands of plays ago got recommended again (SFLIX/MooHouse 'Hawking',
-        2026-07-20). ``since`` (a datetime) limits the pull to plays after that instant — the sync
-        passes each account's high-water mark so a run fetches only new events. The high ``max_results``
-        bounds a pathological account; plexapi pages internally to reach it.
-        """
-        kwargs: dict = {"maxresults": max_results, "accountID": account_id}
-        if since is not None:
-            kwargs["mindate"] = since
-        return self._server.history(**kwargs)
+    @staticmethod
+    def _watched_item(el: ET.Element, media_type: MediaType) -> WatchedItem | None:
+        """Build a WatchedItem from one ``<Video>``/``<Directory>`` element, or None if it has no TMDB id."""
+        tmdb_id: int | None = None
+        for guid in el.iter("Guid"):
+            gid = guid.get("id") or ""
+            if gid.startswith("tmdb://"):
+                tmdb_id = int(gid.removeprefix("tmdb://"))
+                break
+        if tmdb_id is None:
+            return None
+        last_viewed = el.get("lastViewedAt")
+        watched_at = (
+            datetime.fromtimestamp(int(last_viewed), tz=UTC) if last_viewed else datetime(1970, 1, 1, tzinfo=UTC)
+        )
+        year = el.get("year")
+        if media_type is MediaType.MOVIE:
+            return WatchedItem(
+                title=el.get("title") or "",
+                media_type=MediaType.MOVIE,
+                watched_at=watched_at,
+                tmdb_id=tmdb_id,
+                year=int(year) if year else None,
+                rating_key=int(el.get("ratingKey")) if el.get("ratingKey") else None,
+                watch_count=int(el.get("viewCount") or 1),
+            )
+        viewed_leaf = el.get("viewedLeafCount")
+        leaf = el.get("leafCount")
+        viewed_leaf_count = int(viewed_leaf) if viewed_leaf else 0
+        return WatchedItem(
+            title=el.get("title") or "",
+            media_type=MediaType.SHOW,
+            watched_at=watched_at,
+            tmdb_id=tmdb_id,
+            year=int(year) if year else None,
+            rating_key=int(el.get("ratingKey")) if el.get("ratingKey") else None,
+            # Episodes watched is the frequency signal for a show — a 50-episode binge weighs like 50
+            # movie plays (see WatchedItem.watch_count). Floor at 1: unwatched=0 guarantees >0 viewed.
+            watch_count=max(1, viewed_leaf_count),
+            viewed_leaf_count=viewed_leaf_count,
+            leaf_count=int(leaf) if leaf else None,
+        )

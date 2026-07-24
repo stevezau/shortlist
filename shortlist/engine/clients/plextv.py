@@ -119,6 +119,34 @@ class PlexTvClient:
                 return user
         raise LookupError(f"plex.tv account {plex_account_id} not found in users list")
 
+    def shared_server_tokens(self) -> dict[int, str]:
+        """``{plex_account_id: server-scoped accessToken}`` for every user this server is shared with.
+
+        plex.tv mints a per-user ``accessToken`` for each shared invite (``GET
+        /api/servers/{machine_id}/shared_servers``). Passed to the PMS as that user's ``X-Plex-Token``
+        it reads the library AS them — including their ``viewCount``/``viewedLeafCount`` and their
+        MARKS, which the playback-history API never returns (live-verified 2026-07-24: a MooHouse
+        mark-as-watched absent from 11,476 history rows was present via this token). This is how
+        Shortlist sees "already watched" for shared users without mounting the PMS database.
+
+        The owner is NOT in this list (they own the server, not shared to it) — read the owner's own
+        state with the admin token. Home users ARE included, so this one call covers the whole shared
+        roster; only a non-shared managed sub-account needs the switch path (`canary_server_token`).
+
+        The returned tokens are live per-user credentials (plex-safety rule 9): kept in memory for the
+        run, never logged, never persisted.
+        """
+        r = http_retry.get(
+            f"{PLEXTV}/api/servers/{self._machine_id}/shared_servers", headers=self._headers(), timeout=self._timeout
+        )
+        r.raise_for_status()
+        tokens: dict[int, str] = {}
+        for ss in ET.fromstring(r.text).iter("SharedServer"):
+            account_id, access_token = ss.get("userID"), ss.get("accessToken")
+            if account_id and access_token:
+                tokens[int(account_id)] = access_token
+        return tokens
+
     def update_user_filters(self, plex_account_id: int, fields: dict[str, str]) -> None:
         """PUT only the given filter fields (never rebuilds), adaptively throttled with 429 backoff.
 

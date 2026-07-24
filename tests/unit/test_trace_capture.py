@@ -165,7 +165,7 @@ class TestRecordHistoryTrace:
             [spec],
             seeds_for=lambda _spec: seeds,
             watched_movies={1, 2, 3},
-            show_plays={7: 4},
+            watched_shows={7: (4, 10)},
         )
 
         hist = report.trace["history"]
@@ -177,6 +177,34 @@ class TestRecordHistoryTrace:
         # Seeds strongest-first, with the weight rounded for display.
         assert [s["title"] for s in report.trace["seeds"]] == ["B", "A"]
         assert report.trace["seeds"][0]["weight"] == 0.9
+
+    def test_counts_true_distinct_watched_titles_per_library(self):
+        # Two movie libraries + a heavy-TV recent history: the per-library total must be exact per
+        # library (not a shared per-media number), and count DISTINCT titles (a binge counts once).
+        report = _report()
+        history = [
+            WatchedItem(title="Dune", media_type=MediaType.MOVIE, watched_at=datetime(2026, 7, 1, tzinfo=UTC)),
+            WatchedItem(title="Akira", media_type=MediaType.SHOW, watched_at=datetime(2026, 7, 2, tzinfo=UTC)),
+            # Same show watched twice (a binge) -> one distinct title.
+            WatchedItem(title="Akira", media_type=MediaType.SHOW, watched_at=datetime(2026, 7, 3, tzinfo=UTC)),
+            WatchedItem(title="Tron", media_type=MediaType.MOVIE, watched_at=datetime(2026, 7, 4, tzinfo=UTC)),
+        ]
+        library = {"Dune": "Movies", "Akira": "TV Shows", "Tron": "4K Movies"}
+
+        rows_mod._record_history_trace(
+            report,
+            history,
+            [_row_spec()],
+            seeds_for=lambda _spec: [],
+            watched_movies=set(),
+            watched_shows={},
+            library_of_watch=lambda item: library[item.title],
+        )
+
+        by_lib = report.trace["history"]["watched_by_library"]
+        assert by_lib["Movies"] == {"movie": 1, "show": 0}
+        assert by_lib["4K Movies"] == {"movie": 1, "show": 0}  # NOT merged with "Movies"
+        assert by_lib["TV Shows"] == {"movie": 0, "show": 1}  # binge counts once
 
     def test_records_the_real_library_name_for_each_watch_and_seed(self):
         # A server with two movie libraries: grouping by media type alone would wrongly merge them,
@@ -192,7 +220,7 @@ class TestRecordHistoryTrace:
             [_row_spec()],
             seeds_for=lambda _spec: seeds,
             watched_movies=set(),
-            show_plays={},
+            watched_shows={},
             library_of_watch=lambda item: libraries[item.title],
             library_of_seed=lambda s: libraries[s.title],
         )
@@ -205,7 +233,7 @@ class TestRecordHistoryTrace:
         spec = _row_spec()
 
         rows_mod._record_history_trace(
-            report, history, [spec], seeds_for=lambda _spec: [], watched_movies=set(), show_plays={}
+            report, history, [spec], seeds_for=lambda _spec: [], watched_movies=set(), watched_shows={}
         )
         assert report.trace["history"]["total"] == len(history)  # full count preserved
         assert len(report.trace["history"]["recent"]) == rows_mod._TRACE_HISTORY_SAMPLE  # sample bounded

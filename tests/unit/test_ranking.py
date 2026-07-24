@@ -163,7 +163,9 @@ class TestWatchedTitles:
     def _finished(self, movies, plays, episodes, pct=0.9):
         from shortlist.engine.rows import _watched_titles
 
-        return _watched_titles(set(movies), dict(plays), dict(episodes), pct)
+        # Plex gives per-show (viewed, total) counts; the old split plays/episodes dicts merge into that.
+        watched_shows = {tid: (viewed, episodes.get(tid)) for tid, viewed in plays.items()}
+        return _watched_titles(set(movies), watched_shows, pct)
 
     def test_counts_finished_movies_and_shows_but_not_partial(self):
         # movie 1 watched; show 10 finished (9 of 10 eps); show 20 partway (2 of 10); show 30 well

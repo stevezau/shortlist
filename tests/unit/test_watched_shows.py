@@ -1,5 +1,8 @@
 """Tests for the watched-show filter — the logic that decides when a show is "finished" and should
-not be recommended back to a user (issue #12: in-progress shows were being recommended)."""
+not be recommended back to a user (issue #12: in-progress shows were being recommended).
+
+The counts are Plex's OWN per-user ``viewedLeafCount`` / ``leafCount`` (marks included), passed to
+``_watched_titles`` as ``{tmdb_id: (viewed_episodes, total_episodes)}``."""
 
 from shortlist.engine.models import MediaType
 from shortlist.engine.rows import _engaged_floor, _watched_titles
@@ -7,7 +10,7 @@ from shortlist.engine.rows import _engaged_floor, _watched_titles
 
 class TestWatchedShowFilter:
     """The ``_watched_titles`` function decides which shows count as "finished" (already watched) based
-    on episode-play count vs. total episodes. A show is finished when the user has watched either:
+    on episodes watched vs. total episodes. A show is finished when the user has watched either:
 
     - >= ``show_pct`` of its episodes (default 0.8 = 80%), OR
     - >= a length-scaled "engaged" floor (``_engaged_floor``): ``max(3, 15% of episodes)``.
@@ -18,112 +21,56 @@ class TestWatchedShowFilter:
 
     def test_a_show_with_3_episodes_watched_of_a_short_series_is_finished(self):
         """3 episodes of a 6-episode limited series = past the pilot, given it a real try → finished.
-        For a short show the engaged floor is still 3 (15% of 6 = 0.9, below the minimum), which catches
-        mark-as-watched undercounting (issue #12): if history misses marked episodes, plays undercount,
-        and only a low floor keeps in-progress limited series from being recommended back."""
-        watched_movies = set()
-        show_plays = {100: 3}  # tmdb_id 100 → 3 episodes watched
-        episode_counts = {100: 6}  # a 6-episode limited series
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
+        For a short show the engaged floor is still 3 (15% of 6 = 0.9, below the minimum)."""
+        finished = _watched_titles(set(), {100: (3, 6)}, 0.8)
         assert (100, MediaType.SHOW) in finished, "3 of 6 (>= floor 3) → finished"
 
     def test_a_few_episodes_of_a_long_series_is_not_finished(self):
         """The fix: 3 episodes of a 60-episode show is 5% — plainly still a discovery, NOT finished.
         The engaged floor scales to 15% of length (9 here), so a light sample no longer suppresses a
         long show the way the old flat-3 floor did."""
-        watched_movies = set()
-        show_plays = {100: 3}
-        episode_counts = {100: 60}  # 3 of 60 = 5%
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
         # bar = min(60*0.8=48, floor=max(3, 60*0.15=9)=9) = 9; 3 < 9 → still a fresh pick
+        finished = _watched_titles(set(), {100: (3, 60)}, 0.8)
         assert (100, MediaType.SHOW) not in finished, "3 of 60 (< floor 9) → not finished"
 
     def test_a_long_series_watched_to_its_scaled_floor_is_finished(self):
         """Once past ~15% of a long run, the person is engaged, not discovering → finished."""
-        watched_movies = set()
-        show_plays = {100: 9}  # exactly the 15%-of-60 floor
-        episode_counts = {100: 60}
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
+        finished = _watched_titles(set(), {100: (9, 60)}, 0.8)  # 9 = exactly the 15%-of-60 floor
         assert (100, MediaType.SHOW) in finished, "9 of 60 (>= floor 9) → finished"
 
     def test_two_episodes_of_a_short_series_is_not_finished(self):
         """2 episodes = still sampling, below the floor-of-3 → not finished yet."""
-        watched_movies = set()
-        show_plays = {100: 2}
-        episode_counts = {100: 6}
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
+        finished = _watched_titles(set(), {100: (2, 6)}, 0.8)
         assert (100, MediaType.SHOW) not in finished, "2 < floor 3 → not finished"
 
     def test_a_short_show_at_80_percent_is_finished(self):
         """For a 10-episode show, the percentage bar (8) is tighter than the scaled floor (max(3,1.5)=3)."""
-        watched_movies = set()
-        show_plays = {200: 8}  # 8 of 10 = 80%
-        episode_counts = {200: 10}
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
+        finished = _watched_titles(set(), {200: (8, 10)}, 0.8)  # 8 of 10 = 80%
         assert (200, MediaType.SHOW) in finished, "8/10 = 80% → finished"
 
     def test_a_short_show_at_70_percent_is_finished_by_the_floor(self):
         """7 of 10 = 70% (< 80%) but well past the floor of 3 → finished by the floor bar."""
-        watched_movies = set()
-        show_plays = {200: 7}
-        episode_counts = {200: 10}
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
         # 7 >= min(10*0.8=8, floor=max(3, 1.5)=3) = 3 → finished
+        finished = _watched_titles(set(), {200: (7, 10)}, 0.8)
         assert (200, MediaType.SHOW) in finished, "7 episodes >= floor 3 → finished"
 
     def test_a_long_returning_series_never_hits_80_percent(self):
-        """Gold Rush on SFLIX: 160 plays of 226 episodes = 71%, never hits 80%. The scaled floor
+        """Gold Rush on SFLIX: 160 episodes of 226 = 71%, never hits 80%. The scaled floor
         (15% of 226 ≈ 34) catches it — and 160 is well past that."""
-        watched_movies = set()
-        show_plays = {300: 160}
-        episode_counts = {300: 226}
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
         # 160 >= min(226*0.8=180.8, floor=max(3, 226*0.15=33.9)=33.9) = 33.9 → finished
-        assert (300, MediaType.SHOW) in finished, "160 plays >> floor 34 → finished by the floor bar"
+        finished = _watched_titles(set(), {300: (160, 226)}, 0.8)
+        assert (300, MediaType.SHOW) in finished, "160 watched >> floor 34 → finished by the floor bar"
 
-    def test_an_unindexed_show_is_treated_as_finished(self):
-        """If a show has plays but no episode_count (not in the library index), treat it as finished
-        to be conservative — better to skip a potential recommendation than to re-recommend something
-        the user has already worked through."""
-        watched_movies = set()
-        show_plays = {400: 5}
-        episode_counts = {}  # show 400 is not in the index
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
-        assert (400, MediaType.SHOW) in finished, "missing episode_count → treat as finished (conservative)"
+    def test_a_show_with_unknown_total_is_treated_as_finished(self):
+        """If Plex reports episodes watched but no total (leafCount absent/0), treat it as finished to
+        be conservative — better to skip a potential recommendation than to re-recommend something the
+        user has already worked through."""
+        assert (400, MediaType.SHOW) in _watched_titles(set(), {400: (5, None)}, 0.8)
+        assert (401, MediaType.SHOW) in _watched_titles(set(), {401: (5, 0)}, 0.8)
 
     def test_movies_are_always_finished(self):
         """Movies have no episode complexity — any watch = finished."""
-        watched_movies = {500, 600}
-        show_plays = {}
-        episode_counts = {}
-        show_pct = 0.8
-
-        finished = _watched_titles(watched_movies, show_plays, episode_counts, show_pct)
-
+        finished = _watched_titles({500, 600}, {}, 0.8)
         assert (500, MediaType.MOVIE) in finished
         assert (600, MediaType.MOVIE) in finished
 

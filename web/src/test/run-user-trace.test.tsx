@@ -17,7 +17,13 @@ function okTrace(
     error: null,
     reason: null,
     trace: {
-      history: { total: 20, recent: [], watched_movies: 18, watched_shows: 2 },
+      history: {
+        total: 20,
+        recent: [],
+        watched_movies: 18,
+        watched_shows: 2,
+        watched_by_library: { Movies: { movie: 18, show: 0 } },
+      },
       seeds: [
         {
           title: "Toy Story",
@@ -128,5 +134,86 @@ describe("TraceView", () => {
     expect(
       within(delivered as HTMLElement).getByText(/Because you loved Toy Story/),
     ).toBeTruthy();
+  });
+
+  it("reports the true watched total, not the length of the recent sample", () => {
+    // recent is empty but the full-history counts say 18 movies — the tab must say 18, not 0/4.
+    render(<TraceView data={okTrace()} />);
+    const watched = screen
+      .getByText(/What they watched in Movies/)
+      .closest("section") as HTMLElement;
+    expect(within(watched).getByText(/Watched 18 movies here/)).toBeTruthy();
+  });
+
+  it("uses the exact per-library total, distinguishing two libraries of the same media type", () => {
+    // Two movie libraries: the per-MEDIA total (18) is shared, but each tab must show its OWN count.
+    const data = okTrace({
+      breakdown: [
+        {
+          row_slug: "picked-for-you",
+          row_title: "Picked for Sarah",
+          library_key: "2",
+          library_title: "4K Movies",
+          added: [],
+          removed: [],
+          kept: [],
+          deleted: [],
+          created: true,
+          picks: [],
+        },
+      ],
+    });
+    const history = data.trace.history;
+    if (history)
+      history.watched_by_library = {
+        "4K Movies": { movie: 6, show: 0 },
+      };
+    render(<TraceView data={data} />);
+    expect(
+      within(
+        screen
+          .getByText(/What they watched in 4K Movies/)
+          .closest("section") as HTMLElement,
+      ).getByText(/Watched 6 movies here/),
+    ).toBeTruthy();
+  });
+
+  it("shows the AI web search once, naming Exa vs the model and its two steps", async () => {
+    const data = okTrace();
+    const gather = data.trace.gathers?.[0];
+    if (!gather) throw new Error("fixture must have a gather");
+    // Add llm_web as BOTH a source row and a web block — the old UI rendered it twice.
+    gather.sources = [
+      ...(gather.sources ?? []),
+      { source: "llm_web", status: "ok", contributed: 3, detail: "" },
+    ];
+    gather.web = {
+      mode: "exa",
+      searches: [
+        {
+          seed: "Toy Story",
+          query: "movies like Toy Story",
+          cached: false,
+          returned: ["A Bug's Life"],
+        },
+      ],
+      proposed: ["A Bug's Life"],
+      resolved: ["A Bug's Life"],
+      unresolved: [],
+      rag_system: "You are a curator.",
+      rag_user: "Pick from these results.",
+    };
+    render(<TraceView data={data} />);
+    const searched = screen
+      .getByText(/Where we searched/)
+      .closest("section") as HTMLElement;
+    // Rendered exactly once (not once as a bare source card and once as the rich card).
+    expect(within(searched).getAllByText("AI web search")).toHaveLength(1);
+    // Says HOW it ran, and separates the web searches (step 1) from the AI's proposals (step 2).
+    expect(
+      within(searched).getByText(/searched the web with Exa/i),
+    ).toBeTruthy();
+    expect(within(searched).getByText(/Step 1/)).toBeTruthy();
+    expect(within(searched).getByText(/Step 2/)).toBeTruthy();
   });
 });

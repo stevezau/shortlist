@@ -77,7 +77,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="tautulli"
           title="Tautulli"
-          purpose="Optional. A richer source of who-watched-what history."
+          purpose="Optional. Supplies the friendlier display names it knows people by."
           settings={settings}
           summary={settingString(settings, "tautulli.url")}
           glyph={<TautulliGlyph />}

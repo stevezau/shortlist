@@ -23,8 +23,10 @@ function SectionHeading({ children }: { children: ReactNode }) {
   return <h2 className="text-lg font-semibold">{children}</h2>;
 }
 
+type UserTab = "rows" | "settings" | "history";
+
 function UserDetailBody({ user }: { user: User }) {
-  const [tab, setTab] = useState<"rows" | "settings">("rows");
+  const [tab, setTab] = useState<UserTab>("rows");
 
   return (
     <div className="space-y-8">
@@ -35,10 +37,11 @@ function UserDetailBody({ user }: { user: User }) {
       <Segmented
         options={[
           { value: "rows", label: "Rows" },
-          { value: "settings", label: "Settings & History" },
+          { value: "settings", label: "Settings" },
+          { value: "history", label: "Watch History" },
         ]}
         value={tab}
-        onChange={(value) => setTab(value as "rows" | "settings")}
+        onChange={(value) => setTab(value as UserTab)}
       />
 
       {tab === "rows" && (
@@ -68,15 +71,6 @@ function UserDetailBody({ user }: { user: User }) {
           </section>
 
           <section className="space-y-3">
-            <SectionHeading>Watch history</SectionHeading>
-            <Card>
-              <CardContent className="pt-6">
-                <WatchHistory userId={user.id} />
-              </CardContent>
-            </Card>
-          </section>
-
-          <section className="space-y-3">
             <div className="flex items-center justify-between">
               <SectionHeading>Recent runs</SectionHeading>
               <Button asChild variant="ghost" size="sm">
@@ -89,6 +83,17 @@ function UserDetailBody({ user }: { user: User }) {
             <RecentRuns userId={user.id} />
           </section>
         </div>
+      )}
+
+      {tab === "history" && (
+        <section className="space-y-3">
+          <SectionHeading>Watch history</SectionHeading>
+          <Card>
+            <CardContent className="pt-6">
+              <WatchHistory userId={user.id} />
+            </CardContent>
+          </Card>
+        </section>
       )}
     </div>
   );

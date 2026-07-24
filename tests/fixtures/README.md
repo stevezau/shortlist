@@ -12,4 +12,3 @@ Response shapes recorded from real servers (plex-safety rule 11). Identifying va
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
 | `pms_hubs_home.json`   | PMS 1.43.3 `GET /hubs` (JSON) — reconstructed from the live Phase 0 probe observations (collection hub `key`/`context` shapes); re-record with a direct capture when convenient | 2026-07-12 |
 | `plextv_users.xml.txt` | plex.tv `GET /api/users` — field-verified live in Phase 0 (share filters as `<User>` attributes)                                                                                | 2026-07-12 |
-| `pms_accounts.xml.txt` | PMS 1.43.3 `GET /accounts` — recorded from a live 80-account server; pins that the OWNER is a local account named after their plex.tv username, not their plex.tv id            | 2026-07-21 |

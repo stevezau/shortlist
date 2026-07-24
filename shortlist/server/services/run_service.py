@@ -173,48 +173,6 @@ class RunService:
                 logger.info("watch-sync skipped: {}", type(e).__name__)
                 self._bus.publish("sync.finished", {"kind": "watched", "ok": False, "error": type(e).__name__})
 
-    async def reconcile_watched_from_db(self) -> dict:
-        """One-off Tools action: fill every enabled user's watch history from the PMS database — the
-        only source that sees a mark-as-watched. Reads the database read-only, writes only our own
-        ``watch_events``, never touches Plex. Returns {configured, users, added} for an honest result
-        line. Serialized by the run lock so it never overlaps a live run's writes.
-
-        Unlike ``sync_watched`` this does NOT run on a schedule: reading someone's live multi-gigabyte
-        production database every night for a payload most users rarely produce is too heavy and too
-        invasive to do automatically — it's a repair the owner runs when watched state has drifted.
-        """
-        loop = asyncio.get_running_loop()
-
-        def work() -> dict:
-            ctx = self.build_context(dry_run=True)  # dry: builds clients, writes nothing to Plex
-            source = ctx.history_source
-            if not getattr(source, "flags_configured", False):
-                return {"configured": False, "users": 0, "added": 0}
-            with self._sessions() as session:
-                profiles = self.enabled_profiles(session)
-            added = 0
-            for profile in profiles:
-                try:
-                    added += source.reconcile_flags(profile)
-                    # Re-read the complete history (now including the just-added flags) so the report
-                    # reconcile below credits any pick a mark reveals as watched.
-                    profile.history = source.fetch(profile, min_completion=ctx.config.min_completion)
-                except Exception as e:
-                    # Fail-soft per user — one account's torn read must not abort the sweep.
-                    logger.warning("reconcile-watched: failed for {}: {}", profile.slug, type(e).__name__)
-            self._reconcile_watched(profiles)
-            return {"configured": True, "users": len(profiles), "added": added}
-
-        async with self._lock:
-            result = await loop.run_in_executor(None, work)
-        logger.info(
-            "reconcile-watched: {}",
-            "not configured (no Plex database mounted)"
-            if not result["configured"]
-            else f"+{result['added']} watched event(s) across {result['users']} user(s)",
-        )
-        return result
-
     # -- execution -----------------------------------------------------------------------
 
     async def start_run(

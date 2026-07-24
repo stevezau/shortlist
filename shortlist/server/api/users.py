@@ -26,7 +26,6 @@ from shortlist.server.db.models import (
     RunUser,
     Server,
     User,
-    WatchEvent,
     iso_utc,
 )
 from shortlist.server.safe_mode import force_dry_run
@@ -106,23 +105,20 @@ def _serialize(
 
 
 def _watch_depths(session) -> dict[int, int]:
-    """user_id -> how many DISTINCT titles we have watch events for.
+    """user_id -> how many DISTINCT watched titles we last read for them.
 
-    Read from the local watch mirror rather than `prefs["history_depth"]`, which is only written
-    after a run actually processes someone — so a user who was skipped, or who has simply never had
-    a successful run, showed "0 titles" forever. A beta user was looking at a Users page reporting 0
-    for all 42 of his accounts while the log showed 170 events synced for one of them, which is a
-    terrible thing to be told while working out why nothing was recommended.
-
-    Distinct rating_key, not row count: watch_events holds one row per PLAY, so a 40-episode binge
-    is one title here — matching what "N titles" claims.
+    ``prefs["history_depth"]`` is the count of their watched set from the last read, which the
+    share-token source returns as one item per distinct title (a 40-episode binge is one title). The
+    daily ``sync_watched`` job refreshes it for EVERY enabled user, not just ones a run processed — so
+    a skipped or never-run user no longer shows "0 titles" forever (the beta bug that reported 0 for
+    all 42 accounts while the log showed watches synced).
     """
-    rows = (
-        session.query(WatchEvent.user_id, func.count(func.distinct(WatchEvent.rating_key)))
-        .group_by(WatchEvent.user_id)
-        .all()
-    )
-    return {user_id: count for user_id, count in rows}
+    depths: dict[int, int] = {}
+    for user in session.query(User).all():
+        depth = (user.prefs or {}).get("history_depth")
+        if isinstance(depth, int):
+            depths[user.id] = depth
+    return depths
 
 
 @router.get("")
@@ -400,9 +396,8 @@ def _sync_owner(
             owner_account_id,
         )
         return None
-    # `username`, never `title`: PMS names the owner's LOCAL account after their plex.tv username
-    # ("S_FLIX"), not their display title ("SFLIX_Admin") — and that name is how their watch history
-    # is found (see PlexClient.system_account_id + tests/fixtures/pms_accounts.xml.txt).
+    # `username`, never `title`: store the owner's plex.tv username ("S_FLIX"), not their display
+    # title ("SFLIX_Admin"), to match how every other account is keyed on the roster.
     username = account.get("username") or account.get("title") or "owner"
     # The owner is in Tautulli like anyone else, so their `{user}` row should honour the name set
     # there rather than falling straight through to their Plex username.

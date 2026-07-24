@@ -45,7 +45,13 @@ def dedupe_slug(base: str, is_taken: Callable[[str], bool]) -> str:
 
 @dataclass(frozen=True)
 class WatchedItem:
-    """One meaningful watch from the user's history."""
+    """One watched title from the user's library, as Plex records it FOR THEM.
+
+    The share-token source reads this straight from the PMS as the user (``unwatched=0``), so one item
+    is one distinct TITLE they've watched — carrying Plex's own per-user counts — not one play event.
+    ``watch_count`` is therefore the frequency signal (see below) rather than something a caller derives
+    by counting duplicate rows.
+    """
 
     title: str
     media_type: MediaType
@@ -54,8 +60,20 @@ class WatchedItem:
     year: int | None = None
     rating_key: int | None = None
     completion: float = 1.0  # 0..1 fraction watched
-    # For a show watch, the specific episode behind it (the show name is `title`). None for movies
-    # and for sources that don't report episode detail — display only, never used for seeding.
+    # How much this title was watched, the frequency half of a seed's weight. For a MOVIE it's the
+    # play count (``viewCount``); for a SHOW it's episodes watched (``viewedLeafCount``) — so a show
+    # binged 50 episodes deep weighs like 50 movie plays, matching the old per-play behaviour without
+    # the source emitting 50 rows. Defaults to 1 so a single-play source reads as one watch.
+    watch_count: int = 1
+    # A show's per-user watched fraction, straight from Plex (``viewedLeafCount``/``leafCount``) —
+    # marks included. The finished-show check reads these directly instead of reconstructing the
+    # fraction from play counts. None for movies and for sources that don't report episode totals.
+    viewed_leaf_count: int | None = None
+    leaf_count: int | None = None
+    # For a show watch, the specific episode behind it (the show name is `title`). Display only, never
+    # used for seeding. Always None from ShareTokenWatchSource, which reads watched STATE at the show
+    # level (viewedLeafCount), not per-episode play events — the recent-watches panel renders these
+    # only when present, so it degrades to the show name. A seam for any future per-episode source.
     season: int | None = None
     episode: int | None = None
     episode_title: str | None = None

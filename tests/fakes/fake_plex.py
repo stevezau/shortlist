@@ -47,6 +47,7 @@ class FakeMovie:
     tmdb_id: int
     audience_rating: float
     media_type: str = "movie"  # "movie" | "show"
+    leaf_count: int = 0  # total episodes (shows only); the share-token watched read serves it as leafCount
 
 
 @dataclass
@@ -243,6 +244,28 @@ class FakePlexState:
             return self.users.get(int(token.removeprefix("server-")))
         return None
 
+    def watched_account_id(self, token: str) -> int | None:
+        """Which PMS account a share-token watched read (``unwatched=0``) speaks for.
+
+        The share-token read is served AS the token's owner, so the watched set is theirs. The owner
+        reads with the admin token and their history is filed under the local ``owner_pms_account_id``
+        (never their plex.tv id — see the class notes); a shared/Home user reads with a
+        ``server-<accountID>`` token filed under that same plex.tv id.
+        """
+        if token == self.owner_token:
+            return self.owner_pms_account_id
+        user = self.user_for_token(token)
+        return user.id if user else None
+
+    def watched_keys(self, account_id: int) -> set[int]:
+        """The rating keys this account has watched (movies and shows), from ``history``."""
+        return {h.rating_key for h in self.history if h.account_id == account_id}
+
+    def last_viewed_at(self, account_id: int, rating_key: int) -> int:
+        """The most recent watch time for one title, or 0 if never watched by this account."""
+        times = [h.viewed_at for h in self.history if h.account_id == account_id and h.rating_key == rating_key]
+        return max(times, default=0)
+
     @staticmethod
     def excluded_labels(user: FakeUser) -> set[str]:
         """Lowercased ``label!=`` values across the user's movie/TV share filters."""
@@ -284,6 +307,7 @@ def seed_state() -> FakePlexState:
             tmdb_id=7000 + i,
             audience_rating=5.0 + (i * 3) % 40 / 10,
             media_type="show",
+            leaf_count=10,  # 10 episodes; a seeded "watched" show is served fully watched (finished)
         )
     state.users[201] = FakeUser(id=201, username="sarah")
     state.users[202] = FakeUser(id=202, username="mike")
@@ -322,8 +346,13 @@ def _container(**attrs) -> Element:
     return root
 
 
-def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie) -> Element:
-    """One library item. Plex serves movies as <Video> and shows as <Directory>."""
+def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watched_by: int | None = None) -> Element:
+    """One library item. Plex serves movies as <Video> and shows as <Directory>.
+
+    When ``watched_by`` is set, the element also carries that account's per-user watched counts the way
+    a real ``unwatched=0`` read does: ``viewCount``/``lastViewedAt`` for a movie, and
+    ``viewedLeafCount``/``leafCount`` for a show (the share-token watched read reads exactly these).
+    """
     is_show = movie.media_type == "show"
     section = state.section_of(movie.rating_key)
     element = _el(
@@ -340,6 +369,17 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie) -> Eleme
         # library's items would all claim to live in the first one.
         librarySectionID=section.key if section else state.section_id,
     )
+    if watched_by is not None:
+        element.set("lastViewedAt", str(state.last_viewed_at(watched_by, movie.rating_key)))
+        if is_show:
+            # A watched show in the fixture is served fully watched (viewed == total) — the common
+            # "finished the series" case, which the engine then treats as finished AND a seed.
+            element.set("viewedLeafCount", str(movie.leaf_count))
+            element.set("leafCount", str(movie.leaf_count))
+        else:
+            # viewCount = how many times this account has this title in history (>= 1, since it's watched).
+            plays = sum(1 for h in state.history if h.account_id == watched_by and h.rating_key == movie.rating_key)
+            element.set("viewCount", str(max(1, plays)))
     _el(element, "Guid", id=f"tmdb://{movie.tmdb_id}")
     return element
 
@@ -476,6 +516,19 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             root = _container(size=len(owned), totalSize=len(owned), librarySectionID=section_id)
             for collection in owned:
                 _collection_xml(root, state, collection)
+            return _xml(root)
+        # The share-token watched read (ShareTokenWatchSource): `unwatched=0` filters to what the
+        # REQUESTING account has watched, served AS them with their own per-user viewCount/leaf counts.
+        # The token is in the X-Plex-Token header (includeToken=False keeps the owner's out of the URL).
+        if query.get("unwatched") == "0":
+            account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
+            watched = state.watched_keys(account_id) if account_id is not None else set()
+            listing = [item for item in _sorted_items(list(items.values()), None) if item.rating_key in watched]
+            start, size = _page(request, len(listing))
+            page = listing[start : start + size]
+            root = _container(size=len(page), totalSize=len(listing), librarySectionID=section_id)
+            for item in page:
+                _movie_xml(root, state, item, watched_by=account_id)
             return _xml(root)
         listing = _sorted_items(list(items.values()), query.get("sort"))
         if query.get("limit") is not None:
@@ -751,6 +804,27 @@ def make_fake_plextv(state: FakePlexState) -> FastAPI:
                 **user.filters,
             )
             _el(user_el, "Server", id=user.id, serverId="1", machineIdentifier=state.machine_id, name="FakePlex")
+        return _xml(root)
+
+    @app.get("/api/servers/{machine_id}/shared_servers")
+    def shared_servers(machine_id: str) -> Response:
+        """The per-user server tokens plex.tv mints for every shared invite (ShareTokenWatchSource).
+
+        Every shared/Home user gets one; the token is ``server-<accountID>`` so the PMS fake serves
+        that user's own watched set for it (``user_for_token``). The owner is NOT here — they own the
+        server rather than being shared to it, so the source reads their state with the admin token.
+        """
+        root = _container(size=len(state.users))
+        for user in state.users.values():
+            _el(
+                root,
+                "SharedServer",
+                id=user.id,
+                userID=user.id,
+                username=user.username,
+                accessToken=f"server-{user.id}",
+                machineIdentifier=machine_id,
+            )
         return _xml(root)
 
     @app.put("/api/users/{account_id}")

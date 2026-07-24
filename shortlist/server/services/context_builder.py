@@ -9,23 +9,20 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from pathlib import Path
 
 from loguru import logger
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.clients.mdblist import MdbListClient
-from shortlist.engine.clients.plex_db import PlexDbReader
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.search import ExaClient
-from shortlist.engine.clients.tautulli import TautulliClient
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.curator import make_curator
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, render_row_name
-from shortlist.engine.history import FallbackHistorySource, PlexHistorySource, TautulliSource, distinct_recent
+from shortlist.engine.history import ShareTokenWatchSource, distinct_recent
 from shortlist.engine.models import (
     ArrTarget,
     EngineConfig,
@@ -54,7 +51,6 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services.poster_service import load_upload, make_studio
 from shortlist.server.services.sse import EventBus
-from shortlist.server.services.watch_history import StoreHistorySource
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -80,46 +76,6 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
     if get("curator.model"):
         kwargs["model"] = get("curator.model")
     return kwargs
-
-
-def _pms_account_resolver(plex: PlexClient, session: Session) -> Callable[[UserProfile], int]:
-    """UserProfile -> the id PMS knows them by.
-
-    `metadata_item_settings.account_id` is the PMS-LOCAL account space, the same one
-    `history?accountID=` uses — and the owner is not in it under their plex.tv id (their local row
-    is id=1). Resolving that is exactly what `PlexHistorySource` already does; without it the owner
-    reads zero watched flags and nothing says why.
-    """
-    roster = frozenset(row[0] for row in session.query(User.plex_account_id).all())
-
-    def resolve(user: UserProfile) -> int:
-        if user.user_type is not UserType.OWNER:
-            return user.plex_account_id
-        return plex.system_account_id(user.plex_account_id, user.username, exclude_ids=roster - {user.plex_account_id})
-
-    return resolve
-
-
-# Where the docs tell people to mount Plex's database. Bind-mounting a database into a container is
-# not something anyone does by accident, so the MOUNT is the deliberate opt-in — making the owner
-# then type the path they just mounted is a second hoop that buys no extra consent. Nothing is
-# auto-discovered: if this exact path isn't mounted, the feature stays off.
-DEFAULT_PLEX_DB_MOUNT = Path("/plexdb")
-
-
-def _flag_reader(store: SettingsStore) -> PlexDbReader | None:
-    """The PMS-database watched-flag reader, or None when it isn't set up.
-
-    An explicit `plex.db_path` always wins, so an unusual layout stays possible.
-    """
-    path = (store.get("plex.db_path") or "").strip()
-    if path:
-        return PlexDbReader(path)
-    default = DEFAULT_PLEX_DB_MOUNT / PlexDbReader.FILENAME
-    if default.is_file():
-        logger.info("watched flags: using the Plex database mounted at {}", DEFAULT_PLEX_DB_MOUNT)
-        return PlexDbReader(DEFAULT_PLEX_DB_MOUNT)
-    return None
 
 
 class ContextBuilder:
@@ -159,7 +115,7 @@ class ContextBuilder:
             # native provider tools still work without it — only Ollama depends on it).
             exa_key = store.get("exa.apikey")
             search = ExaClient(exa_key) if exa_key else None
-            history = self._history_source(store, plex, session)
+            history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get))
             # Build the poster studio only if a row actually renders a poster from text (built-in or
@@ -226,19 +182,11 @@ class ContextBuilder:
             trakt=trakt,
             search=search,
             poster_artist=poster_artist,
-            # The engine reads the COMPLETE watch history from a local store, synced incrementally from
-            # `history` (Plex/Tautulli) — Plex's API only returns the most recent ~200 plays, which hid
-            # a heavy watcher's older watches from the already-watched filter. StoreHistorySource.fetch
-            # syncs-then-reads, so it drops into the existing history_source slot unchanged.
-            history_source=StoreHistorySource(
-                self._sessions,
-                history,
-                min_completion=config.min_completion,
-                # Optional second source: watched FLAGS from the PMS database, which is the only
-                # place a mark-as-watched is visible. Off unless the owner sets `plex.db_path`.
-                flags=_flag_reader(store),
-                flag_account_id=_pms_account_resolver(plex, session),
-            ),
+            # The engine reads each user's COMPLETE watched set by reading the PMS AS them, with the
+            # per-user server token plex.tv mints for every share. That set carries their own
+            # viewCount/viewedLeafCount — so a mark-as-watched (which the playback-history API never
+            # returns, and which capped at ~200 plays) is seen, with no PMS database mount.
+            history_source=history,
             curator=curator,
             snapshots=DbSnapshotStore(self._sessions),
             index_cache=DbCache(self._sessions, kind="library_index"),
@@ -287,21 +235,6 @@ class ContextBuilder:
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             return self._build_requests(store), tmdb
 
-    @staticmethod
-    def _history_source(store: SettingsStore, plex: PlexClient, session: Session):
-        """The watch-history source: Tautulli-with-Plex-fallback when Tautulli is set, else Plex.
-
-        The roster's account ids go to the Plex source so it can resolve the OWNER's local PMS
-        account without ever landing on somebody else's — see PlexClient.system_account_id.
-        """
-        roster = frozenset(row[0] for row in session.query(User.plex_account_id).all())
-        if store.get("tautulli.url"):
-            return FallbackHistorySource(
-                TautulliSource(TautulliClient(store.get("tautulli.url"), store.get("tautulli.apikey"))),
-                PlexHistorySource(plex, roster_account_ids=roster),
-            )
-        return PlexHistorySource(plex, roster_account_ids=roster)
-
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         """Recent watches for one user, newest first — the same source that feeds recommendations.
 
@@ -321,7 +254,9 @@ class ContextBuilder:
                 user_type=UserType(user.user_type),
                 slug=user.slug,
             )
-            history = self._history_source(store, PlexClient(plex_url, plex_token), session)
+            plex = PlexClient(plex_url, plex_token)
+            plextv = PlexTvClient(plex_token, plex.machine_id)
+            history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
         # A lower completion bar than a run uses: this is "what they've been watching", not seeds.
         # Distinct titles, newest first: a show's episodes collapse to the one show (keeping its most
         # recent episode's detail), so a binge shows as one entry and the list reflects real variety —

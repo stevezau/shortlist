@@ -1,266 +1,124 @@
-"""History-source matrix: tautulli / plex, plus seed derivation."""
+"""Watch-history: the share-token source's token matrix + orchestration, plus seed derivation."""
 
 from __future__ import annotations
 
-from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
-from shortlist.engine.history import (
-    FallbackHistorySource,
-    PlexHistorySource,
-    TautulliSource,
-    derive_seeds,
-    distinct_recent,
-)
+from shortlist.engine.history import ShareTokenWatchSource, derive_seeds, distinct_recent
 from shortlist.engine.models import MediaType, UserType
 from tests.conftest import make_profile, make_watched
 
 
-def tautulli_row(**kw) -> dict:
-    base = {
-        "media_type": "movie",
-        "title": "Heat",
-        "grandparent_title": None,
-        "percent_complete": 100,
-        "date": 1752000000,
-        "year": 1995,
-        "rating_key": 42,
-        "grandparent_rating_key": None,
-        "parent_media_index": None,
-        "media_index": None,
-    }
-    return {**base, **kw}
+def _section(key: str, section_type: str) -> SimpleNamespace:
+    """A stand-in for a plexapi library section — the source only reads `.key` and `.type`."""
+    return SimpleNamespace(key=key, type=section_type)
 
 
-class TestTautulliSource:
-    def test_maps_movie_rows(self, mock_tautulli):
-        mock_tautulli.get_history.return_value = [tautulli_row()]
-        items = TautulliSource(mock_tautulli).fetch(make_profile(), min_completion=0.7)
-        assert len(items) == 1
-        assert items[0].title == "Heat"
-        assert items[0].media_type is MediaType.MOVIE
-        assert items[0].completion == 1.0
-        # A movie carries no episode detail.
-        assert (items[0].season, items[0].episode, items[0].episode_title) == (None, None, None)
-        mock_tautulli.get_history.assert_called_once_with(100, since_ts=None)
+class TestShareTokenWatchSource:
+    """The one watch source: reads each user's COMPLETE watched set from the PMS as that user.
 
-    def test_episode_rows_collapse_to_show_title(self, mock_tautulli):
-        mock_tautulli.get_history.return_value = [
-            tautulli_row(
-                media_type="episode",
-                title="Pilot",
-                grandparent_title="Suits",
-                grandparent_rating_key=7,
-                parent_media_index="2",
-                media_index="5",
-            ),
-        ]
-        items = TautulliSource(mock_tautulli).fetch(make_profile(), min_completion=0.7)
-        assert items[0].title == "Suits"
-        assert items[0].media_type is MediaType.SHOW
-        assert items[0].rating_key == 7
-        # The episode detail is carried for display (show title stays the seed).
-        assert (items[0].season, items[0].episode) == (2, 5)
-        assert items[0].episode_title == "Pilot"
+    The value under test is which token it reads AS (the user_type matrix) and that it aggregates
+    every library fail-soft — the XML→WatchedItem parsing lives in test_clients (PMS `watched_titles`).
+    """
 
-    def test_incomplete_watches_filtered_by_threshold(self, mock_tautulli):
-        mock_tautulli.get_history.return_value = [tautulli_row(percent_complete=20)]
-        assert TautulliSource(mock_tautulli).fetch(make_profile(), min_completion=0.7) == []
+    def _source(self, mock_plex, mock_plextv, *, owner_token: str = "OWNER-TOK") -> ShareTokenWatchSource:
+        # Two libraries, one of each type, so fetch() must iterate both and pick the media type per one.
+        mock_plex._server.library.sections.return_value = [_section("1", "movie"), _section("2", "show")]
+        mock_plex.watched_titles = MagicMock(return_value=[])
+        return ShareTokenWatchSource(mock_plex, mock_plextv, owner_token=owner_token)
 
+    def test_owner_is_read_with_the_admin_token_never_the_shared_roster(self, mock_plex, mock_plextv):
+        """The owner isn't shared to their own server, so they aren't in shared_servers — read their
+        own watched state with the admin token, and don't waste a roster call to discover that."""
+        source = self._source(mock_plex, mock_plextv)
+        source.fetch(make_profile(username="steve", user_type=UserType.OWNER, account_id=1), min_completion=0.7)
 
-class TestPlexHistorySource:
-    def test_maps_entries_from_plex_history_api(self, mock_plex):
-        entry = SimpleNamespace(
-            type="episode",
-            grandparentTitle="Suits",
-            title="Pilot",
-            parentIndex="2",
-            index="5",
-            viewedAt=datetime(2026, 7, 1),
-            grandparentRatingKey="7",
-            ratingKey="99",
-        )
-        mock_plex._server.history.return_value = [entry]
-        items = PlexHistorySource(mock_plex).fetch(make_profile(account_id=555000100), min_completion=0.7)
-        assert items[0].title == "Suits"
-        assert items[0].rating_key == 7
-        # PMS parentIndex/index → season/episode, entry.title → episode name.
-        assert (items[0].season, items[0].episode) == (2, 5)
-        assert items[0].episode_title == "Pilot"
-        call = mock_plex._server.history.call_args
-        assert call.kwargs["accountID"] == 555000100
+        tokens_used = {call.args[2] for call in mock_plex.watched_titles.call_args_list}
+        assert tokens_used == {"OWNER-TOK"}
+        mock_plextv.shared_server_tokens.assert_not_called()
 
-    def test_a_shared_user_is_asked_for_by_their_plex_tv_id_without_reading_pms_accounts(self, mock_plex):
-        """PMS lists shared users under their plex.tv id, so they cost no extra `/accounts` read."""
-        mock_plex._server.history.return_value = []
+    def test_a_shared_user_is_read_with_their_own_roster_token(self, mock_plex, mock_plextv):
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {100: "SARAH-TOK", 200: "OTHER-TOK"}
 
-        PlexHistorySource(mock_plex).fetch(make_profile(account_id=555000100), min_completion=0.7)
+        source.fetch(make_profile(username="sarah", user_type=UserType.SHARED, account_id=100), min_completion=0.7)
 
-        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000100
-        mock_plex._server.systemAccounts.assert_not_called()
+        tokens_used = {call.args[2] for call in mock_plex.watched_titles.call_args_list}
+        assert tokens_used == {"SARAH-TOK"}  # never the owner's, never another user's
+        mock_plextv.canary_server_token.assert_not_called()  # already in the roster — no switch needed
 
-    def test_the_owners_history_is_asked_for_by_the_id_pms_files_it_under(self, mock_plex):
-        """The owner is not in PMS's account table under their plex.tv id — asking for that id
-        returns nothing, and their 'personalized' row would quietly be built from an empty history."""
-        mock_plex._server.systemAccounts.return_value = [
-            SimpleNamespace(id=0, name=""),
-            SimpleNamespace(id=1, name="steve"),  # the owner, as a LOCAL PMS account
-            SimpleNamespace(id=555000100, name="sarah"),
-        ]
-        mock_plex._server.history.return_value = []
+    def test_the_roster_is_fetched_once_and_reused_across_users(self, mock_plex, mock_plextv):
+        """One shared_servers call covers the whole roster; a 40-user run must not call it 40 times."""
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {100: "A", 200: "B"}
 
-        PlexHistorySource(mock_plex).fetch(
-            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
-            min_completion=0.7,
+        source.fetch(make_profile(username="a", account_id=100), min_completion=0.7)
+        source.fetch(make_profile(username="b", account_id=200), min_completion=0.7)
+
+        mock_plextv.shared_server_tokens.assert_called_once()
+
+    def test_a_managed_user_absent_from_the_roster_is_read_via_a_switched_token(self, mock_plex, mock_plextv):
+        """A managed sub-account with no share invite of its own isn't in shared_servers — the source
+        switches to it and exchanges for a server token (the canary path)."""
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {}  # not shared to it directly
+        mock_plextv.canary_server_token.return_value = "KID-TOK"
+
+        source.fetch(make_profile(username="kid", user_type=UserType.MANAGED, account_id=200), min_completion=0.7)
+
+        mock_plextv.canary_server_token.assert_called_once_with(200)
+        tokens_used = {call.args[2] for call in mock_plex.watched_titles.call_args_list}
+        assert tokens_used == {"KID-TOK"}
+
+    def test_no_obtainable_token_yields_empty_history_and_reads_nothing(self, mock_plex, mock_plextv):
+        """If neither the roster nor a switch can produce a token, fail soft to "nothing watched" (it
+        may re-surface a title they've seen) rather than crash the run — and never read the PMS."""
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {}
+        mock_plextv.canary_server_token.side_effect = PermissionError("PIN-protected")
+
+        result = source.fetch(
+            make_profile(username="pin", user_type=UserType.MANAGED, account_id=200), min_completion=0.7
         )
 
-        assert mock_plex._server.history.call_args.kwargs["accountID"] == 1
+        assert result == []
+        mock_plex.watched_titles.assert_not_called()
 
-    def test_an_owner_pms_already_knows_by_plex_tv_id_is_left_alone(self, mock_plex):
-        """An exact id match wins over the name, so a server that does file the owner under their
-        plex.tv id keeps working — and two accounts sharing a display name can't cross wires."""
-        mock_plex._server.systemAccounts.return_value = [
-            SimpleNamespace(id=1, name="steve"),
-            SimpleNamespace(id=555000001, name="steve"),
-        ]
-        mock_plex._server.history.return_value = []
-
-        PlexHistorySource(mock_plex).fetch(
-            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
-            min_completion=0.7,
+    def test_selects_the_media_type_per_library_and_aggregates_across_them(self, mock_plex, mock_plextv):
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {100: "SARAH-TOK"}
+        mock_plex.watched_titles.side_effect = lambda key, mt, tok: (
+            [make_watched("Heat", media_type=MediaType.MOVIE)]
+            if mt is MediaType.MOVIE
+            else [make_watched("Suits", media_type=MediaType.SHOW)]
         )
 
-        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
+        items = source.fetch(make_profile(account_id=100), min_completion=0.7)
 
-    def test_an_unreadable_account_list_raises_rather_than_reporting_an_empty_history(self, mock_plex):
-        """Falling back to the plex.tv id here would return ZERO rows — indistinguishable from "this
-        person has never watched anything". The incremental sync banks that as a successful empty
-        pull and advances the watermark, so one hiccup on the owner's first run would leave their
-        history permanently un-backfilled. Raising keeps the watermark (the sync fails soft)."""
-        mock_plex._server.systemAccounts.side_effect = RuntimeError("PMS said no")
+        # Movie library read as type=movie, show library as type=show, results merged.
+        by_key = {call.args[0]: call.args[1] for call in mock_plex.watched_titles.call_args_list}
+        assert by_key == {"1": MediaType.MOVIE, "2": MediaType.SHOW}
+        assert {(i.title, i.media_type) for i in items} == {
+            ("Heat", MediaType.MOVIE),
+            ("Suits", MediaType.SHOW),
+        }
 
-        with pytest.raises(RuntimeError, match="could not read PMS accounts"):
-            PlexHistorySource(mock_plex).fetch(
-                make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
-                min_completion=0.7,
-            )
+    def test_one_unreadable_library_degrades_to_empty_without_failing_the_others(self, mock_plex, mock_plextv):
+        """A single library erroring must not lose the user's whole history — the other library's
+        titles still come back (fail-soft per library, matching the old sources' stance)."""
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {100: "SARAH-TOK"}
 
-        mock_plex._server.history.assert_not_called()
+        def read(key, media_type, token):
+            if media_type is MediaType.MOVIE:
+                raise RuntimeError("section unreadable")
+            return [make_watched("Suits", media_type=MediaType.SHOW)]
 
-    def test_a_single_name_match_on_a_known_roster_account_is_refused(self, mock_plex):
-        """The residual attribution risk: the owner renames themselves, PMS's local row keeps the old
-        name, and ANOTHER account now carries the new one — a single, confident, wrong match. Every
-        non-owner is listed under their plex.tv id, so a candidate that IS a known account can't be
-        the owner's local row."""
-        mock_plex._server.systemAccounts.return_value = [
-            SimpleNamespace(id=1, name="old-name"),
-            SimpleNamespace(id=555000100, name="steve"),  # sarah, who just renamed herself
-        ]
-        mock_plex._server.history.return_value = []
+        mock_plex.watched_titles.side_effect = read
+        items = source.fetch(make_profile(account_id=100), min_completion=0.7)
 
-        PlexHistorySource(mock_plex, roster_account_ids=frozenset({555000100, 555000200})).fetch(
-            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
-            min_completion=0.7,
-        )
-
-        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
-
-    def test_a_managed_user_is_asked_for_by_their_plex_tv_id(self, mock_plex):
-        """The third cell of the user_type matrix. PMS lists Home/managed profiles under their own
-        plex.tv id (recorded fixture `pms_accounts.xml.txt`), so they resolve like a shared user —
-        and must NOT go near the name match, since a Home profile's local name is owner-chosen."""
-        mock_plex._server.history.return_value = []
-
-        PlexHistorySource(mock_plex).fetch(
-            make_profile(username="kid", user_type=UserType.MANAGED, account_id=555000200),
-            min_completion=0.7,
-        )
-
-        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000200
-        mock_plex._server.systemAccounts.assert_not_called()
-
-    def test_two_accounts_sharing_the_owners_name_are_refused_rather_than_guessed(self, mock_plex):
-        """A Home profile can be given ANY local name, including the owner's. Two candidates and no
-        id match means we cannot tell which is the person — and picking the first would build the
-        owner's private row out of a managed user's viewing."""
-        mock_plex._server.systemAccounts.return_value = [
-            SimpleNamespace(id=1, name="steve"),
-            SimpleNamespace(id=555000200, name="Steve"),  # another account that carries the same name
-        ]
-        mock_plex._server.history.return_value = []
-
-        PlexHistorySource(mock_plex).fetch(
-            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
-            min_completion=0.7,
-        )
-
-        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
-
-    def test_the_nameless_local_bucket_never_wins_the_match(self, mock_plex):
-        """PMS id 0 is the 'Local' account: plays from clients that were never signed in, belonging
-        to nobody. An owner with no username must not be handed that pile of everyone's viewing."""
-        mock_plex._server.systemAccounts.return_value = [
-            SimpleNamespace(id=0, name=""),
-            SimpleNamespace(id=1, name="steve"),
-        ]
-        mock_plex._server.history.return_value = []
-
-        PlexHistorySource(mock_plex).fetch(
-            make_profile(username="", user_type=UserType.OWNER, account_id=555000001),
-            min_completion=0.7,
-        )
-
-        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
-
-    def test_an_owner_pms_has_never_heard_of_is_never_mapped_onto_another_account(self, mock_plex):
-        """No id match and no name match must mean 'empty history', never 'the nearest account'."""
-        mock_plex._server.systemAccounts.return_value = [
-            SimpleNamespace(id=1, name="someone-else"),
-            SimpleNamespace(id=555000100, name="sarah"),
-        ]
-        mock_plex._server.history.return_value = []
-
-        PlexHistorySource(mock_plex).fetch(
-            make_profile(username="steve", user_type=UserType.OWNER, account_id=555000001),
-            min_completion=0.7,
-        )
-
-        assert mock_plex._server.history.call_args.kwargs["accountID"] == 555000001
-
-
-class TestFallbackHistorySource:
-    """Phase 1 pilot lesson: Tautulli had 1 row for a user with 11k rows of PMS history."""
-
-    def _source(self, primary_items, fallback_items, min_items=10):
-        primary, fallback = MagicMock(), MagicMock()
-        primary.fetch.return_value = primary_items
-        fallback.fetch.return_value = fallback_items
-        return FallbackHistorySource(primary, fallback, min_items=min_items), primary, fallback
-
-    def test_rich_primary_wins_without_touching_fallback(self):
-        items = [make_watched(f"m{i}") for i in range(10)]
-        source, _, fallback = self._source(items, [])
-        assert source.fetch(make_profile(), min_completion=0.7) == items
-        fallback.fetch.assert_not_called()
-
-    def test_thin_primary_falls_back_to_richer_source(self):
-        thin = [make_watched("only one")]
-        rich = [make_watched(f"m{i}") for i in range(20)]
-        source, _, _ = self._source(thin, rich)
-        assert source.fetch(make_profile(), min_completion=0.7) == rich
-
-    def test_thin_primary_kept_when_fallback_is_no_better(self):
-        thin = [make_watched("only one")]
-        source, _, _ = self._source(thin, [])
-        assert source.fetch(make_profile(), min_completion=0.7) == thin
-
-    def test_primary_error_uses_fallback(self):
-        source, primary, _ = self._source([], [make_watched("m")])
-        primary.fetch.side_effect = RuntimeError("tautulli down")
-        assert len(source.fetch(make_profile(), min_completion=0.7)) == 1
+        assert [i.title for i in items] == ["Suits"]
 
 
 class TestDistinctRecent:
@@ -306,6 +164,31 @@ class TestDeriveSeeds:
         seeds = derive_seeds(history, lambda w: ids.get((w.title, w.media_type)))
         assert seeds[0].title == "Binged Show"
         assert seeds[0].weight > seeds[1].weight
+
+    def test_a_shows_episode_count_drives_its_weight_not_its_row_count(self):
+        # The share-token source returns ONE row per show carrying watch_count = episodes watched, so
+        # a 50-episode binge must weigh like 50 plays even though it's a single WatchedItem — the seed
+        # weight reads watch_count, not len(rows) (the old per-play sources emitted one row per play).
+        history = [
+            make_watched("Binge", days_ago=1, media_type=MediaType.SHOW, watch_count=50),
+            make_watched("One Movie", days_ago=1, media_type=MediaType.MOVIE, watch_count=1),
+        ]
+        ids = {("Binge", MediaType.SHOW): 1, ("One Movie", MediaType.MOVIE): 2}
+        seeds = derive_seeds(history, lambda w: ids[(w.title, w.media_type)])
+        binge = next(s for s in seeds if s.title == "Binge")
+        assert binge.watch_count == 50
+        assert binge.weight > next(s for s in seeds if s.title == "One Movie").weight
+
+    def test_an_items_own_tmdb_id_wins_over_the_resolver(self):
+        # The share-token source inlines the tmdb_id from the PMS GUID, so derive_seeds must use it
+        # and never consult the (index/search) resolver for that item — the resolver here would fail.
+        history = [make_watched("Heat", tmdb_id=949)]
+
+        def resolver(_w):
+            raise AssertionError("resolver must not be called when the item carries its own tmdb_id")
+
+        seeds = derive_seeds(history, resolver)
+        assert [s.tmdb_id for s in seeds] == [949]
 
     def test_unresolvable_titles_are_skipped(self):
         seeds = derive_seeds([make_watched("Unknown")], lambda w: None)

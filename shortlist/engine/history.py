@@ -1,25 +1,23 @@
-"""Watch-history sources: Tautulli (preferred) and Plex's own history API (fallback)."""
+"""Watch-history source: each user's complete watched set, read from the PMS AS them.
+
+``ShareTokenWatchSource`` is the one source. plex.tv mints a per-user server token for every shared
+invite; passed to the PMS it reads the library with that user's own ``viewCount``/``viewedLeafCount``
+— so a mark-as-watched (which the playback-history API never returns, issue #12) is seen, and no PMS
+database mount is needed. It supersedes the old Tautulli / Plex-history-API sources, which saw only
+playback sessions and capped at ~200 rows.
+"""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import threading
+from datetime import datetime
 from typing import Protocol
 
 from loguru import logger
 
 from shortlist.engine.clients.plex_pms import PlexClient
-from shortlist.engine.clients.tautulli import TautulliClient
+from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.models import MediaType, Seed, UserProfile, UserType, WatchedItem
-
-
-def _as_int(value: object) -> int | None:
-    """Parse a possibly-str/None index (season/episode) to int, or None if absent/unparseable."""
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
 
 
 class HistorySource(Protocol):
@@ -28,130 +26,77 @@ class HistorySource(Protocol):
     ) -> list[WatchedItem]: ...
 
 
-class FallbackHistorySource:
-    """Per-user fallback between sources.
+class ShareTokenWatchSource:
+    """Each user's COMPLETE watched set, read from the PMS with that user's own server token.
 
-    Tautulli only logs sessions it observed live, so a user can have years of history on the
-    PMS that Tautulli never saw (seen in the Phase 1 pilot: 11k PMS rows vs 1 Tautulli row).
-    If the primary source yields fewer than `min_items`, the fallback is consulted and the
-    richer result wins.
+    plex.tv mints a per-user server ``accessToken`` for every shared invite; passed to the PMS it
+    reads the library AS that user — with their ``viewCount``/``viewedLeafCount``, which INCLUDE a
+    mark-as-watched. The playback-history API never returns a mark (issue #12) and capped at ~200
+    rows; this returns everything, marks and all, in one read per library, with no PMS database mount.
+
+    Token per user (rule 9 — a live per-user credential, kept in memory for the run, never logged):
+      * OWNER  — the owner is not shared to their own server, so read with the admin token.
+      * SHARED / Home — plex.tv lists them in ``shared_servers`` with a token; one call covers the roster.
+      * a MANAGED sub-account with no share invite — switch to it and exchange for a server token
+        (the same path the privacy canary uses).
     """
 
-    def __init__(self, primary: HistorySource, fallback: HistorySource, *, min_items: int = 10):
-        self._primary = primary
-        self._fallback = fallback
-        self._min_items = min_items
+    def __init__(self, plex: PlexClient, plextv: PlexTvClient, *, owner_token: str):
+        self._plex = plex
+        self._plextv = plextv
+        self._owner_token = owner_token
+        # {plex_account_id: server token} for the shared roster, fetched once and reused for the run.
+        self._shared_tokens: dict[int, str] | None = None
+        # fetch() runs per-user inside a ThreadPoolExecutor when run.concurrency > 1, all sharing this
+        # one instance — the lock makes the roster fetch happen exactly once instead of N racing GETs
+        # bursting plex.tv (rule 6: be polite to shared infra).
+        self._tokens_lock = threading.Lock()
 
-    def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
+    def _tokens(self) -> dict[int, str]:
+        with self._tokens_lock:
+            if self._shared_tokens is None:
+                self._shared_tokens = self._plextv.shared_server_tokens()
+            return self._shared_tokens
+
+    def _token_for(self, user: UserProfile) -> str | None:
+        """The server token to read this user's watched state with, or None if none can be obtained."""
+        if user.user_type is UserType.OWNER:
+            return self._owner_token
+        token = self._tokens().get(user.plex_account_id)
+        if token is not None:
+            return token
+        # Not in the shared list: a managed Home profile with no invite of its own. Switch + exchange.
         try:
-            items = self._primary.fetch(user, min_completion=min_completion, since=since)
+            return self._plextv.canary_server_token(user.plex_account_id)
         except Exception as e:
-            logger.warning("{}: primary history source failed ({}); using fallback", user.username, e)
-            return self._fallback.fetch(user, min_completion=min_completion, since=since)
-        if len(items) >= self._min_items:
-            return items
-        fallback_items = self._fallback.fetch(user, min_completion=min_completion, since=since)
-        if len(fallback_items) > len(items):
-            logger.info(
-                "{}: primary history thin ({} items) — using fallback ({} items)",
-                user.username,
-                len(items),
-                len(fallback_items),
+            logger.warning(
+                "{}: no server token available ({}) — treating as no watch history", user.username, type(e).__name__
             )
-            return fallback_items
-        return items
-
-
-class TautulliSource:
-    """Deeper, more reliable history via Tautulli's get_history."""
-
-    def __init__(self, client: TautulliClient):
-        self._client = client
+            return None
 
     def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
-        since_ts = int(since.timestamp()) if since is not None else None
-        rows = self._client.get_history(user.plex_account_id, since_ts=since_ts)
-        items = []
-        for row in rows:
-            completion = int(row.get("percent_complete") or 0) / 100
-            if completion < min_completion:
-                continue
-            is_episode = row.get("media_type") == "episode"
-            media_type = MediaType.SHOW if is_episode else MediaType.MOVIE
-            title = row.get("grandparent_title") or row.get("title") or ""
-            if not title:
-                continue
-            items.append(
-                WatchedItem(
-                    title=title,
-                    media_type=media_type,
-                    watched_at=datetime.fromtimestamp(int(row.get("date") or 0), tz=UTC),
-                    year=int(row["year"]) if row.get("year") else None,
-                    rating_key=int(row["grandparent_rating_key"] or row["rating_key"])
-                    if row.get("grandparent_rating_key") or row.get("rating_key")
-                    else None,
-                    completion=completion,
-                    # Tautulli keys season/episode as parent_media_index/media_index; the row's own
-                    # `title` is the episode name (the show is grandparent_title, used above).
-                    season=_as_int(row.get("parent_media_index")) if is_episode else None,
-                    episode=_as_int(row.get("media_index")) if is_episode else None,
-                    episode_title=(row.get("title") or None) if is_episode else None,
+        """Every watched title across every movie/show library, as this user.
+
+        ``min_completion`` needs no reconstruction here: ``unwatched=0`` already excludes a
+        partially-watched movie (Plex counts a title watched only at ``viewCount>0``). ``since`` is
+        ignored — this is always a COMPLETE read, so a failed run simply re-reads next run and there is
+        no incremental state to lose.
+        """
+        token = self._token_for(user)
+        if token is None:
+            return []
+        items: list[WatchedItem] = []
+        for section in self._plex.sections():
+            media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+            try:
+                items.extend(self._plex.watched_titles(section.key, media_type, token))
+            except Exception as e:
+                # One unreadable library degrades to "nothing watched there" (it may re-surface a title
+                # they've seen), never a failed run — the same fail-soft stance the old sources took.
+                logger.warning(
+                    "{}: watched read failed for section {} ({})", user.username, section.key, type(e).__name__
                 )
-            )
-        logger.debug("{}: {} meaningful watches from Tautulli", user.username, len(items))
-        return items
-
-
-class PlexHistorySource:
-    """Zero-config fallback: PMS /status/sessions/history/all per accountID with the owner token."""
-
-    def __init__(self, client: PlexClient, *, roster_account_ids: frozenset[int] = frozenset()):
-        self._client = client
-        # Every plex.tv account id Shortlist knows. Used only to resolve the OWNER's local PMS
-        # account: anything in here demonstrably belongs to someone else, so it can never be it.
-        self._roster_account_ids = roster_account_ids
-
-    def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
-        # PMS history rows carry no completion percentage; presence in history is the signal.
-        items = []
-        # Only the owner is asked for: every other account is in PMS's table under the id we already
-        # hold, so this spends a `/accounts` read on the one person it can be wrong for.
-        account_id = (
-            self._client.system_account_id(
-                user.plex_account_id,
-                user.username,
-                exclude_ids=self._roster_account_ids - {user.plex_account_id},
-            )
-            if user.user_type is UserType.OWNER
-            else user.plex_account_id
-        )
-        for entry in self._client.history_for_account(account_id, since=since):
-            is_episode = entry.type == "episode"
-            media_type = MediaType.SHOW if is_episode else MediaType.MOVIE
-            title = getattr(entry, "grandparentTitle", None) or getattr(entry, "title", "")
-            if not title:
-                continue
-            viewed_at = getattr(entry, "viewedAt", None)
-            if viewed_at is None:
-                # No timestamp -> can't position it in history, and a `now()` fallback would get a
-                # fresh time on every pull and duplicate in the watch-history store. Skip it.
-                continue
-            items.append(
-                WatchedItem(
-                    title=title,
-                    media_type=media_type,
-                    watched_at=viewed_at.replace(tzinfo=UTC) if viewed_at.tzinfo is None else viewed_at,
-                    rating_key=int(entry.grandparentRatingKey)
-                    if getattr(entry, "grandparentRatingKey", None)
-                    else (int(entry.ratingKey) if getattr(entry, "ratingKey", None) else None),
-                    # PMS keys season/episode as parentIndex/index; the entry's own `title` is the
-                    # episode name (the show is grandparentTitle, used above).
-                    season=_as_int(getattr(entry, "parentIndex", None)) if is_episode else None,
-                    episode=_as_int(getattr(entry, "index", None)) if is_episode else None,
-                    episode_title=(getattr(entry, "title", None) or None) if is_episode else None,
-                )
-            )
-        logger.debug("{}: {} watches from Plex history API", user.username, len(items))
+        logger.debug("{}: {} watched titles via share token", user.username, len(items))
         return items
 
 
@@ -188,10 +133,15 @@ def derive_seeds(
 ) -> list[Seed]:
     """Collapse history into weighted seeds: distinct titles, frequency x recency weighted.
 
+    Frequency is the sum of each watch's ``watch_count`` — Plex's own per-title play/episode count —
+    not the number of history rows. The share-token source returns one row per title carrying that
+    count, so a 50-episode binge weighs like 50 without emitting 50 rows.
+
     Args:
-        history: Meaningful watches, any order.
-        resolve_tmdb_id: Callable (WatchedItem) -> int | None; adapters resolve via the
-            library index or TMDB search. Items that resolve to None are skipped.
+        history: Watched titles, any order.
+        resolve_tmdb_id: Callable (WatchedItem) -> int | None, used only when an item carries no
+            ``tmdb_id`` of its own (adapters resolve via the library index or TMDB search). Items that
+            resolve to None are skipped.
         max_seeds: Cap (most-recent/most-watched titles win).
     """
     if not history:
@@ -203,9 +153,12 @@ def derive_seeds(
 
     seeds = []
     for (title, media_type), items in by_title.items():
-        tmdb_id = resolve_tmdb_id(items[0])
+        # The item's own tmdb_id (the share-token source inlines it from the PMS GUID) wins; only
+        # fall back to the resolver for a source that didn't set one.
+        tmdb_id = items[0].tmdb_id if items[0].tmdb_id is not None else resolve_tmdb_id(items[0])
         if tmdb_id is None:
             continue
+        watch_count = sum(i.watch_count for i in items)
         recency_days = (newest - max(i.watched_at for i in items)).days
         recency_weight = max(0.25, 1.0 - recency_days / 90)  # linear decay over ~3 months
         seeds.append(
@@ -213,8 +166,8 @@ def derive_seeds(
                 tmdb_id=tmdb_id,
                 title=title,
                 media_type=media_type,
-                weight=len(items) * recency_weight,
-                watch_count=len(items),
+                weight=watch_count * recency_weight,
+                watch_count=watch_count,
                 recency_days=recency_days,
             )
         )

@@ -96,7 +96,7 @@ def test_an_incomplete_db_at_a_squashed_revision_is_not_silently_healed(tmp_path
     db = tmp_path / "shortlist.db"
     conn = sqlite3.connect(db)
     conn.execute("update alembic_version set version_num = '0028'")
-    conn.execute("drop table watch_events")  # schema now incomplete
+    conn.execute("drop table events")  # schema now incomplete
     conn.commit()
     conn.close()
 

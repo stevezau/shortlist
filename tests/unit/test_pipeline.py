@@ -47,7 +47,7 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     plex.sections_by_type.return_value = {MediaType.MOVIE: movie_section}
     movie_section.collections.return_value = []
     # Library: watched item 900 (ratingKey 999) + candidates 10 and 20.
-    plex.build_library_index.return_value = ({900: 999, 10: 1010, 20: 1020}, {})
+    plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020}
     plex.owned_collections.return_value = {}
     plex.find_owned_collections.return_value = []  # delivery finds by title; promotion enumerates rows
     plex.stored_label.side_effect = lambda collection, label: label.replace("shortlist", "Shortlist", 1)
@@ -440,9 +440,8 @@ class TestPerRowOverrides:
         lib2.title = "4K Movies"
         ctx.plex.sections.return_value = [lib1, lib2]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: lib1}  # lowest-key only
-        ctx.plex.build_library_index.side_effect = lambda s, ep=None: (
-            {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010, 20: 2020},
-            {},
+        ctx.plex.build_library_index.side_effect = lambda s: (
+            {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010, 20: 2020}
         )
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, library_keys=["2"])]
         sarah = make_profile("sarah", account_id=100)
@@ -484,9 +483,8 @@ class TestPerRowOverrides:
         ctx.plex.sections.return_value = [lib1, lib2]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: lib1}
         # Candidate 10 is in BOTH libraries; candidate 20 lives only in lib1.
-        ctx.plex.build_library_index.side_effect = lambda s, ep=None: (
-            {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010},
-            {},
+        ctx.plex.build_library_index.side_effect = lambda s: (
+            {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010}
         )
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, library_keys=["2"])]
         sarah = make_profile("sarah", account_id=100)
@@ -516,7 +514,7 @@ class TestPerRowOverrides:
         ctx.config.candidates_pre_rank = 5  # a tiny cut, so crowding-out is easy to trigger
         movies = {900: 999, **{i: 1000 + i for i in range(1, 60)}}
         shows = {5000: 5999, 5001: 5001}
-        ctx.plex.build_library_index.side_effect = lambda s, ep=None: (movies if s is movie_section else shows, {})
+        ctx.plex.build_library_index.side_effect = lambda s: movies if s is movie_section else shows
         ctx.config.rows = [RowSpec(slug="tv", name_template="TV Picks", size=2, media="show")]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
@@ -619,7 +617,7 @@ class TestPerRowOverrides:
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movie_section, MediaType.SHOW: show_section}
         movies = {900: 999, **{i: 1000 + i for i in range(1, 40)}}
         shows = {5000: 5999, **{5000 + i: 6000 + i for i in range(1, 40)}}
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (movies if sec is movie_section else shows, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: movies if sec is movie_section else shows
 
         def suggestions(tid, mt):  # returns (item, affinity) pairs
             # Plenty of BOTH movie and show candidates in the pool.
@@ -661,7 +659,7 @@ class TestPerRowOverrides:
         # Disjoint catalogues: Movies holds tmdb 10-15, 4K holds tmdb 50-55 (seed 900 in both).
         idx_std = {900: 999, **{i: 1000 + i for i in range(10, 16)}}
         idx_4k = {900: 999, **{i: 2000 + i for i in range(50, 56)}}
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (idx_std if sec is movies else idx_4k, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: idx_std if sec is movies else idx_4k
         # The candidate pool spans BOTH libraries' titles; each library must pick only its own.
         pool = [
             {"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in [*range(10, 16), *range(50, 56)]
@@ -691,7 +689,7 @@ class TestPerRowOverrides:
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         idx_std = {900: 999, **{i: 1000 + i for i in range(10, 16)}}
         idx_4k = {900: 999, **{i: 2000 + i for i in range(50, 56)}}
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (idx_std if sec is movies else idx_4k, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: idx_std if sec is movies else idx_4k
         pool = [
             {"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in [*range(10, 16), *range(50, 56)]
         ]
@@ -719,7 +717,7 @@ class TestPerRowOverrides:
         ctx.plex.sections.return_value = [movies]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         idx = {900: 999, **{i: 1000 + i for i in range(10, 20)}}
-        ctx.plex.build_library_index.return_value = (idx, {})
+        ctx.plex.build_library_index.return_value = idx
         pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 20)]
         ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
@@ -823,7 +821,7 @@ class TestPerRowOverrides:
         ctx.tmdb.search.side_effect = lambda title, mt, year=None: (
             {"id": 30, "title": "Web Pick", "genre_ids": [], "vote_average": 8.5} if title == "Web Pick" else None
         )
-        ctx.plex.build_library_index.return_value = ({900: 999, 10: 1010, 20: 1020, 30: 1030}, {})
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020, 30: 1030}
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -907,7 +905,7 @@ class TestPerRowOverrides:
                 {"id": 20, "title": "Fresh Twenty", "genre_ids": [], "vote_average": 7.0},
             ]
         )
-        ctx.plex.build_library_index.return_value = ({900: 999, 10: 1010, 20: 1020}, {})
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020}
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -934,7 +932,7 @@ class TestPerRowOverrides:
                 {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
             ]
         )
-        ctx.plex.build_library_index.return_value = ({900: 999, 50: 550, 10: 1010}, {})
+        ctx.plex.build_library_index.return_value = {900: 999, 50: 550, 10: 1010}
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -1283,7 +1281,7 @@ class TestPlacement:
         # Movies is fed by Fargo (ids 10-15), 4K by Heat (ids 50-55).
         idx_std = {900: 999, 800: 888, **{i: 1000 + i for i in range(10, 16)}}
         idx_4k = {900: 999, 800: 888, **{i: 2000 + i for i in range(50, 56)}}
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (idx_std if sec is movies else idx_4k, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: idx_std if sec is movies else idx_4k
 
         def suggestions(tid, mt):  # returns (item, affinity) pairs
             base = 10 if tid == 900 else 50  # Fargo -> Movies ids, Heat -> 4K ids
@@ -1343,7 +1341,7 @@ class TestLibraryScoping:
         ctx.config.rows_defined = True
         ctx.plex.section_signature.return_value = None  # force a scan (no cache)
         scanned: list[str] = []
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: scanned.append(str(sec.key)) or ({}, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
 
         pipeline_mod._build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, sports, shows])
 
@@ -1358,7 +1356,7 @@ class TestLibraryScoping:
         ctx.config.rows_defined = False
         ctx.plex.section_signature.return_value = None
         scanned: list[str] = []
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: scanned.append(str(sec.key)) or ({}, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
 
         pipeline_mod._build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, shows])
 
@@ -1395,7 +1393,7 @@ class TestLibraryIndexCache:
         ctx.index_cache = cache
         ctx.progress = None  # _emit only logs
         ctx.plex.section_signature.return_value = "100:200"
-        ctx.plex.build_library_index.return_value = ({42: 1}, {42: 10})
+        ctx.plex.build_library_index.return_value = {42: 1}
         return ctx
 
     def test_unchanged_library_serves_the_cached_index_without_re_scanning(self):
@@ -1403,7 +1401,7 @@ class TestLibraryIndexCache:
         section = MagicMock(key="1", title="Movies")
         first = pipeline_mod._library_index(ctx, section)
         second = pipeline_mod._library_index(ctx, section)
-        assert first == second == ({42: 1}, {42: 10})
+        assert first == second == {42: 1}
         assert ctx.plex.build_library_index.call_count == 1  # second run served from cache
 
     def test_a_changed_signature_re_scans(self):
@@ -1540,7 +1538,7 @@ class TestPerDeliveryTimeoutRetry:
         ctx.tmdb.suggestions.return_value = _ranked(
             [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in ids]
         )
-        ctx.plex.build_library_index.return_value = ({900: 999, **{i: 1000 + i for i in ids}}, {})
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 1000 + i for i in ids}}
 
     def test_a_transient_delivery_timeout_retries_only_the_write_not_pick_selection(
         self, ctx: EngineContext, mock_plextv, monkeypatch

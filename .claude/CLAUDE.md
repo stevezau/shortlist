@@ -1,8 +1,9 @@
 # Shortlist
 
 A private, AI-curated "Picked for You" row for every user on a Plex server. One Docker container:
-FastAPI backend + React SPA + SQLite, with a pure-Python engine (Tautulli/Plex history → TMDB
-similar-titles → LLM curate/explain → per-user Plex collection + label-restriction privacy).
+FastAPI backend + React SPA + SQLite, with a pure-Python engine (per-user watched set read from the
+PMS via each share's server token → TMDB similar-titles → LLM curate/explain → per-user Plex
+collection + label-restriction privacy).
 
 **Status: beta.** In production on the maintainer's server: the FastAPI server runs the engine on
 its own nightly schedule (APScheduler), with the React SPA and Docker
@@ -122,6 +123,7 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   NOT "before the PR" alone: a `dev` push deploys to the maintainer's server and to every `:dev`
   user, so risky code is already live by then. The 0032 migration that was a no-op on every real
   database sat on `dev` for days before any PR existed.
+
 - Settings live in the DB (`settings` table via `settings_store`); env vars are one-time seeds
   migrated on first boot (infrastructure vars like `PORT`, `TZ`, `PUID/PGID`, `APP_BASE_PATH` stay live)
 - Every schema change ships an Alembic migration

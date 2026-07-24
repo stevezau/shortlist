@@ -267,26 +267,17 @@ class TestUsersApi:
     def _one(self, client: TestClient, user_id: int) -> dict:
         return next(u for u in client.get("/api/users").json() if u["id"] == user_id)
 
-    def test_watch_history_is_counted_from_the_watch_mirror_not_a_run_written_pref(self, client: TestClient):
-        """`prefs["history_depth"]` is only written once a run PROCESSES someone, so a skipped user —
-        or anyone before their first successful run — read "0 titles" forever. A beta user saw 0 for
-        all 42 of his accounts while the log showed 170 events synced for one of them."""
-        from shortlist.server.db.models import User, WatchEvent
+    def test_watch_history_depth_is_read_from_prefs_not_gated_on_a_run(self, client: TestClient):
+        """`history_depth` is refreshed for EVERY enabled user by the daily watch sync (the share-token
+        read returns one item per distinct title, so a binge is one). It must surface without waiting
+        for a run to PROCESS someone — a skipped or never-run user used to read "0 titles" forever (the
+        beta bug that reported 0 for all 42 accounts while the log showed watches synced)."""
+        from shortlist.server.db.models import User
 
         with client.app.state.sessions() as session:
             user = session.query(User).filter_by(username="sarah").one()
-            # Two plays of one show + one film = 2 distinct TITLES, not 3 events. (Distinct
-            # timestamps: (user, rating_key, watched_at) is unique, which is how the sync dedups.)
-            when = datetime(2026, 7, 21, 2, 0, tzinfo=UTC)
-            session.add_all(
-                [
-                    WatchEvent(user_id=user.id, rating_key=100, watched_at=when, media_type="show"),
-                    WatchEvent(
-                        user_id=user.id, rating_key=100, watched_at=when + timedelta(hours=1), media_type="show"
-                    ),
-                    WatchEvent(user_id=user.id, rating_key=200, watched_at=when, media_type="movie"),
-                ]
-            )
+            # The sync writes the distinct-title count the share-token source returned; no run yet.
+            user.prefs = {**(user.prefs or {}), "history_depth": 2}
             session.commit()
             user_id = user.id
 
@@ -914,7 +905,6 @@ class TestRunsApi:
         """_prune_runs deletes a run past `keep` AND its picks + per-user rows — but ONLY once it's
         also older than the 30-day hit window (a recent run beyond `keep` is kept so the report keeps
         crediting its picks). Picks/run_users aren't ORM-cascaded off Run, so both go explicitly."""
-        from datetime import UTC, datetime, timedelta
 
         from shortlist.server.db.models import PickRow, Run, RunUser, User
         from shortlist.server.services.run_service import RunService
@@ -961,7 +951,6 @@ class TestRunsApi:
         assert captured["dry_run"] is True and captured["trigger"] == "manual"
 
     def test_effectiveness_report_counts_hits(self, client: TestClient):
-        from datetime import UTC, datetime
 
         from shortlist.server.db.models import PickRow, Run, User
 
@@ -1024,7 +1013,6 @@ class TestRunsApi:
     def test_report_splits_a_multi_library_row_per_library(self, client: TestClient):
         """A row targeting >1 library is one Plex collection PER library, so the report tracks each
         library as its own line — with its own hit rate and the library's own {library_name} name."""
-        from datetime import UTC, datetime
 
         from shortlist.server.db.models import PickRow, Run, User
 
@@ -1080,7 +1068,6 @@ class TestRunsApi:
         """The full lifecycle: a title watched in one row, later moved to another row (no re-credit,
         the watch predates it), then watched by a DIFFERENT person in that other row. Overall must not
         double-count; each row is credited only for the watches that happened while the title was in it."""
-        from datetime import UTC, datetime
 
         from shortlist.server.db.models import PickRow, Run, User
 

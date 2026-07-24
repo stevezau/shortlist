@@ -157,33 +157,19 @@ Settings → Finding titles has three more dials (each per-row overridable):
 
 ### If a watched title still gets recommended
 
-Almost always one cause: **Plex's history only records what someone actually _played_.** A title
-_marked_ watched — ticked off without playing it, or a whole season marked at once — leaves no play
-record anywhere in Plex's API, so Shortlist can't see it and may recommend it back. On one real
-server that hid **13,201** of a user's watched titles behind the ~1,000 the API reported.
+Shortlist reads each person's **complete** watched set from Plex every run — including titles they
+only _marked_ watched (ticked off, or a whole season marked) rather than played — so this is rare.
+It reads the library _as that user_, with the per-user server token Plex mints for every share, and
+`viewCount > 0` covers both plays and marks at any depth. Nothing to configure, and it works whether
+or not Shortlist runs on the same machine as Plex. (This replaced the old playback-history read,
+which saw plays only and capped at ~200 — on one real server that hid **13,201** of a user's watched
+titles behind the ~1,000 the API reported.)
 
-If Shortlist runs on the same machine as Plex, you can close that gap completely. Mount the Plex
-database read-only:
-
-```yaml
-volumes:
-  - /path/to/plex/.../Plug-in Support/Databases:/plexdb:ro
-```
-
-and that's it — mounting it at `/plexdb` makes it available. (Settings → Advanced has a path field
-if your layout differs, with a **Test** button.) One read covers every account on the server. The
-database is opened read-only and Shortlist never writes to it — it only reads which items each
-account has watched.
-
-Then go to **Tools → Reconcile watched from Plex** and run it. Reading the database is a manual
-action, not part of every nightly run — scanning a live multi-gigabyte database every night, for
-marks people add rarely, would be needlessly heavy. The reconcile tells you how many watched titles
-it found that the play history had missed. Run it once now, and again whenever watched state drifts;
-because Plex's API still can't see marks, anything you mark watched later stays hidden until you
-reconcile again.
-
-This is off unless you set it: it needs a deliberate mount, and it can't work if Shortlist runs on a
-different machine to Plex.
+When it does happen, it's almost always timing: **the read is per-run, so a title you mark watched
+after the last run stays eligible until the next one.** To fix it immediately without waiting for a
+scheduled run, go to **Tools → Sync history** — it re-reads every user's watched set right now,
+writes nothing to Plex, and updates what Shortlist knows (and the "N titles watched" count on the
+Users page). Any run after that leaves the title out.
 
 ### Everything above is only the _default_ — rows override it
 
@@ -381,9 +367,9 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
   didn't add), and confirm the PMS is ≥ 1.43.2.10687 (older builds ignore the exclusion).
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
-- **Tautulli shows fewer watches than expected** — Tautulli only knows sessions it observed
-  live. Shortlist automatically falls back to Plex's own history per user when Tautulli's
-  answer is thin.
+- **A watched title keeps getting recommended** — the watched set is read per run, so a title you
+  mark watched _after_ the last run stays eligible until the next one. **Tools → Sync history**
+  re-reads everyone's watched set immediately (writes nothing to Plex); any run after that drops it.
 - **Everything broke, get me out** — Settings → Danger Zone → **Uninstall** restores every
   user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled
   collection. Kometa and other tools' collections are never touched.

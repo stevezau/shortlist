@@ -176,10 +176,19 @@ interface LibraryView {
   label: string;
   /** movie | show | both — how this library's candidate SEARCH is scoped (search is per-type). */
   media: string;
+  /** The most-recent watches recorded (a bounded sample — the true totals are the counts below). */
   watched: TraceWatch[];
+  /** True distinct-title watch totals for this tab's media type(s), NOT the sample length: the
+   *  recent sample is time-ordered and can be all TV, so a movie tab may sample only a handful. */
+  watchedMovies: number;
+  watchedShows: number;
   seeds: TraceSeed[];
+  /** Every source EXCEPT llm_web, which is rendered on its own from `web`/`webSource` (it has a
+   *  richer story than a contribution count — the web searches and the AI's proposals). */
   sources: TraceSource[];
   web: TraceWeb | null;
+  /** The llm_web source row (its status/contribution), paired with `web` in the AI-search card. */
+  webSource: TraceSource | null;
   discoverGenres: Record<string, string[]>;
   delivered: RunLibraryBreakdown[];
   /** True when search is shared with other libraries of the same media type (be honest about it). */
@@ -189,6 +198,14 @@ interface LibraryView {
 function buildLibraries(data: RunUserTraceResponse): LibraryView[] {
   const trace: RunUserTrace = data.trace ?? {};
   const watches = trace.history?.recent ?? [];
+  // The true distinct-title totals across ALL history, not the length of the recent sample. The
+  // sample is time-ordered and bounded, so a heavy TV watcher's movie tab sees only a few recent
+  // movie titles — these are what "watched N movies / M shows" should actually report.
+  const totalMovies = trace.history?.watched_movies ?? 0;
+  const totalShows = trace.history?.watched_shows ?? 0;
+  // Exact per-library totals (split by media) when the run recorded them — this distinguishes two
+  // libraries of the same media type, which the server-wide per-media total above cannot.
+  const byLibrary = trace.history?.watched_by_library;
   const seeds = trace.seeds ?? [];
   const gathers = trace.gathers ?? [];
   const breakdown = data.breakdown ?? [];
@@ -242,10 +259,15 @@ function buildLibraries(data: RunUserTraceResponse): LibraryView[] {
     // A gather is relevant to this library if its pool covers this library's media type. Union the
     // sources across those gathers, keeping only the per-return rows for this library's media.
     const relevant = gathers.filter((g) => poolCoversMedia(g.pool, medias));
-    const sources = mergeSourcesForMedia(
+    const merged = mergeSourcesForMedia(
       relevant.flatMap((g) => g.sources ?? []),
       medias,
     );
+    // llm_web is pulled OUT of the generic source list: it has its own rich card (the web searches
+    // it ran + the titles the AI proposed), so showing it twice — once as a bare "Contributed N"
+    // row and once as the detailed card — is the confusing duplication we're removing.
+    const sources = merged.filter((s) => s.source !== "llm_web");
+    const webSource = merged.find((s) => s.source === "llm_web") ?? null;
     const web = relevant.map((g) => g.web).find(Boolean) ?? null;
     const discoverGenres: Record<string, string[]> = {};
     for (const g of relevant) {
@@ -256,14 +278,33 @@ function buildLibraries(data: RunUserTraceResponse): LibraryView[] {
     const sharedSearch = [...medias].some(
       (m) => (libsPerMedia.get(m) ?? 0) > 1,
     );
+    // The true watched totals belong to this tab's media type(s). A movie-only tab reports the
+    // movie total; a "both" tab reports both. These come from the full-history counts, not the
+    // bounded recent sample, so a TV-heavy watcher's movie tab no longer reads "4 watched". Prefer
+    // the exact per-library split (which distinguishes two same-type libraries); fall back to the
+    // server-wide per-media total for runs recorded before per-library totals existed.
+    const libTotals = byLibrary?.[label];
+    const watchedMovies = libTotals
+      ? libTotals.movie
+      : medias.size === 0 || medias.has("movie")
+        ? totalMovies
+        : 0;
+    const watchedShows = libTotals
+      ? libTotals.show
+      : medias.size === 0 || medias.has("show")
+        ? totalShows
+        : 0;
     return {
       key: label,
       label,
       media: primaryMedia,
       watched: libWatches,
+      watchedMovies,
+      watchedShows,
       seeds: libSeeds,
       sources,
       web,
+      webSource,
       discoverGenres,
       delivered: breakdown.filter((b) => b.library_title === label),
       sharedSearch,
@@ -379,7 +420,9 @@ interface FlowStepDef {
 
 function LibraryFlow({ lib }: { lib: LibraryView }) {
   const searchNoun = mediaLabel(lib.media).toLowerCase();
-  const placesSearched = lib.sources.length + (lib.web ? 1 : 0);
+  const hasWeb = Boolean(lib.web || lib.webSource);
+  const placesSearched = lib.sources.length + (hasWeb ? 1 : 0);
+  const totalWatched = lib.watchedMovies + lib.watchedShows;
   const deliveredCount = lib.delivered.reduce((n, b) => n + b.picks.length, 0);
   const steps: FlowStepDef[] = [
     {
@@ -387,8 +430,12 @@ function LibraryFlow({ lib }: { lib: LibraryView }) {
       n: 1,
       icon: History,
       rail: "Watched",
-      count: lib.watched.length,
+      count: totalWatched || lib.watched.length,
       title: `What they watched in ${lib.label}`,
+      subtitle:
+        totalWatched > lib.watched.length
+          ? `${watchedSummary(lib)} — their most recent are below (we keep tonight's picks anchored to what they've watched lately).`
+          : undefined,
       body:
         lib.watched.length > 0 ? (
           <ul className="flex flex-wrap gap-1.5">
@@ -432,12 +479,13 @@ function LibraryFlow({ lib }: { lib: LibraryView }) {
       count: placesSearched,
       title: "Where we searched, and every title in and out",
       subtitle: lib.sharedSearch
-        ? `We search for ${searchNoun} candidates by taste, not by library — so these results are shared across your ${searchNoun} libraries. Each title shows whether it made this library’s shortlist or why it fell out.`
-        : "Each place we looked, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn’t.",
+        ? `Each seed above fans out to every place we look for ${searchNoun}s. We search by taste, not by library, so these results are shared across your ${searchNoun} libraries — each title shows whether it made this library's shortlist or why it fell out.`
+        : `Each seed above fans out to every place we look. Below is each one, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.`,
       body: (
         <SourcesFlow
           sources={lib.sources}
           web={lib.web}
+          webSource={lib.webSource}
           discoverGenres={lib.discoverGenres}
         />
       ),
@@ -672,28 +720,59 @@ function seedWhy(s: TraceSeed): string {
 
 // ── Stage 3: sources, each title in and out ───────────────────────────────────
 
+/** The search step rendered as a branch: one "seeds" node at the top, then a card per place we
+ *  looked, each hung off a short connector so it reads as a fan-out rather than a flat list. */
 function SourcesFlow({
   sources,
   web,
+  webSource,
   discoverGenres,
 }: {
   sources: TraceSource[];
   web: TraceWeb | null;
+  webSource: TraceSource | null;
   discoverGenres: Record<string, string[]>;
 }) {
-  const hasAny = sources.length > 0 || web;
-  if (!hasAny) return <Muted>No candidate sources ran for this library.</Muted>;
+  const branchCount = sources.length + (web || webSource ? 1 : 0);
+  if (branchCount === 0)
+    return <Muted>No candidate sources ran for this library.</Muted>;
   return (
-    <div className="space-y-3">
-      {sources.map((src) => (
-        <SourceCard
-          key={src.source}
-          src={src}
-          discoverGenres={discoverGenres}
-        />
-      ))}
-      {web && <WebSourceCard web={web} />}
+    <div>
+      <div className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        <span className="flex h-6 items-center rounded-full bg-muted px-2.5 tabular-nums">
+          Your seeds
+        </span>
+        <span aria-hidden="true">fanned out to</span>
+        <span className="tabular-nums">
+          {branchCount} {branchCount === 1 ? "place" : "places"}
+        </span>
+      </div>
+      {/* The branch: a vertical spine down the left with each place tee'd off it. */}
+      <ul className="relative space-y-3 border-l-2 border-dashed border-border pl-5">
+        {sources.map((src) => (
+          <li key={src.source} className="relative">
+            <BranchConnector />
+            <SourceCard src={src} discoverGenres={discoverGenres} />
+          </li>
+        ))}
+        {(web || webSource) && (
+          <li className="relative">
+            <BranchConnector />
+            <WebSourceCard web={web} source={webSource} />
+          </li>
+        )}
+      </ul>
     </div>
+  );
+}
+
+/** The short horizontal elbow that ties a branch card back to the spine on its left. */
+function BranchConnector() {
+  return (
+    <span
+      aria-hidden="true"
+      className="absolute -left-5 top-6 h-px w-5 bg-border"
+    />
   );
 }
 
@@ -844,32 +923,64 @@ function ReturnRow({ ret }: { ret: TraceReturn }) {
   );
 }
 
-function WebSourceCard({ web }: { web: TraceWeb }) {
+/** The AI web-search branch. This is a TWO-step source and the UI must say so, because the two
+ *  steps look alike but aren't: (A) real web searches run — one per seed, via Exa and/or the model's
+ *  own built-in search — and (B) the AI then READS all those results and proposes titles to watch.
+ *  So the many search queries are NOT the one prompt at the bottom: the queries are step A (Exa), the
+ *  prompt is step B (what the model was handed). Conflating them was the reported confusion. */
+function WebSourceCard({
+  web,
+  source,
+}: {
+  web: TraceWeb | null;
+  source: TraceSource | null;
+}) {
   const proposed = [
-    ...new Set([...(web.native_proposed ?? []), ...(web.proposed ?? [])]),
+    ...new Set([...(web?.native_proposed ?? []), ...(web?.proposed ?? [])]),
   ];
-  const resolved = new Set(web.resolved ?? []);
-  const unresolved = new Set(web.unresolved ?? []);
+  const resolved = new Set(web?.resolved ?? []);
+  const unresolved = new Set(web?.unresolved ?? []);
+  const searches = web?.searches ?? [];
+  const failed = source?.status === "failed";
+  const kept = source?.disposition?.kept ?? 0;
+  const mech = webMechanism(web?.mode ?? "", searches.length > 0);
+
   return (
-    <div className="rounded-lg border">
-      <div className="flex items-center gap-2 p-3">
+    <div className="overflow-hidden rounded-lg border">
+      <div className="flex items-start gap-2 p-3">
         <Globe
-          className="h-4 w-4 shrink-0 text-muted-foreground"
+          className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
           aria-hidden="true"
         />
-        <p className="text-sm font-medium">{sourceLabel("llm_web")}</p>
-        <Badge variant="secondary" className="ml-auto shrink-0">
-          {proposed.length}
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-sm font-medium">{sourceLabel("llm_web")}</p>
+          <p className="text-xs text-muted-foreground">{mech}</p>
+        </div>
+        <Badge
+          variant={failed ? "destructive" : "secondary"}
+          className="shrink-0"
+        >
+          {failed ? "Failed" : proposed.length}
         </Badge>
       </div>
+
+      {failed && source?.detail && (
+        <p className="border-t px-3 py-2 text-xs text-destructive">
+          Couldn’t reach it — {source.detail}
+        </p>
+      )}
+
       <div className="space-y-4 border-t p-3">
-        {web.searches && web.searches.length > 0 && (
+        {searches.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground">
-              What it searched the web for
+            <p className="text-xs font-medium">
+              <span className="mr-1.5 rounded bg-muted px-1.5 py-0.5 font-semibold tabular-nums">
+                Step 1
+              </span>
+              Web searches we ran — one per seed
             </p>
             <ul className="space-y-1.5">
-              {web.searches.map((s, i) => (
+              {searches.map((s, i) => (
                 <li key={i} className="text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <Search
@@ -899,9 +1010,16 @@ function WebSourceCard({ web }: { web: TraceWeb }) {
 
         {proposed.length > 0 && (
           <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground">
-              Titles the AI suggested — struck-through ones had no real match
-              and were dropped
+            <p className="text-xs font-medium">
+              {searches.length > 0 && (
+                <span className="mr-1.5 rounded bg-muted px-1.5 py-0.5 font-semibold tabular-nums">
+                  Step 2
+                </span>
+              )}
+              Titles the AI then suggested
+              <span className="ml-1 font-normal text-muted-foreground">
+                — struck-through ones had no real match and were dropped
+              </span>
             </p>
             <ul className="flex flex-wrap gap-1.5">
               {proposed.map((title, i) => {
@@ -921,13 +1039,20 @@ function WebSourceCard({ web }: { web: TraceWeb }) {
                 );
               })}
             </ul>
+            {kept > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {kept} of these made this library’s shortlist.
+              </p>
+            )}
           </div>
         )}
 
-        {web.rag_user && (
+        {web?.rag_user && (
           <details className="rounded-lg border bg-muted/20 p-3 text-sm">
             <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground">
-              See the exact instructions the AI was given
+              {searches.length > 0
+                ? "See the exact prompt the AI got in step 2"
+                : "See the exact prompt the AI was given"}
             </summary>
             {web.rag_system && (
               <pre className="mt-3 whitespace-pre-wrap rounded bg-background/70 p-3 font-mono text-[11px] leading-relaxed">
@@ -942,6 +1067,21 @@ function WebSourceCard({ web }: { web: TraceWeb }) {
       </div>
     </div>
   );
+}
+
+/** Plain-English description of HOW the AI web search ran, from the mode + whether Exa searches were
+ *  recorded. The three engine modes (candidates.py): native = the model's own built-in web search;
+ *  exa = the external Exa search, then the model ranks; auto = both, unioned. */
+function webMechanism(mode: string, hasSearches: boolean): string {
+  if (mode === "native")
+    return "The AI model’s own built-in web search proposed titles directly.";
+  if (mode === "exa" || (hasSearches && mode !== "auto"))
+    return "We searched the web with Exa, then the AI read the results and proposed titles.";
+  if (mode === "auto")
+    return hasSearches
+      ? "The AI model’s built-in web search AND an Exa web search, combined — the AI proposed titles from both."
+      : "The AI model’s own built-in web search proposed titles directly.";
+  return "The AI proposed titles to watch next from a web search.";
 }
 
 // ── Stage 4: delivered picks, with reasons ────────────────────────────────────
@@ -984,6 +1124,21 @@ function DeliveredPick({ pick }: { pick: Pick }) {
 }
 
 // ── Plain-English helpers ─────────────────────────────────────────────────────
+
+/** "Watched 598 movies and 40 shows" from the true totals — so a tab whose recent sample is all TV
+ *  doesn't read as "4 watched". Only names the media type(s) this tab actually holds. */
+function watchedSummary(lib: LibraryView): string {
+  const parts: string[] = [];
+  if (lib.watchedMovies > 0)
+    parts.push(
+      `${lib.watchedMovies.toLocaleString()} movie${lib.watchedMovies === 1 ? "" : "s"}`,
+    );
+  if (lib.watchedShows > 0)
+    parts.push(
+      `${lib.watchedShows.toLocaleString()} show${lib.watchedShows === 1 ? "" : "s"}`,
+    );
+  return parts.length > 0 ? `Watched ${parts.join(" and ")} here` : "";
+}
 
 /** "movie" → "Movie", "show" → "Show", "both" → "Movies & shows". */
 function mediaLabel(media: string): string {

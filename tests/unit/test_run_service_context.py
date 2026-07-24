@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import shortlist.server.services.context_builder as context_builder_mod
-from shortlist.engine.history import FallbackHistorySource, PlexHistorySource
+from shortlist.engine.history import ShareTokenWatchSource
 from shortlist.engine.models import MediaType
 from shortlist.server.db.models import PickRow, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
@@ -16,7 +16,6 @@ from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
-from shortlist.server.services.watch_history import StoreHistorySource
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -61,11 +60,11 @@ class TestBuildContext:
         with pytest.raises(RuntimeError, match="not configured"):
             service.build_context(dry_run=True)
 
-    def test_no_tautulli_uses_plex_history(self, service, configured):
+    def test_watched_state_is_read_via_the_share_token_source(self, service, configured):
         ctx = service.build_context(dry_run=True)
-        # The engine reads through the local watch-history store, which wraps the real source.
-        assert isinstance(ctx.history_source, StoreHistorySource)
-        assert isinstance(ctx.history_source._upstream, PlexHistorySource)
+        # The one watch source: each user's complete watched set read from the PMS AS them, with the
+        # per-user server token plex.tv mints. No Tautulli/history-API/DB-mirror wrapper anymore.
+        assert isinstance(ctx.history_source, ShareTokenWatchSource)
         assert ctx.curator.name == "none"
         assert ctx.config.dry_run is True
 
@@ -84,14 +83,15 @@ class TestBuildContext:
         assert "reason" not in entries[1], "a stage that needs no explaining carries no reason"
         assert entries[1]["counts"] == {"items": 12}
 
-    def test_tautulli_configured_uses_per_user_fallback(self, service, sessions, configured):
+    def test_tautulli_config_does_not_change_the_watch_source(self, service, sessions, configured):
+        # Tautulli is no longer a watch SOURCE (only friendly names + a setup probe) — configuring it
+        # must not swap in a different history source. The share-token read is used either way.
         with sessions() as session:
             store = SettingsStore(session, configured)
             store.set("tautulli.url", "http://taut:8181")
             store.set("tautulli.apikey", "tk")
         ctx = service.build_context(dry_run=False)
-        assert isinstance(ctx.history_source, StoreHistorySource)
-        assert isinstance(ctx.history_source._upstream, FallbackHistorySource)
+        assert isinstance(ctx.history_source, ShareTokenWatchSource)
 
     def test_plex_timeout_setting_flows_to_the_client(self, service, sessions, configured, monkeypatch):
         # A big TV library's collection rebuild legitimately takes 15-20s+; the run's PMS client must
@@ -378,48 +378,3 @@ def test_build_scheduler_registers_the_daily_watch_sync(sessions):
     app = SimpleNamespace(state=SimpleNamespace(sessions=sessions, run_service=None))
     scheduler = build_scheduler(app)
     assert scheduler.get_job(WATCH_SYNC_JOB_ID) is not None  # daily, independent of any row's cron
-
-
-class TestPlexDbAutoMount:
-    """Bind-mounting Plex's database into the container is the opt-in — being made to then type the
-    path you just mounted is a second hoop that buys no extra consent."""
-
-    def test_the_documented_mount_switches_it_on_with_no_setting(self, tmp_path, monkeypatch):
-        from shortlist.server.services import context_builder as cb
-
-        mount = tmp_path / "plexdb"
-        mount.mkdir()
-        (mount / cb.PlexDbReader.FILENAME).write_bytes(b"")
-        monkeypatch.setattr(cb, "DEFAULT_PLEX_DB_MOUNT", mount)
-
-        reader = cb._flag_reader(_StubStore({}))
-
-        assert reader is not None and reader.path == mount / cb.PlexDbReader.FILENAME
-
-    def test_nothing_is_discovered_when_the_mount_is_absent(self, tmp_path, monkeypatch):
-        """No searching the filesystem for someone's Plex database — one documented path or off."""
-        from shortlist.server.services import context_builder as cb
-
-        monkeypatch.setattr(cb, "DEFAULT_PLEX_DB_MOUNT", tmp_path / "not-mounted")
-
-        assert cb._flag_reader(_StubStore({})) is None
-
-    def test_an_explicit_path_always_wins(self, tmp_path, monkeypatch):
-        from shortlist.server.services import context_builder as cb
-
-        mount = tmp_path / "plexdb"
-        mount.mkdir()
-        (mount / cb.PlexDbReader.FILENAME).write_bytes(b"")
-        monkeypatch.setattr(cb, "DEFAULT_PLEX_DB_MOUNT", mount)
-
-        reader = cb._flag_reader(_StubStore({"plex.db_path": "/somewhere/else.db"}))
-
-        assert reader is not None and str(reader.path) == "/somewhere/else.db"
-
-
-class _StubStore:
-    def __init__(self, values: dict):
-        self._values = values
-
-    def get(self, key, default=None):
-        return self._values.get(key, default)

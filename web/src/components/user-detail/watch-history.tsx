@@ -14,7 +14,7 @@ function episodeLabel(item: WatchItem): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-/** A user's recent watches, straight from Plex/Tautulli. All four states via QueryBoundary. */
+/** A user's recent watches, read from Plex per user. All four states via QueryBoundary. */
 export function WatchHistory({ userId }: { userId: number }) {
   const query = useUserHistory(userId);
   return (

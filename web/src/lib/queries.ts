@@ -341,7 +341,7 @@ export function useUserHistory(id: number) {
   return useQuery({
     queryKey: queryKeys.userHistory(id),
     queryFn: () => api.getUserHistory(id),
-    retry: false, // a live Plex/Tautulli fetch; surface the error rather than hammering
+    retry: false, // a live per-user Plex read; surface the error rather than hammering
   });
 }
 

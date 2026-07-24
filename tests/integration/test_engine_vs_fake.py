@@ -22,7 +22,7 @@ from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.curator import NullCurator
-from shortlist.engine.history import PlexHistorySource
+from shortlist.engine.history import ShareTokenWatchSource
 from shortlist.engine.models import EngineConfig, MediaType, RowSpec, UserProfile, UserType
 from shortlist.engine.pipeline import EngineContext
 from shortlist.engine.pipeline import run as engine_run
@@ -156,7 +156,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -297,7 +297,7 @@ def test_a_row_builds_in_every_movie_library_with_that_librarys_own_rating_keys(
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -371,7 +371,7 @@ def test_two_per_person_rows_share_one_label_and_are_both_hidden(fakes, tmp_path
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -420,7 +420,7 @@ def test_the_owners_own_row_is_built_from_their_history_and_hidden_from_everyone
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -463,21 +463,27 @@ def test_the_owners_own_row_is_built_from_their_history_and_hidden_from_everyone
 
 
 def test_the_owners_history_is_never_confused_with_a_shared_users(fakes, tmp_path):
-    """The owner resolves to a DIFFERENT PMS account id than their plex.tv one, so the mapping has
-    to be per-person — get it wrong and the owner's row is someone else's picks."""
+    """Each person's watched set is read AS them, so two people never get each other's picks.
+
+    The owner reads with the admin token (they own the server, not shared to it), and their watched
+    state is filed under a LOCAL PMS account id — not their plex.tv one. Sarah reads with the per-user
+    server token plex.tv minted for her share. Route either token to the wrong account and the owner's
+    row becomes someone else's picks."""
     state, pms_url, _tmdb_app = fakes
     plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    source = ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token)
 
-    owner_items = PlexHistorySource(plex).fetch(
+    owner_items = source.fetch(
         UserProfile(username=state.owner_username, plex_account_id=state.owner_account_id, user_type=UserType.OWNER),
         min_completion=0.7,
     )
-    sarah_items = PlexHistorySource(plex).fetch(
+    sarah_items = source.fetch(
         UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED),
         min_completion=0.7,
     )
 
-    assert owner_items, "the owner's history came back empty — PMS was asked for the wrong account"
+    assert owner_items, "the owner's history came back empty — the admin token read the wrong account"
     assert {i.title for i in owner_items}.isdisjoint({i.title for i in sarah_items})
 
 
@@ -490,13 +496,13 @@ def _shared_rows(plex: PlexClient, label: str) -> list:
     return [row for row in plex.owned_collections().values() if row.label.lower() == label.lower()]
 
 
-def _run(plex, plextv, tmp_path, rows) -> tuple:
+def _run(plex, plextv, tmp_path, rows, owner_token) -> tuple:
     ctx = EngineContext(
         config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12, rows=rows),
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -523,6 +529,7 @@ def test_shared_row_is_public_built_from_aggregate_and_never_excluded(fakes, tmp
             RowSpec(slug="picked", name_template="", size=12),
             RowSpec(slug="popular", name_template="Popular on this server", size=6, shared=True),
         ],
+        state.owner_token,
     )
     assert report.ok, [(u.username, u.error) for u in report.users]
 
@@ -558,7 +565,11 @@ def test_a_solo_watched_title_never_reaches_a_shared_row(fakes, tmp_path):
     plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
     # min_watchers=1 is even floored to 2 in the engine, so a lone watcher still can't get through.
     _ctx, _users, report = _run(
-        plex, plextv, tmp_path, [RowSpec(slug="popular", name_template="Popular", size=6, shared=True, min_watchers=1)]
+        plex,
+        plextv,
+        tmp_path,
+        [RowSpec(slug="popular", name_template="Popular", size=6, shared=True, min_watchers=1)],
+        state.owner_token,
     )
     assert not _shared_rows(plex, "shortlist__shared_popular")
 
@@ -588,7 +599,7 @@ def test_a_run_scoped_to_one_person_leaves_shared_rows_alone(fakes, tmp_path):
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -623,7 +634,7 @@ def test_a_shared_row_that_can_never_build_says_so_instead_of_just_skipping(fake
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -658,6 +669,7 @@ def test_shared_row_restricted_to_a_subset_is_hidden_from_the_rest(fakes, tmp_pa
         plextv,
         tmp_path,
         [RowSpec(slug="staff", name_template="Staff Picks", size=6, shared=True, audience={201, 202})],
+        state.owner_token,
     )
     assert report.ok, [(u.username, u.error) for u in report.users]
     assert _shared_rows(plex, "shortlist__shared_staff")
@@ -684,6 +696,7 @@ def test_a_per_person_row_only_builds_for_its_audience(fakes, tmp_path):
             RowSpec(slug="picked", name_template="", size=12),
             RowSpec(slug="gems", name_template="Hidden Gems", size=8, audience={201}),  # sarah only
         ],
+        state.owner_token,
     )
     assert report.ok, [(u.username, u.error) for u in report.users]
 
@@ -716,7 +729,7 @@ def test_a_run_heals_the_leaking_rows_a_previous_version_left_behind(fakes, tmp_
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -796,7 +809,7 @@ def test_a_bad_night_upstream_does_not_destroy_an_established_row(fakes, tmp_pat
         plex=plex,
         plextv=plextv,
         tmdb=tmdb,
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -841,7 +854,7 @@ def test_a_stranded_row_is_removed_even_from_a_user_who_produces_no_picks(fakes,
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -891,7 +904,7 @@ def test_a_stranded_row_is_removed_even_when_tmdb_errors_out(fakes, tmp_path):
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -940,7 +953,7 @@ def test_a_leaking_row_is_swept_even_when_its_owner_is_not_in_the_run(fakes, tmp
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -981,7 +994,7 @@ def test_the_sweep_runs_even_when_every_user_is_paused(fakes, tmp_path):
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -1014,7 +1027,7 @@ def test_a_dry_run_reports_the_sweep_without_touching_the_server(fakes, tmp_path
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -1060,7 +1073,7 @@ def test_a_sweep_that_fails_part_way_aborts_the_run_and_still_audits_what_it_del
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -1122,7 +1135,7 @@ def test_a_row_created_before_a_mid_delivery_failure_is_still_excluded_on_every_
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -1179,7 +1192,7 @@ def test_every_account_that_shares_the_server_gets_the_excludes_not_just_the_man
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
@@ -1222,7 +1235,7 @@ def test_a_user_who_is_no_longer_shared_with_does_not_block_everyone_elses_rows(
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
         known_slugs={201: "sarah", 999888: "ghost"},
@@ -1257,7 +1270,7 @@ def test_a_user_who_renamed_themselves_is_not_hidden_from_their_own_row(fakes, t
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
         known_slugs={201: "sarah", 202: "mike"},
@@ -1300,7 +1313,7 @@ def test_each_users_row_contains_only_their_own_picks(fakes, tmp_path):
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
         known_slugs={201: "sarah", 202: "mike", 203: "canary"},
@@ -1343,7 +1356,7 @@ def test_migration_night_rebuilds_every_shared_row_in_one_run(fakes, tmp_path):
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
-        history_source=PlexHistorySource(plex),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
         curator=NullCurator(),
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
         known_slugs={201: "sarah", 202: "mike", 203: "canary"},

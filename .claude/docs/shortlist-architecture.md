@@ -59,7 +59,7 @@ shortlist/
 │   ├── engine/                   # PURE library — zero FastAPI/DB imports; talks to clients only
 │   │   ├── pipeline.py           # per-user stage orchestration (history→candidates→filter→rank→curate→deliver→privacy)
 │   │   ├── models.py             # dataclasses: Seed, Candidate, Pick, UserProfile, RunReport
-│   │   ├── history.py            # HistorySource protocol; TautulliSource, PlexHistorySource
+│   │   ├── history.py            # HistorySource protocol; ShareTokenWatchSource (reads PMS per-user watched set), seed derivation
 │   │   ├── candidates.py         # TMDB similar/recommended pooling + seed tagging
 │   │   ├── ranking.py            # heuristic pre-rank (seed_freq × rating × recency)
 │   │   ├── curator/              # LLM providers behind Curator protocol

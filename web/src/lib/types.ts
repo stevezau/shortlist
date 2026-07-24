@@ -441,6 +441,9 @@ export interface RunUserTrace {
     recent: TraceWatch[];
     watched_movies: number;
     watched_shows: number;
+    /** True distinct-title watched totals per library NAME, split by media type — exact per library
+     *  even when several libraries share a media type. Absent on runs recorded before this was added. */
+    watched_by_library?: Record<string, { movie: number; show: number }>;
   };
   seeds?: TraceSeed[];
   gathers?: TraceGather[];
@@ -483,7 +486,6 @@ export interface ConnectionTestResult {
 
 export type TestableService =
   | "plex"
-  | "plexdb"
   | "tautulli"
   | "tmdb"
   | "llm"

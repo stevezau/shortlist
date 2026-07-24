@@ -28,7 +28,6 @@ from shortlist.server.api import (
     runs,
     setup,
     system,
-    tools,
     user_rows,
     users,
 )
@@ -196,7 +195,6 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         system,
         events,
         report,
-        tools,
         notifications,
     ):
         app.include_router(module.router, prefix="/api")

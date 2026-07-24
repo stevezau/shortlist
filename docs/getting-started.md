@@ -7,9 +7,9 @@
   shows your server's version up front so you can confirm it before you start.
 - **Plex Pass** on the server owner's account (label restrictions are a Pass feature).
 - A **TMDB API key** (free: themoviedb.org → Settings → API).
-- Optional: **Tautulli** for deeper watch history; **an LLM API key** (Anthropic/OpenAI/Google)
-  or a **local server** (Ollama, llama.cpp, LM Studio, vLLM, LocalAI) — Shortlist is fully
-  functional with none of these (heuristic mode).
+- Optional: **Tautulli** for friendlier display names (watch history is read straight from Plex,
+  no setup); **an LLM API key** (Anthropic/OpenAI/Google) or a **local server** (Ollama, llama.cpp,
+  LM Studio, vLLM, LocalAI) — Shortlist is fully functional with none of these (heuristic mode).
 
 ## Install (Docker)
 
@@ -45,9 +45,9 @@ The wizard opens on a short welcome screen, then walks (the progress bar reads "
 
 1. **Connect Plex** — PIN login, pick your server. The capability probe checks your PMS
    version, Plex Pass, and libraries with plain-English results.
-2. **Recommendations & history** — where picks come from (TMDB, Trakt, AI, web search) and
-   where watch history comes from: point at Tautulli if you run it; Plex's own history works
-   without it.
+2. **Recommendations & history** — where picks come from (TMDB, Trakt, AI, web search). Watch
+   history is read straight from Plex, per user, with no setup; Tautulli is optional here, only
+   for the friendlier display names it knows people by.
 3. **Choose your curator** — Claude / GPT / Gemini / Local (OpenAI-compatible) / **None**.
    Keys are yours, stored encrypted, redacted after save.
 4. **Pick your users** — everyone you share with, with history-depth and new-viewer badges.

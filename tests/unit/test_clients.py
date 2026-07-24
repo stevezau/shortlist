@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -22,7 +21,6 @@ from tests.conftest import fake_media_item
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 USERS_XML = (FIXTURES / "plextv_users.xml.txt").read_text()
-ACCOUNTS_XML = (FIXTURES / "pms_accounts.xml.txt").read_text()
 
 
 class _MemoryCache:
@@ -166,6 +164,24 @@ class TestPlexTvClient:
         )
         with pytest.raises(PermissionError, match="PIN-protected"):
             self._client().canary_server_token(1)
+
+    @respx.mock
+    def test_shared_server_tokens_maps_each_users_id_to_their_server_token(self):
+        # The share-token watched read hinges on this: plex.tv mints a per-user accessToken for every
+        # shared invite, keyed by their plex.tv userID. Home users appear here too; entries missing
+        # either attribute are skipped rather than crashing the parse.
+        xml = (
+            '<MediaContainer size="3">'
+            '<SharedServer userID="100" username="sarah" accessToken="SARAH-TOK"/>'
+            '<SharedServer userID="200" username="kid" accessToken="KID-TOK"/>'
+            '<SharedServer username="pending-invite"/>'  # no userID/accessToken yet — skipped
+            "</MediaContainer>"
+        )
+        respx.get("https://plex.tv/api/servers/machine1/shared_servers").mock(
+            return_value=httpx.Response(200, text=xml)
+        )
+        tokens = self._client().shared_server_tokens()
+        assert tokens == {100: "SARAH-TOK", 200: "KID-TOK"}
 
 
 class TestTmdbClient:
@@ -316,45 +332,6 @@ class TestTautulliClient:
         assert "502" in str(excinfo.value)
 
 
-class TestSystemAccountId:
-    """Resolution driven by the RECORDED `/accounts` response, parsed by real plexapi.
-
-    The whole owner feature rests on what a real server returns here, so this replays the recording
-    rather than a hand-built list: on the live server the owner's plex.tv id was absent from this
-    document entirely, their local row was named after their plex.tv USERNAME, and that row's id was
-    the only one with any of their history under it (SFLIX, 2026-07-21).
-    """
-
-    def _accounts(self, mock_plex: PlexClient) -> None:
-        from plexapi.server import SystemAccount
-
-        root = ET.fromstring(ACCOUNTS_XML)
-        mock_plex._server.systemAccounts.return_value = [
-            SystemAccount(mock_plex._server, el) for el in root.findall("Account")
-        ]
-
-    def test_the_owner_resolves_to_their_local_pms_account(self, mock_plex: PlexClient):
-        self._accounts(mock_plex)
-        # 5245144-style plex.tv id: nowhere in the recorded document.
-        assert mock_plex.system_account_id(555000001, "s_flix") == 1
-
-    def test_the_match_is_case_insensitive_on_the_recorded_name(self, mock_plex: PlexClient):
-        self._accounts(mock_plex)
-        assert mock_plex.system_account_id(555000001, "S_FLIX") == 1
-
-    def test_the_owners_title_does_not_match_only_their_username_does(self, mock_plex: PlexClient):
-        """plex.tv returns BOTH `username` ("S_FLIX") and `title` ("SFLIX_Admin"); PMS names the
-        local account after the username. Passing the title finds nothing — which is why the sync
-        stores `username` first."""
-        self._accounts(mock_plex)
-        assert mock_plex.system_account_id(555000001, "SFLIX_Admin") == 555000001
-
-    def test_everyone_else_is_already_listed_under_their_plex_tv_id(self, mock_plex: PlexClient):
-        self._accounts(mock_plex)
-        assert mock_plex.system_account_id(555000100, "sarah") == 555000100  # shared
-        assert mock_plex.system_account_id(555000200, "kid") == 555000200  # managed/Home
-
-
 class TestPlexClient:
     def test_build_library_index_maps_tmdb_guids(self, mock_plex: PlexClient):
         section = MagicMock()
@@ -365,7 +342,7 @@ class TestPlexClient:
             fake_media_item(2, "No Guid"),
             SimpleNamespace(ratingKey=3, title="Other Guid", guids=[SimpleNamespace(id="imdb://tt1")]),
         ]
-        index, _episodes = mock_plex.build_library_index(section)
+        index = mock_plex.build_library_index(section)
         assert index == {42: 1}
 
     def test_stored_label_returns_existing_title_cased_form_without_write(self, mock_plex: PlexClient):
@@ -667,6 +644,120 @@ class TestSectionsByType:
         mock_plex._server.library.sections.return_value = [movies_4k, movies, shows]
 
         assert mock_plex.sections_by_type() == {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+
+
+class TestWatchedTitles:
+    """Parsing one library's watched set, read from the PMS AS a user. The value under test is what a
+    real ``/library/sections/{k}/all?unwatched=0&includeGuids=1`` response maps to (recorded shapes),
+    and that paging walks the whole set — a silent cap here would re-recommend already-watched titles."""
+
+    _URL = "http://pms:32400/library/sections/1/all"
+
+    def _mock_url(self, mock_plex: PlexClient) -> None:
+        # PlexClient builds the read URL via plexapi's server.url(); pin it so respx can intercept the
+        # real http_retry.get (includeToken=False keeps the owner token out of the URL — rule 9).
+        mock_plex._server.url.return_value = self._URL
+
+    @respx.mock
+    def test_maps_a_watched_movie_with_its_inline_tmdb_guid_and_viewcount(self, mock_plex: PlexClient):
+        self._mock_url(mock_plex)
+        xml = (
+            '<MediaContainer size="1" totalSize="1">'
+            '<Video ratingKey="42" title="Heat" year="1995" viewCount="3" lastViewedAt="1752000000">'
+            '<Guid id="imdb://tt0113277"/><Guid id="tmdb://949"/>'
+            "</Video>"
+            "</MediaContainer>"
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "SARAH-TOK")
+
+        assert len(items) == 1
+        item = items[0]
+        assert (item.title, item.tmdb_id, item.year, item.media_type) == ("Heat", 949, 1995, MediaType.MOVIE)
+        assert item.rating_key == 42
+        assert item.watch_count == 3  # viewCount — the frequency signal for a movie
+        # The per-user token rides in the header, never the URL (rule 9).
+        request = respx.calls.last.request
+        assert request.headers["X-Plex-Token"] == "SARAH-TOK"
+        assert "X-Plex-Token" not in str(request.url)
+        assert request.url.params["unwatched"] == "0"  # Plex's binary watched flag: viewCount>0, marks included
+        assert request.url.params["type"] == "1"  # movie
+
+    @respx.mock
+    def test_a_marked_movie_with_no_playback_still_counts_once(self, mock_plex: PlexClient):
+        # A mark-as-watched: unwatched=0 returns it (the whole point — the history API never would),
+        # but it carries no viewCount. watch_count floors at 1 so it still weighs as one watch.
+        self._mock_url(mock_plex)
+        xml = (
+            '<MediaContainer size="1" totalSize="1">'
+            '<Video ratingKey="7" title="Marked" year="2020"><Guid id="tmdb://500"/></Video>'
+            "</MediaContainer>"
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        assert items[0].watch_count == 1
+
+    @respx.mock
+    def test_maps_a_show_with_plex_own_viewed_leaf_counts(self, mock_plex: PlexClient):
+        # A show comes back once, at the show level, carrying Plex's OWN viewedLeafCount/leafCount —
+        # so "finished" is Plex's fraction, not a reconstruction, and a bulk-marked season counts.
+        self._mock_url(mock_plex)
+        xml = (
+            '<MediaContainer size="1" totalSize="1">'
+            '<Directory ratingKey="55" title="Suits" year="2011" viewedLeafCount="30" leafCount="134" '
+            'lastViewedAt="1752000000"><Guid id="tmdb://37680"/></Directory>'
+            "</MediaContainer>"
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+
+        item = items[0]
+        assert (item.title, item.tmdb_id, item.media_type) == ("Suits", 37680, MediaType.SHOW)
+        assert (item.viewed_leaf_count, item.leaf_count) == (30, 134)
+        assert item.watch_count == 30  # episodes watched drives a show's frequency weight
+        assert respx.calls.last.request.url.params["type"] == "2"  # show
+
+    @respx.mock
+    def test_a_title_with_no_tmdb_guid_is_dropped(self, mock_plex: PlexClient):
+        # No tmdb:// GUID means it can never match a candidate, so it's dropped rather than kept as a
+        # useless, unmatchable entry.
+        self._mock_url(mock_plex)
+        xml = (
+            '<MediaContainer size="1" totalSize="1">'
+            '<Video ratingKey="9" title="No Guid" viewCount="1"><Guid id="imdb://tt99"/></Video>'
+            "</MediaContainer>"
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
+        assert mock_plex.watched_titles("1", MediaType.MOVIE, "TOK") == []
+
+    @respx.mock
+    def test_pages_until_the_reported_total_is_reached(self, mock_plex: PlexClient):
+        # A heavy watcher has thousands of watched titles; the read must page past the first response
+        # or a silent cap would hide older watches from the already-watched filter (the 200-row bug).
+        self._mock_url(mock_plex)
+
+        def page(request: httpx.Request) -> httpx.Response:
+            # One title per page, totalSize=2, so the loop MUST issue a second request to reach both —
+            # and must then STOP (start >= total). Every page returns a title, so an over-read would
+            # surface a third tmdb id, not be masked by an empty page.
+            rk = int(request.headers["X-Plex-Container-Start"]) + 1
+            return httpx.Response(
+                200,
+                text=(
+                    f'<MediaContainer size="1" totalSize="2">'
+                    f'<Video ratingKey="{rk}" title="Movie {rk}" viewCount="1"><Guid id="tmdb://{rk}"/></Video>'
+                    f"</MediaContainer>"
+                ),
+            )
+
+        respx.get(self._URL).mock(side_effect=page)
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+
+        assert {i.tmdb_id for i in items} == {1, 2}
+        assert len(respx.calls) == 2  # paged: first page short of total, second fetched the rest, then stop
 
 
 class TestTraktClient:

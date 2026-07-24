@@ -77,9 +77,6 @@ class User(Base):
     label: Mapped[str] = mapped_column(String(255), default="")  # as stored by Plex (title-cased)
     request_tag: Mapped[str] = mapped_column(String(64), default="")  # tag added to titles requested for them
     prefs: Mapped[dict] = mapped_column(JSON, default=dict)
-    # High-water mark for the incremental watch-history sync: only plays newer than this are pulled
-    # each run (NULL = never synced -> full backfill). See WatchEvent + WatchHistorySync.
-    watch_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run_users: Mapped[list[RunUser]] = relationship(back_populates="user")
 
@@ -267,34 +264,6 @@ class PickRow(Base):
     seed_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # hit-rate
-
-
-class WatchEvent(Base):
-    """One play event from a user's Plex/Tautulli watch history — the local mirror that powers the
-    already-watched filter.
-
-    Plex's history API only returns the most recent ~200 plays per call, so a heavy watcher's older
-    watches were invisible to the filter and got recommended again (SFLIX/MooHouse, 2026-07-20). We
-    instead sync the FULL history incrementally into this table (per-user high-water mark on
-    ``User.watch_synced_at``) and read the complete set at run time. One row PER play event (not per
-    title) so the finished-show fraction can still count episode plays; the unique constraint dedups
-    the overlap window between incremental syncs.
-    """
-
-    __tablename__ = "watch_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    rating_key: Mapped[int] = mapped_column(
-        Integer
-    )  # PMS ratingKey (grandparent for episodes) -> resolved to tmdb in-engine
-    media_type: Mapped[str] = mapped_column(String(16))
-    title: Mapped[str] = mapped_column(String(512), default="")
-    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    watched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    completion: Mapped[float] = mapped_column(Float, default=1.0)  # 0..1; 1.0 for presence-only (Plex history)
-
-    __table_args__ = (UniqueConstraint("user_id", "rating_key", "watched_at", name="uq_watch_event"),)
 
 
 class RestrictionSnapshotRow(Base):
