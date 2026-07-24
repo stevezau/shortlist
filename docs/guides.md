@@ -12,8 +12,9 @@
   leaves the owner out, so Shortlist adds you itself). **Sync from Plex** pulls the roster again
   after you invite someone new (or to pick up your own owner row on an install that predates it).
   Enable/disable each person or **Enable all / Disable all** at once, pause someone (keeps their
-  row, skips them on runs), set a request tag, add per-row overrides
-  (size, mute), and see each user's restriction status. Opening a person shows
+  row, skips them on runs), set a request tag, add per-person row overrides
+  (mute a row, resize it, or set its watch-history depth just for them), and see each user's
+  restriction status. Opening a person shows
   their recent watch history (distinct titles, with season/episode numbers for TV), their picks
   grouped by row (long lists collapse behind a "show more"), and a **Run now** button to rebuild
   just that person.
@@ -23,7 +24,7 @@
   ranked picks; errors as first-class rows with copy-for-GitHub buttons, LLM token usage. Open a
   person and click **View trace** to see the full pipeline for them: the watch history and seeds it
   started from, every candidate source's query and what it returned, the exact web-search queries and
-  the prompt the AI ranked from, and which proposed titles resolved to a real match vs. were dropped
+  the prompt the AI searched from, and which proposed titles resolved to a real match vs. were dropped
   as hallucinations.
 - **Logs** — what this instance has been doing, with a level filter (this level _and louder_), a
   text filter, live follow, **Copy**, and **Download .zip** for attaching to a bug report. Tokens,
@@ -182,6 +183,7 @@ Settings → Finding titles sets what a row uses **unless the row says otherwise
 | **Libraries**                  | Which Plex libraries it builds in — which also sets what it recommends |
 | **Freshness**, **Watched cap** | How often it refreshes, and how much already-watched it allows         |
 | **Row size**, **Audience**     | How many titles, and who gets it                                       |
+| **Recent watches to search**   | How many recent watches AI web search looks up for this row            |
 | **Request tag**                | The Sonarr/Radarr tag on titles requested for this row's audience      |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can be AI-web-search-only
@@ -190,6 +192,11 @@ all on the same server, all at once. The Rows list shows each row's overrides on
 see at a glance which rows differ.
 
 A row left on "Use global default" stays in sync with Settings → Finding titles.
+
+**And one step finer — per person.** Row size and recent-watches depth can also be set for a single
+person on a single row: open that person (Users → click them), find the row, and use **Customize for
+this person**. Their value wins over the row's, which wins over the global default. Leave a
+customization on "default" and that person follows the row like everyone else.
 
 **The one exception is the seeded "Picked for You" row**: its **name** and **size** always follow the
 global Settings (Row defaults) so they stay in sync everywhere — the row editor points you there
