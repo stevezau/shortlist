@@ -221,6 +221,13 @@ def sync_user_restrictions(
         # stale user row stop every other user's rows from being promoted, every night.
         logger.info("{}: no longer shares this server — nothing to restrict", user.username)
         return None
+    if remote.restricted:
+        # A managed account with parental controls — plex.tv refuses share-filter writes on these
+        # (HTTP 422). Their restriction PROFILE is a stricter fence than a label exclude: the profile
+        # already hides any content outside their age rating, so the row's label exclude is redundant.
+        # Skipping is safe and avoids blocking promotion for every other user on the server (#14).
+        logger.debug("{}: managed/restricted account — skipping share-filter (parental profile governs)", user.username)
+        return None
 
     wanted = desired_excludes(
         own_label,

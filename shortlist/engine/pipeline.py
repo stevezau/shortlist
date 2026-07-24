@@ -773,6 +773,12 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
     global_anchors = ctx.config.hub_anchors
     any_override = any(spec.hub_anchors for spec in ctx.config.rows)
     if not global_anchors and not any_override:
+        # No explicit anchors configured — default to moving all owned rows to the top of each
+        # library's Recommended shelf. Without this, aborted runs or new promotions scatter rows to
+        # wherever Plex appends them, which looks broken (issue: some at top, some at bottom).
+        for section in ctx.delivery_sections:
+            default = HubAnchor(anchor_title="", before=False, to_top=True)
+            _apply_order(ctx, report, section, default, only_titles=None)
         return
     titles_by_slug = _row_titles_by_slug(report) if any_override else {}
     for section in ctx.delivery_sections:
