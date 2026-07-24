@@ -10,7 +10,7 @@ import pytest
 import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.clients.tmdb import NullCache
-from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec
+from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec, UserType
 from shortlist.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -211,6 +211,58 @@ class TestRun:
         report = pipeline_mod.run(ctx, [sarah, mike])
 
         assert not report.ok
+        ctx.plex.promote.assert_not_called()
+
+    def test_filter_write_refused_on_restricted_account_does_not_block_promotion(self, ctx: EngineContext, mock_plextv):
+        """A restricted account gets a 422 from plex.tv — this must NOT block promotion for everyone
+        else. The restricted account is simply skipped (live-verified: they see 0 collections)."""
+        from shortlist.engine.clients.plextv import PlexTvUser
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        sarah_remote = plextv_user(100, "sarah")
+        kid_remote = PlexTvUser(
+            id=500,
+            username="kid",
+            user_type=UserType.MANAGED,
+            home=True,
+            restricted=True,
+            protected=False,
+            filters={
+                "filterAll": "",
+                "filterMovies": "",
+                "filterTelevision": "",
+                "filterMusic": "",
+                "filterPhotos": "",
+            },
+        )
+        mock_plextv.users = [sarah_remote, kid_remote]
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+
+        # Promotion proceeds (the restricted kid is skipped in privacy.py before the write even fires).
+        assert report.ok
+        assert not report.promotion_blockers
+
+    def test_filter_write_refused_on_non_restricted_account_blocks_promotion(self, ctx: EngineContext, mock_plextv):
+        """A 422 on a NON-restricted account is an unknown failure — must block promotion (leak risk)."""
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+
+        def refuse_mike(account_id, fields):
+            if account_id == 200:
+                raise FilterWriteRefused("plex.tv 422 for account 200")
+            mock_plextv.users[0].filters.update(fields)
+
+        mock_plextv.update_user_filters.side_effect = refuse_mike
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        assert report.promotion_blockers  # promotion was blocked
+        assert any("200" in b for b in report.promotion_blockers)
         ctx.plex.promote.assert_not_called()
 
     def test_on_user_done_fires_once_per_user(self, ctx: EngineContext, mock_plextv):

@@ -558,10 +558,16 @@ def _privacy_sync_phase(
             if user_report is not None:
                 user_report.privacy_synced = bool(written)
         except FilterWriteRefused as e:
-            # plex.tv permanently refused the write (422). Live-verified: restricted accounts see
-            # zero collections/hubs regardless — Plex's own restriction profile is a stricter gate
-            # than a label exclude. Safe to skip without blocking promotion for everyone else (#14).
-            logger.warning("{}: plex.tv refused filter write ({}), skipping — promotion not blocked", user.username, e)
+            # plex.tv permanently refused the write (422). Only safe to skip for restricted accounts
+            # (live-verified: they see 0 collections). An unexpected 422 on a non-restricted account
+            # must block promotion — it's an unknown failure, not a known-safe skip.
+            remote_user = roster.get(user.plex_account_id)
+            if remote_user and remote_user.restricted:
+                logger.warning("{}: plex.tv refused filter write (restricted account), skipping", user.username)
+            else:
+                sync_failed = True
+                report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
+                logger.error("{}: plex.tv 422 on a NON-restricted account — blocking promotion", user.username)
         except Exception as e:
             # One user's filter not being written means the rows are not private. Nothing gets
             # promoted this run — including for users whose own sync succeeded.

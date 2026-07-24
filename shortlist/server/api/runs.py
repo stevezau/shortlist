@@ -71,7 +71,8 @@ async def runs_summary(request: Request) -> dict:
 async def clear_runs(request: Request) -> dict:
     """Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the
     dashboard's lifetime metrics survive — only the browsable history is cleared. Changes nothing
-    on Plex."""
+    on Plex. Note: the next run will re-curate from scratch (no carry-forward) since picks lose
+    their run association."""
     with request.app.state.sessions() as session:
         deleted = session.query(func.count(Run.id)).scalar() or 0
         # Detach picks from their runs (null run_id) so the dashboard metrics survive, then delete
