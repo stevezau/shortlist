@@ -8,7 +8,7 @@ import type { Settings } from "@/lib/types";
 
 const BACKENDS = [
   { value: "auto", label: "Auto" },
-  { value: "native", label: "Curator’s own" },
+  { value: "native", label: "AI provider’s own" },
   { value: "exa", label: "Exa" },
 ] as const;
 
@@ -21,23 +21,23 @@ function needsExa(backend: string, settings: Settings): boolean {
 
 function backendNote(backend: string, settings: Settings): string {
   if (backend === "native")
-    return "Uses your AI curator’s own web search (Claude, GPT, or Gemini). A local Ollama model can’t — pick Exa for that.";
+    return "Uses your AI provider’s own web search (Claude, GPT, or Gemini). A local Ollama model can’t — pick Exa for that.";
   if (backend === "exa")
-    return "Uses the Exa search API — works for every provider, and the only option for a local Ollama curator.";
+    return "Uses the Exa search API — works for every provider, and the only option for a local Ollama model.";
   if (hasNativeWebSearch(settings) && hasExa(settings))
-    return "Uses your curator’s own search and Exa together. They find mostly different titles, so you get the widest pool — at the cost of two searches per run.";
+    return "Uses your AI provider’s own search and Exa together. They find mostly different titles, so you get the widest pool — at the cost of two searches per run.";
   if (hasNativeWebSearch(settings))
-    return "Uses your curator’s own web search. Add an Exa key below to search with both (they find different titles).";
+    return "Uses your AI provider’s own web search. Add an Exa key below to search with both (they find different titles).";
   if (hasExa(settings))
-    return "Uses your Exa key. A Claude, GPT, or Gemini curator would add its own web search alongside it.";
-  return "Set up a search backend below — an Exa key, or a Claude/GPT/Gemini curator that can search on its own.";
+    return "Uses your Exa key. A Claude, GPT, or Gemini provider would add its own web search alongside it.";
+  return "Set up a search backend below — an Exa key, or a Claude/GPT/Gemini provider that can search on its own.";
 }
 
 /**
  * "AI — web search for what to watch next" as its own card: enable, choose the search backend, and —
  * the point — enter whatever that backend needs RIGHT HERE. No dead-end "add it in Connections". The
  * toggle reflects intent and is never disabled; if a dependency is missing, the card shows exactly how
- * to satisfy it (an inline Exa key, or a curator prompt), so it can never read "on" while unexplained.
+ * to satisfy it (an inline Exa key, or an AI-provider prompt), so it can never read "on" while unexplained.
  */
 export function AiWebSearchCard({
   settings,
@@ -106,7 +106,7 @@ export function AiWebSearchCard({
 
             {curatorMissing && (
               <p className="text-sm text-warning">
-                Also needs an AI curator to choose titles from the results —{" "}
+                Also needs an AI provider to choose titles from the results —{" "}
                 <a href="#connections" className="font-medium underline">
                   set one up in Connections
                 </a>
@@ -116,9 +116,9 @@ export function AiWebSearchCard({
 
             {nativeUnusable && (
               <p className="text-sm text-warning">
-                Your AI curator can’t search the web on its own. To use this
+                Your AI provider can’t search the web on its own. To use this
                 source, either switch the backend to <strong>Auto</strong> or{" "}
-                <strong>Exa</strong>, or pick a Claude, GPT, or Gemini curator.
+                <strong>Exa</strong>, or pick a Claude, GPT, or Gemini provider.
               </p>
             )}
 

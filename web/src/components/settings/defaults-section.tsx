@@ -56,8 +56,8 @@ export function DefaultsSection({ settings }: { settings: Settings }) {
                 person&rsquo;s name
               </li>
               <li>
-                <span className="font-mono">{"{top_seed}"}</span> — their
-                most-watched title
+                <span className="font-mono">{"{top_seed}"}</span> — a title they
+                recently watched
               </li>
             </ul>
             <p className="text-sm text-muted-foreground">

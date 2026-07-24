@@ -212,7 +212,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               Results are cached for two weeks and shared across people, so a
               popular title is searched once for the whole server. Fewer =
               tighter and cheaper. Only affects the AI web-search source; any
-              row can choose its own.
+              row — and any person on a row — can set their own.
             </p>
             <Input
               id="recent-count"

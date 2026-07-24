@@ -83,11 +83,11 @@ describe("RecommendationsSection", () => {
       "candidates.sources": ["llm_web"],
     });
     expect(
-      screen.getByText(/needs an AI curator to choose titles/i),
+      screen.getByText(/needs an AI provider to choose titles/i),
     ).toBeInTheDocument();
   });
 
-  it("AI web search: 'Curator's own' on a curator that can't self-search (Ollama) warns loudly", () => {
+  it("AI web search: 'AI provider's own' on a provider that can't self-search (Ollama) warns loudly", () => {
     // Regression: this cell used to show the toggle ON with no prompt while the engine did nothing.
     renderSection({
       "curator.provider": "ollama",

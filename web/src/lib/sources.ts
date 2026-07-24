@@ -43,7 +43,7 @@ export const SOURCES: readonly SourceInfo[] = [
     id: "llm_web",
     label: "AI — web search for what to watch next",
     short: "AI web search",
-    desc: "Searches the live web for current, well-reviewed titles, then keeps the ones already in your library. Uses your curator's own web search (Claude, GPT, or Gemini) or an Exa key — choose which under Search backend below.",
+    desc: "Searches the live web for current, well-reviewed titles, then keeps the ones already in your library. Uses your AI provider's own web search (Claude, GPT, or Gemini) or an Exa key — choose which under Search backend below.",
     requires: "web_search",
   },
 ];

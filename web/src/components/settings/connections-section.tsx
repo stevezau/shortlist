@@ -60,7 +60,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="plex"
           title="Plex"
-          purpose="Your media server — where the personalized rows appear."
+          purpose="Your media server — the source of each person's watch history, and where the personalized rows appear."
           settings={settings}
           summary={settingString(settings, "plex.url")}
           glyph={<PlexGlyph />}
