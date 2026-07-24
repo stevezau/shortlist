@@ -143,30 +143,13 @@ describe("RowEditor — the default row's name", () => {
     updateCollection.mockClear();
   });
 
-  it("lets the owner edit the default row's name (no longer disabled)", () => {
+  it("shows the current name read-only and points to the Rename button", () => {
     renderEditor(defaultRow());
-    const name = screen.getByLabelText("Name");
-    expect(name).toBeEnabled();
-    expect(name).toHaveValue("✨ {library_name} Picked for You");
-    // The help text says the edit is shared with Settings and renames on Plex.
+    // The name is displayed as text, not an editable input — renaming is via a dedicated button.
     expect(
-      screen.getByText(/shared with Settings → Defaults/i),
+      screen.getByText(/✨ \{library_name\} Picked for You/),
     ).toBeInTheDocument();
-  });
-
-  it("round-trips an edited default name into the PATCH body", async () => {
-    renderEditor(defaultRow());
-
-    const name = screen.getByLabelText("Name");
-    await userEvent.clear(name);
-    await userEvent.type(name, "✨ Handpicked");
-    await userEvent.click(
-      screen.getByRole("button", { name: /Save changes/i }),
-    );
-
-    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
-    const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
-    expect(body.name).toBe("✨ Handpicked");
+    expect(screen.getByText(/Rename/)).toBeInTheDocument();
   });
 });
 

@@ -117,28 +117,13 @@ export function RowEditor({
         </DialogHeader>
 
         <div className="space-y-5 py-2">
-          <div className="space-y-2">
-            <Label htmlFor="row-name">Name</Label>
-            <Input
-              id="row-name"
-              value={input.name}
-              placeholder="e.g. Hidden Gems"
-              onChange={(event) => set({ name: event.target.value })}
-            />
+          <div className="space-y-1">
+            <p className="text-sm font-medium">Name</p>
             <p className="text-sm text-muted-foreground">
-              Use <span className="font-mono">{"{library_name}"}</span> for the
-              library’s name, <span className="font-mono">{"{user}"}</span> for
-              each person’s name, or{" "}
-              <span className="font-mono">{"{top_seed}"}</span> for a title they
-              recently watched.
+              {input.name || "Picked for You"} — use the{" "}
+              <span className="font-medium">Rename</span> button on the row card
+              to change it (it renames all collections on Plex immediately).
             </p>
-            {isDefault && (
-              <p className="text-sm text-muted-foreground">
-                This is the default row’s name, shared with Settings → Defaults
-                — changing it here changes it there too, and renames everyone’s
-                row on Plex.
-              </p>
-            )}
           </div>
 
           <PosterField

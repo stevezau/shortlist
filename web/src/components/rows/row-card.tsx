@@ -2,6 +2,7 @@ import { useMutation } from "@tanstack/react-query";
 import {
   Eraser,
   ListChecks,
+  Pen,
   Trash2,
   UserCheck,
   Users as UsersIcon,
@@ -21,6 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { api, apiErrorMessage } from "@/lib/api";
 import { audienceSummary, rowOverrides, toInput } from "@/lib/collections";
@@ -52,6 +55,18 @@ export function RowCard({
   const isDefault = collection.slug === DEFAULT_ROW_SLUG;
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTo, setRenameTo] = useState(
+    collection.name_template || collection.name,
+  );
+  const rename = useMutation({
+    mutationFn: () =>
+      api.updateCollection(collection.id, {
+        ...toInput(collection),
+        name_template: renameTo,
+      }),
+    onSuccess: () => setRenameOpen(false),
+  });
   // A dry-run first (what WOULD be removed), then the real removal on confirm.
   const preview = useMutation({
     mutationFn: () => api.cleanupCollection(collection.id, true),
@@ -151,6 +166,20 @@ export function RowCard({
           </Button>
           <Button variant="outline" size="sm" onClick={onEdit}>
             Edit
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={() => {
+              setRenameTo(collection.name_template || collection.name);
+              rename.reset();
+              setRenameOpen(true);
+            }}
+            title="Rename this row on Plex"
+          >
+            <Pen aria-hidden="true" />
+            Rename
           </Button>
           <Button
             variant="ghost"
@@ -302,6 +331,56 @@ export function RowCard({
                 Remove from Plex
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename this row</DialogTitle>
+            <DialogDescription>
+              This renames every collection on Plex for every user who has this
+              row — one rename per person, per library. It happens immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="rename-template">New name</Label>
+              <Input
+                id="rename-template"
+                value={renameTo}
+                onChange={(e) => setRenameTo(e.target.value)}
+                placeholder="e.g. ✨ {library_name} Picked for You"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use {"{library_name}"} for the library, {"{user}"} for each
+                person's name.
+              </p>
+            </div>
+          </div>
+          {rename.isError && (
+            <MutationAlert
+              error={rename.error}
+              fallback="Couldn't rename. Check the Plex connection."
+            />
+          )}
+          {rename.isSuccess && (
+            <p className="text-sm text-success">
+              Renamed — the collections on Plex now use the new name.
+            </p>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              loading={rename.isPending}
+              onClick={() => rename.mutate()}
+              disabled={!renameTo.trim()}
+            >
+              {!rename.isPending && <Pen aria-hidden="true" />}
+              Rename on Plex
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
