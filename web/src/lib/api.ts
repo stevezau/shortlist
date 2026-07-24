@@ -196,6 +196,24 @@ export const api = {
   syncUsers: (): Promise<{ added: number; updated: number; total: number }> =>
     request("/api/users/sync", { method: "POST" }),
 
+  blockSeed: (
+    userId: number,
+    tmdbId: number,
+    title: string,
+  ): Promise<{ blocked_seeds: number[] }> =>
+    request(`/api/users/${userId}/blocked-seeds`, {
+      method: "POST",
+      body: JSON.stringify({ tmdb_id: tmdbId, title }),
+    }),
+
+  unblockSeed: (
+    userId: number,
+    tmdbId: number,
+  ): Promise<{ blocked_seeds: number[] }> =>
+    request(`/api/users/${userId}/blocked-seeds/${tmdbId}`, {
+      method: "DELETE",
+    }),
+
   getUserRows: (id: number): Promise<UserRow[]> =>
     request(`/api/users/${id}/rows`),
 

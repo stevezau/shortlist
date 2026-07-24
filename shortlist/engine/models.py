@@ -184,6 +184,7 @@ class UserProfile:
     nickname: str = ""
     history: list[WatchedItem] = field(default_factory=list)
     excluded_genres: set[str] = field(default_factory=set)
+    blocked_seeds: set[int] = field(default_factory=set)
     row_name_template: str | None = None
     request_tag: str = ""  # tag added to titles requested for this user (layered onto global + row tags)
     # Per-row overrides keyed by collection slug; a slug absent here uses the row's own settings.

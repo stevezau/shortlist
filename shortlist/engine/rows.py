@@ -779,7 +779,7 @@ def _run_user(
             key = (spec.media, tuple(sorted(str(k) for k in spec.library_keys)))
             if key not in seed_cache:
                 relevant = _history_for_row(ctx, user.history, spec)
-                seed_cache[key] = derive_seeds(relevant, resolve, max_seeds=cfg.max_seeds)
+                seed_cache[key] = derive_seeds(relevant, resolve, max_seeds=cfg.max_seeds, blocked=user.blocked_seeds)
             return seed_cache[key]
 
         # Reported as the widest seed set any of this person's rows uses — the "both media, every

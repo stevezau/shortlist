@@ -56,6 +56,7 @@ class UserPrefs(BaseModel):
     # (PUT /users/{id}/rows/{collection_id}), which the UI actually exposes.
     row_name_tpl: str | None = None
     excluded_genres: list[str] | None = None
+    blocked_seeds: list[int] | None = None
     paused: bool | None = None
 
 
@@ -284,6 +285,43 @@ async def _rename_after_nickname(state) -> None:
         if "{user}" not in (template or ""):
             continue  # this row's title doesn't mention them, so a nickname can't have changed it
         await run_row_rename(state, slug=slug, new_template=template, scope="user.nickname")
+
+
+class BlockSeedBody(BaseModel):
+    tmdb_id: int
+    title: str = ""
+
+
+@router.post("/{user_id}/blocked-seeds")
+async def block_seed(user_id: int, body: BlockSeedBody, request: Request) -> dict:
+    """Block a title from being used as a seed for this user's recommendations."""
+    with request.app.state.sessions() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        prefs = dict(user.prefs or {})
+        blocked = set(prefs.get("blocked_seeds") or [])
+        blocked.add(body.tmdb_id)
+        prefs["blocked_seeds"] = sorted(blocked)
+        user.prefs = prefs
+        session.commit()
+    return {"blocked_seeds": sorted(blocked)}
+
+
+@router.delete("/{user_id}/blocked-seeds/{tmdb_id}")
+async def unblock_seed(user_id: int, tmdb_id: int, request: Request) -> dict:
+    """Unblock a title so it can be used as a seed again."""
+    with request.app.state.sessions() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        prefs = dict(user.prefs or {})
+        blocked = set(prefs.get("blocked_seeds") or [])
+        blocked.discard(tmdb_id)
+        prefs["blocked_seeds"] = sorted(blocked)
+        user.prefs = prefs
+        session.commit()
+    return {"blocked_seeds": sorted(blocked)}
 
 
 @router.get("/{user_id}/runs")

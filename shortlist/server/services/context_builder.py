@@ -372,9 +372,9 @@ class ContextBuilder:
                     plex_account_id=user.plex_account_id,
                     user_type=UserType(user.user_type),
                     slug=user.slug,
-                    # The owner's own nickname wins; Tautulli's friendly name is only the default.
                     nickname=user.nickname or user.friendly_name,
                     excluded_genres=set(prefs.get("excluded_genres") or []),
+                    blocked_seeds=set(prefs.get("blocked_seeds") or []),
                     row_name_template=prefs.get("row_name_tpl"),
                     request_tag=request_tag,
                     row_overrides=overrides.get(user.id, {}),

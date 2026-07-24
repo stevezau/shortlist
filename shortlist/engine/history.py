@@ -135,6 +135,7 @@ def derive_seeds(
     resolve_tmdb_id,
     *,
     max_seeds: int = 30,
+    blocked: set[int] | None = None,
 ) -> list[Seed]:
     """Collapse history into weighted seeds: distinct titles, weighted purely by RECENCY.
 
@@ -166,6 +167,8 @@ def derive_seeds(
         # fall back to the resolver for a source that didn't set one.
         tmdb_id = items[0].tmdb_id if items[0].tmdb_id is not None else resolve_tmdb_id(items[0])
         if tmdb_id is None:
+            continue
+        if blocked and tmdb_id in blocked:
             continue
         watch_count = sum(i.watch_count for i in items)
         recency_days = (newest - max(i.watched_at for i in items)).days

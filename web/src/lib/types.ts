@@ -166,6 +166,7 @@ export interface UserPrefs {
   row_name_tpl?: string;
   row_size?: number;
   excluded_genres?: string[];
+  blocked_seeds?: number[];
   max_rating?: string | null;
   paused?: boolean;
 }
