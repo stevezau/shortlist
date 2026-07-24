@@ -14,7 +14,9 @@
   Enable/disable each person or **Enable all / Disable all** at once, pause someone (keeps their
   row, skips them on runs), set a request tag, add per-person row overrides
   (mute a row, resize it, or set its watch-history depth just for them), and see each user's
-  restriction status. Opening a person shows
+  restriction status. Accounts with Plex **parental controls** (age restrictions) are badged
+  "Restricted" — Plex hides all collections from them regardless, so no row is built; remove the
+  restriction in Plex if you want them to get recommendations. Opening a person shows
   their recent watch history (distinct titles, with season/episode numbers for TV), their picks
   grouped by row (long lists collapse behind a "show more"), and a **Run now** button to rebuild
   just that person.
@@ -39,6 +41,11 @@
   of the console level in Settings → Advanced.
 - **Requests** — the approval inbox for titles your picks wanted but the library doesn't have
   yet. Approve to send to Radarr/Sonarr, or reject so they never come back (see "Requests" below).
+- **Tools** — on-demand maintenance: **Sync watch history** (re-read everyone's watched set now,
+  with a frequency picker: Daily / 12h / 6h / 4h / custom cron) and **Sync users** (pull the
+  roster from plex.tv + Tautulli). Both show when they last synced and when the next scheduled
+  run fires. Clearing run history is here too — it clears the browsable history but preserves
+  your dashboard metrics (delivered/watched/hit rate survive indefinitely).
 - **Settings** — organised into a grouped sidebar sub-nav so it doesn't read as one long wall:
   **Connect** (Connections), **Rows** (Finding titles, Row defaults, Row
   placement), **Add-ons** (Requests), and **System** (Advanced, API access, Danger Zone). Every
