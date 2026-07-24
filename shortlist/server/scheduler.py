@@ -105,8 +105,8 @@ def build_scheduler(app) -> AsyncIOScheduler:
 
 
 def rebuild_schedule(app) -> None:
-    """Re-derive every per-row cron job from the DB. Call after any row's schedule changes (create,
-    edit, enable/disable, delete) so the live scheduler matches the rows exactly."""
+    """Re-derive every scheduled job from the DB. Call after any row's schedule or the watch sync
+    cron changes so the live scheduler matches the settings exactly."""
     scheduler = app.state.scheduler
     groups = schedule_groups(app)
     wanted = {_job_id(cron) for cron in groups}
@@ -114,4 +114,5 @@ def rebuild_schedule(app) -> None:
         if job.id.startswith(_JOB_PREFIX) and job.id not in wanted:
             job.remove()  # a cron that no longer has any row
     _register(scheduler, app, groups)
-    logger.info("rebuilt schedule: {} row cron group(s)", len(groups))
+    _register_watch_sync(scheduler, app)
+    logger.info("rebuilt schedule: {} row cron group(s) + watch-sync", len(groups))

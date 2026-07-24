@@ -170,6 +170,10 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
             from shortlist.logging_config import configure_logging
 
             configure_logging(str(update.values["log.level"]))
+        if "sync.watch_cron" in update.values:
+            from shortlist.server.scheduler import rebuild_schedule
+
+            rebuild_schedule(request.app)
         return store.all_public()
 
 

@@ -10,6 +10,7 @@ import { useState } from "react";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
+import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,10 +21,22 @@ import {
 } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { api } from "@/lib/api";
-import { timeAgo } from "@/lib/format";
-import { queryKeys, useSyncs } from "@/lib/queries";
+import { timeAgo, timeUntil } from "@/lib/format";
+import {
+  queryKeys,
+  useSettings,
+  useSaveSettings,
+  useSyncs,
+} from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
 import type { SyncFinishedEvent, SyncProgressEvent } from "@/lib/types";
+
+const WATCH_SYNC_PRESETS = [
+  { value: "", label: "Daily" },
+  { value: "17 */12 * * *", label: "12h" },
+  { value: "17 */6 * * *", label: "6h" },
+  { value: "17 */4 * * *", label: "4h" },
+] as const;
 
 /**
  * Tools — on-demand maintenance the owner runs by hand, distinct from the nightly schedule. Each
@@ -69,6 +82,9 @@ export function ToolsPage() {
   });
 
   const syncs = useSyncs();
+  const settings = useSettings();
+  const saveSettings = useSaveSettings();
+  const watchCron = ((settings.data ?? {})["sync.watch_cron"] as string) ?? "";
 
   return (
     <div>
@@ -83,6 +99,16 @@ export function ToolsPage() {
           result={watchedResult}
           lastSynced={syncs.data?.watched.last ?? null}
           nextRun={syncs.data?.watched.next ?? null}
+          watchCron={watchCron}
+          onCronChange={(cron) =>
+            saveSettings.mutate(
+              { "sync.watch_cron": cron },
+              {
+                onSuccess: () =>
+                  queryClient.invalidateQueries({ queryKey: ["syncs"] }),
+              },
+            )
+          }
         />
         <SyncUsersCard
           progress={usersProgress}
@@ -99,16 +125,22 @@ function SyncHistoryCard({
   result,
   lastSynced,
   nextRun,
+  watchCron,
+  onCronChange,
 }: {
   progress: SyncProgressEvent | null;
   result: SyncFinishedEvent | null;
   lastSynced: string | null;
   nextRun: string | null;
+  watchCron: string;
+  onCronChange: (cron: string) => void;
 }) {
   const sync = useMutation({ mutationFn: api.syncWatched });
   // This POST returns 202 the moment the sync is QUEUED — the real outcome arrives on the bus as
   // `result`. So the bar is live while events flow, then the bus result (not the POST) is the truth.
   const running = progress !== null;
+  const activePreset =
+    WATCH_SYNC_PRESETS.find((p) => p.value === watchCron)?.value ?? watchCron;
 
   return (
     <Card>
@@ -122,21 +154,20 @@ function SyncHistoryCard({
         </CardTitle>
         <CardDescription>
           Re-read every user's complete watched set from Plex right now —
-          including anything they've marked as watched. This runs automatically
-          each day; use it when you want the effectiveness report refreshed
-          straight away.
+          including anything they've marked as watched. Use it when you want the
+          effectiveness report refreshed straight away.
         </CardDescription>
         {(lastSynced || nextRun) && (
           <p className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
             <Clock className="size-3.5 shrink-0" aria-hidden="true" />
             {lastSynced && <span>Last synced {timeAgo(lastSynced)}</span>}
             {lastSynced && nextRun && <span aria-hidden="true">·</span>}
-            {nextRun && <span>Next: {timeAgo(nextRun)}</span>}
+            {nextRun && <span>Next: {timeUntil(nextRun)}</span>}
           </p>
         )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div>
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="outline"
             onClick={() => sync.mutate()}
@@ -145,6 +176,17 @@ function SyncHistoryCard({
             <RefreshCw aria-hidden="true" />
             Sync history
           </Button>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Frequency:</span>
+            <Segmented
+              value={activePreset}
+              onChange={onCronChange}
+              options={WATCH_SYNC_PRESETS.map((p) => ({
+                value: p.value,
+                label: p.label,
+              }))}
+            />
+          </div>
         </div>
         {running && (
           <div className="flex flex-col gap-1.5">
