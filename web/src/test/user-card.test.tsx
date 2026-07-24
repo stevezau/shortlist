@@ -12,6 +12,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     username: "Sarah",
     slug: "sarah",
     user_type: "shared",
+    restricted: false,
     enabled: true,
     cold_start: false,
     history_depth: 342,

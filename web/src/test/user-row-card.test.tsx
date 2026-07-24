@@ -34,6 +34,7 @@ const USER: User = {
   username: "sarah",
   slug: "sarah",
   user_type: "shared",
+  restricted: false,
   enabled: true,
   cold_start: false,
   history_depth: 40,

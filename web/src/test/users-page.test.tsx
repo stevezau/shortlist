@@ -40,6 +40,7 @@ const SARAH: User = {
   username: "sarah",
   slug: "sarah",
   user_type: "shared",
+  restricted: false,
   enabled: true,
   cold_start: false,
   history_depth: 120,
@@ -181,18 +182,16 @@ describe("UsersPage — pulling the roster again", () => {
     // The whole feature lives in the cache invalidation, not the POST: assert the ROSTER refreshes.
     // Asserting only that syncUsers was called would pass just as happily with the invalidation
     // deleted, or pointed at the wrong query key.
-    getUsers
-      .mockResolvedValueOnce([SARAH])
-      .mockResolvedValue([
-        SARAH,
-        {
-          ...SARAH,
-          id: 9,
-          username: "steve",
-          slug: "steve",
-          user_type: "owner",
-        },
-      ]);
+    getUsers.mockResolvedValueOnce([SARAH]).mockResolvedValue([
+      SARAH,
+      {
+        ...SARAH,
+        id: 9,
+        username: "steve",
+        slug: "steve",
+        user_type: "owner",
+      },
+    ]);
     renderPage();
     expect(await screen.findByText("sarah")).toBeInTheDocument();
     expect(screen.queryByText("steve")).toBeNull();

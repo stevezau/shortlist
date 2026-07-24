@@ -356,6 +356,8 @@ class ContextBuilder:
         overrides = self._row_overrides(session)
         profiles = []
         for user in query.all():
+            if user.restricted:
+                continue
             prefs = user.prefs or {}
             if prefs.get("paused"):
                 continue

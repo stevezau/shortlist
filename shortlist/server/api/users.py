@@ -92,6 +92,7 @@ def _serialize(
         "display_name": user.display_name,
         "avatar_url": user.avatar_url,
         "user_type": user.user_type,
+        "restricted": user.restricted,
         "enabled": user.enabled,
         "cold_start": user.cold_start,
         "request_tag": user.request_tag or "",
@@ -498,6 +499,7 @@ async def sync_users(request: Request) -> dict:
                         slug=unique_slug(session, r.username),
                         avatar_url=r.avatar_url,
                         user_type=r.user_type.value,
+                        restricted=r.restricted,
                         friendly_name=friendly_names.get(r.id, ""),
                     )
                 )
@@ -506,6 +508,7 @@ async def sync_users(request: Request) -> dict:
                 user.username = r.username
                 user.avatar_url = r.avatar_url
                 user.user_type = r.user_type.value
+                user.restricted = r.restricted
                 # Refreshed every sync so a rename in Tautulli follows through — but `nickname`
                 # (the owner's own choice) is never touched, so an override always survives.
                 user.friendly_name = friendly_names.get(r.id, user.friendly_name)

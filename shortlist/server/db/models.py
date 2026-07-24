@@ -72,6 +72,7 @@ class User(Base):
     nickname: Mapped[str] = mapped_column(String(255), default="")
     friendly_name: Mapped[str] = mapped_column(String(255), default="")
     user_type: Mapped[str] = mapped_column(String(16), default="shared")  # shared | managed | owner
+    restricted: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     cold_start: Mapped[bool] = mapped_column(Boolean, default=False)
     label: Mapped[str] = mapped_column(String(255), default="")  # as stored by Plex (title-cased)

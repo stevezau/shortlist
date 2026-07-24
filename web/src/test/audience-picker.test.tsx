@@ -11,6 +11,7 @@ function user(id: number, username: string): User {
     username,
     slug: username.toLowerCase(),
     user_type: "shared",
+    restricted: false,
     enabled: true,
     cold_start: false,
     history_depth: 10,

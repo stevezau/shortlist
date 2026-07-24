@@ -37,6 +37,7 @@ const SARAH: User = {
   username: "sarah",
   slug: "sarah",
   user_type: "shared",
+    restricted: false,
   enabled: true,
   cold_start: false,
   history_depth: 120,
@@ -115,6 +116,7 @@ describe("StepUsers — the owner's own line", () => {
     username: "steve",
     slug: "steve",
     user_type: "owner",
+    restricted: false,
   };
 
   it("tells a returning owner to switch THEMSELVES on when their row is off", async () => {

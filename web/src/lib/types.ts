@@ -17,6 +17,7 @@ export interface User {
   /** nickname → friendly_name → username, resolved server-side. */
   display_name?: string;
   user_type: UserType;
+  restricted: boolean;
   enabled: boolean;
   cold_start: boolean;
   history_depth: number;

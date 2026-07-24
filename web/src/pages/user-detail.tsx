@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
 import { OwnerNote } from "@/components/owner-note";
+import { RestrictedNote } from "@/components/restricted-note";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
 import { RecentRuns } from "@/components/user-detail/recent-runs";
@@ -33,6 +34,7 @@ function UserDetailBody({ user }: { user: User }) {
       <UserDetailHeader user={user} />
 
       {user.user_type === "owner" && <OwnerNote />}
+      {user.restricted && <RestrictedNote />}
 
       <Segmented
         options={[

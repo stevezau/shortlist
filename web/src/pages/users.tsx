@@ -8,7 +8,11 @@ import { OwnerNote } from "@/components/owner-note";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { UserAvatar } from "@/components/user-avatar";
-import { ColdStartBadge, UserTypeBadge } from "@/components/user-badges";
+import {
+  ColdStartBadge,
+  RestrictedBadge,
+  UserTypeBadge,
+} from "@/components/user-badges";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -234,7 +238,10 @@ export function UsersPage() {
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <UserTypeBadge user={user} />
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          <UserTypeBadge user={user} />
+                          <RestrictedBadge user={user} />
+                        </span>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {/* "New viewer" belongs HERE, next to the number it explains — it's a
@@ -255,6 +262,12 @@ export function UsersPage() {
                       <TableCell className="text-right">
                         <Switch
                           checked={user.enabled}
+                          disabled={user.restricted}
+                          title={
+                            user.restricted
+                              ? "Plex parental controls hide all collections from this account — remove the age restriction to enable"
+                              : undefined
+                          }
                           onCheckedChange={(enabled) =>
                             patchUser.mutate({
                               id: user.id,
