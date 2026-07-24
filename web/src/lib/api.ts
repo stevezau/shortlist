@@ -32,6 +32,7 @@ import type {
   Session,
   Settings,
   SetupState,
+  SyncsInfo,
   TestableService,
   UninstallResult,
   User,
@@ -336,6 +337,9 @@ export const api = {
       );
     return response.text();
   },
+
+  /** When each sync last ran and when it next fires (Tools page). */
+  getSyncs: (): Promise<SyncsInfo> => request("/api/system/syncs"),
 
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
   getReport: (): Promise<EffectivenessReport> => request("/api/report"),

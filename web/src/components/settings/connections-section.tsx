@@ -266,8 +266,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         />
         <ConnectionCard
           service="exa"
-          title="Exa (AI web search)"
-          purpose='Optional. Powers the "AI — web search" source for any provider. It&apos;s also the only way a local Ollama model can search the web.'
+          title="Exa (web search)"
+          purpose="Optional. A standalone web search — Shortlist searches Exa for each seed, then feeds the results to your AI provider to pick titles from. Works with any provider, including local Ollama."
           settings={settings}
           summary={settingString(settings, "exa.apikey") ? "API key saved" : ""}
           glyph={<Globe aria-hidden className="text-primary" />}

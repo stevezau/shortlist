@@ -69,13 +69,16 @@ async def runs_summary(request: Request) -> dict:
 
 @router.delete("")
 async def clear_runs(request: Request) -> dict:
-    """Delete ALL run history: every run, its per-user rows, and its picks. This also clears the
-    effectiveness report (it's built from picks). Irreversible; it changes nothing on Plex."""
+    """Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the
+    dashboard's lifetime metrics survive — only the browsable history is cleared. Changes nothing
+    on Plex."""
     with request.app.state.sessions() as session:
         deleted = session.query(func.count(Run.id)).scalar() or 0
-        # Picks aren't ORM-cascaded off Run, and a bulk delete bypasses the RunUser cascade too, so
-        # clear all three tables explicitly (order doesn't matter — no DB-level FK enforcement here).
-        session.query(PickRow).delete(synchronize_session=False)
+        # Detach picks from their runs (null run_id) so the dashboard metrics survive, then delete
+        # the run history itself (per-user traces are the storage hog at ~100 KB per user per run).
+        session.query(PickRow).filter(PickRow.run_id.isnot(None)).update(
+            {PickRow.run_id: None}, synchronize_session=False
+        )
         session.query(RunUser).delete(synchronize_session=False)
         session.query(Run).delete(synchronize_session=False)
         session.commit()

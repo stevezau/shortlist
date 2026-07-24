@@ -67,8 +67,24 @@ def _register(scheduler: AsyncIOScheduler, app, groups: dict[str, list[int]]) ->
         )
 
 
+def _resolve_watch_cron(app) -> str:
+    """The watch sync cron, from the DB setting or the built-in default."""
+    from shortlist.server.settings_store import SettingsStore
+
+    with app.state.sessions() as session:
+        custom = SettingsStore(session).get("sync.watch_cron")
+    if custom and isinstance(custom, str) and custom.strip():
+        try:
+            CronTrigger.from_crontab(custom.strip())
+            return custom.strip()
+        except ValueError:
+            logger.warning("invalid sync.watch_cron {!r} — falling back to default", custom)
+    return _WATCH_SYNC_CRON
+
+
 def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
     """The daily watch-status reconcile — one fixed job, unaffected by row schedules."""
+    cron = _resolve_watch_cron(app)
 
     async def fire() -> None:
         try:
@@ -76,7 +92,7 @@ def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
         except Exception:
             logger.exception("daily watch-sync failed")
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(_WATCH_SYNC_CRON), id=WATCH_SYNC_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=WATCH_SYNC_JOB_ID, replace_existing=True)
 
 
 def build_scheduler(app) -> AsyncIOScheduler:

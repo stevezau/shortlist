@@ -37,6 +37,28 @@ async def version() -> dict:
     return {"version": shortlist.__version__}
 
 
+@router.get("/syncs", dependencies=[Depends(require_owner)])
+async def syncs(request: Request) -> dict:
+    """When each sync last ran and when it next fires — for the Tools page "last synced" lines."""
+    from shortlist.server.scheduler import WATCH_SYNC_JOB_ID
+
+    with request.app.state.sessions() as session:
+        store = SettingsStore(session)
+        last_watched = store.get("report.watch_synced_at")
+        last_users = store.get("report.users_synced_at")
+        watch_cron = store.get("sync.watch_cron")
+    scheduler = getattr(request.app.state, "scheduler", None)
+    job = scheduler.get_job(WATCH_SYNC_JOB_ID) if scheduler else None
+    return {
+        "watched": {
+            "last": last_watched,
+            "next": iso_utc(job.next_run_time) if job and job.next_run_time else None,
+            "cron": watch_cron or "",
+        },
+        "users": {"last": last_users},
+    }
+
+
 @router.get("/api-token", dependencies=[Depends(require_owner)])
 async def api_token_status(request: Request) -> dict:
     """The owner API token itself (decrypted, for the owner to reveal/copy — like Sonarr/Radarr's key),

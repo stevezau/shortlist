@@ -538,6 +538,9 @@ async def sync_users(request: Request) -> dict:
         display_changed = display_changed or _display_names_drifted(session, before)
     if display_changed:
         await _rename_after_nickname(state)
+    with state.sessions() as session:
+        SettingsStore(session, state.secrets).set("report.users_synced_at", datetime.now(UTC).isoformat())
+        session.commit()
     result = {"added": added, "updated": updated, "total": len(roster) + (1 if owner else 0)}
     emit("sync.finished", {"ok": True, **result})
     return result

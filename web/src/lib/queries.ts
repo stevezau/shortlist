@@ -74,7 +74,7 @@ export function useClearRuns() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: api.clearRuns,
-    // Clearing runs also empties picks, so the dashboard report resets too — refresh both.
+    // Picks survive (metrics preserved), but the runs list and the dashboard's "Runs" card refresh.
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       queryClient.invalidateQueries({ queryKey: ["report"] });
@@ -102,6 +102,10 @@ export function useRunUserTrace(runId: number, userId: number, enabled = true) {
 
 export function useSettings() {
   return useQuery({ queryKey: queryKeys.settings, queryFn: api.getSettings });
+}
+
+export function useSyncs() {
+  return useQuery({ queryKey: ["syncs"], queryFn: api.getSyncs });
 }
 
 /** Whether the AI provider can generate poster images — for the row editor's Generate gate. */

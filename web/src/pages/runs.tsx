@@ -280,10 +280,9 @@ export function RunsPage() {
           <DialogHeader>
             <DialogTitle>Clear all run history?</DialogTitle>
             <DialogDescription>
-              This deletes every recorded run and the picks they produced. It
-              changes nothing on Plex — your rows stay exactly as they are — but
-              it also resets the dashboard’s watch tracking, which is built from
-              those picks. This can’t be undone.
+              This clears the browsable run history and per-run traces. Your
+              dashboard metrics (delivered, watched, hit rate) are kept — only
+              the run list is cleared. Nothing changes on Plex.
             </DialogDescription>
           </DialogHeader>
           {clearRuns.isError && (

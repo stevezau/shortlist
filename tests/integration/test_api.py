@@ -911,7 +911,7 @@ class TestRunsApi:
         assert summary["error"] == 1
         assert summary["last_status"] == "error"  # the newest run
 
-    def test_clear_runs_deletes_every_run_its_picks_and_per_user_rows(self, client: TestClient):
+    def test_clear_runs_deletes_history_but_keeps_picks_for_the_dashboard(self, client: TestClient):
         from shortlist.server.db.models import PickRow, Run, RunUser, User
 
         with client.app.state.sessions() as session:
@@ -928,13 +928,14 @@ class TestRunsApi:
         assert client.delete("/api/runs").json() == {"deleted": 1}
         assert client.get("/api/runs").json() == []
         with client.app.state.sessions() as session:
-            assert session.query(PickRow).count() == 0  # picks went too
-            assert session.query(RunUser).count() == 0  # and the per-user rows (no ORM cascade on bulk delete)
+            assert session.query(PickRow).count() == 1  # picks survive (dashboard metrics preserved)
+            pick = session.query(PickRow).first()
+            assert pick.run_id is None  # detached from the deleted run
+            assert session.query(RunUser).count() == 0  # per-user detail is gone
 
-    def test_retention_prunes_old_runs_beyond_keep_but_spares_the_hit_window(self, client: TestClient):
-        """_prune_runs deletes a run past `keep` AND its picks + per-user rows — but ONLY once it's
-        also older than the 30-day hit window (a recent run beyond `keep` is kept so the report keeps
-        crediting its picks). Picks/run_users aren't ORM-cascaded off Run, so both go explicitly."""
+    def test_retention_prunes_runs_older_than_configured_months_but_keeps_picks(self, client: TestClient):
+        """_prune_runs deletes runs older than retention_months but keeps their picks (nulls run_id)
+        so the dashboard's lifetime metrics survive. Runs inside the window are untouched."""
 
         from shortlist.server.db.models import PickRow, Run, RunUser, User
         from shortlist.server.services.run_service import RunService
@@ -942,28 +943,29 @@ class TestRunsApi:
         with client.app.state.sessions() as session:
             uid = session.query(User).first().id
             now = datetime.now(UTC)
-            stale = Run(trigger="manual", status="ok", started_at=now - timedelta(days=40))  # beyond the window
-            recent = Run(trigger="manual", status="ok", started_at=now - timedelta(days=2))  # inside the window
-            newest = Run(trigger="manual", status="ok", started_at=now)
-            session.add_all([stale, recent, newest])
+            stale = Run(trigger="manual", status="ok", started_at=now - timedelta(days=100))  # beyond 3 months
+            recent = Run(trigger="manual", status="ok", started_at=now - timedelta(days=2))  # inside
+            session.add_all([stale, recent])
             session.flush()
             stale_id, recent_id = stale.id, recent.id
-            for i, run in enumerate((stale, recent, newest)):
+            for i, run in enumerate((stale, recent)):
                 session.add(RunUser(run_id=run.id, user_id=uid, status="ok"))
                 session.add(
                     PickRow(run_id=run.id, user_id=uid, tmdb_id=i, media_type="movie", rating_key=i, rank=1, title="X")
                 )
             session.commit()
 
-            RunService._prune_runs(session, keep=1)  # keep only the newest by count...
+            RunService._prune_runs(session, retention_months=3)
             session.commit()
 
-            kept = {r.id for r in session.query(Run).all()}
-            # ...but `recent` survives despite being beyond keep=1, because it's inside the hit window.
-            assert stale_id not in kept and recent_id in kept
-            assert session.query(PickRow).filter(PickRow.run_id == stale_id).count() == 0  # its pick pruned
-            assert session.query(RunUser).filter(RunUser.run_id == stale_id).count() == 0  # its per-user row pruned
-            assert session.query(PickRow).count() == 2  # recent + newest picks remain
+            kept_runs = {r.id for r in session.query(Run).all()}
+            assert stale_id not in kept_runs  # old run pruned
+            assert recent_id in kept_runs  # recent run kept
+            assert session.query(RunUser).filter(RunUser.run_id == stale_id).count() == 0  # detail gone
+            # Picks survive with a null run_id (dashboard metrics preserved).
+            assert session.query(PickRow).count() == 2
+            orphaned = session.query(PickRow).filter(PickRow.run_id.is_(None)).first()
+            assert orphaned is not None and orphaned.tmdb_id == 0  # stale run's pick, now detached
 
     def test_trigger_forwards_row_scope_to_the_run(self, client: TestClient, monkeypatch):
         """A manual run can target specific rows — collection_ids must reach start_run (the engine's

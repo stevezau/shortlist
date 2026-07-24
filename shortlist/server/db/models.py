@@ -239,7 +239,7 @@ class PickRow(Base):
     __tablename__ = "picks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), index=True, nullable=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     tmdb_id: Mapped[int] = mapped_column(Integer)
     # A TMDB id is unique only within its namespace, so the pair (tmdb_id, media_type) is what

@@ -13,11 +13,11 @@ const LEVELS = ["ERROR", "WARNING", "INFO", "DEBUG", "TRACE"] as const;
 type Level = (typeof LEVELS)[number];
 
 // Preset chips for the three number knobs; each also takes a "Custom…" value within the bounds the
-// API validates (run.concurrency 1–16, runs.retention 0–10000, plex.timeout_s 5–300 — settings.py).
+// API validates (run.concurrency 1–16, runs.retention 0–24 months, plex.timeout_s 5–300 — settings.py).
 const CONCURRENCY = [1, 2, 4, 8].map((n) => ({ value: n, label: String(n) }));
-const RETENTION = [0, 50, 100, 250].map((n) => ({
+const RETENTION = [0, 3, 6, 12].map((n) => ({
   value: n,
-  label: n === 0 ? "All" : String(n), // 0 = keep every run
+  label: n === 0 ? "Forever" : `${n}mo`,
 }));
 const TIMEOUTS = [20, 30, 45, 60, 90].map((n) => ({
   value: n,
@@ -123,22 +123,20 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
           <div className="border-t pt-4">
             <p className="font-medium">Runs kept</p>
             <p className="text-sm text-muted-foreground">
-              How many past runs to keep in history.
+              How long to keep run history (the per-run detail and traces).
               <br />
-              Older runs (and the picks they recorded) are cleared automatically
-              after each run. <strong>All</strong> keeps everything.
-              <br />A run is never cleared while it still counts toward the
-              dashboard&rsquo;s 30-day watch tracking, so a low number
-              won&rsquo;t cost you any stats.
+              Older runs are auto-cleared after each run. Your dashboard metrics
+              are kept forever regardless — only the browsable run history is
+              pruned. <strong>Forever</strong> keeps everything.
             </p>
           </div>
           <NumberPresets
             value={retention}
-            ariaLabel="Runs kept"
+            ariaLabel="History retention"
             presets={RETENTION}
             min={0}
-            max={10000}
-            unit="runs (0 = keep all)"
+            max={24}
+            unit="months (0 = forever)"
             onChange={(value) => save({ "runs.retention": value })}
           />
           <div className="flex items-start justify-between gap-4 border-t pt-4">

@@ -102,7 +102,7 @@ def _known_sources(value: object) -> str | None:
 # client reached the engine (`row.size: "abc"` crashed every run and 500'd two endpoints).
 VALIDATORS = {
     "row.size": _bounded_int(5, 40),  # ceiling = candidates_pre_rank (per-media pool cap)
-    "runs.retention": _bounded_int(0, 10000),  # 0 = keep every run
+    "runs.retention": _bounded_int(0, 24),  # months; 0 = keep forever
     # The FLOOR (minimum seconds) between plex.tv writes. 0 = fire as fast as plex.tv accepts; the
     # client backs off adaptively on 429 (rule 6), so 0 is safe, not an "off switch" like it once was.
     "plextv.throttle_s": _bounded_float(0.0, 60.0),

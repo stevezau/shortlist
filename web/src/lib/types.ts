@@ -882,3 +882,9 @@ export interface LogPage {
   /** The file these came from, or null when the instance has not written any logs yet. */
   file: string | null;
 }
+
+/** Sync schedule info for the Tools page — when each sync last ran and next fires. */
+export interface SyncsInfo {
+  watched: { last: string | null; next: string | null; cron: string };
+  users: { last: string | null };
+}

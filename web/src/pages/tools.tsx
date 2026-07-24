@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  Clock,
   RefreshCw,
   Users as UsersIcon,
   Wrench,
@@ -19,7 +20,8 @@ import {
 } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { api } from "@/lib/api";
-import { queryKeys } from "@/lib/queries";
+import { timeAgo } from "@/lib/format";
+import { queryKeys, useSyncs } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
 import type { SyncFinishedEvent, SyncProgressEvent } from "@/lib/types";
 
@@ -66,6 +68,8 @@ export function ToolsPage() {
     },
   });
 
+  const syncs = useSyncs();
+
   return (
     <div>
       <PageHeader
@@ -74,8 +78,16 @@ export function ToolsPage() {
         subtitle="On-demand maintenance. Run these when something has drifted — a new user, or watched state that's out of sync — rather than waiting for the nightly run."
       />
       <div className="grid gap-4">
-        <SyncHistoryCard progress={watchedProgress} result={watchedResult} />
-        <SyncUsersCard progress={usersProgress} />
+        <SyncHistoryCard
+          progress={watchedProgress}
+          result={watchedResult}
+          lastSynced={syncs.data?.watched.last ?? null}
+          nextRun={syncs.data?.watched.next ?? null}
+        />
+        <SyncUsersCard
+          progress={usersProgress}
+          lastSynced={syncs.data?.users.last ?? null}
+        />
       </div>
     </div>
   );
@@ -85,9 +97,13 @@ export function ToolsPage() {
 function SyncHistoryCard({
   progress,
   result,
+  lastSynced,
+  nextRun,
 }: {
   progress: SyncProgressEvent | null;
   result: SyncFinishedEvent | null;
+  lastSynced: string | null;
+  nextRun: string | null;
 }) {
   const sync = useMutation({ mutationFn: api.syncWatched });
   // This POST returns 202 the moment the sync is QUEUED — the real outcome arrives on the bus as
@@ -110,6 +126,14 @@ function SyncHistoryCard({
           each day; use it when you want the effectiveness report refreshed
           straight away.
         </CardDescription>
+        {(lastSynced || nextRun) && (
+          <p className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
+            <Clock className="size-3.5 shrink-0" aria-hidden="true" />
+            {lastSynced && <span>Last synced {timeAgo(lastSynced)}</span>}
+            {lastSynced && nextRun && <span aria-hidden="true">·</span>}
+            {nextRun && <span>Next: {timeAgo(nextRun)}</span>}
+          </p>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div>
@@ -178,7 +202,13 @@ function SyncHistoryCard({
 }
 
 /** Re-pull the shared + Home users (and the owner) from plex.tv into the users table. */
-function SyncUsersCard({ progress }: { progress: SyncProgressEvent | null }) {
+function SyncUsersCard({
+  progress,
+  lastSynced,
+}: {
+  progress: SyncProgressEvent | null;
+  lastSynced: string | null;
+}) {
   const queryClient = useQueryClient();
   const sync = useMutation({
     mutationFn: api.syncUsers,
@@ -206,6 +236,12 @@ function SyncUsersCard({ progress }: { progress: SyncProgressEvent | null }) {
           names, and share status. Use it after inviting someone new so they
           show up in the user list without waiting for the next run.
         </CardDescription>
+        {lastSynced && (
+          <p className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
+            <Clock className="size-3.5 shrink-0" aria-hidden="true" />
+            <span>Last synced {timeAgo(lastSynced)}</span>
+          </p>
+        )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <div>

@@ -327,23 +327,24 @@ class RunService:
 
                 # Only picks recent enough to still be creditable: a pick older than the window can
                 # never become a hit, so scanning every unwatched pick ever recorded is dead work
-                # that grows without bound.
+                # that grows without bound. Uses the pick's own created_at (when it was delivered),
+                # not the run's started_at — so picks that outlive their run (after clear/prune) are
+                # still creditable.
                 cutoff = datetime.now(UTC) - timedelta(days=HIT_WINDOW_DAYS)
                 unwatched = (
-                    session.query(PickRow, Run.started_at)
-                    .join(Run, PickRow.run_id == Run.id)
+                    session.query(PickRow)
                     .filter(
                         PickRow.user_id == user.id,
                         PickRow.watched_at.is_(None),
-                        Run.started_at >= cutoff,
+                        PickRow.created_at >= cutoff,
                     )
                     .all()
                 )
-                for pick, recommended_at in unwatched:
+                for pick in unwatched:
                     watched = latest_watch.get((pick.tmdb_id, pick.media_type))
                     if watched is None:
                         continue
-                    since = recommended_at if recommended_at.tzinfo else recommended_at.replace(tzinfo=UTC)
+                    since = pick.created_at if pick.created_at.tzinfo else pick.created_at.replace(tzinfo=UTC)
                     if since <= watched <= since + timedelta(days=HIT_WINDOW_DAYS):
                         pick.watched_at = watched
             session.commit()
@@ -408,35 +409,30 @@ class RunService:
             self._finalize_run(run, report, status, error, ok, errors, skipped)
             from shortlist.server.settings_store import SettingsStore
 
-            self._prune_runs(session, int(SettingsStore(session).get("runs.retention")))
+            months = int(SettingsStore(session).get("runs.retention"))
+            # Legacy DBs store the old count-based "100" — values beyond the new 24-month max are
+            # treated as 0 (keep forever) until the owner visits Settings and sets a real month value.
+            self._prune_runs(session, months if 0 < months <= 24 else 0)
             session.commit()
 
     @staticmethod
-    def _prune_runs(session: Session, keep: int) -> None:
-        """Keep the newest `keep` runs (and their picks + per-user rows), deleting the rest. 0 = keep
-        everything. The just-finalized run has the highest id, so it's always kept.
+    def _prune_runs(session: Session, retention_months: int) -> None:
+        """Delete runs older than `retention_months`. 0 = keep everything forever.
 
-        A run beyond `keep` is ONLY pruned once it's also older than the hit-window: `_reconcile_watched`
-        credits a watch to a pick whose run started within `HIT_WINDOW_DAYS`, so deleting such a run
-        early would silently drop hits the report still owes. The scheduler fires one run per row-cron,
-        so a low `keep` can span far less than the window — the time floor closes that gap. Picks and
-        run_users aren't ORM-cascaded off Run (and a bulk delete bypasses the cascade anyway), so both
-        are deleted explicitly."""
-        if keep <= 0:
+        Picks are KEPT (their run_id is nulled) so the dashboard's lifetime metrics survive. Only the
+        run history (the Runs list, per-user detail/trace) is pruned — those are the storage hog
+        (~100 KB per user per run in trace blobs).
+        """
+        if retention_months <= 0:
             return
-        cutoff = datetime.now(UTC) - timedelta(days=HIT_WINDOW_DAYS)
-
-        def _older_than_window(started_at: datetime | None) -> bool:
-            if started_at is None:
-                return True
-            aware = started_at if started_at.tzinfo else started_at.replace(tzinfo=UTC)
-            return aware < cutoff
-
-        beyond_keep = session.query(Run.id, Run.started_at).order_by(Run.id.desc()).offset(keep).all()
-        old_ids = [rid for rid, started_at in beyond_keep if _older_than_window(started_at)]
+        cutoff = datetime.now(UTC) - timedelta(days=retention_months * 30)
+        old = session.query(Run.id).filter(Run.started_at < cutoff).all()
+        old_ids = [rid for (rid,) in old]
         if not old_ids:
             return
-        session.query(PickRow).filter(PickRow.run_id.in_(old_ids)).delete(synchronize_session=False)
+        session.query(PickRow).filter(PickRow.run_id.in_(old_ids)).update(
+            {PickRow.run_id: None}, synchronize_session=False
+        )
         session.query(RunUser).filter(RunUser.run_id.in_(old_ids)).delete(synchronize_session=False)
         session.query(Run).filter(Run.id.in_(old_ids)).delete(synchronize_session=False)
 
