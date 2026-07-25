@@ -13,7 +13,7 @@ from loguru import logger
 import shortlist
 
 _CACHE_TTL = 3600  # 1 hour
-_GITHUB_REPO = "stevezau/rowarr"
+_GITHUB_REPO = "stevezau/shortlist"
 _RELEASES_URL = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
 
 _lock = threading.Lock()
