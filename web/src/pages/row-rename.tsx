@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, Pen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
@@ -22,6 +23,7 @@ interface RenameEvent {
 export function RowRenamePage() {
   const { id } = useParams();
   const collectionId = Number(id);
+  const queryClient = useQueryClient();
   const collections = useCollections();
   const collection = collections.data?.find((c) => c.id === collectionId);
   const location = useLocation();
@@ -80,10 +82,14 @@ export function RowRenamePage() {
               return;
             }
             setEvents((prev) => [...prev, event]);
-            if (event.done) setRunning(false);
+            if (event.done) {
+              setRunning(false);
+              queryClient.invalidateQueries({ queryKey: ["collections"] });
+            }
           }
         }
         setRunning(false);
+        queryClient.invalidateQueries({ queryKey: ["collections"] });
       } catch (e) {
         if ((e as Error).name !== "AbortError") {
           setError((e as Error).message);
