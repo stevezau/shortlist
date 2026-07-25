@@ -109,7 +109,7 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
   const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
   const label = STAGE_LABELS[entry.stage] ?? entry.stage;
   const detail = Object.entries(entry.counts ?? {})
-    .map(([k, v]) => countLabel(k, Number(v)))
+    .map(([k, v]) => countLabel(k, v))
     .join(" · ");
   return (
     <div className="flex gap-2">
@@ -496,7 +496,15 @@ function ResultsLegend() {
 }
 
 /** The selected user's result: an error, or their rows grouped from the per-(row, library) breakdown. */
-function UserPanel({ run, result }: { run: RunDetail; result: RunUserResult }) {
+function UserPanel({
+  run,
+  result,
+  liveLog,
+}: {
+  run: RunDetail;
+  result: RunUserResult;
+  liveLog?: RunLogEntry[];
+}) {
   if (result.error !== null) {
     return (
       <div role="alert" className="space-y-3 rounded-md bg-destructive/10 p-3">
@@ -534,13 +542,27 @@ function UserPanel({ run, result }: { run: RunDetail; result: RunUserResult }) {
     );
   }
   if (result.breakdown.length === 0) {
-    // Still running (this user hasn't finished) or a legacy run with no breakdown.
+    // Still running (this user hasn’t finished) or a legacy run with no breakdown.
     if (result.picks.length > 0)
       return <PickList picks={result.picks} className="mt-1" />;
+    if (result.status === "ok" || result.status === "cold_start") {
+      return (
+        <p className="text-sm text-muted-foreground">
+          No changes — this person’s rows were already up to date.
+        </p>
+      );
+    }
+    // Show the latest stage from the live log for this user.
+    const userLog = liveLog?.filter((e) => e.user === result.slug);
+    const latest = userLog?.at(-1);
+    const stageLabel = latest
+      ? (STAGE_LABELS[latest.stage] ?? latest.stage)
+      : null;
+    const rowName = latest?.counts?.row as string | undefined;
     return (
       <p className="text-sm text-muted-foreground">
-        {result.status === "ok" || result.status === "cold_start"
-          ? "No changes — this person’s rows were already up to date."
+        {stageLabel
+          ? `${stageLabel}${rowName ? ` — ${rowName}` : ""}…`
           : "Working on this person…"}
       </p>
     );
@@ -1038,7 +1060,11 @@ export function RunDetailPage() {
                             </div>
                           </CardHeader>
                           <CardContent>
-                            <UserPanel run={run} result={selected} />
+                            <UserPanel
+                              run={run}
+                              result={selected}
+                              liveLog={liveLog}
+                            />
                           </CardContent>
                         </Card>
                       </div>

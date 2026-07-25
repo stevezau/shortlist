@@ -900,7 +900,8 @@ def _run_user(
             if pools is None:
                 continue  # every source this row uses is down; its siblings still deliver
             _pool, _in_library, pool_for_row = pools
-            _pipeline._emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row)})
+            row_label = spec.name_template or spec.slug
+            _pipeline._emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
         section_picks: dict[str, list[Pick]] = {}
         fresh = effective_freshness(spec)
         for section in targets:
@@ -978,7 +979,7 @@ def _run_user(
                 user_report.placement_titles[title + marker] = spec.slug
         picks = [pick for sp in section_picks.values() for pick in sp]
         all_picks.extend(picks)
-        _pipeline._emit(ctx, user.slug, "delivering", {"picks": len(picks)})
+        _pipeline._emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
 
         # write_lock: the Plex collection writes AND the shared stored_labels mutation inside
         # deliver_rows must be serial across users — the leak-safe half of Stage 3 parallelism.

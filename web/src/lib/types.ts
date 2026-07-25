@@ -658,7 +658,7 @@ export interface RunLogEntry {
   run_id?: number | null;
   user: string;
   stage: string;
-  counts: Record<string, number>;
+  counts: Record<string, number | string>;
   reason?: string | null;
 }
 
