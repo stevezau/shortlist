@@ -120,25 +120,35 @@ export function RowEditor({
 
         <div className="space-y-5 py-2">
           <div className="space-y-2">
-            <Label>Name</Label>
-            <div className="flex items-center gap-2">
+            <Label htmlFor="row-name">Name</Label>
+            {collection ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  id="row-name"
+                  value={input.name || "Picked for You"}
+                  disabled
+                  className="flex-1 opacity-70"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    onClose();
+                    onRename?.();
+                  }}
+                >
+                  Rename
+                </Button>
+              </div>
+            ) : (
               <Input
-                value={input.name || "Picked for You"}
-                disabled
-                className="flex-1 opacity-70"
+                id="row-name"
+                value={input.name}
+                onChange={(e) => set({ name: e.target.value })}
+                placeholder="e.g. Hidden Gems"
               />
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  onClose();
-                  onRename?.();
-                }}
-              >
-                Rename
-              </Button>
-            </div>
+            )}
           </div>
 
           <PosterField

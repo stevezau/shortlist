@@ -86,13 +86,19 @@ def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(pag
     expect(page.get_by_role("heading", name="Edit row")).to_be_visible()
 
     name = page.get_by_label("Name", exact=True)
-    expect(name).to_be_enabled()  # the field is no longer locked on the default row
+    expect(name).to_be_disabled()  # existing rows show name read-only; rename via button
     expect(name).to_have_value("✨ {library_name} Picked for You")  # its value IS the global template
-    name.fill("✨ {library_name} Handpicked")
-    page.get_by_role("button", name="Save changes").click()
+    # Close the editor; rename happens via the row-card's Rename button + dialog.
+    page.get_by_role("button", name="Cancel").click()
 
-    # The edit landed on the shared setting, not a per-collection column.
-    expect(page.get_by_text("✨ {library_name} Handpicked").first).to_be_visible(timeout=LOAD)
+    page.get_by_role("button", name="Rename").click()
+    rename_input = page.get_by_label("New name")
+    expect(rename_input).to_be_visible()
+    rename_input.fill("✨ {library_name} Handpicked")
+    page.get_by_role("button", name="Rename on Plex").click()
+
+    # The rename triggers an SSE stream page — wait for it to finish, then check the DB.
+    expect(page.get_by_text("Done")).to_be_visible(timeout=LOAD)
     settings = app.api("GET", "/api/settings").json()
     assert settings["row.name_template"] == "✨ {library_name} Handpicked"
 
