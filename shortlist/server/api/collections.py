@@ -427,7 +427,8 @@ async def delete_collection(collection_id: int, request: Request) -> None:
 
 
 class RenameRequest(BaseModel):
-    name_template: str
+    name_template: str = ""
+    old_template: str = ""
 
 
 @router.post("/{collection_id}/rename")
@@ -457,12 +458,15 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
             if slug == DEFAULT_SLUG:
                 new_template = SettingsStore(session).get("row.name_template") or new_template
 
+    old_template = body.old_template.strip() or None
     state = request.app.state
     q: Queue = Queue()
 
     def _run():
         try:
-            for event in reconcile.reconcile_row_rename_iter(state, slug=slug, new_template=new_template):
+            for event in reconcile.reconcile_row_rename_iter(
+                state, slug=slug, new_template=new_template, old_template=old_template
+            ):
                 q.put(event)
         except Exception as e:
             q.put({"error": f"{type(e).__name__}: {e}"})

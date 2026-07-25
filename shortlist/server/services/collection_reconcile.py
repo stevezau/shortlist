@@ -23,6 +23,7 @@ from shortlist.engine.delivery import (
     render_row_name,
     reset_row_posters,
     row_marker,
+    strip_marker,
 )
 from shortlist.engine.models import SHARED_LABEL_PREFIX, UserProfile, UserType
 from shortlist.server.db.models import DEFAULT_SLUG, Event, Run, User
@@ -232,55 +233,79 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, entries: list[
                 entries.append({"user": user.slug, "old": old_display, "new": new_display, "libraries": libraries})
 
 
-def reconcile_row_rename_iter(state, *, slug: str, new_template: str):
-    """Like _reconcile_row_rename but YIELDS one dict per user renamed (for SSE streaming).
+def reconcile_row_rename_iter(state, *, slug: str, new_template: str, old_template: str | None = None):
+    """Rename a row's collections on Plex, yielding one event per user renamed (for SSE streaming).
+
+    Finds collections directly from Plex (by label), not from run history — so it works even after
+    runs are cleared. For each user: finds their collections by label on Plex, identifies this row's
+    collection by its old rendered title, computes the new title from the template, and renames if
+    different.
+
+    When ``old_template`` is provided (the template BEFORE the rename), it is used to identify which
+    collection on Plex belongs to this row (per-person rows share one label for ALL rows, so title is
+    the only discriminator). Without it, all collections under the user's label are candidates — safe
+    on single-row servers but may misfire on multi-row ones.
 
     Yields: {"user": slug, "display_name": str, "old": old_title, "new": new_title, "libraries": [...]}
-    for each user actually renamed. Skipped users (title unchanged, no collections) are not yielded.
-    At the end yields {"done": True, "total": n} as the terminal event.
+    At the end yields {"done": True, "total": n}.
     """
     with state.sessions() as session:
-        titles_by_user = _delivered_titles_by_user(session, slug)
-        users = session.query(User).all()
+        users = session.query(User).filter_by(enabled=True).all()
+        users_data = [
+            {
+                "slug": u.slug,
+                "username": u.username,
+                "nickname": u.nickname or u.friendly_name,
+                "plex_account_id": u.plex_account_id,
+                "user_type": u.user_type,
+                "prefs": u.prefs or {},
+            }
+            for u in users
+        ]
     dry_run = force_dry_run()
     ctx = state.run_service.build_context(dry_run=dry_run)
     total = 0
-    for user in users:
-        old_titles = titles_by_user.get(user.id, {})
-        if not old_titles:
-            continue
-        override = (user.prefs or {}).get("row_name_tpl") if slug == DEFAULT_SLUG else None
+    for udata in users_data:
+        override = udata["prefs"].get("row_name_tpl") if slug == DEFAULT_SLUG else None
         effective_template = override or new_template
+        effective_old = override or old_template
         profile = UserProfile(
-            username=user.username,
-            plex_account_id=user.plex_account_id,
-            user_type=UserType(user.user_type),
-            slug=user.slug,
-            nickname=user.nickname or user.friendly_name,
+            username=udata["username"],
+            plex_account_id=udata["plex_account_id"],
+            user_type=UserType(udata["user_type"]),
+            slug=udata["slug"],
+            nickname=udata["nickname"],
         )
-        marker = row_marker(user.plex_account_id)
-        for old_display, library_title in old_titles.items():
-            new_display = render_row_name(effective_template, profile, [], library_name=library_title)
-            if new_display == DEFAULT_ROW_NAME or old_display == new_display:
+        label = f"{ctx.config.label_prefix}_{udata['slug']}"
+        marker = row_marker(udata["plex_account_id"])
+        for section in ctx.plex.sections():
+            lib_name = getattr(section, "title", "") or ""
+            new_display = render_row_name(effective_template, profile, [], library_name=lib_name)
+            if new_display == DEFAULT_ROW_NAME:
                 continue
-            libraries = rename_row_collections(
-                ctx.plex,
-                ctx.config,
-                label=f"{ctx.config.label_prefix}_{user.slug}",
-                marker=marker,
-                old_display=old_display,
-                new_display=new_display,
-                dry_run=dry_run,
-            )
-            if libraries:
-                total += 1
-                yield {
-                    "user": user.slug,
-                    "display_name": profile.display_name,
-                    "old": old_display,
-                    "new": new_display,
-                    "libraries": libraries,
-                }
+            new_with_marker = new_display + marker
+            old_display = render_row_name(effective_old, profile, [], library_name=lib_name) if effective_old else None
+            for collection in ctx.plex.find_owned_collections(section, label):
+                current_title = collection.title
+                if current_title == new_with_marker:
+                    continue
+                # Scope to THIS row: if we know the old template, only rename collections whose
+                # stripped title matches what this row USED to render as.
+                if old_display and strip_marker(current_title) != old_display:
+                    continue
+                try:
+                    if not dry_run:
+                        collection.editTitle(new_with_marker)
+                    total += 1
+                    yield {
+                        "user": udata["slug"],
+                        "display_name": profile.display_name,
+                        "old": strip_marker(current_title),
+                        "new": new_display,
+                        "libraries": [lib_name],
+                    }
+                except Exception as e:
+                    logger.warning("{}: rename failed in {} ({}: {})", udata["slug"], lib_name, type(e).__name__, e)
     yield {"done": True, "total": total}
 
 

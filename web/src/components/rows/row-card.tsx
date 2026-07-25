@@ -61,14 +61,21 @@ export function RowCard({
     collection.name_template || collection.name,
   );
   const rename = useMutation({
-    mutationFn: () =>
-      api.updateCollection(collection.id, {
-        ...toInput(collection),
-        name_template: renameTo,
-      }),
-    onSuccess: () => {
+    mutationFn: () => {
+      const oldTemplate = collection.name_template || collection.name;
+      return api
+        .updateCollection(collection.id, {
+          ...toInput(collection),
+          name: renameTo,
+          name_template: renameTo,
+        })
+        .then(() => oldTemplate);
+    },
+    onSuccess: (oldTemplate) => {
       setRenameOpen(false);
-      navigate(`/rows/${collection.id}/rename`);
+      navigate(`/rows/${collection.id}/rename`, {
+        state: { oldTemplate },
+      });
     },
   });
   // A dry-run first (what WOULD be removed), then the real removal on confirm.

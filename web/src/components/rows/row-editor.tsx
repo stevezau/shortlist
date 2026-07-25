@@ -133,7 +133,13 @@ export function RowEditor({
                 size="sm"
                 onClick={() => {
                   onClose();
-                  if (collection) navigate(`/rows/${collection.id}/rename`);
+                  if (collection)
+                    navigate(`/rows/${collection.id}/rename`, {
+                      state: {
+                        oldTemplate:
+                          collection.name_template || collection.name,
+                      },
+                    });
                 }}
               >
                 Rename

@@ -1,6 +1,6 @@
 import { Check, Loader2, Pen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,9 @@ export function RowRenamePage() {
   const collectionId = Number(id);
   const collections = useCollections();
   const collection = collections.data?.find((c) => c.id === collectionId);
+  const location = useLocation();
+  const oldTemplate = (location.state as { oldTemplate?: string } | null)
+    ?.oldTemplate;
   const [events, setEvents] = useState<RenameEvent[]>([]);
   const [running, setRunning] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +47,10 @@ export function RowRenamePage() {
               "x-shortlist-csrf": "1",
             },
             credentials: "include",
-            body: JSON.stringify({ name_template: "" }),
+            body: JSON.stringify({
+              name_template: "",
+              old_template: oldTemplate ?? "",
+            }),
             signal: controller.signal,
           },
         );
