@@ -261,7 +261,7 @@ export function UsersPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <Switch
-                          checked={user.enabled}
+                          checked={user.enabled && !user.restricted}
                           disabled={user.restricted}
                           title={
                             user.restricted
