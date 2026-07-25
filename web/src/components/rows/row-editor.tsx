@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { LibraryPicker } from "@/components/rows/library-picker";
@@ -78,12 +77,13 @@ export function RowEditor({
   collection,
   users,
   onClose,
+  onRename,
 }: {
   collection: Collection | null;
   users: User[];
   onClose: () => void;
+  onRename?: () => void;
 }) {
-  const navigate = useNavigate();
   const save = useSaveCollection();
   const [input, setInput] = useState<CollectionInput>(
     collection ? toInput(collection) : blankInput(),
@@ -133,13 +133,7 @@ export function RowEditor({
                 size="sm"
                 onClick={() => {
                   onClose();
-                  if (collection)
-                    navigate(`/rows/${collection.id}/rename`, {
-                      state: {
-                        oldTemplate:
-                          collection.name_template || collection.name,
-                      },
-                    });
+                  onRename?.();
                 }}
               >
                 Rename

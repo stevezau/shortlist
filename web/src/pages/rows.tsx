@@ -27,6 +27,8 @@ export function RowsPage() {
   const [editing, setEditing] = useState<{
     collection: Collection | null;
   } | null>(null);
+  // When set, the matching RowCard opens its rename dialog on mount.
+  const [renameTarget, setRenameTarget] = useState<number | null>(null);
 
   return (
     <div>
@@ -77,6 +79,8 @@ export function RowsPage() {
                       collection={collection}
                       users={users}
                       onEdit={() => setEditing({ collection })}
+                      openRename={renameTarget === collection.id}
+                      onRenameOpened={() => setRenameTarget(null)}
                     />
                   ))}
                 </div>
@@ -88,6 +92,11 @@ export function RowsPage() {
                 collection={editing.collection}
                 users={users}
                 onClose={() => setEditing(null)}
+                onRename={() => {
+                  const id = editing.collection?.id;
+                  setEditing(null);
+                  if (id) setRenameTarget(id);
+                }}
               />
             )}
           </>

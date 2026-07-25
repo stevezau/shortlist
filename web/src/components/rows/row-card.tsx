@@ -7,7 +7,7 @@ import {
   UserCheck,
   Users as UsersIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { MutationAlert } from "@/components/mutation-alert";
@@ -43,10 +43,14 @@ export function RowCard({
   collection,
   users,
   onEdit,
+  openRename,
+  onRenameOpened,
 }: {
   collection: Collection;
   users: User[];
   onEdit: () => void;
+  openRename?: boolean;
+  onRenameOpened?: () => void;
 }) {
   const navigate = useNavigate();
   const save = useSaveCollection();
@@ -60,6 +64,14 @@ export function RowCard({
   const [renameTo, setRenameTo] = useState(
     collection.name_template || collection.name,
   );
+
+  useEffect(() => {
+    if (openRename) {
+      setRenameTo(collection.name_template || collection.name);
+      setRenameOpen(true);
+      onRenameOpened?.();
+    }
+  }, [openRename]);
   const rename = useMutation({
     mutationFn: () => {
       const oldTemplate = collection.name_template || collection.name;
