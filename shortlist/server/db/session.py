@@ -90,7 +90,16 @@ def _heal_squashed_revision(cfg: AlembicConfig, config_dir: Path) -> None:
 
 
 def run_migrations(config_dir: Path) -> None:
-    """Apply Alembic migrations to head (every schema change ships one — project rule)."""
+    """Apply Alembic migrations to head (every schema change ships one — project rule).
+
+    Takes a pre-migration backup so a bad migration can always be rolled back.
+    """
+    from shortlist.server.services.backup import take_backup
+
+    db_path = config_dir / "shortlist.db"
+    if db_path.exists() and db_path.stat().st_size > 0:
+        take_backup(config_dir, label="pre-migration")
+
     cfg = AlembicConfig()
     cfg.set_main_option("script_location", str(ALEMBIC_DIR))
     cfg.set_main_option("sqlalchemy.url", db_url(config_dir))

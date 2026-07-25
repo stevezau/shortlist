@@ -421,3 +421,44 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
     logger.warning("UNINSTALL {}: {}", "preview" if body.dry_run else "executed", result)
     message = "Preview only — nothing was changed." if body.dry_run else "Your server is as we found it."
     return {**result, "message": message}
+
+
+# -- Backups -----------------------------------------------------------------------------------
+
+
+@router.get("/backups", dependencies=[Depends(require_owner)])
+async def get_backups(request: Request):
+    """List available DB backups, newest first."""
+    from shortlist.server.services.backup import list_backups
+
+    return list_backups(request.app.state.config_dir)
+
+
+@router.post("/backups", dependencies=[Depends(require_owner)])
+async def create_backup(request: Request):
+    """Take a manual backup now."""
+    from shortlist.server.services.backup import take_backup
+
+    path = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: take_backup(request.app.state.config_dir, label="manual")
+    )
+    if path is None:
+        raise HTTPException(500, "backup failed")
+    return {"name": path.name, "size_bytes": path.stat().st_size}
+
+
+class RestoreRequest(BaseModel):
+    name: str
+
+
+@router.post("/backups/restore", dependencies=[Depends(require_owner)])
+async def restore_backup_endpoint(body: RestoreRequest, request: Request):
+    """Restore from a named backup. The app will need to be restarted after."""
+    from shortlist.server.services.backup import restore_backup
+
+    ok = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: restore_backup(request.app.state.config_dir, body.name)
+    )
+    if not ok:
+        raise HTTPException(404, "backup not found")
+    return {"restored": body.name, "message": "Restored. Restart the container to pick up the restored database."}

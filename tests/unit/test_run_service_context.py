@@ -370,11 +370,12 @@ class TestSyncWatched:
         assert finished == [{"kind": "watched", "ok": False, "error": "RuntimeError"}]
 
 
-def test_build_scheduler_registers_the_daily_watch_sync(sessions):
+def test_build_scheduler_registers_the_daily_watch_sync(sessions, tmp_path):
     from types import SimpleNamespace
 
-    from shortlist.server.scheduler import WATCH_SYNC_JOB_ID, build_scheduler
+    from shortlist.server.scheduler import BACKUP_JOB_ID, WATCH_SYNC_JOB_ID, build_scheduler
 
-    app = SimpleNamespace(state=SimpleNamespace(sessions=sessions, run_service=None))
+    app = SimpleNamespace(state=SimpleNamespace(sessions=sessions, run_service=None, config_dir=tmp_path))
     scheduler = build_scheduler(app)
     assert scheduler.get_job(WATCH_SYNC_JOB_ID) is not None  # daily, independent of any row's cron
+    assert scheduler.get_job(BACKUP_JOB_ID) is not None  # daily DB backup

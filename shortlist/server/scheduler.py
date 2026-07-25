@@ -21,8 +21,10 @@ _JOB_PREFIX = "row-schedule::"
 # users with no scheduled row. Read-only: fetches history and marks hits, never writes to Plex.
 WATCH_SYNC_JOB_ID = "watch-sync"
 USER_SYNC_JOB_ID = "user-sync"
+BACKUP_JOB_ID = "db-backup"
 _WATCH_SYNC_CRON = "17 4 * * *"  # 04:17 local daily — a quiet hour, offset off the top of the hour
 _USER_SYNC_CRON = "47 4 * * *"  # 04:47 local daily — 30 min after the watch sync so they don't overlap
+_BACKUP_CRON = "0 3 * * *"  # 03:00 local daily — before any syncs or row runs
 
 
 def _job_id(cron: str) -> str:
@@ -132,13 +134,31 @@ def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=USER_SYNC_JOB_ID, replace_existing=True)
 
 
+def _register_backup(scheduler: AsyncIOScheduler, app) -> None:
+    """Daily DB backup — keeps the last N copies so a bad migration or data loss is recoverable."""
+    from shortlist.server.services.backup import take_backup
+
+    config_dir = app.state.config_dir
+
+    async def fire():
+        try:
+            import asyncio
+
+            await asyncio.get_running_loop().run_in_executor(None, lambda: take_backup(config_dir, label="scheduled"))
+        except Exception:
+            logger.exception("daily backup failed")
+
+    scheduler.add_job(fire, CronTrigger.from_crontab(_BACKUP_CRON), id=BACKUP_JOB_ID, replace_existing=True)
+
+
 def build_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     groups = schedule_groups(app)
     _register(scheduler, app, groups)
     _register_watch_sync(scheduler, app)
     _register_user_sync(scheduler, app)
-    logger.info("scheduled {} row cron group(s) + watch-sync + user-sync", len(groups))
+    _register_backup(scheduler, app)
+    logger.info("scheduled {} row cron group(s) + watch-sync + user-sync + backup", len(groups))
     return scheduler
 
 
@@ -154,4 +174,5 @@ def rebuild_schedule(app) -> None:
     _register(scheduler, app, groups)
     _register_watch_sync(scheduler, app)
     _register_user_sync(scheduler, app)
-    logger.info("rebuilt schedule: {} row cron group(s) + watch-sync + user-sync", len(groups))
+    _register_backup(scheduler, app)
+    logger.info("rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup", len(groups))
