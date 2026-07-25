@@ -14,7 +14,7 @@ import shortlist
 
 _CACHE_TTL = 3600  # 1 hour
 _GITHUB_REPO = "stevezau/shortlist"
-_RELEASES_URL = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
+_RELEASES_URL = f"https://api.github.com/repos/{_GITHUB_REPO}/releases"
 
 _lock = threading.Lock()
 _cached_latest: str | None = None
@@ -43,8 +43,10 @@ def _fetch_latest() -> str | None:
             _RELEASES_URL, timeout=10, follow_redirects=True, headers={"Accept": "application/vnd.github.v3+json"}
         )
         if r.status_code == 200:
-            tag = r.json().get("tag_name", "")
-            return tag.lstrip("v")
+            releases = r.json()
+            if releases:
+                tag = releases[0].get("tag_name", "")
+                return tag.lstrip("v")
     except Exception as e:
         logger.debug("version check failed: {}", e)
     return None
