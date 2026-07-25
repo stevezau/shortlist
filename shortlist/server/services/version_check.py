@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 
 import httpx
 from loguru import logger
-from packaging.version import InvalidVersion, Version
 
 import shortlist
 
@@ -39,7 +39,9 @@ def _install_type() -> str:
 def _fetch_latest() -> str | None:
     """Fetch the latest release tag from GitHub. Returns None on any failure."""
     try:
-        r = httpx.get(_RELEASES_URL, timeout=10, headers={"Accept": "application/vnd.github.v3+json"})
+        r = httpx.get(
+            _RELEASES_URL, timeout=10, follow_redirects=True, headers={"Accept": "application/vnd.github.v3+json"}
+        )
         if r.status_code == 200:
             tag = r.json().get("tag_name", "")
             return tag.lstrip("v")
@@ -64,15 +66,23 @@ def latest_version() -> str | None:
         return _cached_latest
 
 
+def _parse_version(v: str) -> tuple:
+    """Parse a PEP 440-ish version into a comparable tuple. Pre-release suffixes sort below release."""
+    m = re.match(r"(\d+(?:\.\d+)*)(.*)", v)
+    if not m:
+        return (0,)
+    nums = tuple(int(x) for x in m.group(1).split("."))
+    suffix = m.group(2)
+    # No suffix = release (sorts higher), any suffix (a/b/rc/beta/dev) = pre-release
+    return nums + ((1,) if not suffix else (0, suffix))
+
+
 def update_available() -> bool:
     """True if a newer release exists on GitHub."""
     latest = latest_version()
     if not latest:
         return False
-    try:
-        return Version(latest) > Version(current_version())
-    except InvalidVersion:
-        return False
+    return _parse_version(latest) > _parse_version(current_version())
 
 
 def version_info() -> dict:
@@ -80,10 +90,7 @@ def version_info() -> dict:
     latest = latest_version()
     current = current_version()
     install = _install_type()
-    try:
-        has_update = Version(latest) > Version(current) if latest else False
-    except InvalidVersion:
-        has_update = False
+    has_update = _parse_version(latest) > _parse_version(current) if latest else False
     return {
         "current_version": current,
         "latest_version": latest,
