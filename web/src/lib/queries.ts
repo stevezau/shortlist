@@ -399,7 +399,8 @@ export function useVersion() {
   return useQuery({
     queryKey: ["version"],
     queryFn: api.getVersion,
-    staleTime: Infinity, // the running build doesn't change under the user's feet
+    staleTime: 3600_000, // check once per hour
+    refetchOnWindowFocus: false,
   });
 }
 

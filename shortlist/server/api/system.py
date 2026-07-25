@@ -27,14 +27,17 @@ _TOKEN_CREATED_KEY = "api.token_created_at"
 router = APIRouter(prefix="/system", tags=["system"])
 
 
+@router.get("/version", dependencies=[Depends(require_owner)])
+async def version(request: Request) -> dict:
+    """Current + latest version and whether an update is available."""
+    from shortlist.server.services.version_check import version_info
+
+    return version_info()
+
+
 @router.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": shortlist.__version__}
-
-
-@router.get("/version", dependencies=[Depends(require_owner)])
-async def version() -> dict:
-    return {"version": shortlist.__version__}
 
 
 @router.get("/syncs", dependencies=[Depends(require_owner)])

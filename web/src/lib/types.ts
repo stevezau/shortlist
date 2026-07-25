@@ -897,3 +897,10 @@ export interface Backup {
   size_bytes: number;
   created_at: string;
 }
+
+export interface VersionInfo {
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
+  install_type: string;
+}

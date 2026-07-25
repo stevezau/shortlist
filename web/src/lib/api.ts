@@ -37,6 +37,7 @@ import type {
   TestableService,
   UninstallResult,
   User,
+  VersionInfo,
   UserPatch,
   UserRow,
   UserRunSummary,
@@ -318,9 +319,8 @@ export const api = {
   /** The server's Plex libraries, for the Rows editor's per-row delivery-target picker. */
   getLibraries: (): Promise<PlexLibrary[]> => request("/api/system/libraries"),
 
-  /** The running app version (for the footer + prefilled bug reports). */
-  getVersion: (): Promise<{ version: string }> =>
-    request("/api/system/version"),
+  /** The running app version + update check (for the footer + update banner). */
+  getVersion: (): Promise<VersionInfo> => request("/api/system/version"),
 
   /** Whether an owner API token exists (+ when it was made and its last-4 hint) — never the token. */
   getApiToken: (): Promise<ApiTokenStatus> => request("/api/system/api-token"),
