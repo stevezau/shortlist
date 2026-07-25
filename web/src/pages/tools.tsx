@@ -465,8 +465,12 @@ function BackupsCard() {
                 saveSettings.mutate(
                   { "backup.max_keep": Number(v) },
                   {
-                    onSuccess: () =>
-                      queryClient.invalidateQueries({ queryKey: ["syncs"] }),
+                    onSuccess: () => {
+                      queryClient.invalidateQueries({ queryKey: ["syncs"] });
+                      queryClient.invalidateQueries({
+                        queryKey: queryKeys.settings,
+                      });
+                    },
                   },
                 )
               }
