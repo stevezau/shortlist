@@ -69,14 +69,21 @@ def latest_version() -> str | None:
 
 
 def _parse_version(v: str) -> tuple:
-    """Parse a PEP 440-ish version into a comparable tuple. Pre-release suffixes sort below release."""
+    """Parse a PEP 440-ish version into a comparable tuple. Pre-release suffixes sort below release.
+
+    Handles both PEP 440 (0.1.0b5) and GitHub-style (0.1.0-beta.5) pre-release tags.
+    """
     m = re.match(r"(\d+(?:\.\d+)*)(.*)", v)
     if not m:
         return (0,)
     nums = tuple(int(x) for x in m.group(1).split("."))
     suffix = m.group(2)
-    # No suffix = release (sorts higher), any suffix (a/b/rc/beta/dev) = pre-release
-    return nums + ((1,) if not suffix else (0, suffix))
+    if not suffix:
+        return (*nums, 1, 0)  # release sorts above any pre-release
+    # Normalize: "b5", "-beta.5", "-beta5" all become pre-release number 5
+    pre_match = re.search(r"(\d+)", suffix)
+    pre_num = int(pre_match.group(1)) if pre_match else 0
+    return (*nums, 0, pre_num)
 
 
 def update_available() -> bool:
