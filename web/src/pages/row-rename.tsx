@@ -44,9 +44,7 @@ export function RowRenamePage() {
               "x-shortlist-csrf": "1",
             },
             credentials: "include",
-            body: JSON.stringify({
-              name_template: collection!.name_template || collection!.name,
-            }),
+            body: JSON.stringify({ name_template: "" }),
             signal: controller.signal,
           },
         );

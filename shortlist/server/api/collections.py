@@ -443,19 +443,26 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
         if collection is None:
             raise HTTPException(status_code=404, detail="row not found")
         slug = collection.slug
-        # Persist the new template on the collection itself FIRST (so the next run uses it too).
-        if body.name_template.strip():
-            collection.name_template = body.name_template.strip()
+        # If a new template is provided, save it now (standalone use without the dialog PATCH).
+        # If called from the dialog flow, the PATCH already saved it — this is idempotent.
+        new_template = body.name_template.strip()
+        if new_template:
+            collection.name_template = new_template
             if slug == DEFAULT_SLUG:
-                SettingsStore(session).set("row.name_template", body.name_template.strip())
+                SettingsStore(session).set("row.name_template", new_template)
             session.commit()
+        else:
+            # No template in the body — read the current one from the DB (already saved by PATCH).
+            new_template = collection.name_template or collection.name
+            if slug == DEFAULT_SLUG:
+                new_template = SettingsStore(session).get("row.name_template") or new_template
 
     state = request.app.state
     q: Queue = Queue()
 
     def _run():
         try:
-            for event in reconcile.reconcile_row_rename_iter(state, slug=slug, new_template=body.name_template.strip()):
+            for event in reconcile.reconcile_row_rename_iter(state, slug=slug, new_template=new_template):
                 q.put(event)
         except Exception as e:
             q.put({"error": f"{type(e).__name__}: {e}"})
