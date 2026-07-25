@@ -890,3 +890,9 @@ export interface SyncsInfo {
   watched: { last: string | null; next: string | null; cron: string };
   users: { last: string | null; next: string | null; cron: string };
 }
+
+export interface Backup {
+  name: string;
+  size_bytes: number;
+  created_at: string;
+}

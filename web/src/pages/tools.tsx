@@ -1,7 +1,9 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   Clock,
+  Database,
+  Download,
   RefreshCw,
   Users as UsersIcon,
   Wrench,
@@ -174,6 +176,7 @@ export function ToolsPage() {
             )
           }
         />
+        <BackupsCard />
       </div>
     </div>
   );
@@ -382,6 +385,132 @@ function SyncUsersCard({
             {result.added > 0 || result.updated > 0
               ? `Synced ${result.total} ${result.total === 1 ? "user" : "users"} — ${result.added} added, ${result.updated} updated.`
               : `All ${result.total} ${result.total === 1 ? "user is" : "users are"} already up to date.`}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BackupsCard() {
+  const queryClient = useQueryClient();
+  const backups = useQuery({
+    queryKey: ["backups"],
+    queryFn: api.getBackups,
+  });
+  const create = useMutation({
+    mutationFn: api.createBackup,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["backups"] }),
+  });
+  const restore = useMutation({
+    mutationFn: api.restoreBackup,
+  });
+  const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+
+  function formatSize(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Database className="h-4 w-4" aria-hidden="true" />
+          Backups
+        </CardTitle>
+        <CardDescription>
+          A backup is taken automatically every day at 3 AM and before every
+          upgrade. Keeps the last 10.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Button
+          size="sm"
+          variant="outline"
+          loading={create.isPending}
+          onClick={() => create.mutate()}
+        >
+          <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+          Back up now
+        </Button>
+
+        {create.isError && (
+          <MutationAlert error={create.error} fallback="Backup failed." />
+        )}
+        {restore.isSuccess && (
+          <p className="text-sm text-success">{restore.data.message}</p>
+        )}
+        {restore.isError && (
+          <MutationAlert error={restore.error} fallback="Restore failed." />
+        )}
+
+        {backups.data && backups.data.length > 0 && (
+          <div className="max-h-48 overflow-y-auto rounded border">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-muted/80 text-left text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-1.5">Backup</th>
+                  <th className="px-3 py-1.5">Size</th>
+                  <th className="px-3 py-1.5">When</th>
+                  <th className="px-3 py-1.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {backups.data.map((b) => (
+                  <tr key={b.name} className="border-t">
+                    <td className="px-3 py-1.5 font-mono text-xs">
+                      {b.name.replace("shortlist_", "").replace(".db", "")}
+                    </td>
+                    <td className="px-3 py-1.5">{formatSize(b.size_bytes)}</td>
+                    <td className="px-3 py-1.5">{timeAgo(b.created_at)}</td>
+                    <td className="px-3 py-1.5 text-right">
+                      {confirmRestore === b.name ? (
+                        <span className="flex items-center justify-end gap-1">
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="h-6 px-2 text-xs"
+                            loading={restore.isPending}
+                            onClick={() => {
+                              restore.mutate(b.name, {
+                                onSuccess: () => setConfirmRestore(null),
+                              });
+                            }}
+                          >
+                            Confirm
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-xs"
+                            onClick={() => setConfirmRestore(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => setConfirmRestore(b.name)}
+                        >
+                          Restore
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {backups.data && backups.data.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No backups yet. One will be created automatically tonight at 3 AM.
           </p>
         )}
       </CardContent>

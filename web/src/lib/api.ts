@@ -3,6 +3,7 @@ import type {
   ApiTokenStatus,
   AppNotification,
   ArrOptions,
+  Backup,
   EffectivenessReport,
   OwnedCollectionsAudit,
   PlexLibrary,
@@ -498,6 +499,19 @@ export const api = {
     request("/api/system/uninstall", {
       method: "POST",
       body: JSON.stringify({ confirm: "UNINSTALL", dry_run: dryRun }),
+    }),
+
+  getBackups: (): Promise<Backup[]> => request("/api/system/backups"),
+
+  createBackup: (): Promise<{ name: string; size_bytes: number }> =>
+    request("/api/system/backups", { method: "POST" }),
+
+  restoreBackup: (
+    name: string,
+  ): Promise<{ restored: string; message: string }> =>
+    request("/api/system/backups/restore", {
+      method: "POST",
+      body: JSON.stringify({ name }),
     }),
 };
 
