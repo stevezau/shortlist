@@ -24,10 +24,6 @@ DEFAULTS: dict[str, Any] = {
     # Any server speaking the OpenAI API (llama.cpp, LM Studio, vLLM, LocalAI, OpenRouter): its
     # root, usually ending in /v1. Used only when curator.provider is openai_compatible.
     "curator.openai_base_url": "",
-    # Global curation recipe (the LLM prompt), overridable per user via prefs.
-    "curator.prompt_tone": "balanced",
-    "curator.prompt_guidance": "",
-    "curator.prompt_template": "",
     "row.name_template": "✨ {library_name} Picked for You",  # {library_name} -> each library's own name
     "row.size": 15,
     # Requests (Sonarr/Radarr): ask for picks the library doesn't have yet. Off by default and
@@ -62,10 +58,14 @@ DEFAULTS: dict[str, Any] = {
     # Master switch for Shortlist touching the Recommended-shelf ORDER. False -> never reorder the
     # shelf (a co-managing tool like agregarr/Kometa owns the order). Default on.
     "rows.manage_shelf_order": True,
-    # How many past runs to keep. After each run, older ones (and their picks) are pruned to this
-    # count — but a run is never pruned while it's still inside the 30-day watch-credit window, so a
-    # low value can't cost the report a hit. 0 = keep everything.
-    "runs.retention": 100,
+    # How many months of run history to keep. After each run, anything older is auto-pruned (runs +
+    # per-user traces are deleted; picks are kept so the dashboard's lifetime metrics survive).
+    # 0 = keep everything forever.
+    "runs.retention": 3,
+    # The cron expression for the daily watch-history sync. Blank = the default (04:17 daily).
+    "sync.watch_cron": "",
+    # The cron expression for the user-list sync (plex.tv + Tautulli). Blank = the default (daily 04:47).
+    "sync.users_cron": "",
     # Notification ids the owner dismissed. Each id encodes its state (run id / version), so the same
     # alert stays hidden but a new failure or a newer release surfaces again. Capped to the newest 100.
     "notifications.dismissed": [],

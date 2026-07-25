@@ -23,9 +23,10 @@ from shortlist.engine.delivery import (
     render_row_name,
     reset_row_posters,
     row_marker,
+    strip_marker,
 )
 from shortlist.engine.models import SHARED_LABEL_PREFIX, UserProfile, UserType
-from shortlist.server.db.models import Event, Run, User
+from shortlist.server.db.models import DEFAULT_SLUG, Event, Run, User
 from shortlist.server.safe_mode import force_dry_run
 
 
@@ -171,9 +172,12 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, entries: list[
     Each user's collection is found by the exact title the last run delivered for THIS row (its
     persisted breakdown), scoped to that user's own label, and renamed to the freshly-rendered new
     title (same account marker). Privacy-neutral, so gate-exempt (the hiding filter is keyed on the
-    label, which never changes here). A ``{library_name}`` template IS renamed here — it renders to a
-    stable per-library title, and the breakdown records which library each old title came from, so the
-    new title is re-rendered in that SAME library. Only titles that render to the default with no picks
+    label, which never changes here). For the DEFAULT row a user's own ``row_name_tpl`` override wins
+    over ``new_template`` (matching delivery's ``resolve_row_template``), so an override user is
+    re-rendered from their own template and left untouched. A ``{library_name}`` template IS renamed
+    here — it renders to a stable per-library title, and the breakdown records which library each old
+    title came from, so the new title is re-rendered in that SAME library. Only titles that render to
+    the default with no picks
     (a ``{top_seed}`` template, or a blank one) are skipped — their title changes every run anyway, and
     the next run's delivery already renames the sole-row case. Runs in an executor.
 
@@ -188,6 +192,12 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, entries: list[
         old_titles = titles_by_user.get(user.id, {})  # {delivered title -> library it was delivered in}
         if not old_titles:
             continue
+        # The DEFAULT row has no per-collection template, so delivery resolves each user's title as
+        # their own `row_name_tpl` override or the global template (resolve_row_template's second tier).
+        # Re-render with the SAME per-user template here, or a user who set a personal name would have
+        # their collection renamed to the global template — clobbering their override until the next run.
+        override = (user.prefs or {}).get("row_name_tpl") if slug == DEFAULT_SLUG else None
+        effective_template = override or new_template
         profile = UserProfile(
             username=user.username,
             plex_account_id=user.plex_account_id,
@@ -202,7 +212,7 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, entries: list[
         for old_display, library_title in old_titles.items():
             # Re-render in the SAME library the old title was delivered in, so a {library_name} row's
             # "✨ Movies Picked for You" is renamed to its new Movies title, not to some other library's.
-            new_display = render_row_name(new_template, profile, [], library_name=library_title)
+            new_display = render_row_name(effective_template, profile, [], library_name=library_title)
             if new_display == DEFAULT_ROW_NAME:
                 # A {top_seed}/blank template renders to the default with no picks — its title changes
                 # every run anyway, so the next run's delivery renames the sole-row case. Skip here.
@@ -221,6 +231,82 @@ def _reconcile_row_rename(state, *, slug: str, new_template: str, entries: list[
             )
             if libraries:
                 entries.append({"user": user.slug, "old": old_display, "new": new_display, "libraries": libraries})
+
+
+def reconcile_row_rename_iter(state, *, slug: str, new_template: str, old_template: str | None = None):
+    """Rename a row's collections on Plex, yielding one event per user renamed (for SSE streaming).
+
+    Finds collections directly from Plex (by label), not from run history — so it works even after
+    runs are cleared. For each user: finds their collections by label on Plex, identifies this row's
+    collection by its old rendered title, computes the new title from the template, and renames if
+    different.
+
+    When ``old_template`` is provided (the template BEFORE the rename), it is used to identify which
+    collection on Plex belongs to this row (per-person rows share one label for ALL rows, so title is
+    the only discriminator). Without it, all collections under the user's label are candidates — safe
+    on single-row servers but may misfire on multi-row ones.
+
+    Yields: {"user": slug, "display_name": str, "old": old_title, "new": new_title, "libraries": [...]}
+    At the end yields {"done": True, "total": n}.
+    """
+    with state.sessions() as session:
+        users = session.query(User).filter_by(enabled=True).all()
+        users_data = [
+            {
+                "slug": u.slug,
+                "username": u.username,
+                "nickname": u.nickname or u.friendly_name,
+                "plex_account_id": u.plex_account_id,
+                "user_type": u.user_type,
+                "prefs": u.prefs or {},
+            }
+            for u in users
+        ]
+    dry_run = force_dry_run()
+    ctx = state.run_service.build_context(dry_run=dry_run)
+    total = 0
+    for udata in users_data:
+        override = udata["prefs"].get("row_name_tpl") if slug == DEFAULT_SLUG else None
+        effective_template = override or new_template
+        effective_old = override or old_template
+        profile = UserProfile(
+            username=udata["username"],
+            plex_account_id=udata["plex_account_id"],
+            user_type=UserType(udata["user_type"]),
+            slug=udata["slug"],
+            nickname=udata["nickname"],
+        )
+        label = f"{ctx.config.label_prefix}_{udata['slug']}"
+        marker = row_marker(udata["plex_account_id"])
+        for section in ctx.plex.sections():
+            lib_name = getattr(section, "title", "") or ""
+            new_display = render_row_name(effective_template, profile, [], library_name=lib_name)
+            if new_display == DEFAULT_ROW_NAME:
+                continue
+            new_with_marker = new_display + marker
+            old_display = render_row_name(effective_old, profile, [], library_name=lib_name) if effective_old else None
+            for collection in ctx.plex.find_owned_collections(section, label):
+                current_title = collection.title
+                if current_title == new_with_marker:
+                    continue
+                # Scope to THIS row: if we know the old template, only rename collections whose
+                # stripped title matches what this row USED to render as.
+                if old_display and strip_marker(current_title) != old_display:
+                    continue
+                try:
+                    if not dry_run:
+                        collection.editTitle(new_with_marker)
+                    total += 1
+                    yield {
+                        "user": udata["slug"],
+                        "display_name": profile.display_name,
+                        "old": strip_marker(current_title),
+                        "new": new_display,
+                        "libraries": [lib_name],
+                    }
+                except Exception as e:
+                    logger.warning("{}: rename failed in {} ({}: {})", udata["slug"], lib_name, type(e).__name__, e)
+    yield {"done": True, "total": total}
 
 
 async def run_row_rename(state, *, slug: str, new_template: str, scope: str) -> tuple[list[dict], str | None]:

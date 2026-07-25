@@ -7,6 +7,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from shortlist.engine import privacy
+from shortlist.engine.clients.plextv import PlexTvUser
 from shortlist.engine.models import UserType
 from shortlist.engine.privacy import (
     FilterCondition,
@@ -245,6 +246,30 @@ class TestSyncUserRestrictions:
         # The owner is not even on plex.tv's user list, so `remote` is None: they are skipped
         # before it is ever read (Plex cannot restrict the owner — rule 5).
         wrote = sync_user_restrictions(mock_plextv, owner, None, {}, snapshot_store)
+        assert wrote is None
+        mock_plextv.update_user_filters.assert_not_called()
+
+    def test_restricted_account_is_skipped_without_calling_plextv(self, mock_plextv, snapshot_store):
+        # A restricted (parental-controlled) account: plex.tv refuses filter writes (422) and
+        # live-verified (2026-07-25) they see 0 collections. Skipping is safe and must not error.
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+        remote = plextv_user(500, "kid")
+        remote = PlexTvUser(
+            id=500,
+            username="kid",
+            user_type=UserType.MANAGED,
+            home=True,
+            restricted=True,
+            protected=False,
+            filters={
+                "filterAll": "",
+                "filterMovies": "contentRating=G",
+                "filterTelevision": "",
+                "filterMusic": "",
+                "filterPhotos": "",
+            },
+        )
+        wrote = sync_user_restrictions(mock_plextv, kid, remote, {"sarah": "Shortlist_sarah"}, snapshot_store)
         assert wrote is None
         mock_plextv.update_user_filters.assert_not_called()
 

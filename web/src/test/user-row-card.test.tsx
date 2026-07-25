@@ -25,7 +25,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
         collectionId: number,
         patch: RowOverridePatch,
       ) => setUserRowOverride(id, collectionId, patch),
-      previewPrompt: () => Promise.resolve({ system: "", user: "" }),
     },
   };
 });
@@ -35,6 +34,7 @@ const USER: User = {
   username: "sarah",
   slug: "sarah",
   user_type: "shared",
+  restricted: false,
   enabled: true,
   cold_start: false,
   history_depth: 40,
@@ -50,13 +50,12 @@ function row(patch: Partial<UserRow> = {}): UserRow {
     name: "Picked for You",
     media: "both",
     size: 15,
+    recent_count: 10,
     is_default: true,
     muted: false,
     override: {
       row_size: null,
-      prompt_tone: "",
-      prompt_guidance: "",
-      prompt_template: "",
+      recent_count: null,
     },
     picks: [],
     ...patch,
@@ -147,6 +146,63 @@ describe("UserRowCard", () => {
     expect(call?.[2]).toMatchObject({ row_size: 20 });
     // The drawer must never carry the mute flag — that would let a stale switch value ride along.
     expect(call?.[2]).not.toHaveProperty("muted");
+  });
+
+  it("saves a per-person watch-history depth, and clears it back to the row default", async () => {
+    // A row starting on its own depth (10). Turning the switch on reveals the box; typing a value
+    // saves it as this person's override; turning the switch off sends null to inherit the row again.
+    getUserRows.mockResolvedValue([row({ recent_count: 10 })]);
+    setUserRowOverride.mockResolvedValue({});
+    renderSection();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Customize for this person/i }),
+    );
+    // No box until the owner asks for a custom depth — the row default is in force.
+    expect(
+      screen.queryByLabelText(/Recent watches for this person/i),
+    ).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("switch", { name: /Custom watch-history depth/i }),
+    );
+    const depth = screen.getByLabelText(/Recent watches for this person/i);
+    await userEvent.clear(depth);
+    await userEvent.type(depth, "5");
+    await userEvent.tab();
+
+    await waitFor(() =>
+      expect(setUserRowOverride.mock.calls.at(-1)?.[2]).toMatchObject({
+        recent_count: 5,
+      }),
+    );
+
+    // Switching it back off clears the override (null) so the row's own depth applies again.
+    await userEvent.click(
+      screen.getByRole("switch", { name: /Custom watch-history depth/i }),
+    );
+    await waitFor(() =>
+      expect(setUserRowOverride.mock.calls.at(-1)?.[2]).toMatchObject({
+        recent_count: null,
+      }),
+    );
+  });
+
+  it("opens the depth box pre-filled when the person already has a saved override", async () => {
+    // A stored recent_count override must show its value, not silently sit behind the "default" switch.
+    getUserRows.mockResolvedValue([
+      row({ recent_count: 10, override: { row_size: null, recent_count: 3 } }),
+    ]);
+    setUserRowOverride.mockResolvedValue({});
+    renderSection();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Customize for this person/i }),
+    );
+    const depth = screen.getByLabelText(
+      /Recent watches for this person/i,
+    ) as HTMLInputElement;
+    expect(depth.value).toBe("3");
   });
 
   it("offers a retry when a customization auto-save fails, instead of stranding the edit", async () => {

@@ -52,7 +52,7 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   },
   {
     title: "Recommendations & history",
-    why: "A TMDB key (required) powers recommendations. Tautulli deepens watch history but is optional — Plex's own history works too.",
+    why: "A TMDB key (required) powers recommendations. Watch history is read from Plex per user; Tautulli is optional, only for friendlier display names.",
   },
   {
     title: "Choose your curator",

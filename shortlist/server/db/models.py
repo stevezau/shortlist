@@ -72,16 +72,21 @@ class User(Base):
     nickname: Mapped[str] = mapped_column(String(255), default="")
     friendly_name: Mapped[str] = mapped_column(String(255), default="")
     user_type: Mapped[str] = mapped_column(String(16), default="shared")  # shared | managed | owner
+    restricted: Mapped[bool] = mapped_column(Boolean, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     cold_start: Mapped[bool] = mapped_column(Boolean, default=False)
     label: Mapped[str] = mapped_column(String(255), default="")  # as stored by Plex (title-cased)
     request_tag: Mapped[str] = mapped_column(String(64), default="")  # tag added to titles requested for them
     prefs: Mapped[dict] = mapped_column(JSON, default=dict)
-    # High-water mark for the incremental watch-history sync: only plays newer than this are pulled
-    # each run (NULL = never synced -> full backfill). See WatchEvent + WatchHistorySync.
-    watch_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run_users: Mapped[list[RunUser]] = relationship(back_populates="user")
+
+    @property
+    def display_name(self) -> str:
+        """What to call this person in the UI: owner's nickname, else the Tautulli friendly name,
+        else the bare Plex username. Same precedence `{user}` renders in a row title — keep the one
+        source of truth so the Users page, the runs view, and Plex never disagree on someone's name."""
+        return self.nickname or self.friendly_name or self.username
 
 
 class Collection(Base):
@@ -128,7 +133,10 @@ class Collection(Base):
     # Per-library override of where THIS row sits in the Recommended shelf: {sectionKey: {anchor, before}}.
     # {} -> inherit the global default (settings `rows.hub_anchor`). A library absent here inherits too.
     hub_anchor: Mapped[dict] = mapped_column(JSON, default=dict)
-    prompt: Mapped[dict] = mapped_column(JSON, default=dict)  # PromptConfig recipe
+    # Dead as of the curate removal (migration 0036 clears it): the LLM no longer ranks a candidate
+    # pool, so there is no per-row curation recipe. Column kept — dropping it would rebuild the whole
+    # table (inbound FKs); a future migration can remove it.
+    prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     # Custom collection poster for this row. {} -> Plex's own artwork. Shape:
     # {"mode": "upload"|"generate", "title", "subtitle", "style"}. No image bytes live here — an
     # uploaded/generated image is stored in the `poster_assets` table, keyed by collection id / prompt.
@@ -175,7 +183,11 @@ class CollectionUserOverride(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     muted: Mapped[bool] = mapped_column(Boolean, default=False)  # this person doesn't get this row
     row_size: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None -> the row's own size
-    prompt: Mapped[dict] = mapped_column(JSON, default=dict)  # PromptConfig override; {} -> the row's own
+    # How many recent watches the AI web-search source searches for THIS person on THIS row (1..25).
+    # None -> fall through to the row's own recent_count, then the global recommendations.recent_count.
+    recent_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Dead as of the curate removal (migration 0036 clears it) — see Collection.prompt. Column kept.
+    prompt: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
@@ -206,8 +218,9 @@ class RunUser(Base):
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     llm_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    # `llm_tokens` split by WHERE it went: {"curate": N, "llm_web": M, "llm_library": P}. {} on legacy
-    # rows. Exa is counted apart from tokens — it bills per search request, not per token.
+    # `llm_tokens` split by WHERE it went: {"llm_web": M}. {} on legacy rows (and on rows written
+    # before the curate step was removed, which may still carry a "curate"/"llm_library" key). Exa is
+    # counted apart from tokens — it bills per search request, not per token.
     llm_tokens_by_step: Mapped[dict] = mapped_column(JSON, default=dict)
     exa_searches: Mapped[int] = mapped_column(Integer, default=0)
     diff: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -215,6 +228,9 @@ class RunUser(Base):
     # the merged `diff` + `picks`). Each entry: row_slug/row_title, library_key/library_title,
     # added/removed/kept/deleted, created, and that library's own picks.
     breakdown: Mapped[list] = mapped_column(JSON, default=list)
+    # Full per-user pipeline trace (seeds, per-source queries+returns, web-search/RAG prompts) so the
+    # UI can show "exactly what happened for this person". {} on legacy rows and skipped/cold users.
+    trace: Mapped[dict] = mapped_column(JSON, default=dict)
 
     run: Mapped[Run] = relationship(back_populates="users")
     user: Mapped[User] = relationship(back_populates="run_users")
@@ -224,7 +240,7 @@ class PickRow(Base):
     __tablename__ = "picks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), index=True, nullable=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     tmdb_id: Mapped[int] = mapped_column(Integer)
     # A TMDB id is unique only within its namespace, so the pair (tmdb_id, media_type) is what
@@ -252,34 +268,6 @@ class PickRow(Base):
     seed_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # hit-rate
-
-
-class WatchEvent(Base):
-    """One play event from a user's Plex/Tautulli watch history — the local mirror that powers the
-    already-watched filter.
-
-    Plex's history API only returns the most recent ~200 plays per call, so a heavy watcher's older
-    watches were invisible to the filter and got recommended again (SFLIX/MooHouse, 2026-07-20). We
-    instead sync the FULL history incrementally into this table (per-user high-water mark on
-    ``User.watch_synced_at``) and read the complete set at run time. One row PER play event (not per
-    title) so the finished-show fraction can still count episode plays; the unique constraint dedups
-    the overlap window between incremental syncs.
-    """
-
-    __tablename__ = "watch_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    rating_key: Mapped[int] = mapped_column(
-        Integer
-    )  # PMS ratingKey (grandparent for episodes) -> resolved to tmdb in-engine
-    media_type: Mapped[str] = mapped_column(String(16))
-    title: Mapped[str] = mapped_column(String(512), default="")
-    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    watched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    completion: Mapped[float] = mapped_column(Float, default=1.0)  # 0..1; 1.0 for presence-only (Plex history)
-
-    __table_args__ = (UniqueConstraint("user_id", "rating_key", "watched_at", name="uq_watch_event"),)
 
 
 class RestrictionSnapshotRow(Base):

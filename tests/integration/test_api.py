@@ -267,26 +267,17 @@ class TestUsersApi:
     def _one(self, client: TestClient, user_id: int) -> dict:
         return next(u for u in client.get("/api/users").json() if u["id"] == user_id)
 
-    def test_watch_history_is_counted_from_the_watch_mirror_not_a_run_written_pref(self, client: TestClient):
-        """`prefs["history_depth"]` is only written once a run PROCESSES someone, so a skipped user —
-        or anyone before their first successful run — read "0 titles" forever. A beta user saw 0 for
-        all 42 of his accounts while the log showed 170 events synced for one of them."""
-        from shortlist.server.db.models import User, WatchEvent
+    def test_watch_history_depth_is_read_from_prefs_not_gated_on_a_run(self, client: TestClient):
+        """`history_depth` is refreshed for EVERY enabled user by the daily watch sync (the share-token
+        read returns one item per distinct title, so a binge is one). It must surface without waiting
+        for a run to PROCESS someone — a skipped or never-run user used to read "0 titles" forever (the
+        beta bug that reported 0 for all 42 accounts while the log showed watches synced)."""
+        from shortlist.server.db.models import User
 
         with client.app.state.sessions() as session:
             user = session.query(User).filter_by(username="sarah").one()
-            # Two plays of one show + one film = 2 distinct TITLES, not 3 events. (Distinct
-            # timestamps: (user, rating_key, watched_at) is unique, which is how the sync dedups.)
-            when = datetime(2026, 7, 21, 2, 0, tzinfo=UTC)
-            session.add_all(
-                [
-                    WatchEvent(user_id=user.id, rating_key=100, watched_at=when, media_type="show"),
-                    WatchEvent(
-                        user_id=user.id, rating_key=100, watched_at=when + timedelta(hours=1), media_type="show"
-                    ),
-                    WatchEvent(user_id=user.id, rating_key=200, watched_at=when, media_type="movie"),
-                ]
-            )
+            # The sync writes the distinct-title count the share-token source returned; no run yet.
+            user.prefs = {**(user.prefs or {}), "history_depth": 2}
             session.commit()
             user_id = user.id
 
@@ -359,18 +350,6 @@ class TestUsersApi:
         assert set(removed_labels) == {"shortlist_sarah", "shortlist_mike"}
         assert not any(u["enabled"] for u in client.get("/api/users").json())
 
-    def test_patch_prompt_prefs_persist(self, client: TestClient):
-        users = client.get("/api/users").json()
-        target = next(u for u in users if u["username"] == "sarah")
-        r = client.patch(
-            f"/api/users/{target['id']}",
-            json={"prefs": {"prompt_tone": "cinephile", "prompt_guidance": "she loves slow burns"}},
-        )
-        assert r.status_code == 200
-        prefs = r.json()["prefs"]
-        assert prefs["prompt_tone"] == "cinephile"
-        assert prefs["prompt_guidance"] == "she loves slow burns"
-
 
 class TestUserSync:
     """`POST /users/sync` — the roster from plex.tv, PLUS the owner, who is never in that list.
@@ -428,6 +407,31 @@ class TestUserSync:
 
         assert self._users(client)["sarah"]["display_name"] == "Sazza"
         assert len(calls) == 1, "a changed display name must reconcile the rows already on Plex"
+
+    def test_sync_streams_a_fetch_phase_then_a_save_bar_and_a_finish(self, client: TestClient, plextv, monkeypatch):
+        """The Tools page bar reads these events: one indeterminate `fetch`, a determinate `save`
+        count, then `sync.finished` echoing the same counts the POST returns."""
+        published: list[tuple[str, dict]] = []
+        real_publish = client.app.state.bus.publish
+        monkeypatch.setattr(
+            client.app.state.bus,
+            "publish",
+            lambda event, data: (published.append((event, data)), real_publish(event, data))[0],
+        )
+
+        body = client.post("/api/users/sync").json()
+
+        events = [(e, d) for e, d in published if e in ("sync.progress", "sync.finished")]
+        assert all(d["kind"] == "users" for _, d in events), "every sync event must be tagged for the users card"
+        phases = [d.get("phase") for e, d in events if e == "sync.progress"]
+        assert phases[0] == "fetch", "the opaque plex.tv call is announced as an indeterminate fetch first"
+        assert "save" in phases, "the roster upsert drives a determinate save bar"
+        save_events = [d for e, d in events if e == "sync.progress" and d.get("phase") == "save"]
+        assert save_events[-1]["done"] == save_events[-1]["total"], "the save bar reaches 100%"
+        # The finish event carries the same numbers the HTTP response does, so the bar can settle on them.
+        finished = next(d for e, d in events if e == "sync.finished")
+        assert finished["ok"] is True
+        assert {k: finished[k] for k in ("added", "updated", "total")} == body
 
     def test_a_sync_that_changes_no_name_does_no_plex_work(self, client: TestClient, plextv, monkeypatch):
         """The reconcile does Plex I/O — it must not fire on every routine sync."""
@@ -581,14 +585,35 @@ class TestUserRowsApi:
         assert row["muted"] is True
         assert row["override"]["row_size"] == 20
 
-    def test_override_curation_recipe_persists_and_clears(self, client: TestClient):
+    def test_recent_count_override_round_trips_and_resets(self, client: TestClient):
+        uid = self._sarah_id(client)
+        row0 = client.get(f"/api/users/{uid}/rows").json()[0]
+        cid = row0["collection_id"]
+        # The row reports its own effective depth (the global default) so the UI knows what "default" means.
+        assert row0["recent_count"] == 10
+        assert row0["override"]["recent_count"] is None
+
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"recent_count": 3})
+        assert client.get(f"/api/users/{uid}/rows").json()[0]["override"]["recent_count"] == 3
+        # An explicit null clears it back to the row's own depth, exactly like the size override.
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"recent_count": None})
+        assert client.get(f"/api/users/{uid}/rows").json()[0]["override"]["recent_count"] is None
+
+    def test_recent_count_and_size_overrides_are_independent(self, client: TestClient):
         uid = self._sarah_id(client)
         cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
-        client.put(f"/api/users/{uid}/rows/{cid}", json={"prompt_tone": "playful"})
-        assert client.get(f"/api/users/{uid}/rows").json()[0]["override"]["prompt_tone"] == "playful"
-        # An all-blank recipe clears it back to inheriting the row's own.
-        client.put(f"/api/users/{uid}/rows/{cid}", json={"prompt_tone": "", "prompt_guidance": ""})
-        assert client.get(f"/api/users/{uid}/rows").json()[0]["override"]["prompt_tone"] == ""
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"row_size": 20})
+        # A recent_count-only PUT must not clobber the saved size (server writes only fields it's sent).
+        client.put(f"/api/users/{uid}/rows/{cid}", json={"recent_count": 5})
+        override = client.get(f"/api/users/{uid}/rows").json()[0]["override"]
+        assert override == {"row_size": 20, "recent_count": 5}
+
+    def test_recent_count_override_is_bounded(self, client: TestClient):
+        uid = self._sarah_id(client)
+        cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
+        # Same 1..25 bounds the global/row settings validate — out of range is a 422, not a bad save.
+        assert client.put(f"/api/users/{uid}/rows/{cid}", json={"recent_count": 0}).status_code == 422
+        assert client.put(f"/api/users/{uid}/rows/{cid}", json={"recent_count": 26}).status_code == 422
 
     def test_override_on_unknown_user_or_row_404(self, client: TestClient):
         assert client.put("/api/users/9999/rows/1", json={"muted": True}).status_code == 404
@@ -645,6 +670,28 @@ class TestRunsApi:
         assert result["status"] == "skipped"
         assert result["reason"] == "There are no per-person rows to build."
         assert result["error"] is None
+
+    def test_run_detail_shows_the_display_name_not_the_bare_username(self, client: TestClient):
+        """The runs view must read a person the same way the Users page does — nickname → Tautulli
+        friendly name → username (User.display_name). The bug: it only emitted `username`, so a
+        Tautulli friendly name populated after the run still showed the raw Plex login (SFLIX)."""
+        from shortlist.server.db.models import Run, RunUser, User
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).first()
+            user.nickname = ""  # no owner override — the Tautulli name should win
+            user.friendly_name = "Joe - Richard's Mate"
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=user.id, status="ok"))
+            session.commit()
+            run_id, raw_username = run.id, user.username
+
+        result = client.get(f"/api/runs/{run_id}").json()["users"][0]
+
+        assert result["username"] == raw_username  # still carried, for search + avatar
+        assert result["display_name"] == "Joe - Richard's Mate"
 
     def test_the_run_page_gets_provenance_on_the_breakdown_it_actually_renders(self, client: TestClient):
         """The run page renders the stored `breakdown` blob, NOT the picks list — so provenance
@@ -725,6 +772,59 @@ class TestRunsApi:
         entry = client.get(f"/api/runs/{run_id}").json()["users"][0]["breakdown"][0]["picks"][0]
 
         assert "sources" not in entry or entry["sources"] == []
+
+    def test_the_trace_endpoint_carries_the_error_and_the_delivered_ending(self, client: TestClient):
+        """The trace page must be able to explain a FAILED person and show what each library's row
+        ended up with — so the trace endpoint returns `error`/`reason` and the per-library breakdown
+        (the delivered ending of the flow), not just the partial stage trace."""
+        from shortlist.server.db.models import PickRow, Run, RunUser, User
+
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user_id,
+                    status="error",
+                    error="RuntimeError: every candidate source failed",
+                    trace={"history": {"total": 3, "recent": [], "watched_movies": 3, "watched_shows": 0}},
+                    breakdown=[
+                        {
+                            "row_slug": "picked",
+                            "row_title": "Picked",
+                            "library_key": "1",
+                            "library_title": "Movies",
+                            "picks": [{"rank": 1, "title": "Dune", "tmdb_id": 55, "media_type": "movie"}],
+                        }
+                    ],
+                )
+            )
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=user_id,
+                    tmdb_id=55,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    title="Dune",
+                    sources="tmdb_similar",
+                    affinity=0.9,
+                )
+            )
+            session.commit()
+            run_id = run.id
+
+        payload = client.get(f"/api/runs/{run_id}/users/{user_id}/trace").json()
+
+        assert payload["status"] == "error"
+        assert "every candidate source failed" in payload["error"]
+        # The delivered ending is present and provenance-enriched from the picks table.
+        assert payload["breakdown"][0]["library_title"] == "Movies"
+        assert payload["breakdown"][0]["picks"][0]["sources"] == ["tmdb_similar"]
 
     def test_a_failed_run_exposes_why_not_just_that_it_failed(self, client: TestClient):
         """The reason lived only inside `stats`, which no client read — so a run that failed for a
@@ -811,7 +911,7 @@ class TestRunsApi:
         assert summary["error"] == 1
         assert summary["last_status"] == "error"  # the newest run
 
-    def test_clear_runs_deletes_every_run_its_picks_and_per_user_rows(self, client: TestClient):
+    def test_clear_runs_deletes_history_but_keeps_picks_for_the_dashboard(self, client: TestClient):
         from shortlist.server.db.models import PickRow, Run, RunUser, User
 
         with client.app.state.sessions() as session:
@@ -828,14 +928,14 @@ class TestRunsApi:
         assert client.delete("/api/runs").json() == {"deleted": 1}
         assert client.get("/api/runs").json() == []
         with client.app.state.sessions() as session:
-            assert session.query(PickRow).count() == 0  # picks went too
-            assert session.query(RunUser).count() == 0  # and the per-user rows (no ORM cascade on bulk delete)
+            assert session.query(PickRow).count() == 1  # picks survive (dashboard metrics preserved)
+            pick = session.query(PickRow).first()
+            assert pick.run_id is None  # detached from the deleted run
+            assert session.query(RunUser).count() == 0  # per-user detail is gone
 
-    def test_retention_prunes_old_runs_beyond_keep_but_spares_the_hit_window(self, client: TestClient):
-        """_prune_runs deletes a run past `keep` AND its picks + per-user rows — but ONLY once it's
-        also older than the 30-day hit window (a recent run beyond `keep` is kept so the report keeps
-        crediting its picks). Picks/run_users aren't ORM-cascaded off Run, so both go explicitly."""
-        from datetime import UTC, datetime, timedelta
+    def test_retention_prunes_runs_older_than_configured_months_but_keeps_picks(self, client: TestClient):
+        """_prune_runs deletes runs older than retention_months but keeps their picks (nulls run_id)
+        so the dashboard's lifetime metrics survive. Runs inside the window are untouched."""
 
         from shortlist.server.db.models import PickRow, Run, RunUser, User
         from shortlist.server.services.run_service import RunService
@@ -843,28 +943,29 @@ class TestRunsApi:
         with client.app.state.sessions() as session:
             uid = session.query(User).first().id
             now = datetime.now(UTC)
-            stale = Run(trigger="manual", status="ok", started_at=now - timedelta(days=40))  # beyond the window
-            recent = Run(trigger="manual", status="ok", started_at=now - timedelta(days=2))  # inside the window
-            newest = Run(trigger="manual", status="ok", started_at=now)
-            session.add_all([stale, recent, newest])
+            stale = Run(trigger="manual", status="ok", started_at=now - timedelta(days=100))  # beyond 3 months
+            recent = Run(trigger="manual", status="ok", started_at=now - timedelta(days=2))  # inside
+            session.add_all([stale, recent])
             session.flush()
             stale_id, recent_id = stale.id, recent.id
-            for i, run in enumerate((stale, recent, newest)):
+            for i, run in enumerate((stale, recent)):
                 session.add(RunUser(run_id=run.id, user_id=uid, status="ok"))
                 session.add(
                     PickRow(run_id=run.id, user_id=uid, tmdb_id=i, media_type="movie", rating_key=i, rank=1, title="X")
                 )
             session.commit()
 
-            RunService._prune_runs(session, keep=1)  # keep only the newest by count...
+            RunService._prune_runs(session, retention_months=3)
             session.commit()
 
-            kept = {r.id for r in session.query(Run).all()}
-            # ...but `recent` survives despite being beyond keep=1, because it's inside the hit window.
-            assert stale_id not in kept and recent_id in kept
-            assert session.query(PickRow).filter(PickRow.run_id == stale_id).count() == 0  # its pick pruned
-            assert session.query(RunUser).filter(RunUser.run_id == stale_id).count() == 0  # its per-user row pruned
-            assert session.query(PickRow).count() == 2  # recent + newest picks remain
+            kept_runs = {r.id for r in session.query(Run).all()}
+            assert stale_id not in kept_runs  # old run pruned
+            assert recent_id in kept_runs  # recent run kept
+            assert session.query(RunUser).filter(RunUser.run_id == stale_id).count() == 0  # detail gone
+            # Picks survive with a null run_id (dashboard metrics preserved).
+            assert session.query(PickRow).count() == 2
+            orphaned = session.query(PickRow).filter(PickRow.run_id.is_(None)).first()
+            assert orphaned is not None and orphaned.tmdb_id == 0  # stale run's pick, now detached
 
     def test_trigger_forwards_row_scope_to_the_run(self, client: TestClient, monkeypatch):
         """A manual run can target specific rows — collection_ids must reach start_run (the engine's
@@ -882,7 +983,6 @@ class TestRunsApi:
         assert captured["dry_run"] is True and captured["trigger"] == "manual"
 
     def test_effectiveness_report_counts_hits(self, client: TestClient):
-        from datetime import UTC, datetime
 
         from shortlist.server.db.models import PickRow, Run, User
 
@@ -945,7 +1045,6 @@ class TestRunsApi:
     def test_report_splits_a_multi_library_row_per_library(self, client: TestClient):
         """A row targeting >1 library is one Plex collection PER library, so the report tracks each
         library as its own line — with its own hit rate and the library's own {library_name} name."""
-        from datetime import UTC, datetime
 
         from shortlist.server.db.models import PickRow, Run, User
 
@@ -1001,7 +1100,6 @@ class TestRunsApi:
         """The full lifecycle: a title watched in one row, later moved to another row (no re-credit,
         the watch predates it), then watched by a DIFFERENT person in that other row. Overall must not
         double-count; each row is credited only for the watches that happened while the title was in it."""
-        from datetime import UTC, datetime
 
         from shortlist.server.db.models import PickRow, Run, User
 
@@ -1148,14 +1246,6 @@ class TestSettingsValidation:
     def test_an_unknown_curator_provider_is_refused(self, client: TestClient):
         assert client.put("/api/settings", json={"values": {"curator.provider": "bogus"}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"curator.provider": "none"}}).status_code == 200
-
-    def test_prompt_default_returns_the_editable_builtin_template(self, client: TestClient):
-        personal = client.get("/api/settings/prompt-default").json()["template"]
-        shared = client.get("/api/settings/prompt-default?shared=true").json()["template"]
-        # $-style variables (matching the custom-template renderer), scoped per row kind.
-        assert "$k" in personal and "personal" in personal
-        assert "$k" in shared and "everyone" in shared
-        assert personal != shared
 
     def test_curator_models_is_empty_for_the_built_in_picker(self, client: TestClient):
         client.put("/api/settings", json={"values": {"curator.provider": "none"}})
@@ -1328,15 +1418,6 @@ class TestSettingsApi:
 
             assert SettingsStore(session, client.app.state.secrets).get("plex.token") == "real-token"
 
-    def test_prompt_settings_round_trip(self, client: TestClient):
-        r = client.put(
-            "/api/settings",
-            json={"values": {"curator.prompt_tone": "warm", "curator.prompt_guidance": "house style"}},
-        )
-        assert r.status_code == 200
-        assert r.json()["curator.prompt_tone"] == "warm"
-        assert r.json()["curator.prompt_guidance"] == "house style"
-
     def test_exa_key_is_encrypted_at_rest_and_redacted_in_the_api(self, client: TestClient):
         # The Exa web-search key is a secret: stored encrypted, shown as the redacted sentinel, and
         # a round-tripped sentinel must not overwrite the real value (rule 9).
@@ -1372,16 +1453,6 @@ class TestSettingsApi:
         assert "super-secret-abc" not in body["message"]
         assert "X-Plex-Token=REDACTED" in body["message"]
 
-    def test_prompt_preview_reflects_the_recipe(self, client: TestClient):
-        r = client.post("/api/settings/prompt-preview", json={"tone": "cinephile", "guidance": "Prefer noir."})
-        assert r.status_code == 200
-        system = r.json()["system"]
-        assert "Prefer noir." in system
-        assert "film buff" in system  # cinephile tone clause
-        assert "Use only tmdb_id values from the candidate list" in system  # contract always present
-        shared = client.post("/api/settings/prompt-preview", json={"shared": True}).json()
-        assert "popular on this server" in shared["system"].lower()
-
 
 class _FakeStore:
     """Minimal SettingsStore stand-in: .get(key) returns the value or None."""
@@ -1391,42 +1462,6 @@ class _FakeStore:
 
     def get(self, key: str):
         return self._values.get(key)
-
-
-class TestResolvePrompt:
-    """The global-vs-per-person recipe merge (ContextBuilder._resolve_prompt), cell by cell."""
-
-    def _resolve(self, glob: dict, prefs: dict):
-        from shortlist.server.services.context_builder import ContextBuilder
-
-        return ContextBuilder._resolve_prompt(_FakeStore(glob), prefs)
-
-    def test_defaults_when_nothing_is_set(self):
-        cfg = self._resolve({}, {})
-        assert (cfg.tone, cfg.guidance, cfg.template) == ("balanced", "", "")
-
-    def test_user_tone_overrides_global(self):
-        cfg = self._resolve({"curator.prompt_tone": "warm"}, {"prompt_tone": "cinephile"})
-        assert cfg.tone == "cinephile"
-
-    def test_empty_user_tone_inherits_global(self):
-        cfg = self._resolve({"curator.prompt_tone": "warm"}, {"prompt_tone": ""})
-        assert cfg.tone == "warm"
-
-    def test_guidance_is_additive_global_then_user(self):
-        cfg = self._resolve(
-            {"curator.prompt_guidance": "house rule"},
-            {"prompt_guidance": "note for this person"},
-        )
-        assert cfg.guidance == "house rule\nnote for this person"
-
-    def test_guidance_skips_blank_parts(self):
-        assert self._resolve({"curator.prompt_guidance": "only global"}, {}).guidance == "only global"
-        assert self._resolve({}, {"prompt_guidance": "only user"}).guidance == "only user"
-
-    def test_template_user_wins_else_global(self):
-        assert self._resolve({"curator.prompt_template": "G"}, {}).template == "G"
-        assert self._resolve({"curator.prompt_template": "G"}, {"prompt_template": "U"}).template == "U"
 
 
 class TestCollectionsSeed:
@@ -1490,6 +1525,55 @@ class TestCollectionsSeed:
             from shortlist.server.db.models import Collection
 
             assert session.query(Collection).filter_by(slug="picked").one().name == "✨ Picked for You"
+
+    def test_editing_the_default_rows_name_writes_the_global_template_and_reconciles(
+        self, client: TestClient, monkeypatch
+    ):
+        """The default row's editable name IS the global `row.name_template` (a per-collection value
+        would beat each user's own `row_name_tpl` override). Editing it writes that setting and renames
+        the collections already on Plex in place — the same reconcile a nickname change fires."""
+        from shortlist.server.services import collection_reconcile as rec
+
+        calls: list[tuple[str, str, str]] = []
+
+        async def fake_rename(state, *, slug, new_template, scope):
+            calls.append((slug, new_template, scope))
+            return [], None
+
+        monkeypatch.setattr(rec, "run_row_rename", fake_rename)
+
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        r = client.patch(f"/api/collections/{picked['id']}", json={"name": "✨ {library_name} Handpicked"})
+        assert r.status_code == 200
+        # The edit is surfaced as the row's name (read back from the global template) …
+        assert r.json()["name"] == "✨ {library_name} Handpicked"
+        # … persisted to the shared setting …
+        assert client.get("/api/settings").json()["row.name_template"] == "✨ {library_name} Handpicked"
+        # … and reconciled onto Plex for the default slug.
+        assert calls == [("picked", "✨ {library_name} Handpicked", "collection.rename")]
+
+    def test_saving_the_default_row_with_an_unchanged_name_does_no_plex_work(self, client: TestClient, monkeypatch):
+        """A save that doesn't move the name (e.g. an enable toggle carrying the current name) must not
+        touch Plex — the rename reconcile does real I/O and only fires on a real change."""
+        from shortlist.server.services import collection_reconcile as rec
+
+        calls: list = []
+
+        async def fake_rename(state, **kwargs):
+            calls.append(kwargs)
+            return [], None
+
+        monkeypatch.setattr(rec, "run_row_rename", fake_rename)
+
+        client.put("/api/settings", json={"values": {"row.name_template": "✨ {library_name} Picked for You"}})
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        # The editor round-trips the current template as the name — an unchanged value, so no reconcile.
+        r = client.patch(
+            f"/api/collections/{picked['id']}",
+            json={"name": "✨ {library_name} Picked for You", "enabled": True},
+        )
+        assert r.status_code == 200
+        assert calls == [], "an unchanged default name must not reconcile onto Plex"
 
     def test_default_row_size_and_name_follow_the_global_setting(self, client: TestClient, tmp_path):
         """The wizard/Settings set row.size and row.name_template; the default 'picked' row must
@@ -1729,36 +1813,6 @@ class TestCollectionsSeed:
         # The test config has no OpenAI/Google curator, so generation is not available.
         assert status.json()["capable"] is False
 
-    def test_default_row_prompt_by_build(self, client: TestClient):
-        """The default row's style comes from global Settings — but HOW it gets there differs by
-        build, and the shared cell used to fall through to a bare default (ignoring Settings).
-
-        per_person: spec.prompt stays None so each user's own resolved prompt (global + their
-        overrides) wins. shared: there is no user profile to inherit from, so the global recipe
-        must be passed explicitly.
-        """
-        from shortlist.server.services.context_builder import ContextBuilder
-        from shortlist.server.services.sse import EventBus
-        from shortlist.server.settings_store import SettingsStore
-
-        client.put("/api/settings", json={"values": {"curator.prompt_tone": "cinephile"}})
-        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
-
-        def picked_spec():
-            with client.app.state.sessions() as session:
-                specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
-            return next(spec for spec in specs if spec.slug == "picked")
-
-        assert picked_spec().prompt is None  # per_person: the per-user prompt wins downstream
-
-        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
-        client.patch(f"/api/collections/{picked['id']}", json={"name": picked["name"], "build": "shared"})
-
-        prompt = picked_spec().prompt
-        assert prompt is not None, "a shared default row must carry the global recipe, not a bare default"
-        assert prompt.tone == "cinephile"
-        assert prompt.shared is True
-
 
 class TestCollectionsApi:
     def test_list_starts_with_the_seeded_default(self, client: TestClient):
@@ -1768,17 +1822,16 @@ class TestCollectionsApi:
     def test_create_update_delete_per_person(self, client: TestClient):
         created = client.post(
             "/api/collections",
-            json={"name": "Hidden Gems", "size": 10, "prompt": {"tone": "cinephile"}},
+            json={"name": "Hidden Gems", "size": 10},
         )
         assert created.status_code == 201
         cid = created.json()["id"]
         assert created.json()["slug"] == "hidden_gems"
         assert created.json()["build"] == "per_person"
-        assert created.json()["prompt"]["tone"] == "cinephile"
 
         updated = client.patch(
             f"/api/collections/{cid}",
-            json={"name": "Hidden Gems", "size": 20, "enabled": False, "prompt": {"tone": "warm"}},
+            json={"name": "Hidden Gems", "size": 20, "enabled": False},
         )
         assert updated.status_code == 200
         assert updated.json()["size"] == 20 and updated.json()["enabled"] is False
@@ -2227,6 +2280,57 @@ class TestCollectionsApi:
         assert r.status_code == 200
         assert renames == []  # dynamic new title → skipped, not retitled to the default name
 
+    def test_renaming_the_default_row_leaves_a_users_own_name_override_untouched(self, client: TestClient, monkeypatch):
+        """The default row resolves each user's title as their own `row_name_tpl` or the global template.
+        Renaming the global template must retitle a user on the default, but NOT one who set a personal
+        name — the reconcile re-renders the override user from THEIR template, sees no change, skips them."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Run, RunUser, User
+
+        # Two users on the default row: one on the global template, one with a personal name override.
+        with client.app.state.sessions() as session:
+            plain, custom = session.query(User).order_by(User.id).all()[:2]
+            custom.prefs = {"row_name_tpl": "🌟 My Own Picks"}
+            plain_info = (plain.slug, plain.plex_account_id)
+            custom_info = (custom.slug, custom.plex_account_id)
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            # Each user's LAST delivered title reflects the template that applied to THEM.
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=plain.id,
+                    status="ok",
+                    breakdown=[{"row_slug": "picked", "row_title": "✨ Picked for You"}],
+                )
+            )
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=custom.id,
+                    status="ok",
+                    breakdown=[{"row_slug": "picked", "row_title": "🌟 My Own Picks"}],
+                )
+            )
+            session.commit()
+
+        renames = self._fake_rename_ctx(
+            monkeypatch,
+            client,
+            titles_by_label={
+                f"shortlist_{plain_info[0]}": "✨ Picked for You" + row_marker(plain_info[1]),
+                f"shortlist_{custom_info[0]}": "🌟 My Own Picks" + row_marker(custom_info[1]),
+            },
+        )
+
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        r = client.patch(f"/api/collections/{picked['id']}", json={"name": "✨ Handpicked"})
+        assert r.status_code == 200
+        # Only the plain user is retitled; the override user's collection is left exactly as it was.
+        plain_marker = row_marker(plain_info[1])
+        assert renames == [("✨ Picked for You" + plain_marker, "✨ Handpicked" + plain_marker)]
+
     def test_changing_a_rows_build_removes_the_old_builds_collections(self, client: TestClient, monkeypatch):
         """Flipping per-person → shared removes the old per-person per-user collections, so both builds
         don't live on Home at once. A removal, so gate-exempt."""
@@ -2326,67 +2430,6 @@ class TestCollectionsApi:
         patched = client.patch(f"/api/collections/{cid}", json={"name": "4K Only", "library_keys": ["3", "5"]})
         assert patched.status_code == 200
         assert patched.json()["library_keys"] == ["3", "5"]
-
-    def test_a_custom_row_inherits_the_global_curation_style(self, client: TestClient):
-        """Settings -> Curation style said it wrote "everyone's rows". It wrote exactly one: the
-        default. Every custom row got a bare `balanced` recipe that beat the global one downstream."""
-        from shortlist.server.services.context_builder import ContextBuilder
-        from shortlist.server.services.sse import EventBus
-        from shortlist.server.settings_store import SettingsStore
-
-        client.put(
-            "/api/settings",
-            json={"values": {"curator.prompt_tone": "cinephile", "curator.prompt_guidance": "no horror"}},
-        )
-        client.post("/api/collections", json={"name": "Hidden Gems"})
-        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
-        with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
-        gems = next(spec for spec in specs if spec.slug == "hidden_gems")
-
-        assert gems.prompt.tone == "cinephile"  # inherited, not a bare "balanced"
-        assert "no horror" in gems.prompt.guidance
-
-    def test_a_rows_own_style_still_beats_the_global_one(self, client: TestClient):
-        from shortlist.server.services.context_builder import ContextBuilder
-        from shortlist.server.services.sse import EventBus
-        from shortlist.server.settings_store import SettingsStore
-
-        client.put("/api/settings", json={"values": {"curator.prompt_tone": "cinephile"}})
-        created = client.post(
-            "/api/collections",
-            json={"name": "Family Night", "prompt": {"tone": "playful", "guidance": "keep it light", "template": ""}},
-        )
-        assert created.status_code == 201
-        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
-        with client.app.state.sessions() as session:
-            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
-        row = next(spec for spec in specs if spec.slug == "family_night")
-
-        assert row.prompt.tone == "playful"  # the row's own choice wins
-        assert "keep it light" in row.prompt.guidance
-
-    def test_default_row_never_stores_a_prompt_the_engine_would_ignore(self, client: TestClient):
-        # The default row is curated with the GLOBAL recipe (ContextBuilder passes prompt=None for
-        # it), so a per-row prompt here would save cleanly and then do nothing. The API blanks it.
-        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
-        patched = client.patch(
-            f"/api/collections/{picked['id']}",
-            json={"name": picked["name"], "prompt": {"tone": "cinephile", "guidance": "x", "template": "y"}},
-        )
-        assert patched.status_code == 200
-        assert patched.json()["prompt"] == {}
-        assert client.get("/api/collections").json()[0]["prompt"] == {}
-
-    def test_other_rows_keep_their_own_prompt(self, client: TestClient):
-        # The other cell of the same branch: every non-default row's recipe IS honoured, so it must
-        # persist exactly as sent.
-        created = client.post("/api/collections", json={"name": "Hidden Gems"})
-        cid = created.json()["id"]
-        recipe = {"tone": "cinephile", "guidance": "deep cuts", "template": ""}
-        patched = client.patch(f"/api/collections/{cid}", json={"name": "Hidden Gems", "prompt": recipe})
-        assert patched.status_code == 200
-        assert patched.json()["prompt"] == recipe
 
     def test_slug_collision_gets_suffixed(self, client: TestClient):
         # Different names (duplicates are rejected) that slugify to the same base collide on slug.

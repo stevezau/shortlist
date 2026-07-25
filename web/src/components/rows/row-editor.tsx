@@ -1,10 +1,5 @@
 import { useState } from "react";
 
-import {
-  CurationStyleFields,
-  type CurationStyleValue,
-} from "@/components/curation-style";
-import { SaveStatus } from "@/components/save-status";
 import { AudiencePicker } from "@/components/rows/audience-picker";
 import { LibraryPicker } from "@/components/rows/library-picker";
 import { PosterField } from "@/components/rows/poster-field";
@@ -26,51 +21,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { RecentCountField } from "@/components/recent-count-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
-import { useAutosavedSettings } from "@/lib/autosave";
 import { blankInput, toInput } from "@/lib/collections";
-import { settingString } from "@/lib/format";
-import { useSaveCollection, useSettings } from "@/lib/queries";
-import type { Collection, CollectionInput, Settings, User } from "@/lib/types";
-
-/**
- * The default row's curation IS the global style (Settings → Curation style), so we edit it in place
- * here, wired straight to those global settings and auto-saved — the same style, the same store, just
- * reachable from the row. Seeded synchronously from the loaded settings so opening it saves nothing.
- */
-function DefaultRowCuration({ settings }: { settings: Settings }) {
-  const [curation, setCuration] = useState<CurationStyleValue>({
-    tone: settingString(settings, "curator.prompt_tone", "balanced"),
-    guidance: settingString(settings, "curator.prompt_guidance"),
-    template: settingString(settings, "curator.prompt_template"),
-  });
-  const save = useAutosavedSettings(curation, () => ({
-    "curator.prompt_tone": curation.tone,
-    "curator.prompt_guidance": curation.guidance,
-    "curator.prompt_template": curation.template,
-  }));
-  return (
-    <>
-      <p className="text-sm text-muted-foreground">
-        The default row uses the global style (Settings → Curation style), so
-        edits here apply everywhere — and save automatically.
-      </p>
-      <CurationStyleFields
-        value={curation}
-        onChange={setCuration}
-        scope="global"
-      />
-      <SaveStatus
-        isPending={save.isPending}
-        isError={save.isError}
-        error={save.error}
-        saved={save.saved}
-        onRetry={save.retry}
-      />
-    </>
-  );
-}
+import { useSaveCollection } from "@/lib/queries";
+import type { Collection, CollectionInput, User } from "@/lib/types";
 
 /** The add/edit-a-row dialog. `collection` is null when adding. */
 /**
@@ -121,13 +77,14 @@ export function RowEditor({
   collection,
   users,
   onClose,
+  onRename,
 }: {
   collection: Collection | null;
   users: User[];
   onClose: () => void;
+  onRename?: () => void;
 }) {
   const save = useSaveCollection();
-  const settings = useSettings();
   const [input, setInput] = useState<CollectionInput>(
     collection ? toInput(collection) : blankInput(),
   );
@@ -135,12 +92,6 @@ export function RowEditor({
 
   const set = (patch: Partial<CollectionInput>) =>
     setInput((prev) => ({ ...prev, ...patch }));
-
-  const curation: CurationStyleValue = {
-    tone: input.prompt.tone,
-    guidance: input.prompt.guidance,
-    template: input.prompt.template,
-  };
 
   const submit = () => {
     // Keep 'Top' entries and real anchors; drop a half-set library (mode chosen, no collection yet) so
@@ -170,26 +121,33 @@ export function RowEditor({
         <div className="space-y-5 py-2">
           <div className="space-y-2">
             <Label htmlFor="row-name">Name</Label>
-            <Input
-              id="row-name"
-              value={input.name}
-              placeholder="e.g. Hidden Gems"
-              disabled={isDefault}
-              onChange={(event) => set({ name: event.target.value })}
-            />
-            {isDefault ? (
-              <p className="text-sm text-muted-foreground">
-                The default row’s name and size follow Settings → Defaults, so
-                they stay in sync everywhere. Change them there.
-              </p>
+            {collection ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  id="row-name"
+                  value={input.name || "Picked for You"}
+                  disabled
+                  className="flex-1 opacity-70"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    onClose();
+                    onRename?.();
+                  }}
+                >
+                  Rename
+                </Button>
+              </div>
             ) : (
-              <p className="text-sm text-muted-foreground">
-                Use <span className="font-mono">{"{library_name}"}</span> for
-                the library’s name,{" "}
-                <span className="font-mono">{"{user}"}</span> for each person’s
-                name, or <span className="font-mono">{"{top_seed}"}</span> for
-                their top watched title.
-              </p>
+              <Input
+                id="row-name"
+                value={input.name}
+                onChange={(e) => set({ name: e.target.value })}
+                placeholder="e.g. Hidden Gems"
+              />
             )}
           </div>
 
@@ -331,7 +289,7 @@ export function RowEditor({
           </div>
 
           <div className="space-y-3 border-t pt-4">
-            <Label htmlFor="row-recent-count">Recent watches to search</Label>
+            <p className="text-sm font-medium">Recent watches to search</p>
             <p className="text-sm text-muted-foreground">
               How many of a person&rsquo;s most recent watches the AI web-search
               source looks up for this row (one cached search each). Only
@@ -347,21 +305,9 @@ export function RowEditor({
               />
             </div>
             {input.recent_count !== null && (
-              <Input
-                id="row-recent-count"
-                type="number"
-                min={1}
-                max={25}
+              <RecentCountField
                 value={input.recent_count}
-                onChange={(e) =>
-                  set({
-                    recent_count: Math.max(
-                      1,
-                      Math.min(25, Number(e.target.value) || 1),
-                    ),
-                  })
-                }
-                className="w-28"
+                onChange={(next) => set({ recent_count: next })}
               />
             )}
           </div>
@@ -402,32 +348,6 @@ export function RowEditor({
                 onChange={(hub_anchor) => set({ hub_anchor })}
               />
             </div>
-          </div>
-
-          <div className="space-y-2 border-t pt-4">
-            <Label>Curation style</Label>
-            {isDefault ? (
-              // The default row is curated with the GLOBAL recipe (ContextBuilder._build_rows discards
-              // any stored on the row), so edit that global recipe in place here — auto-saved to the
-              // same settings Settings → Curation style writes, once they've loaded.
-              settings.data && <DefaultRowCuration settings={settings.data} />
-            ) : (
-              <CurationStyleFields
-                allowInherit
-                scope="row"
-                shared={input.build === "shared"}
-                value={curation}
-                onChange={(next) =>
-                  set({
-                    prompt: {
-                      tone: next.tone,
-                      guidance: next.guidance,
-                      template: next.template,
-                    },
-                  })
-                }
-              />
-            )}
           </div>
 
           {input.build !== "shared" && (

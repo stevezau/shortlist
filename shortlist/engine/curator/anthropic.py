@@ -1,33 +1,24 @@
-"""Anthropic curator — structured output via output_config.format on the Messages API."""
+"""Anthropic curator — web-search title discovery via Claude's web_search server tool."""
 
 from __future__ import annotations
-
-import json
-import time
 
 from loguru import logger
 
 from shortlist.engine.curator.base import (
-    CuratorError,
     ThreadLocalTokens,
-    build_prompts,
     build_web_prompt,
-    log_curate_request,
-    log_curate_response,
     parse_web_titles,
-    picks_schema,
-    validate_picks,
 )
-from shortlist.engine.models import Candidate, Pick, UserProfile
+from shortlist.engine.models import UserProfile
 
-# Design doc §3: cheap tier is plenty for re-ranking ~40 owned titles.
+# Design doc §3: cheap tier is plenty for a web-search title lookup.
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 
 class AnthropicCurator:
     name = "anthropic"
     supports_native_web_search = True  # Claude's web_search server tool (see recommend_web)
-    last_tokens = ThreadLocalTokens()  # per-thread, so parallel per-user curation doesn't race
+    last_tokens = ThreadLocalTokens()  # per-thread, so parallel per-user web search doesn't race
 
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, timeout: float = 60.0):
         try:
@@ -48,44 +39,6 @@ class AnthropicCurator:
     def list_models(self) -> list[str]:
         """Model ids this key can use, newest first — populates the setup model picker."""
         return [m.id for m in self._client.models.list(limit=100).data]
-
-    def curate(self, profile: UserProfile, candidates: list[Candidate], k: int) -> list[Pick]:
-        import anthropic
-
-        system, user = build_prompts(profile, candidates, k)
-        log_curate_request(self.name, self._model, system, user, len(candidates), k)
-        started = time.monotonic()
-        try:
-            response = self._client.messages.create(
-                model=self._model,
-                max_tokens=4096,
-                system=system,
-                messages=[{"role": "user", "content": user}],
-                output_config={"format": {"type": "json_schema", "schema": picks_schema()}},
-            )
-        except anthropic.RateLimitError as e:
-            raise CuratorError(f"Anthropic rate limited: {e.message}") from e
-        except anthropic.APIStatusError as e:
-            raise CuratorError(f"Anthropic API error {e.status_code}: {e.message}") from e
-        except anthropic.APIConnectionError as e:
-            raise CuratorError("Anthropic connection error") from e
-
-        self.last_tokens = response.usage.input_tokens + response.usage.output_tokens
-        if response.stop_reason == "refusal":
-            raise CuratorError("Anthropic refused the request")
-        if response.stop_reason == "max_tokens":
-            logger.warning("anthropic: output truncated at max_tokens; picks may be partial")
-        text = next((b.text for b in response.content if b.type == "text"), "")
-        picks = self._parse(text, candidates, k)
-        log_curate_response(self.name, self._model, len(picks), self.last_tokens, time.monotonic() - started, text)
-        return picks
-
-    def _parse(self, text: str, candidates: list[Candidate], k: int) -> list[Pick]:
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise CuratorError(f"Anthropic returned unparseable JSON: {text[:200]!r}") from e
-        return validate_picks(data.get("picks", []), candidates, k, self.name)
 
     def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
         """Propose up to k titles to watch next via Claude's web-search tool (the ``llm_web`` source).

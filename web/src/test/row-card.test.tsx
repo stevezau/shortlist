@@ -43,7 +43,6 @@ function collection(patch: Partial<Collection> = {}): Collection {
     placement: "both",
     pin_top: false,
     hub_anchor: {},
-    prompt: { tone: "", guidance: "", template: "" }, // blank = inherit the global style
     ...patch,
   } as Collection;
 }
@@ -62,22 +61,20 @@ function renderCard(value: Collection) {
 }
 
 describe("RowCard", () => {
-  it("shows a row's own sources, libraries and style so overrides are visible without opening it", async () => {
+  it("shows a row's own sources and libraries so overrides are visible without opening it", async () => {
     renderCard(
       collection({
         candidate_sources: ["trakt"],
         library_keys: ["2"],
-        prompt: { tone: "cinephile", guidance: "", template: "" },
       }),
     );
     expect(await screen.findByText("Sources: Trakt")).toBeTruthy();
     expect(await screen.findByText("Libraries: 4K Movies")).toBeTruthy();
-    expect(await screen.findByText("Style: Cinephile")).toBeTruthy();
   });
 
   it("shows no override badges for a row that follows the global defaults", () => {
     renderCard(collection());
     expect(screen.queryByText(/^Sources:/)).toBeNull();
-    expect(screen.queryByText(/^Style:/)).toBeNull();
+    expect(screen.queryByText(/^Libraries:/)).toBeNull();
   });
 });

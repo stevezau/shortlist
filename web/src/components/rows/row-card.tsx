@@ -2,12 +2,13 @@ import { useMutation } from "@tanstack/react-query";
 import {
   Eraser,
   ListChecks,
+  Pen,
   Trash2,
   UserCheck,
   Users as UsersIcon,
 } from "lucide-react";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { api, apiErrorMessage } from "@/lib/api";
 import { audienceSummary, rowOverrides, toInput } from "@/lib/collections";
@@ -40,11 +43,16 @@ export function RowCard({
   collection,
   users,
   onEdit,
+  openRename,
+  onRenameOpened,
 }: {
   collection: Collection;
   users: User[];
   onEdit: () => void;
+  openRename?: boolean;
+  onRenameOpened?: () => void;
 }) {
+  const navigate = useNavigate();
   const save = useSaveCollection();
   const remove = useDeleteCollection();
   const settings = useSettings();
@@ -52,6 +60,36 @@ export function RowCard({
   const isDefault = collection.slug === DEFAULT_ROW_SLUG;
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTo, setRenameTo] = useState(
+    collection.name_template || collection.name,
+  );
+
+  useEffect(() => {
+    if (openRename) {
+      setRenameTo(collection.name_template || collection.name);
+      setRenameOpen(true);
+      onRenameOpened?.();
+    }
+  }, [openRename]);
+  const rename = useMutation({
+    mutationFn: () => {
+      const oldTemplate = collection.name_template || collection.name;
+      return api
+        .updateCollection(collection.id, {
+          ...toInput(collection),
+          name: renameTo,
+          name_template: renameTo,
+        })
+        .then(() => oldTemplate);
+    },
+    onSuccess: (oldTemplate) => {
+      setRenameOpen(false);
+      navigate(`/rows/${collection.id}/rename`, {
+        state: { oldTemplate },
+      });
+    },
+  });
   // A dry-run first (what WOULD be removed), then the real removal on confirm.
   const preview = useMutation({
     mutationFn: () => api.cleanupCollection(collection.id, true),
@@ -151,6 +189,20 @@ export function RowCard({
           </Button>
           <Button variant="outline" size="sm" onClick={onEdit}>
             Edit
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            onClick={() => {
+              setRenameTo(collection.name_template || collection.name);
+              rename.reset();
+              setRenameOpen(true);
+            }}
+            title="Rename this row on Plex"
+          >
+            <Pen aria-hidden="true" />
+            Rename
           </Button>
           <Button
             variant="ghost"
@@ -302,6 +354,51 @@ export function RowCard({
                 Remove from Plex
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename this row</DialogTitle>
+            <DialogDescription>
+              This renames every collection on Plex for every user who has this
+              row — one rename per person, per library. It happens immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="rename-template">New name</Label>
+              <Input
+                id="rename-template"
+                value={renameTo}
+                onChange={(e) => setRenameTo(e.target.value)}
+                placeholder="e.g. ✨ {library_name} Picked for You"
+              />
+              <p className="text-xs text-muted-foreground">
+                Use {"{library_name}"} for the library, {"{user}"} for each
+                person's name.
+              </p>
+            </div>
+          </div>
+          {rename.isError && (
+            <MutationAlert
+              error={rename.error}
+              fallback="Couldn't save the new name. Check the connection."
+            />
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              loading={rename.isPending}
+              onClick={() => rename.mutate()}
+              disabled={!renameTo.trim()}
+            >
+              {!rename.isPending && <Pen aria-hidden="true" />}
+              Rename on Plex
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

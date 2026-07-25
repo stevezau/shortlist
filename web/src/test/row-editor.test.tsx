@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RowEditor } from "@/components/rows/row-editor";
@@ -53,7 +54,6 @@ function row(patch: Partial<Collection> = {}): Collection {
     placement: "both",
     pin_top: false,
     hub_anchor: {},
-    prompt: { tone: "", guidance: "", template: "" },
     poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
     ...patch,
   };
@@ -65,6 +65,7 @@ function user(patch: Partial<User> = {}): User {
     username: "sarah",
     slug: "sarah",
     user_type: "shared",
+    restricted: false,
     enabled: true,
     cold_start: false,
     history_depth: 10,
@@ -80,9 +81,11 @@ function renderEditor(collection: Collection, users: User[] = []) {
     defaultOptions: { queries: { retry: false } },
   });
   render(
-    <QueryClientProvider client={client}>
-      <RowEditor collection={collection} users={users} onClose={() => {}} />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={client}>
+        <RowEditor collection={collection} users={users} onClose={() => {}} />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -128,6 +131,27 @@ describe("RowEditor — already-watched titles", () => {
     const call = updateCollection.mock.calls.at(0);
     expect(call?.[0]).toBe(1);
     expect((call?.[1] as Collection).watched_pct).toBe(0);
+  });
+});
+
+describe("RowEditor — the default row's name", () => {
+  const defaultRow = (patch: Partial<Collection> = {}) =>
+    row({
+      slug: "picked",
+      name: "✨ {library_name} Picked for You",
+      ...patch,
+    });
+
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("shows the current name read-only and points to the Rename button", () => {
+    renderEditor(defaultRow());
+    // The name is in a disabled input — renaming happens via the dedicated button.
+    const input = screen.getByDisplayValue("✨ {library_name} Picked for You");
+    expect(input).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Rename/ })).toBeInTheDocument();
   });
 });
 
@@ -219,12 +243,10 @@ describe("RowEditor — recent watches to search", () => {
   });
 });
 
-
 describe("RowEditor — a shared row that can never build", () => {
   const sharedRow = (patch: Partial<Collection> = {}) =>
     row({ build: "shared", min_watchers: 2, ...patch });
-  const warning = () =>
-    screen.queryByText(/This row can’t build yet/i);
+  const warning = () => screen.queryByText(/This row can’t build yet/i);
 
   it("warns when only one person in the audience is active in runs", () => {
     // The exact shape of issue #3: a shared row on a server with one enabled user can never reach
@@ -234,7 +256,9 @@ describe("RowEditor — a shared row that can never build", () => {
       user({ id: 2, username: "mike", enabled: false }),
     ]);
     expect(warning()).toBeInTheDocument();
-    expect(screen.getByText(/only 1 of them is active in runs/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/only 1 of them is active in runs/i),
+    ).toBeInTheDocument();
   });
 
   it("counts a PAUSED user as inactive — the engine drops them before any row is built", () => {
@@ -250,7 +274,9 @@ describe("RowEditor — a shared row that can never build", () => {
       user({ id: 1, username: "sarah" }),
       user({ id: 2, username: "mike" }),
     ]);
-    expect(screen.getByText(/nobody in its audience is active in runs/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/nobody in its audience is active in runs/i),
+    ).toBeInTheDocument();
   });
 
   it("stays quiet once the row can actually build", () => {

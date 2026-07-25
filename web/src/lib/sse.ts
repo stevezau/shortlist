@@ -4,6 +4,8 @@ import { eventsUrl } from "./api";
 import type {
   RunFinishedEvent,
   RunUserStageEvent,
+  SyncFinishedEvent,
+  SyncProgressEvent,
   UninstallProgressEvent,
 } from "./types";
 
@@ -11,6 +13,8 @@ export interface SSEHandlers {
   onRunUserStage?: (event: RunUserStageEvent) => void;
   onRunFinished?: (event: RunFinishedEvent) => void;
   onUninstallProgress?: (event: UninstallProgressEvent) => void;
+  onSyncProgress?: (event: SyncProgressEvent) => void;
+  onSyncFinished?: (event: SyncFinishedEvent) => void;
 }
 
 const INITIAL_RETRY_MS = 1_000;
@@ -72,6 +76,22 @@ export function useSSE(handlers: SSEHandlers): { connected: boolean } {
         (event: MessageEvent<string>) => {
           const data = parseData<UninstallProgressEvent>(event.data);
           if (data) handlersRef.current.onUninstallProgress?.(data);
+        },
+      );
+
+      source.addEventListener(
+        "sync.progress",
+        (event: MessageEvent<string>) => {
+          const data = parseData<SyncProgressEvent>(event.data);
+          if (data) handlersRef.current.onSyncProgress?.(data);
+        },
+      );
+
+      source.addEventListener(
+        "sync.finished",
+        (event: MessageEvent<string>) => {
+          const data = parseData<SyncFinishedEvent>(event.data);
+          if (data) handlersRef.current.onSyncFinished?.(data);
         },
       );
 

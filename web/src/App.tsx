@@ -10,12 +10,15 @@ import { useSession, useSetupState } from "@/lib/queries";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
 import { RequestsPage } from "@/pages/requests";
+import { RowRenamePage } from "@/pages/row-rename";
 import { RowsPage } from "@/pages/rows";
 import { RunDetailPage } from "@/pages/run-detail";
+import { RunUserTracePage } from "@/pages/run-user-trace";
 import { LogsPage } from "@/pages/logs";
 import { RunsPage } from "@/pages/runs";
 import { SettingsPage } from "@/pages/settings";
 import { SetupPage } from "@/pages/setup";
+import { ToolsPage } from "@/pages/tools";
 import { UninstallPage } from "@/pages/uninstall";
 import { UserDetailPage } from "@/pages/user-detail";
 import { UsersPage } from "@/pages/users";
@@ -99,12 +102,18 @@ export default function App() {
           <Route element={<RequireApp />}>
             <Route index element={<DashboardPage />} />
             <Route path="rows" element={<RowsPage />} />
+            <Route path="rows/:id/rename" element={<RowRenamePage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="users/:id" element={<UserDetailPage />} />
             <Route path="runs" element={<RunsPage />} />
             <Route path="logs" element={<LogsPage />} />
             <Route path="runs/:id" element={<RunDetailPage />} />
+            <Route
+              path="runs/:id/trace/:userId"
+              element={<RunUserTracePage />}
+            />
             <Route path="requests" element={<RequestsPage />} />
+            <Route path="tools" element={<ToolsPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/uninstall" element={<UninstallPage />} />
             <Route

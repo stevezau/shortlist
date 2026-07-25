@@ -42,9 +42,10 @@ export function UserRequestTag({ user }: { user: User }) {
           className="max-w-xs"
         />
         <p className="text-sm text-muted-foreground">
-          When Requests are on, titles asked for because {user.username} wanted
-          them get this tag in Sonarr/Radarr — on top of your global tag and
-          each row’s own tag. Leave blank for none.
+          When Requests are on, titles asked for because{" "}
+          {user.display_name || user.username} wanted them get this tag in
+          Sonarr/Radarr — on top of your global tag and each row’s own tag.
+          Leave blank for none.
         </p>
         {patchUser.isError && (
           <p role="alert" className="text-sm text-destructive">

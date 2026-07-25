@@ -185,6 +185,43 @@ class RadarrClient(_ArrClient):
         """tmdbIds on Radarr's import-exclusion list (usually left by a past delete)."""
         return self._id_set("/api/v3/exclusions", "tmdbId")
 
+    def get_status(self, tmdb_id: int) -> dict | None:
+        """Fetch Radarr's status for one TMDB id: downloaded, queued, monitored, etc.
+
+        Returns None if not found, or a dict with: {'monitored': bool, 'downloaded': bool, 'status': str}
+        where status is 'downloaded' | 'downloading' | 'queued' | 'monitored' | 'unmonitored'.
+        """
+        resource = self._get(f"/api/v3/movie/lookup/tmdb?tmdbId={tmdb_id}")
+        if not isinstance(resource, dict) or not resource.get("tmdbId"):
+            return None
+        if not resource.get("id"):  # not tracked by Radarr
+            return None
+        # Fetch the full movie record to get hasFile and queue status
+        movie_id = resource["id"]
+        movie = self._get(f"/api/v3/movie/{movie_id}")
+        if not isinstance(movie, dict):
+            return None
+
+        monitored = bool(movie.get("monitored"))
+        has_file = bool(movie.get("hasFile"))
+
+        # Check if it's downloading (in queue)
+        queue = self._get("/api/v3/queue")
+        in_queue = False
+        if isinstance(queue, dict) and isinstance(queue.get("records"), list):
+            in_queue = any(r.get("movieId") == movie_id for r in queue["records"])
+
+        if has_file:
+            status = "downloaded"
+        elif in_queue:
+            status = "downloading"
+        elif monitored:
+            status = "queued"
+        else:
+            status = "unmonitored"
+
+        return {"monitored": monitored, "downloaded": has_file, "status": status}
+
     def add_movie(
         self, tmdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None
     ) -> tuple[str, str, str | None]:
@@ -236,6 +273,48 @@ class SonarrClient(_ArrClient):
     def excluded_tvdb_ids(self) -> set[int]:
         """tvdbIds on Sonarr's import-exclusion list (usually left by a past delete)."""
         return self._id_set("/api/v3/importlistexclusion", "tvdbId")
+
+    def get_status_by_tvdb(self, tvdb_id: int) -> dict | None:
+        """Fetch Sonarr's status for one TVDB id: downloaded, queued, monitored, etc.
+
+        Returns None if not found, or a dict with: {'monitored': bool, 'downloaded': bool, 'status': str}
+        where status is 'downloaded' | 'downloading' | 'queued' | 'monitored' | 'unmonitored'.
+        'downloaded' means all aired episodes are on disk; partial = downloading or queued depending on queue.
+        """
+        results = self._get(f"/api/v3/series/lookup?term=tvdb:{tvdb_id}")
+        resource = _match_tvdb(results, tvdb_id)
+        if resource is None:
+            return None
+        if not resource.get("id"):  # not tracked by Sonarr
+            return None
+
+        series_id = resource["id"]
+        series = self._get(f"/api/v3/series/{series_id}")
+        if not isinstance(series, dict):
+            return None
+
+        monitored = bool(series.get("monitored"))
+        # Sonarr's statistics tell us if all/some/none of aired episodes exist
+        stats = series.get("statistics", {})
+        episode_count = stats.get("episodeCount", 0)
+        episode_file_count = stats.get("episodeFileCount", 0)
+
+        # Check if it's downloading (in queue)
+        queue = self._get("/api/v3/queue")
+        in_queue = False
+        if isinstance(queue, dict) and isinstance(queue.get("records"), list):
+            in_queue = any(r.get("seriesId") == series_id for r in queue["records"])
+
+        if episode_count > 0 and episode_file_count >= episode_count:
+            status = "downloaded"
+        elif in_queue or episode_file_count > 0:
+            status = "downloading"
+        elif monitored:
+            status = "queued"
+        else:
+            status = "unmonitored"
+
+        return {"monitored": monitored, "downloaded": episode_file_count >= episode_count, "status": status}
 
     def add_series(
         self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None

@@ -17,10 +17,9 @@ from loguru import logger
 
 import shortlist.engine.pipeline as _pipeline
 from shortlist.engine import candidates as candidates_mod
-from shortlist.engine import ranking
+from shortlist.engine import picker, ranking
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients.plex_pms import _retry_idempotent
-from shortlist.engine.curator import CuratorError, NullCurator
 from shortlist.engine.delivery import (
     deliver_rows,
     remove_row,
@@ -39,14 +38,12 @@ from shortlist.engine.models import (
     EngineConfig,
     MediaType,
     Pick,
-    PromptConfig,
     RequestWhy,
     RowSpec,
     UserProfile,
     UserRunReport,
     UserType,
     WatchedItem,
-    overlay_prompt,
 )
 
 if TYPE_CHECKING:
@@ -119,31 +116,49 @@ def _media_filter(items: list, media: str) -> list:
     return [item for item in items if item.media_type is kind]
 
 
-# A season's worth of episodes watched = the person is clearly watching this show, not discovering it.
-# The ``show_pct`` fraction alone is unreachable for a long RETURNING series: it keeps adding episodes,
-# so watched/total never hits 90% even after 160 plays (SFLIX/MooHouse Gold Rush 160/226 = 71%, and
-# even the owner's own watched count topped out at 173/226; 2026-07-20). This floor catches those.
-_ENGAGED_EPISODES = 10
+# How many episodes watched = the person is clearly watching this show, not discovering it. The
+# ``show_pct`` fraction alone is unreachable for a long RETURNING series: it keeps adding episodes, so
+# watched/total never hits 80% even for someone 160 episodes deep (SFLIX/MooHouse Gold Rush 160/226 =
+# 71%; 2026-07-20). A per-show floor catches those — someone that far in has plainly seen it, not
+# sampled it, however many unaired-then-aired seasons pushed the total up.
+#
+# The floor SCALES with series length rather than being flat. 3 episodes = "given it a real try" for a
+# limited series; but 3 of a 200-episode run is 1.5%, still plainly a discovery. ``_ENGAGED_FRACTION``
+# lifts the floor toward ~15% of length for long shows (200 eps -> 30) while ``_ENGAGED_EPISODES`` holds
+# the 3-episode minimum for short ones. The counts are Plex's own per-user ``viewedLeafCount`` (marks
+# included), so this no longer has to over-count to compensate for invisible marks (was issue #12).
+_ENGAGED_EPISODES = 3
+_ENGAGED_FRACTION = 0.15
+
+
+def _engaged_floor(total: int) -> float:
+    """Episodes watched at which a show counts as 'engaged, not a fresh pick', scaled to its length."""
+    return max(_ENGAGED_EPISODES, total * _ENGAGED_FRACTION)
 
 
 def _watched_titles(
     watched_movies: set[int],
-    show_plays: dict[int, int],
-    episode_counts: dict[int, int],
+    watched_shows: dict[int, tuple[int, int | None]],
     show_pct: float,
 ) -> set[tuple[int, MediaType]]:
     """The (tmdb_id, media_type) titles this person has already watched — the ones a watched-cap counts.
 
     Every watched movie, plus every show they've clearly watched: seen to >= ``show_pct`` of its
-    episodes, OR watched at least ``_ENGAGED_EPISODES`` of them (a season's worth — a returning series
-    that keeps airing never reaches the fraction, but a person 160 episodes deep isn't a fresh pick).
-    For a short series the fraction is the tighter bar, so ``min`` keeps it strict there. A show whose
-    episode count is unknown is counted as watched rather than risk re-surfacing one they've worked through.
+    episodes, OR watched a length-scaled "engaged" floor of them (``_engaged_floor``). A returning
+    series that keeps airing never reaches the fraction, so the floor is what catches a person 160
+    episodes deep; scaling it with length stops 3 episodes of a 200-episode run counting as finished.
+    For a short series the ``show_pct`` fraction is the tighter bar, so ``min`` keeps it strict there.
+
+    Args:
+        watched_movies: tmdb_ids of watched movies (each is finished on its own).
+        watched_shows: ``tmdb_id -> (viewed_leaf_count, leaf_count)`` — the user's own watched-episode
+            count and the show's total, straight from Plex. A show whose total is unknown (None/0) is
+            counted as watched rather than risk re-surfacing one they've worked through.
+        show_pct: The finished fraction (0..1).
     """
     finished: set[tuple[int, MediaType]] = {(tid, MediaType.MOVIE) for tid in watched_movies}
-    for tid, plays in show_plays.items():
-        total = episode_counts.get(tid)
-        if not total or plays >= min(total * show_pct, _ENGAGED_EPISODES):
+    for tid, (viewed, total) in watched_shows.items():
+        if not total or viewed >= min(total * show_pct, _engaged_floor(total)):
             finished.add((tid, MediaType.SHOW))
     return finished
 
@@ -245,6 +260,65 @@ def _rating_key_resolver(seed_index: dict[int, int]) -> Callable[[WatchedItem], 
     return resolve
 
 
+def _stamp_disposition(
+    gather_stats: candidates_mod.GatherStats,
+    *,
+    dropped: list[tuple[Candidate, str]],
+    in_library: list[Candidate],
+    ranked: list[Candidate],
+) -> None:
+    """Annotate the gather trace with each candidate's FATE, so the operator can follow every title
+    from a source's returns to the row (or to the reason it fell out).
+
+    Reads only the lists selection already produced (``dropped`` from filter_candidates, ``in_library``,
+    ``ranked``) — it computes nothing new about which candidates win and mutates none of them. Two
+    things are written onto ``gather_stats.trace``:
+
+    * a per-source ``disposition`` tally: ``{kept, already_watched, not_in_your_libraries,
+      excluded_genre, lost_ranking_cutoff}`` counts, and
+    * a ``fate``/``fate_reason`` on each already-recorded per-seed return, keyed by tmdb_id.
+
+    A candidate that survived filtering but lost the ``candidates_pre_rank`` cut is
+    ``lost_ranking_cutoff``; one that made the pre-rank is ``kept`` (whether or not it ends in the
+    final row — the per-library row build, downstream of here, decides that and is traced separately
+    by the delivered-picks stage).
+    """
+    ranked_ids = {(c.tmdb_id, c.media_type) for c in ranked}
+    in_library_ids = {(c.tmdb_id, c.media_type) for c in in_library}
+    drop_reason: dict[tuple[int, MediaType], str] = {}
+    for cand, reason in dropped:
+        drop_reason.setdefault((cand.tmdb_id, cand.media_type), reason)
+
+    def fate_of(tmdb_id: int, media: MediaType) -> str:
+        key = (tmdb_id, media)
+        if key in ranked_ids:
+            return "kept"
+        if key in in_library_ids:
+            return "lost_ranking_cutoff"  # survived filtering but lost the pre-rank cut
+        # Defensive fallback: a returned id with no matching pooled candidate. Shouldn't occur —
+        # every returned title is added to the pool, so it resolves to a real fate above.
+        return drop_reason.get(key, "not_returned")
+
+    for source in gather_stats.trace.get("sources", []):
+        tally: dict[str, int] = {}
+        for query in source.get("queries", []):
+            qmedia = MediaType.SHOW if query.get("media") == "show" else MediaType.MOVIE
+            for ret in query.get("returned", []):
+                verdict = fate_of(int(ret.get("tmdb_id") or 0), qmedia)
+                ret["fate"] = verdict
+                tally[verdict] = tally.get(verdict, 0) + 1
+        if tally:
+            source["disposition"] = tally
+
+    # The web-search source records its proposals under trace["web"], not as per-seed `queries`, so it
+    # needs the same fate stamp separately: which AI-proposed titles made this library's shortlist vs
+    # fell out. Hallucinations (no TMDB match) never reach `proposals`, so they carry no fate — the UI
+    # still strikes them through from the `unresolved` list.
+    for proposal in gather_stats.trace.get("web", {}).get("proposals", []):
+        pmedia = MediaType.SHOW if proposal.get("media") == "show" else MediaType.MOVIE
+        proposal["fate"] = fate_of(int(proposal.get("tmdb_id") or 0), pmedia)
+
+
 def row_library_index(
     ctx: EngineContext,
     spec: RowSpec,
@@ -267,23 +341,6 @@ def row_library_index(
     return narrowed
 
 
-def _row_catalog(ctx: EngineContext, spec: RowSpec) -> dict[MediaType, list[dict]]:
-    """The AI-from-library catalog THIS row may propose from — its own libraries only."""
-    if not spec.library_keys or not ctx.section_catalog:
-        return ctx.library_catalog
-    catalog: dict[MediaType, list[dict]] = {MediaType.MOVIE: [], MediaType.SHOW: []}
-    seen: dict[MediaType, set[int]] = {MediaType.MOVIE: set(), MediaType.SHOW: set()}
-    for section in sections_for_keys(ctx.delivery_sections, spec.library_keys):
-        kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-        for item in ctx.section_catalog.get(section.key, []):
-            # A row pinned to both "Movies" and "4K Movies" must not show the LLM the same film
-            # twice — that spends its slice of the catalog on duplicates.
-            if item["tmdb_id"] not in seen[kind]:
-                seen[kind].add(item["tmdb_id"])
-                catalog[kind].append(item)
-    return catalog
-
-
 def _candidate_pool(
     ctx: EngineContext,
     seeds: list,
@@ -293,7 +350,6 @@ def _candidate_pool(
     profile=None,
     sources: list[str] | None = None,
     media: str = "both",
-    catalog: dict[MediaType, list[dict]] | None = None,
     watched_exclusions: set[tuple[int, MediaType]] | None = None,
     recent_count: int | None = None,
 ) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
@@ -327,7 +383,6 @@ def _candidate_pool(
         seeds,
         sources=sources if sources is not None else ctx.config.candidate_sources,
         curator=ctx.curator,
-        catalog=ctx.library_catalog if catalog is None else catalog,
         profile=profile,
         trakt=ctx.trakt,
         search=ctx.search,
@@ -336,12 +391,16 @@ def _candidate_pool(
         recent_count=recent_count if recent_count is not None else ctx.config.recent_count,
         stats=gather_stats,
     )
+    # `dropped` collects (candidate, reason) as filter_candidates works — observation only, it does
+    # not change which candidates are kept.
+    dropped: list[tuple[Candidate, str]] = []
     valid = candidates_mod.filter_candidates(
         pool,
         library_index,
         watched_tmdb_ids=watched_ids,
         excluded_genres=excluded_genres,
         recent_pick_ids=set(),
+        dropped=dropped,
     )
     in_library = _media_filter(valid, media)
     # Pre-rank EACH media type to its own cap, not the mixed pool to one cap — otherwise a 'both'
@@ -350,6 +409,10 @@ def _candidate_pool(
     kinds = [MediaType.MOVIE, MediaType.SHOW] if media == "both" else [MediaType(media)]
     cap = ctx.config.candidates_pre_rank
     ranked = [c for kind in kinds for c in ranking.pre_rank([x for x in in_library if x.media_type is kind], cap)]
+    # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
+    # entirely from the lists selection already produced above — so the trace can follow every title
+    # in and out without altering a single delivered pick.
+    _stamp_disposition(gather_stats, dropped=dropped, in_library=in_library, ranked=ranked)
     return (pool, in_library, ranked), gather_stats
 
 
@@ -359,34 +422,134 @@ def _add_step_tokens(report: UserRunReport, step: str, n: int) -> None:
         report.llm_tokens_by_step[step] = report.llm_tokens_by_step.get(step, 0) + n
 
 
-def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats) -> None:
+def _record_gather(report: UserRunReport, stats: candidates_mod.GatherStats, *, pool_label: str | None = None) -> None:
     """Fold a candidate-gather's AI cost into the user report: per-source tokens (also into the grand
-    total) and Exa searches. Called once per pool COMPUTATION — a cache hit re-adds nothing."""
+    total), Exa searches, and Exa cache hits. Called once per pool COMPUTATION — a cache hit re-adds
+    nothing to tokens, but IS counted in exa_cache_hits so the run shows what the cache saved.
+
+    This is the ONLY AI cost now — the AI is used only to FIND titles (web search). Ranking the pool
+    and writing each row's reason are done in code (``picker.build_picks``), so there is no per-row
+    LLM spend to attribute anymore.
+
+    ``pool_label`` names the pool this gather computed (e.g. "movie · Movies"); its trace is filed
+    under ``report.trace["gathers"]`` so the UI can show what each distinct pool queried. Most users
+    have a single pool shared by every row, so this is usually one entry.
+    """
     for source, tokens in stats.tokens_by_source.items():
         report.llm_tokens += tokens
         _add_step_tokens(report, source, tokens)
     report.exa_searches += stats.exa_searches
+    report.exa_cache_hits += stats.exa_cache_hits
+    if stats.trace:
+        report.trace.setdefault("gathers", []).append({"pool": pool_label or "", **stats.trace})
 
 
-def _record_curate(
-    report: UserRunReport, curate_tokens: dict[tuple[str, str], int], slug: str, section_key, n: int
-) -> None:
-    """Record one curate call's cost: into the grand total, the 'curate' step, and this (row, library)
-    so it can be stamped onto the matching breakdown entry for per-row display."""
-    report.llm_tokens += n
-    _add_step_tokens(report, "curate", n)
-    key = (slug, str(section_key))
-    curate_tokens[key] = curate_tokens.get(key, 0) + n
+def _library_resolvers(ctx: EngineContext) -> tuple[Callable[[WatchedItem], str], Callable[[object], str]]:
+    """Two lookups mapping a watch / a seed to the display NAME of the Plex library it lives in.
 
-
-def _stamp_row_tokens(report: UserRunReport, curate_tokens: dict[tuple[str, str], int]) -> None:
-    """Attach each (row, library) curate cost to its breakdown entry, so the UI shows per-row tokens.
-
-    Keyed by (row_slug, library_key) — the same pair that uniquely identifies a breakdown entry. Only
-    the curate call is per-row; the AI candidate sources are pooled per user and stay at user level.
+    Both are built from data the run already holds — no extra Plex reads. A server can have several
+    movie or TV libraries with custom names, so the trace groups by real library, not media type
+    alone (a "Movies" and a "4K Movies" library must not collapse into one). Returns ``("", "")``
+    resolvers for anything unknown, which the UI falls back to a media-type label for.
     """
-    for entry in report.breakdown:
-        entry["llm_tokens"] = curate_tokens.get((entry["row_slug"], entry["library_key"]), 0)
+    section_titles = {str(s.key): getattr(s, "title", "") or "" for s in ctx.delivery_sections}
+    rating_key_to_section = _sections_of(ctx, [])  # ratingKey -> section key, across all libraries
+    tmdb_to_section = {  # tmdb_id -> section key (first library holding it; good enough for display)
+        tmdb_id: str(section_key) for section_key, index in ctx.section_index.items() for tmdb_id in index
+    }
+
+    def library_of_watch(item: WatchedItem) -> str:
+        return section_titles.get(rating_key_to_section.get(item.rating_key or -1, ""), "")
+
+    def library_of_seed(s) -> str:
+        return section_titles.get(tmdb_to_section.get(s.tmdb_id, ""), "")
+
+    return library_of_watch, library_of_seed
+
+
+def _record_cold_start_trace(report: UserRunReport, picks: list[Pick]) -> None:
+    """File a minimal search stage for a COLD-START user: no TMDB/Trakt search ran, so the trace has
+    no gathers — but without at least one it would be empty, the run page would show no "How we
+    picked" button, and a cold user would look like they were skipped (they weren't). One synthetic
+    ``cold_start`` source per media kind records what was pulled, so each library tab shows its own
+    "Popular on this server" step. The delivered-picks stage shows the titles themselves.
+    """
+    counts: dict[MediaType, int] = {}
+    for pick in picks:
+        counts[pick.media_type] = counts.get(pick.media_type, 0) + 1
+    for kind, count in counts.items():
+        report.trace.setdefault("gathers", []).append(
+            {
+                "pool": f"{kind.value} · cold_start",
+                "sources": [{"source": "cold_start", "status": "ok", "contributed": count, "detail": ""}],
+            }
+        )
+
+
+_TRACE_HISTORY_SAMPLE = 40  # most recent watches to record in the trace (display only — full count is in counts)
+
+
+def _record_history_trace(
+    report: UserRunReport,
+    history: list,
+    specs: list[RowSpec],
+    seeds_for,
+    watched_movies: set[int],
+    watched_shows: dict[int, tuple[int, int | None]],
+    library_of_watch=lambda _item: "",
+    library_of_seed=lambda _seed: "",
+) -> None:
+    """File the history/seeds/watched stage of the trace: the most recent watches, the seeds derived
+    from them (the widest set any row uses), and a watched summary. Display only.
+
+    ``library_of_watch``/``library_of_seed`` resolve each item to its Plex library's display name so
+    the UI can group by real library — a server can have several movie or TV libraries with custom
+    names, so grouping by media type alone would be wrong. Both default to "" (unknown), which the UI
+    falls back to a media-type label for.
+    """
+    recent = sorted(history, key=lambda i: i.watched_at, reverse=True)[:_TRACE_HISTORY_SAMPLE]
+    seeds = max((seeds_for(spec) for spec in specs), key=len, default=[])
+    # True per-library watched totals over the FULL history — NOT the recent sample. The sample is
+    # time-ordered and capped, so a heavy-TV watcher's Movies tab would sample only a handful of recent
+    # movies; and a per-MEDIA total can't tell two same-type libraries apart (a "Movies" and a "4K
+    # Movies" library would show the same number). Each watch is resolved to its library and distinct
+    # titles are counted per media type (a show's episodes share one title, so they count once).
+    by_library: dict[str, dict[str, set]] = {}
+    for item in history:
+        bucket = by_library.setdefault(library_of_watch(item), {"movie": set(), "show": set()})
+        bucket[item.media_type.value].add(item.tmdb_id if item.tmdb_id is not None else item.title)
+    report.trace["history"] = {
+        "total": len(history),
+        "recent": [
+            {
+                "title": i.title,
+                "media": i.media_type.value,
+                "library": library_of_watch(i),
+                "year": i.year,
+                "watched_at": i.watched_at.isoformat() if i.watched_at else None,
+            }
+            for i in recent
+        ],
+        "watched_movies": len(watched_movies),
+        "watched_shows": len(watched_shows),
+        "watched_by_library": {
+            lib: {"movie": len(b["movie"]), "show": len(b["show"])} for lib, b in by_library.items()
+        },
+    }
+    report.trace["seeds"] = [
+        {
+            "title": s.title,
+            "media": s.media_type.value,
+            "library": library_of_seed(s),
+            "tmdb_id": s.tmdb_id,
+            "weight": round(s.weight, 3),
+            # The two ingredients behind the weight, so the UI can say "watched 4x, last seen 3 days
+            # ago" instead of an opaque bar — this is what makes the influence bar legible.
+            "watch_count": s.watch_count,
+            "recency_days": s.recency_days,
+        }
+        for s in sorted(seeds, key=lambda s: s.weight, reverse=True)
+    ]
 
 
 def _in_audience(user: UserProfile, spec: RowSpec) -> bool:
@@ -477,10 +640,6 @@ def _run_user(
         user_report.status = "skipped"
         user_report.reason = _why_no_rows(user, cfg)
         return False
-    # The adapter puts the Phase-A global+per-user recipe on the profile; a row with its own recipe
-    # overrides it for that row only.
-    base_prompt = user.prompt
-
     _pipeline._emit(ctx, user.slug, "history", {})
     user.history = ctx.history_source.fetch(user, min_completion=cfg.min_completion)
     user_report.counts.history = len(user.history)
@@ -494,10 +653,11 @@ def _run_user(
     pool_cache: dict[tuple, Pool] = {}
     pool_failures: dict[tuple, str] = {}  # pool key -> why every source for it failed
     # This person's watched breakdown, filled in the non-cold branch and read by pools_for: watched
-    # movie tmdb_ids, and show tmdb_id -> episode-play count (for the finished-show fraction). The
-    # derived set of FINISHED (tmdb_id, media_type) titles is computed once the breakdown is in.
+    # movie tmdb_ids, and show tmdb_id -> (viewed episodes, total episodes) straight from Plex's own
+    # per-user counts (for the finished-show fraction). The derived set of FINISHED (tmdb_id,
+    # media_type) titles is computed once the breakdown is in.
     watched_movies: set[int] = set()
-    show_plays: dict[int, int] = {}
+    watched_shows: dict[int, tuple[int, int | None]] = {}
     watched_titles: set[tuple[int, MediaType]] = set()
 
     def effective_watched_pct(spec: RowSpec) -> float:
@@ -507,6 +667,12 @@ def _run_user(
         return spec.freshness if spec.freshness is not None else cfg.freshness
 
     def effective_recent_count(spec: RowSpec) -> int:
+        # This person's per-row override wins, then the row's own setting, then the global default —
+        # the same user -> row -> global direction the row size resolves in. pool_key already folds
+        # this value in for web rows, so two of this person's rows that differ in it don't share a pool.
+        override = user.row_overrides.get(spec.slug)
+        if override and override.recent_count is not None:
+            return override.recent_count
         return spec.recent_count if spec.recent_count is not None else cfg.recent_count
 
     def effective_sources(spec: RowSpec) -> tuple[str, ...]:
@@ -555,7 +721,6 @@ def _run_user(
                     sources=list(key[0]),
                     recent_count=effective_recent_count(spec),
                     media=spec.media,
-                    catalog=_row_catalog(ctx, spec),
                     # A 0% row drops finished titles from the pool entirely; a >0 row keeps them (the
                     # per-library cap trims the surplus at delivery). None -> exclude only the seeds.
                     watched_exclusions=watched_titles if effective_watched_pct(spec) == 0 else None,
@@ -565,15 +730,47 @@ def _run_user(
                 logger.warning("{}: row '{}' has no working candidate source ({})", user.username, spec.slug, e)
                 return None
             # Once per pool computation (this cache miss) — the gather's AI cost belongs to this user.
-            _record_gather(user_report, gather_stats)
+            # Label the pool by its media + sources so a multi-pool user's trace stays legible.
+            pool_label = f"{spec.media} · {', '.join(key[0])}"
+            _record_gather(user_report, gather_stats, pool_label=pool_label)
         return pool_cache[key]
+
+    resolve = _rating_key_resolver(seed_index)
+    # The watched breakdown (every watched movie; each show's watched-vs-total episode counts as Plex
+    # records them for this user, marks included — one WatchedItem per title, no per-play accumulation).
+    # Filled for BOTH branches: non-cold pools read it to exclude finished titles, and either branch's
+    # trace shows "watched N movies / M shows" — honest even for a thin cold-start history.
+    for item in user.history:
+        tid = item.tmdb_id if item.tmdb_id is not None else resolve(item)
+        if tid is None:
+            continue
+        if item.media_type is MediaType.MOVIE:
+            watched_movies.add(tid)
+        else:
+            watched_shows[tid] = (item.viewed_leaf_count or item.watch_count, item.leaf_count)
+    library_of_watch, library_of_seed = _library_resolvers(ctx)
 
     if cold:
         # Enough picks for the LARGEST row this user is in; each row then takes its own k.
         base_cold = _cold_start_picks(ctx, user, cfg, k=max(spec.size for spec in specs))
         user_report.status = "cold_start"
+        # File the trace even though no TMDB/Trakt search ran: their (thin) watches as the first stage —
+        # NO seeds, because nothing was searched from them (the point of cold start) — and a synthetic
+        # cold_start search stage. Without this the trace is empty, the run page shows no "How we picked"
+        # button, and a cold user reads as skipped when they weren't (the reported Cassie bug).
+        _record_history_trace(
+            user_report,
+            user.history,
+            specs,
+            lambda _spec: [],
+            watched_movies,
+            watched_shows,
+            library_of_watch=library_of_watch,
+            library_of_seed=library_of_seed,
+        )
+        _record_cold_start_trace(user_report, base_cold)
+        _pipeline._emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": 0})
     else:
-        resolve = _rating_key_resolver(seed_index)
         seed_cache: dict[tuple, list] = {}
 
         def seeds_for(spec: RowSpec) -> list:
@@ -582,26 +779,26 @@ def _run_user(
             key = (spec.media, tuple(sorted(str(k) for k in spec.library_keys)))
             if key not in seed_cache:
                 relevant = _history_for_row(ctx, user.history, spec)
-                seed_cache[key] = derive_seeds(relevant, resolve, max_seeds=cfg.max_seeds)
+                seed_cache[key] = derive_seeds(relevant, resolve, max_seeds=cfg.max_seeds, blocked=user.blocked_seeds)
             return seed_cache[key]
 
         # Reported as the widest seed set any of this person's rows uses — the "both media, every
         # library" case when they have one, so the number still means "how much of their history fed
         # tonight's rows" rather than one arbitrary row's slice.
         user_report.counts.seeds = max((len(seeds_for(spec)) for spec in specs), default=0)
-        # Full watched breakdown (not just the seeds): every watched movie, and each show's
-        # episode-play count. History is already completion-filtered, so this is meaningful watches.
-        for item in user.history:
-            tid = item.tmdb_id if item.tmdb_id is not None else resolve(item)
-            if tid is None:
-                continue
-            if item.media_type is MediaType.MOVIE:
-                watched_movies.add(tid)
-            else:
-                show_plays[tid] = show_plays.get(tid, 0) + 1
         # The finished-title set, derived once: read by pools_for (0% hard-exclude) and the per-row
         # watched cap (>0). Mutated in place so the pools_for closure sees it.
-        watched_titles |= _watched_titles(watched_movies, show_plays, ctx.episode_counts, cfg.watched_show_pct)
+        watched_titles |= _watched_titles(watched_movies, watched_shows, cfg.watched_show_pct)
+        _record_history_trace(
+            user_report,
+            user.history,
+            specs,
+            seeds_for,
+            watched_movies,
+            watched_shows,
+            library_of_watch=library_of_watch,
+            library_of_seed=library_of_seed,
+        )
         _pipeline._emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": user_report.counts.seeds})
         for spec in specs:  # build every row's pool up front so counts and demand see them all
             pools_for(spec)
@@ -683,21 +880,6 @@ def _run_user(
     # and it is visible to everyone (the leak we exist to fix).
     all_picks: list[Pick] = []
     delivered_any = False
-    # (row_slug, library_key) -> curate tokens, stamped onto each breakdown entry after the loop.
-    curate_tokens: dict[tuple[str, str], int] = {}
-
-    def curate_section(profile: UserProfile, cands: list[Candidate], want: int, spec: RowSpec, section) -> list[Pick]:
-        """Curate up to ``want`` picks from ``cands``, recording token spend and degrading to the
-        heuristic curator if the AI one fails. Empty in → empty out (nothing to curate)."""
-        if not cands or want <= 0:
-            return []
-        try:
-            picks = ctx.curator.curate(profile, cands, want)
-            _record_curate(user_report, curate_tokens, spec.slug, section.key, getattr(ctx.curator, "last_tokens", 0))
-            return picks
-        except CuratorError as e:
-            logger.warning("{}: curator failed ({}); degrading to heuristic mode", user.username, e)
-            return NullCurator().curate(profile, cands, want)
 
     for spec in specs:
         # A per-row override lets this one person resize or restyle this one row; each field falls
@@ -711,14 +893,6 @@ def _run_user(
         # movie row and a full show row (the "one movie in Picked for You" bug, SFLIX 2026-07-15).
         targets = target_sections(ctx.delivery_sections, spec)
         if not cold:
-            # The row's recipe (already the global one with the row's fields laid over it), then this
-            # person's override laid over THAT. Setting only a tone for one person used to wipe the
-            # row's guidance and custom prompt.
-            row_prompt = spec.prompt if spec.prompt is not None else base_prompt
-            effective_prompt = overlay_prompt(row_prompt, override.prompt if override else None)
-            # A per-row copy carries the effective recipe to the curator; the real profile is never
-            # mutated, so one row's recipe can't leak into the next row (or into delivery below).
-            row_profile = _with_prompt(user, effective_prompt)
             # This row's own pool: its sources, its media and its libraries — already narrowed to
             # all three BEFORE the pre-rank truncation, so nothing this row could show was cut by
             # candidates it could never show.
@@ -726,7 +900,8 @@ def _run_user(
             if pools is None:
                 continue  # every source this row uses is down; its siblings still deliver
             _pool, _in_library, pool_for_row = pools
-            _pipeline._emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row)})
+            row_label = spec.name_template or spec.slug
+            _pipeline._emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
         section_picks: dict[str, list[Pick]] = {}
         fresh = effective_freshness(spec)
         for section in targets:
@@ -758,22 +933,22 @@ def _run_user(
                     sec_picks = _pad_picks(sec_picks, sub, k)
             elif prior_valid:
                 # Refresh night: keep the strongest ~two-thirds, swap the rest for genuinely-new titles.
-                # Curate only from candidates NOT already in the row so a just-rotated-out title can't
+                # Pick only from candidates NOT already in the row so a just-rotated-out title can't
                 # bounce straight back — the internal anti-immediate-repeat guard that replaced staleness_runs.
                 keep_n = min(len(prior_valid), round(_KEEP_FRACTION * k))
                 kept = prior_valid[:keep_n]
                 prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
                 fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
-                new_picks = curate_section(row_profile, fresh_pool, k, spec, section)
+                new_picks = picker.build_picks(fresh_pool, k)
                 sec_picks = (kept + [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids])[:k]
                 if len(sec_picks) < k:
                     sec_picks = _pad_picks(sec_picks, fresh_pool, k)
             else:
                 # Bootstrap: this row+library has never been built (or its picks predate row/library
-                # stamping) — curate a fresh full row, exactly like a first run.
+                # stamping) — build a fresh full row, exactly like a first run.
                 if not sub:
                     continue
-                sec_picks = curate_section(row_profile, sub, k, spec, section)
+                sec_picks = picker.build_picks(sub, k)
                 if len(sec_picks) < k:
                     sec_picks = _pad_picks(sec_picks, sub, k)
 
@@ -804,7 +979,7 @@ def _run_user(
                 user_report.placement_titles[title + marker] = spec.slug
         picks = [pick for sp in section_picks.values() for pick in sp]
         all_picks.extend(picks)
-        _pipeline._emit(ctx, user.slug, "delivering", {"picks": len(picks)})
+        _pipeline._emit(ctx, user.slug, "delivering", {"picks": len(picks), "row": spec.name_template or spec.slug})
 
         # write_lock: the Plex collection writes AND the shared stored_labels mutation inside
         # deliver_rows must be serial across users — the leak-safe half of Stage 3 parallelism.
@@ -862,16 +1037,9 @@ def _run_user(
 
     user_report.picks = all_picks
     user_report.counts.picks = len(all_picks)
-    _stamp_row_tokens(user_report, curate_tokens)  # per-(row, library) curate cost onto each breakdown entry
     if not all_picks:
         logger.warning("{}: no picks produced — existing rows are left as they are", user.username)
     return delivered_any  # nothing delivered -> nothing to promote
-
-
-def _with_prompt(user: UserProfile, prompt: PromptConfig | None) -> UserProfile:
-    """A shallow copy of the profile carrying ``prompt`` — used to curate one row without mutating
-    the shared profile (its history/genres/overrides are read-only during curation)."""
-    return replace(user, prompt=prompt)
 
 
 def _run_shared(
@@ -967,7 +1135,6 @@ def _shared_row(
         user_type=UserType.SHARED,
         slug=slug,
         history=agg_history,
-        prompt=spec.prompt,
     )
     if not agg_history:
         user_report.status = "skipped"
@@ -1004,17 +1171,15 @@ def _shared_row(
         profile=agg,
         sources=row_sources,
         media=spec.media,
-        catalog=_row_catalog(ctx, spec),
         recent_count=spec.recent_count if spec.recent_count is not None else cfg.recent_count,
     )
-    _record_gather(user_report, gather_stats)  # shared-row gather AI cost (llm_web/llm_library + Exa)
+    _record_gather(user_report, gather_stats)  # shared-row gather AI cost (llm_web + Exa)
     k = spec.size
-    # Curate PER LIBRARY, exactly like a per-person row: each targeted library gets its own full k
-    # from its own contents. One mixed curate over a now media-segregated pool would let a 'both'
+    # Build PER LIBRARY, exactly like a per-person row: each targeted library gets its own full k
+    # from its own contents. One mixed pool over a now media-segregated pool would let a 'both'
     # shared row come back all-movies-no-shows.
     targets = target_sections(ctx.delivery_sections, spec)
     section_picks: dict[str, list[Pick]] = {}
-    curate_tokens: dict[tuple[str, str], int] = {}  # (row_slug, library_key) -> curate cost, stamped below
     for section in targets:
         kind = section_kind(section)
         sec_idx = ctx.section_index.get(section.key, {})
@@ -1022,29 +1187,15 @@ def _shared_row(
         if not sub:
             continue
         # NOTE: shared-row picks aren't persisted per-user (they file under `shared_<slug>`), so they
-        # can't carry forward like per-person rows yet — they re-curate each run. They're few (1-2) and
+        # can't carry forward like per-person rows yet — they rebuild each run. They're few (1-2) and
         # aggregate history changes slowly, so churn here is minor. See [[perf-work-state]] follow-up.
-        try:
-            sec_picks = ctx.curator.curate(agg, sub, k)
-            # Shared-row LLM spend used to vanish — only the per-person path accounted tokens.
-            toks = getattr(ctx.curator, "last_tokens", 0)
-            _record_curate(user_report, curate_tokens, spec.slug, section.key, toks)
-        except CuratorError as e:
-            # Match the personal-row path: say the curator failed so a heuristic-filled shared row
-            # ("Popular on this server") isn't a silent mystery to the operator.
-            logger.warning(
-                "shared row {!r} section {}: curator failed ({}); using heuristic",
-                spec.slug,
-                section.key,
-                type(e).__name__,
-            )
-            sec_picks = NullCurator().curate(agg, sub, k)
+        sec_picks = picker.build_picks(sub, k)
         if len(sec_picks) < k:
-            # Backfill from this library's ranked pool so a thin curate never SHRINKS the row.
+            # Backfill from this library's ranked pool so a thin build never SHRINKS the row.
             sec_picks = _pad_picks(sec_picks, sub, k)
         section_picks[section.key] = sec_picks
-    # Force aggregate framing regardless of curator: a shared row is nobody's "because you watched",
-    # and the seed is dropped so a {top_seed} name template can never surface one person's title.
+    # Force aggregate framing: a shared row is nobody's "because you watched", and the seed is
+    # dropped so a {top_seed} name template can never surface one person's title.
     # Stamp the library too, so a shared row spanning >1 library splits per library in the report.
     library_names = {section.key: getattr(section, "title", "") or "" for section in targets}
     section_picks = {
@@ -1085,7 +1236,6 @@ def _shared_row(
         breakdown=user_report.breakdown,
         order_work=order_work,
     )
-    _stamp_row_tokens(user_report, curate_tokens)  # per-(row, library) curate cost onto the breakdown
     return agg if picks else None
 
 
@@ -1140,7 +1290,7 @@ def _log_row_provenance(
 
 
 def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]:
-    """Top up short curator output from the heuristic order (never invents titles).
+    """Top up a short row from the ranked pool (never invents titles).
 
     Only from candidates whose source actually vouched for them: padding is where a weak association
     turns into a delivered row, so the row is allowed to come up short instead.
@@ -1153,11 +1303,7 @@ def _pad_picks(picks: list[Pick], ranked: list[Candidate], k: int) -> list[Pick]
             len(ranked) - len(worth_it),
             len(ranked),
         )
-    fillers = NullCurator().curate(
-        UserProfile(username="", plex_account_id=0, user_type=UserType.SHARED),
-        [c for c in worth_it if (c.tmdb_id, c.media_type) not in have],
-        k - len(picks),
-    )
+    fillers = picker.build_picks([c for c in worth_it if (c.tmdb_id, c.media_type) not in have], k - len(picks))
     out = list(picks)
     for f in fillers:
         out.append(Pick(**{**f.__dict__, "rank": len(out) + 1}))

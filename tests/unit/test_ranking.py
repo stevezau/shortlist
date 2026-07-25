@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from loguru import logger
 
 from shortlist.engine.models import Candidate, MediaType, Pick, RowSpec, Seed, UserProfile, UserType
-from shortlist.engine.ranking import pre_rank, score
+from shortlist.engine.ranking import diversify_by_seed, pre_rank, score
 from tests.conftest import make_candidate
 
 
@@ -94,6 +94,68 @@ class TestPreRank:
         assert len(pre_rank(pool, keep=3)) == 3
 
 
+class TestDiversifyBySeed:
+    """The final row-selection step that replaced the LLM curate call: each *seed* gets a fair share
+    of the row so one heavily-watched title can't swallow it. Input is `pre_rank` output (best-first)."""
+
+    @staticmethod
+    def _seeded(tmdb_id: int, seed_id: int, weight: float = 1.0) -> Candidate:
+        """A candidate whose sole (and therefore top) seed is `seed_id` — so it queues under it."""
+        return make_candidate(tmdb_id, f"t{tmdb_id}", seeds=[seed(seed_id, weight)])
+
+    def test_a_short_pool_is_returned_unchanged(self):
+        pool = [self._seeded(10, 1), self._seeded(11, 1), self._seeded(12, 2)]
+        # keep >= len: nothing to spread, hand the pool back exactly (same objects, same order).
+        assert diversify_by_seed(pool, keep=5) is pool
+
+    def test_the_single_best_pick_still_leads(self):
+        # Best-first input: the top-scored title heads a seed's queue, so seed A's best is picked first
+        # and diversifying never displaces the strongest pick.
+        pool = [self._seeded(10, 1), self._seeded(20, 2), self._seeded(11, 1), self._seeded(21, 2)]
+        out = diversify_by_seed(pool, keep=2)
+        assert out[0].tmdb_id == 10
+
+    def test_each_seed_gets_a_slot_before_any_seed_gets_a_second(self):
+        pool = [
+            self._seeded(10, 1),  # seed 1, best
+            self._seeded(11, 1),  # seed 1, second
+            self._seeded(20, 2),  # seed 2, best
+            self._seeded(30, 3),  # seed 3, best
+        ]
+        out = diversify_by_seed(pool, keep=3)
+        # One per seed in the order each seed's best appeared — NOT 10,11,20 (which a score-sort gives).
+        assert [c.tmdb_id for c in out] == [10, 20, 30]
+
+    def test_one_flooding_seed_cannot_occupy_every_slot(self):
+        """The bug this exists to prevent: 30 Breaking Bad look-alikes and a handful of everything else
+        gave a row of nothing but Breaking Bad. Every other taste must still reach the row."""
+        pool = [self._seeded(100 + i, 1) for i in range(30)]  # one seed floods the pool
+        pool += [self._seeded(200, 2), self._seeded(300, 3), self._seeded(400, 4)]
+        out = diversify_by_seed(pool, keep=8)
+        seeds_present = {c.top_seed.tmdb_id for c in out}
+        assert seeds_present == {1, 2, 3, 4}, "all four tastes must survive to the row"
+        assert sum(1 for c in out if c.top_seed.tmdb_id == 1) < 8, "the flooding seed can't take every slot"
+
+    def test_seedless_candidates_share_one_queue_and_interleave(self):
+        """discover / web / cold-start picks carry no seed — they queue together under None and get
+        their fair share alongside the seeded tastes, not dropped."""
+        pool = [
+            self._seeded(10, 1),
+            make_candidate(90, "web1", seeds=[]),  # seedless
+            self._seeded(11, 1),
+            make_candidate(91, "web2", seeds=[]),  # seedless
+        ]
+        out = diversify_by_seed(pool, keep=2)
+        # Seed 1's best, then the seedless queue's best — one taste each, not both seed-1 titles.
+        assert [c.tmdb_id for c in out] == [10, 90]
+
+    def test_falls_back_to_the_remaining_queue_when_others_run_dry(self):
+        # keep exceeds the seed count, so after every seed is served the still-full queue backfills.
+        pool = [self._seeded(10, 1), self._seeded(11, 1), self._seeded(12, 1), self._seeded(20, 2)]
+        out = diversify_by_seed(pool, keep=3)
+        assert [c.tmdb_id for c in out] == [10, 20, 11]  # seed1, seed2, back to seed1's next
+
+
 class TestWatchedTitles:
     """The finished-title set: a movie you watched, or a show seen >= show_pct — but not a partway
     show or one with a new season."""
@@ -101,20 +163,24 @@ class TestWatchedTitles:
     def _finished(self, movies, plays, episodes, pct=0.9):
         from shortlist.engine.rows import _watched_titles
 
-        return _watched_titles(set(movies), dict(plays), dict(episodes), pct)
+        # Plex gives per-show (viewed, total) counts; the old split plays/episodes dicts merge into that.
+        watched_shows = {tid: (viewed, episodes.get(tid)) for tid, viewed in plays.items()}
+        return _watched_titles(set(movies), watched_shows, pct)
 
     def test_counts_finished_movies_and_shows_but_not_partial(self):
-        # movie 1 watched; show 10 finished (9 of 10 eps); show 20 partway (2 of 10); show 30 new
-        # season so only 5 of 40 eps watched.
+        # movie 1 watched; show 10 finished (9 of 10 eps); show 20 partway (2 of 10); show 30 well
+        # past the scaled floor of a 40-ep show (8 >= 15% of 40 = 6), so counts as finished.
+        # Show 40: only 2 eps of a 40-ep show = below the scaled floor (6), still fresh.
         finished = self._finished(
             movies={1},
-            plays={10: 9, 20: 2, 30: 5},
-            episodes={10: 10, 20: 10, 30: 40},
+            plays={10: 9, 20: 2, 30: 8, 40: 2},
+            episodes={10: 10, 20: 10, 30: 40, 40: 40},
         )
         assert (1, MediaType.MOVIE) in finished  # finished movie
-        assert (10, MediaType.SHOW) in finished  # finished show
-        assert (20, MediaType.SHOW) not in finished  # partway -> still recommend
-        assert (30, MediaType.SHOW) not in finished  # new season -> eligible again
+        assert (10, MediaType.SHOW) in finished  # finished show (9 >= min(10*0.9, floor 3) = 3)
+        assert (20, MediaType.SHOW) not in finished  # partway (2 < floor 3) -> still recommend
+        assert (30, MediaType.SHOW) in finished  # 8 >= floor max(3, 40*0.15=6) = 6 -> counts as watched
+        assert (40, MediaType.SHOW) not in finished  # 2 < floor 6 -> eligible again
 
     def test_unknown_episode_count_is_treated_as_finished(self):
         finished = self._finished(movies=set(), plays={10: 3}, episodes={})
@@ -128,15 +194,16 @@ class TestWatchedTitles:
 
     def test_a_lightly_sampled_show_is_still_a_fresh_pick(self):
         # A handful of episodes of a big show: below both the fraction AND the floor -> recommendable.
-        finished = self._finished(movies=set(), plays={40: 4}, episodes={40: 226})
+        # With _ENGAGED_EPISODES=3, need <3 plays to stay fresh: 2 of 226 is well below both bars.
+        finished = self._finished(movies=set(), plays={40: 2}, episodes={40: 226})
         assert (40, MediaType.SHOW) not in finished
 
     def test_a_near_complete_short_show_counts_at_the_lowered_bar(self):
         # 8 of 9 episodes = 89%: caught up on a returning show (the newest ep just aired). At the 0.8
-        # default it counts as watched; at the old 0.9 it wrongly stayed a fresh pick (MooHouse's
-        # "Deadliest Catch: The Viking Returns"). The floor (10) doesn't help a 9-episode show.
+        # default it counts as watched. With _ENGAGED_EPISODES lowered from 10 to 3 (issue #12), the
+        # floor (3) catches short shows early — 8 >= min(9*0.9, 3) = 3, so even at pct=0.9 it's finished.
         assert (10, MediaType.SHOW) in self._finished(movies=set(), plays={10: 8}, episodes={10: 9}, pct=0.8)
-        assert (10, MediaType.SHOW) not in self._finished(movies=set(), plays={10: 8}, episodes={10: 9}, pct=0.9)
+        assert (10, MediaType.SHOW) in self._finished(movies=set(), plays={10: 8}, episodes={10: 9}, pct=0.9)
 
 
 class TestWatchedCap:

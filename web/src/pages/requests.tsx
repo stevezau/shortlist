@@ -28,6 +28,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { apiErrorMessage } from "@/lib/api";
 import { formatDate, settingBool, settingString } from "@/lib/format";
 import {
+  useArrStatus,
   useClearRequests,
   useDeleteRequests,
   useRejectRequests,
@@ -287,12 +288,14 @@ function SentRow({
   sonarrUrl,
   onClear,
   clearing,
+  arrStatus,
 }: {
   item: RequestCandidate;
   radarrUrl: string;
   sonarrUrl: string;
   onClear: (id: number) => void;
   clearing: boolean;
+  arrStatus?: string | null;
 }) {
   const isMovie = item.media_type === "movie";
   const app = isMovie ? "Radarr" : "Sonarr";
@@ -326,6 +329,27 @@ function SentRow({
             <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
             Sent to {app}
           </Badge>
+          {arrStatus && (
+            <Badge
+              variant={
+                arrStatus === "downloaded"
+                  ? "success"
+                  : arrStatus === "downloading"
+                    ? "default"
+                    : "secondary"
+              }
+            >
+              {arrStatus === "downloaded"
+                ? "Downloaded"
+                : arrStatus === "downloading"
+                  ? "Downloading"
+                  : arrStatus === "queued"
+                    ? "Queued"
+                    : arrStatus === "monitored"
+                      ? "Monitored"
+                      : "Unmonitored"}
+            </Badge>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -448,6 +472,7 @@ function sortRequests(
 export function RequestsPage() {
   const requestsQuery = useRequests();
   const settingsQuery = useSettings();
+  const arrStatusQuery = useArrStatus();
   const send = useSendRequests();
   const reject = useRejectRequests();
   const del = useDeleteRequests();
@@ -849,6 +874,7 @@ export function RequestsPage() {
                                 sonarrUrl={sonarrUrl}
                                 onClear={(id) => clear.mutate([id])}
                                 clearing={clear.isPending}
+                                arrStatus={arrStatusQuery.data?.[item.id]}
                               />
                             ))}
                           </div>

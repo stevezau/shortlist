@@ -13,6 +13,23 @@ export function timeAgo(iso: string | null): string {
   return `${days}d ago`;
 }
 
+/** "in 6h" style relative time for a FUTURE ISO timestamp. */
+export function timeUntil(iso: string | null): string {
+  if (!iso) return "—";
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "—";
+  const seconds = Math.max(0, Math.floor((then - Date.now()) / 1000));
+  if (seconds < 60) return "in <1m";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMin = minutes % 60;
+  if (hours < 24)
+    return remMin > 0 ? `in ${hours}h ${remMin}m` : `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d`;
+}
+
 export function formatDate(iso: string | null): string {
   if (!iso) return "—";
   const date = new Date(iso);

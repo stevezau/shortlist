@@ -189,7 +189,7 @@ export function StepUsers() {
                 {users.map((user) => (
                   <TableRow key={user.id}>
                     <TableCell className="font-medium">
-                      {user.username}
+                      {user.display_name || user.username}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">

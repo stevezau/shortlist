@@ -80,19 +80,19 @@ def _skip_history(page: Page) -> None:
 
     Without a TMDB key there is nothing to recommend FROM — every run dies at the first user
     with a 401 — so the wizard must not let you past this step until a key is on file. Tautulli
-    stays optional: Plex's own history works.
+    stays optional (it only supplies friendlier display names); skipping uses Plex usernames.
     """
     page.get_by_role("button", name="Next").click()
     expect(page.get_by_role("heading", name="Recommendations & history")).to_be_visible()
 
     # The gate: you cannot leave, or even skip Tautulli, without TMDB.
-    expect(page.get_by_role("button", name="Skip — Plex's own history works without it")).to_be_disabled()
+    expect(page.get_by_role("button", name="Skip — use Plex usernames")).to_be_disabled()
 
     page.get_by_label("TMDB API key (required)").fill("fake-tmdb-key")
     page.get_by_role("button", name="Save TMDB key").click()
     expect(page.get_by_text("TMDB key works")).to_be_visible(timeout=LOAD)
 
-    page.get_by_role("button", name="Skip — Plex's own history works without it").click()
+    page.get_by_role("button", name="Skip — use Plex usernames").click()
 
 
 def _choose_no_curator(page: Page) -> None:

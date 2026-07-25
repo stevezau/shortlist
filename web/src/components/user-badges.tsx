@@ -40,6 +40,22 @@ export function UserTypeBadge({ user }: { user: User }) {
 }
 
 /**
+ * A restricted (parental-controlled) account — Plex hides all content outside their age rating,
+ * including all collections. No row is built because they literally cannot see it.
+ */
+export function RestrictedBadge({ user }: { user: User }) {
+  if (!user.restricted) return null;
+  return (
+    <Badge
+      variant="destructive"
+      title="This account has Plex parental controls. Plex hides all collections from them, so no row is built. Remove the age restriction in Plex to enable recommendations."
+    >
+      Restricted
+    </Badge>
+  );
+}
+
+/**
  * Not a type — a STATE, and a temporary one: this person has too little watch history to
  * personalise from, so their row is built from popular titles until they've watched more. Shown
  * beside their watch history, where it explains the number sitting next to it.
@@ -72,6 +88,7 @@ export function UserBadges({
   return (
     <>
       <UserTypeBadge user={user} />
+      <RestrictedBadge user={user} />
       <ColdStartBadge user={user} />
     </>
   );

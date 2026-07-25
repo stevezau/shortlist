@@ -34,24 +34,6 @@ describe("RecommendationsSection", () => {
   // The model is "intent + inline fix": a source's toggle is never disabled; when it's on but its
   // dependency is missing, the card shows exactly how to satisfy it right there.
 
-  it("prompts to set up a curator when AI-from-library is on without one — toggle stays usable", () => {
-    renderSection({ "candidates.sources": ["llm_library"] });
-    expect(
-      screen.getByLabelText(/suggests from your library/i),
-    ).not.toBeDisabled();
-    expect(
-      screen.getByText(/Needs an AI curator to read/i),
-    ).toBeInTheDocument();
-  });
-
-  it("drops the curator prompt once a curator is configured", () => {
-    renderSection({
-      "curator.provider": "anthropic",
-      "candidates.sources": ["llm_library"],
-    });
-    expect(screen.queryByText(/Needs an AI curator to read/i)).toBeNull();
-  });
-
   it("shows an inline Trakt key field when the Trakt source is on without a key", () => {
     renderSection({ "candidates.sources": ["trakt"] });
     expect(screen.getByLabelText(/Trakt API key/i)).toBeInTheDocument();
@@ -101,11 +83,11 @@ describe("RecommendationsSection", () => {
       "candidates.sources": ["llm_web"],
     });
     expect(
-      screen.getByText(/needs an AI curator to choose titles/i),
+      screen.getByText(/needs an AI provider to choose titles/i),
     ).toBeInTheDocument();
   });
 
-  it("AI web search: 'Curator's own' on a curator that can't self-search (Ollama) warns loudly", () => {
+  it("AI web search: 'AI provider's own' on a provider that can't self-search (Ollama) warns loudly", () => {
     // Regression: this cell used to show the toggle ON with no prompt while the engine did nothing.
     renderSection({
       "curator.provider": "ollama",
@@ -118,13 +100,13 @@ describe("RecommendationsSection", () => {
   });
 
   it("persists an enabled source even when its dependency isn't met yet (intent, not stripped)", async () => {
-    renderSection({ "candidates.sources": ["tmdb_similar"] }); // no curator configured
-    fireEvent.click(screen.getByLabelText(/suggests from your library/i)); // needs a curator
+    renderSection({ "candidates.sources": ["tmdb_similar"] }); // no Trakt key configured
+    fireEvent.click(screen.getByLabelText(/Trakt — related titles/i)); // needs a Trakt key
     await waitFor(() => expect(putSettings).toHaveBeenCalled());
     const sources = putSettings.mock.calls.at(-1)?.[0]?.[
       "candidates.sources"
     ] as string[];
-    expect(sources).toContain("llm_library"); // kept as intent, NOT stripped for the missing curator
+    expect(sources).toContain("trakt"); // kept as intent, NOT stripped for the missing key
   });
 
   it("saves the backend choice to llm_web.search_provider", async () => {

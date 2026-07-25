@@ -45,13 +45,13 @@ labeled collection excluded on every other account's share, so only its owner ev
 - 👤 **A private row for every user** — built from _their_ watch history, visible only to them. One
   container serves your whole server. **Including you**: the server owner gets a row like anyone
   else, so Shortlist is just as useful on a one-person server.
-- 🧠 **Smart picks, no hallucinations** — an optional LLM (Claude / GPT / Gemini, or any local
-  server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI)
-  curates and explains the picks, but only ever from titles verified to exist in your library.
-  **Works with zero AI too** (heuristic mode) — no keys required.
-- 🌐 **Finds what to watch next from everywhere** — pools candidates from TMDB, Trakt, your own
-  library, and a **live web search** for current, well-reviewed titles (via the curator's own web
-  search or an [Exa](https://exa.ai) key).
+- 🧠 **Smart picks, no hallucinations** — every pick is a title verified to exist in your library,
+  never invented. **Works with zero AI** (heuristic mode, no keys required); an optional LLM (Claude /
+  GPT / Gemini, or any local server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI) adds one extra
+  source — a live web search for what to watch next.
+- 🌐 **Finds what to watch next from everywhere** — pools candidates from TMDB, Trakt, and an optional
+  **live web search** for current, well-reviewed titles (via the AI provider's own web search or an
+  [Exa](https://exa.ai) key).
 - 💬 **Explains itself** — every pick says "Because you watched X".
 - 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, and it looks
   back through your full history so both movies and TV shape the picks.
@@ -59,7 +59,7 @@ labeled collection excluded on every other account's share, so only its owner ev
 **Make it yours**
 
 - 🎞️ **Multiple rows per person + shared rows** — e.g. a personal row, a "New this week" shared
-  row, per-library rows — each with its own sources, size, libraries, curation style, and audience.
+  row, per-library rows — each with its own sources, size, libraries, freshness, and audience.
 - 🗓️ **Freshness you control** — rows stay stable and refresh on a cadence you set (nightly →
   fortnightly), so people aren't shown a totally reshuffled row every day.
 - 📍 **Row placement** — choose which Plex shelf each row lands on (Home, the library's Recommended
@@ -87,12 +87,12 @@ labeled collection excluded on every other account's share, so only its owner ev
 
 ## Screenshots
 
-|                                                               |                                                                     |
-| ------------------------------------------------------------- | ------------------------------------------------------------------- |
-| ![Setup wizard](docs/images/wizard.png)                       | ![A user's picks and why](docs/images/user-detail.png)              |
-| **A ~10-minute setup wizard** — connect Plex, pick users, go  | **Each person's row, and _why_ each pick** — "Because you watched…" |
-| ![A run in progress](docs/images/run-detail.png)              | ![Settings & integrations](docs/images/settings.png)                |
-| **Watch every run** — history → candidates → curate → deliver | **Connects to what you run** — Tautulli, Radarr/Sonarr, Trakt, LLMs |
+|                                                              |                                                                     |
+| ------------------------------------------------------------ | ------------------------------------------------------------------- |
+| ![Setup wizard](docs/images/wizard.png)                      | ![A user's picks and why](docs/images/user-detail.png)              |
+| **A ~10-minute setup wizard** — connect Plex, pick users, go | **Each person's row, and _why_ each pick** — "Because you watched…" |
+| ![A run in progress](docs/images/run-detail.png)             | ![Settings & integrations](docs/images/settings.png)                |
+| **Watch every run** — history → candidates → rank → deliver  | **Connects to what you run** — Tautulli, Radarr/Sonarr, Trakt, LLMs |
 
 <sub>App screenshots use placeholder titles (a test library); the Plex row above is a real server.</sub>
 

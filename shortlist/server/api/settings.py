@@ -102,7 +102,7 @@ def _known_sources(value: object) -> str | None:
 # client reached the engine (`row.size: "abc"` crashed every run and 500'd two endpoints).
 VALIDATORS = {
     "row.size": _bounded_int(5, 40),  # ceiling = candidates_pre_rank (per-media pool cap)
-    "runs.retention": _bounded_int(0, 10000),  # 0 = keep every run
+    "runs.retention": _bounded_int(0, 24),  # months; 0 = keep forever
     # The FLOOR (minimum seconds) between plex.tv writes. 0 = fire as fast as plex.tv accepts; the
     # client backs off adaptively on 429 (rule 6), so 0 is safe, not an "off switch" like it once was.
     "plextv.throttle_s": _bounded_float(0.0, 60.0),
@@ -121,7 +121,6 @@ VALIDATORS = {
     # "ollama" stays accepted: it is the pre-merge name for openai_compatible, and an instance
     # configured before the merge still has it stored.
     "curator.provider": _one_of("anthropic", "openai", "openai_compatible", "google", "ollama", "none"),
-    "curator.prompt_tone": _one_of("balanced", "warm", "concise", "cinephile", "playful"),
     "requests.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     "requests.min_rating": _bounded_float(0.0, 10.0),
     "requests.auto_min_rating": _bounded_float(0.0, 10.0),
@@ -145,40 +144,6 @@ def _validate_values(values: dict[str, object]) -> None:
 def _check(key: str, value: object) -> str | None:
     validator = VALIDATORS.get(key)
     return validator(value) if validator else None
-
-
-class PromptPreviewRequest(BaseModel):
-    tone: str = "balanced"
-    guidance: str = ""
-    template: str = ""
-    shared: bool = False
-
-
-@router.post("/prompt-preview")
-async def prompt_preview(body: PromptPreviewRequest, request: Request) -> dict:
-    """Assemble the system+user prompt from a recipe against fixed sample data, so the owner can see
-    the effect of a tone/guidance/template before saving. Uses the configured row size for k."""
-    from shortlist.engine.curator.base import build_prompts
-    from shortlist.engine.curator.preview import sample_preview_inputs
-    from shortlist.engine.models import PromptConfig
-
-    with request.app.state.sessions() as session:
-        k = int(SettingsStore(session, request.app.state.secrets).get("row.size"))
-
-    profile, candidates = sample_preview_inputs(
-        PromptConfig(tone=body.tone, guidance=body.guidance, template=body.template, shared=body.shared)
-    )
-    system, user = build_prompts(profile, candidates, k)
-    return {"system": system, "user": user}
-
-
-@router.get("/prompt-default")
-async def prompt_default(shared: bool = False) -> dict:
-    """The built-in curation prompt as an editable template, so the 'write the whole prompt yourself'
-    box can start from the default rather than a blank slate. ``shared`` picks the group-row wording."""
-    from shortlist.engine.curator.base import default_prompt_template
-
-    return {"template": default_prompt_template(shared)}
 
 
 @router.get("")
@@ -205,6 +170,10 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
             from shortlist.logging_config import configure_logging
 
             configure_logging(str(update.values["log.level"]))
+        if "sync.watch_cron" in update.values or "sync.users_cron" in update.values:
+            from shortlist.server.scheduler import rebuild_schedule
+
+            rebuild_schedule(request.app)
         return store.all_public()
 
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import replace
 
 from loguru import logger
 from sqlalchemy import and_, func
@@ -19,12 +18,11 @@ from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.search import ExaClient
-from shortlist.engine.clients.tautulli import TautulliClient
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.curator import make_curator
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, render_row_name
-from shortlist.engine.history import FallbackHistorySource, PlexHistorySource, TautulliSource, distinct_recent
+from shortlist.engine.history import ShareTokenWatchSource, distinct_recent
 from shortlist.engine.models import (
     ArrTarget,
     EngineConfig,
@@ -32,13 +30,11 @@ from shortlist.engine.models import (
     MediaType,
     Pick,
     PosterSpec,
-    PromptConfig,
     RequestConfig,
     RowOverride,
     RowSpec,
     UserProfile,
     UserType,
-    overlay_prompt,
 )
 from shortlist.engine.pipeline import EngineContext
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
@@ -55,19 +51,7 @@ from shortlist.server.db.models import (
 )
 from shortlist.server.services.poster_service import load_upload, make_studio
 from shortlist.server.services.sse import EventBus
-from shortlist.server.services.watch_history import StoreHistorySource
 from shortlist.server.settings_store import SettingsStore
-
-
-def _prompt_from_recipe(recipe: dict) -> PromptConfig:
-    """A stored recipe dict → PromptConfig, blank fields preserved. Empty means "inherit": the engine
-    overlays this on the layer below field by field, so defaulting any field here (e.g. tone →
-    "balanced") would let an empty recipe silently beat the global/row recipe it should inherit."""
-    return PromptConfig(
-        tone=(recipe.get("tone") or "").strip(),
-        guidance=(recipe.get("guidance") or "").strip(),
-        template=(recipe.get("template") or "").strip(),
-    )
 
 
 def curator_kwargs(get: Callable[[str], object]) -> dict:
@@ -131,7 +115,7 @@ class ContextBuilder:
             # native provider tools still work without it — only Ollama depends on it).
             exa_key = store.get("exa.apikey")
             search = ExaClient(exa_key) if exa_key else None
-            history = self._history_source(store, plex, session)
+            history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get))
             # Build the poster studio only if a row actually renders a poster from text (built-in or
@@ -198,11 +182,11 @@ class ContextBuilder:
             trakt=trakt,
             search=search,
             poster_artist=poster_artist,
-            # The engine reads the COMPLETE watch history from a local store, synced incrementally from
-            # `history` (Plex/Tautulli) — Plex's API only returns the most recent ~200 plays, which hid
-            # a heavy watcher's older watches from the already-watched filter. StoreHistorySource.fetch
-            # syncs-then-reads, so it drops into the existing history_source slot unchanged.
-            history_source=StoreHistorySource(self._sessions, history, min_completion=config.min_completion),
+            # The engine reads each user's COMPLETE watched set by reading the PMS AS them, with the
+            # per-user server token plex.tv mints for every share. That set carries their own
+            # viewCount/viewedLeafCount — so a mark-as-watched (which the playback-history API never
+            # returns, and which capped at ~200 plays) is seen, with no PMS database mount.
+            history_source=history,
             curator=curator,
             snapshots=DbSnapshotStore(self._sessions),
             index_cache=DbCache(self._sessions, kind="library_index"),
@@ -251,21 +235,6 @@ class ContextBuilder:
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             return self._build_requests(store), tmdb
 
-    @staticmethod
-    def _history_source(store: SettingsStore, plex: PlexClient, session: Session):
-        """The watch-history source: Tautulli-with-Plex-fallback when Tautulli is set, else Plex.
-
-        The roster's account ids go to the Plex source so it can resolve the OWNER's local PMS
-        account without ever landing on somebody else's — see PlexClient.system_account_id.
-        """
-        roster = frozenset(row[0] for row in session.query(User.plex_account_id).all())
-        if store.get("tautulli.url"):
-            return FallbackHistorySource(
-                TautulliSource(TautulliClient(store.get("tautulli.url"), store.get("tautulli.apikey"))),
-                PlexHistorySource(plex, roster_account_ids=roster),
-            )
-        return PlexHistorySource(plex, roster_account_ids=roster)
-
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         """Recent watches for one user, newest first — the same source that feeds recommendations.
 
@@ -285,7 +254,9 @@ class ContextBuilder:
                 user_type=UserType(user.user_type),
                 slug=user.slug,
             )
-            history = self._history_source(store, PlexClient(plex_url, plex_token), session)
+            plex = PlexClient(plex_url, plex_token)
+            plextv = PlexTvClient(plex_token, plex.machine_id)
+            history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
         # A lower completion bar than a run uses: this is "what they've been watching", not seeds.
         # Distinct titles, newest first: a show's episodes collapse to the one show (keeping its most
         # recent episode's detail), so a binge shows as one entry and the list reflects real variety —
@@ -385,6 +356,8 @@ class ContextBuilder:
         overrides = self._row_overrides(session)
         profiles = []
         for user in query.all():
+            if user.restricted:
+                continue
             prefs = user.prefs or {}
             if prefs.get("paused"):
                 continue
@@ -399,11 +372,10 @@ class ContextBuilder:
                     plex_account_id=user.plex_account_id,
                     user_type=UserType(user.user_type),
                     slug=user.slug,
-                    # The owner's own nickname wins; Tautulli's friendly name is only the default.
                     nickname=user.nickname or user.friendly_name,
                     excluded_genres=set(prefs.get("excluded_genres") or []),
+                    blocked_seeds=set(prefs.get("blocked_seeds") or []),
                     row_name_template=prefs.get("row_name_tpl"),
-                    prompt=self._resolve_prompt(store, prefs),
                     request_tag=request_tag,
                     row_overrides=overrides.get(user.id, {}),
                 )
@@ -419,11 +391,9 @@ class ContextBuilder:
             slug = slug_by_id.get(row.collection_id)
             if slug is None:
                 continue
-            recipe = row.prompt or {}
-            prompt = None
-            if recipe.get("tone") or recipe.get("guidance") or recipe.get("template"):
-                prompt = _prompt_from_recipe(recipe)
-            out.setdefault(row.user_id, {})[slug] = RowOverride(muted=row.muted, size=row.row_size, prompt=prompt)
+            out.setdefault(row.user_id, {})[slug] = RowOverride(
+                muted=row.muted, size=row.row_size, recent_count=row.recent_count
+            )
         return out
 
     @staticmethod
@@ -457,10 +427,9 @@ class ContextBuilder:
     def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
         """Build the engine's row specs from the enabled collections.
 
-        The default 'picked' row keeps an empty name_template and no recipe here, so the per-user
-        row-name and Phase-A prompt on the profile still apply to it; other rows carry their own
-        name and recipe. A subset audience is resolved from user ids to plex account ids (what the
-        engine matches on).
+        The default 'picked' row keeps an empty name_template here, so the per-user row-name on the
+        profile still applies to it; other rows carry their own name. A subset audience is resolved
+        from user ids to plex account ids (what the engine matches on).
 
         Always ALL enabled rows — never scoped. A per-row scheduled run limits which rows actually
         rebuild via ``EngineConfig.build_only``, not by hiding rows from this list, so privacy
@@ -476,22 +445,6 @@ class ContextBuilder:
             shared = collection.build == "shared"
             audience = self._subset_audience(collection, account_by_user, audience_by_collection)
             is_default = collection.slug == DEFAULT_SLUG
-            prompt: PromptConfig | None = None
-            if not is_default:
-                # A custom row's recipe is the GLOBAL one with this row's fields laid over it. Built
-                # unconditionally before, an empty row recipe produced a bare `balanced` PromptConfig
-                # that beat the global one downstream — so Settings -> Curation style applied to the
-                # default row and NOTHING else, while its own copy claimed it wrote "everyone's rows".
-                row_recipe = _prompt_from_recipe(collection.prompt or {})
-                merged = overlay_prompt(self._resolve_prompt(store, {}), row_recipe)
-                prompt = replace(merged, shared=shared)
-            elif shared:
-                # The default row's style comes from global Settings. A PER-PERSON one inherits that
-                # via the user's own resolved prompt (prompt=None lets it through — rows.py), but a
-                # SHARED row has no user profile to inherit from: leaving it None would curate it
-                # with a bare default and silently ignore Settings -> Curation style. So pass the
-                # global recipe explicitly.
-                prompt = replace(self._resolve_prompt(store, {}), shared=True)
             specs.append(
                 RowSpec(
                     slug=collection.slug,
@@ -503,7 +456,6 @@ class ContextBuilder:
                     media=collection.media,
                     shared=shared,
                     audience=audience,
-                    prompt=prompt,
                     min_watchers=collection.min_watchers,
                     request_tag=(collection.request_tag or "").strip(),
                     candidate_sources=list(collection.candidate_sources or []),
@@ -660,24 +612,4 @@ class ContextBuilder:
             auto_send=bool(store.get("requests.auto_send")),
             auto_min_demand=int(store.get("requests.auto_min_demand")),
             auto_min_rating=float(store.get("requests.auto_min_rating")),
-        )
-
-    @staticmethod
-    def _resolve_prompt(store: SettingsStore, prefs: dict) -> PromptConfig:
-        """Merge the global curation recipe with this user's per-person overrides.
-
-        tone/template: the user's value wins if set, else the global default. guidance is additive —
-        the house guidance plus the per-person note. Empty string means "inherit" everywhere.
-        """
-        global_tone = store.get("curator.prompt_tone") or "balanced"
-        global_guidance = (store.get("curator.prompt_guidance") or "").strip()
-        global_template = (store.get("curator.prompt_template") or "").strip()
-        user_tone = (prefs.get("prompt_tone") or "").strip()
-        user_guidance = (prefs.get("prompt_guidance") or "").strip()
-        user_template = (prefs.get("prompt_template") or "").strip()
-        guidance = "\n".join(part for part in (global_guidance, user_guidance) if part)
-        return PromptConfig(
-            tone=user_tone or global_tone,
-            guidance=guidance,
-            template=user_template or global_template,
         )

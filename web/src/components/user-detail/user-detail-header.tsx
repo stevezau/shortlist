@@ -28,7 +28,7 @@ export function UserDetailHeader({ user }: { user: User }) {
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold tracking-tight">
-                {user.username}
+                {user.display_name || user.username}
               </h1>
               <UserBadges user={user} />
               {!user.enabled && <Badge variant="secondary">off</Badge>}
@@ -37,6 +37,9 @@ export function UserDetailHeader({ user }: { user: User }) {
               )}
             </div>
             <p className="text-sm text-muted-foreground">
+              {user.display_name && user.display_name !== user.username && (
+                <>Plex username: {user.username} · </>
+              )}
               {user.history_depth} titles watched · last run{" "}
               {timeAgo(user.last_run_at)} · {formatHitRate(user.hit_rate)} of
               picks watched
@@ -75,17 +78,18 @@ export function UserDetailHeader({ user }: { user: User }) {
             variant="secondary"
             onClick={() => startRun.mutate({ user_ids: [user.id] })}
             loading={startRun.isPending}
-            title={`Rebuilds only ${user.username}'s rows, just for them — no one else is touched.`}
+            title={`Rebuilds only ${user.display_name || user.username}'s rows, just for them — no one else is touched.`}
           >
             {!startRun.isPending && <RefreshCw aria-hidden="true" />}
-            Run for {user.username}
+            Run for {user.display_name || user.username}
           </Button>
         </div>
       </header>
 
       {startRun.isSuccess && (
         <p className="text-sm text-muted-foreground">
-          Run started for {user.username} only — watch it live on the Dashboard.
+          Run started for {user.display_name || user.username} only — watch it
+          live on the Dashboard.
         </p>
       )}
 

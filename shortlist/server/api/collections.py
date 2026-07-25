@@ -1,5 +1,5 @@
 """Collections API: define curated rows — how each is built (per-person | shared), who it's for
-(audience), and its recipe (size, media, name, prompt). Owner-only."""
+(audience), and its recipe (size, media, name). Owner-only."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from fastapi.concurrency import run_in_threadpool
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import func
+from starlette.responses import StreamingResponse
 
 from shortlist.engine.candidates import KNOWN_SOURCES
-from shortlist.engine.curator.base import TONE_PRESETS
 from shortlist.engine.models import dedupe_slug, slugify
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Event, PickRow, User
@@ -37,19 +37,6 @@ PLACEMENTS = {"both", "home", "library"}
 # "" (Plex default), "upload", "text" (built-in Pillow), "ai" (image model). "generate" is the
 # pre-text-engine name for "ai", accepted for backward compatibility.
 POSTER_MODES = {"", "upload", "text", "ai", "generate"}
-
-
-class PromptIn(BaseModel):
-    """A row's curation recipe. EVERY field is blank-means-inherit-the-global-one.
-
-    `tone` defaulted to "balanced", which is indistinguishable from "unset" — so a row could never
-    inherit Settings -> Curation style, and every row silently overrode it with a bare balanced
-    recipe. Blank is the only honest default.
-    """
-
-    tone: str = ""
-    guidance: str = ""
-    template: str = ""
 
 
 class HubAnchorIn(BaseModel):
@@ -98,7 +85,6 @@ class CollectionIn(BaseModel):
     # Per-library Recommended-shelf override for this row, keyed by section key. {} -> inherit the
     # global default (settings `rows.hub_anchor`).
     hub_anchor: dict[str, HubAnchorIn] = Field(default_factory=dict)
-    prompt: PromptIn = Field(default_factory=PromptIn)
     poster: PosterIn = Field(default_factory=PosterIn)
 
 
@@ -112,8 +98,6 @@ def _validate(body: CollectionIn) -> None:
     unknown = [s for s in body.candidate_sources if s not in KNOWN_SOURCES]
     if unknown:
         raise HTTPException(422, f"unknown candidate source(s) {unknown}; valid: {sorted(KNOWN_SOURCES)}")
-    if body.prompt.tone and body.prompt.tone not in TONE_PRESETS:
-        raise HTTPException(422, f"unknown tone {body.prompt.tone!r}; valid: {sorted(TONE_PRESETS)} (or blank)")
     if body.placement not in PLACEMENTS:
         raise HTTPException(422, f"placement must be one of {sorted(PLACEMENTS)}")
     if body.poster.mode not in POSTER_MODES:
@@ -195,15 +179,8 @@ def _serialize(session, collection: Collection) -> dict:
         "pin_top": bool(collection.pin_top),
         "hub_anchor": collection.hub_anchor or {},
         "library_keys": [str(k) for k in (collection.library_keys or [])],
-        "prompt": collection.prompt or {},
         "poster": _poster_view(session, collection),
     }
-
-
-def _prompt_for(slug: str, body: CollectionIn) -> dict:
-    """The recipe to persist for ``slug`` — always empty on the default row, which the engine
-    curates with the global recipe. Keeps DB state from disagreeing with what a run will do."""
-    return {} if slug == DEFAULT_SLUG else body.prompt.model_dump()
 
 
 def _reject_duplicate_name(session, name: str, *, exclude_id: int | None = None) -> None:
@@ -265,7 +242,6 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             pin_top=body.pin_top,
             hub_anchor={k: v.model_dump() for k, v in body.hub_anchor.items()},
             library_keys=body.library_keys,
-            prompt=_prompt_for(slug, body),
             poster=body.poster.model_dump(),
         )
         session.add(collection)
@@ -277,7 +253,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
     return result
 
 
-# Columns a PATCH may set directly, name (needs a dup check) and audience/prompt (need shaping)
+# Columns a PATCH may set directly, name (needs a dup check) and audience (needs shaping)
 # handled separately.
 _PATCHABLE_COLUMNS = (
     "build",
@@ -309,6 +285,7 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
     state = request.app.state
     dropped_user_ids: set[int] = set()
     new_row_template: str | None = None  # set when a rename should be reconciled onto Plex
+    default_template_change: str | None = None  # set when the DEFAULT row's global name template changed
     poster_reset_needed = False  # set when a row drops a custom poster back to Plex default
     slug = build = None
     with state.sessions() as session:
@@ -332,10 +309,18 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         # the title actually changed — delivery renders from `name_template or name`.
         touching_name = build == "per_person" and not is_default and bool(sent & {"name", "name_template"})
         old_template = (collection.name_template or collection.name) if touching_name else None
-        # The default row's name follows the global Settings → Defaults template, never this column, so
-        # a save of it is ignored here (the editor now shows the template as its name, and would
-        # otherwise round-trip that value back into the column).
-        if "name" in sent and not is_default:
+        # The default row has no per-collection name: its title IS the global `row.name_template`
+        # (Settings → Defaults), which delivery renders per library. So a rename of it writes that
+        # global setting — NOT this column — because a per-collection template would win over each
+        # user's own `row_name_tpl` override in `resolve_row_template`. Its `name` column is never
+        # touched (the editor round-trips the template as the name, which must not clobber it).
+        if "name" in sent and is_default:
+            store = SettingsStore(session, state.secrets)
+            new_template = body.name.strip()
+            if new_template and new_template != (store.get("row.name_template") or ""):
+                store.set("row.name_template", new_template)
+                default_template_change = new_template
+        elif "name" in sent:
             _reject_duplicate_name(session, body.name, exclude_id=collection_id)
             collection.name = body.name
         for column in _PATCHABLE_COLUMNS:
@@ -343,8 +328,6 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
                 setattr(collection, column, getattr(body, column))
         if "schedule" in sent:
             collection.schedule = body.schedule.strip()  # a whitespace-only cron means "no schedule"
-        if "prompt" in sent:
-            collection.prompt = _prompt_for(collection.slug, body)
         if "poster" in sent:
             old_poster_mode = (collection.poster or {}).get("mode") or ""
             collection.poster = body.poster.model_dump()
@@ -402,6 +385,13 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
     # old-named copy until the next run rebuilt it). Privacy-neutral, so gate-exempt. Best-effort + audited.
     if new_row_template is not None:
         await reconcile.run_row_rename(state, slug=slug, new_template=new_row_template, scope="collection.rename")
+    # Renaming the DEFAULT row changed the global template, so reconcile it onto Plex now (same in-place
+    # rename path, keyed on the new global template). run_row_rename re-renders per user and skips anyone
+    # whose title didn't actually change — so a user with their own `row_name_tpl` override is left alone.
+    if default_template_change is not None:
+        await reconcile.run_row_rename(
+            state, slug=slug, new_template=default_template_change, scope="collection.rename"
+        )
     # Dropping a custom poster back to Plex default reverts the artwork on Plex now, not just in config.
     # Cosmetic + privacy-neutral, so gate-exempt. Best-effort + audited.
     if poster_reset_needed:
@@ -434,6 +424,74 @@ async def delete_collection(collection_id: int, request: Request) -> None:
             session.delete(collection)
             session.commit()
     rebuild_schedule(request.app)  # the deleted row's cron job (if any) must stop firing
+
+
+class RenameRequest(BaseModel):
+    name_template: str = ""
+    old_template: str = ""
+
+
+@router.post("/{collection_id}/rename")
+async def rename_collection_stream(collection_id: int, body: RenameRequest, request: Request) -> StreamingResponse:
+    """Rename this row's collections on Plex, streaming SSE events as each user's collection is
+    renamed. Returns a text/event-stream: one 'rename' event per user, then a 'done' event."""
+    import asyncio
+    import json
+    from queue import Empty, Queue
+
+    with request.app.state.sessions() as session:
+        collection = session.get(Collection, collection_id)
+        if collection is None:
+            raise HTTPException(status_code=404, detail="row not found")
+        slug = collection.slug
+        # If a new template is provided, save it now (standalone use without the dialog PATCH).
+        # If called from the dialog flow, the PATCH already saved it — this is idempotent.
+        new_template = body.name_template.strip()
+        if new_template:
+            collection.name_template = new_template
+            if slug == DEFAULT_SLUG:
+                SettingsStore(session).set("row.name_template", new_template)
+            session.commit()
+        else:
+            # No template in the body — read the current one from the DB (already saved by PATCH).
+            new_template = collection.name_template or collection.name
+            if slug == DEFAULT_SLUG:
+                new_template = SettingsStore(session).get("row.name_template") or new_template
+
+    old_template = body.old_template.strip() or None
+    state = request.app.state
+    q: Queue = Queue()
+
+    def _run():
+        try:
+            for event in reconcile.reconcile_row_rename_iter(
+                state, slug=slug, new_template=new_template, old_template=old_template
+            ):
+                q.put(event)
+        except Exception as e:
+            q.put({"error": f"{type(e).__name__}: {e}"})
+        finally:
+            q.put(None)  # sentinel
+
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, _run)
+
+    async def generate():
+        while True:
+            try:
+                event = q.get(timeout=0.1)
+            except Empty:
+                await asyncio.sleep(0.05)
+                continue
+            if event is None:
+                break
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 class CleanupRequest(BaseModel):

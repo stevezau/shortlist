@@ -134,8 +134,15 @@ class RunService:
 
         Skips quietly if Plex isn't configured (build_context raises), and a per-user history-fetch
         failure is logged and skipped rather than aborting the sweep. Serialized against runs by the
-        same lock, so it never overlaps a live run's per-user writes."""
+        same lock, so it never overlaps a live run's per-user writes.
+
+        Streams ``sync.progress`` per user (done/total) and a final ``sync.finished`` over the SSE bus
+        so the Tools page can show a live bar. Harmless on the nightly schedule (no subscribers)."""
         loop = asyncio.get_running_loop()
+
+        def emit(event: str, data: dict) -> None:
+            # work() runs in an executor thread; publish must hop back to the loop (see system.py).
+            loop.call_soon_threadsafe(self._bus.publish, event, {"kind": "watched", **data})
 
         def work() -> int:
             from shortlist.server.settings_store import SettingsStore
@@ -143,23 +150,28 @@ class RunService:
             ctx = self.build_context(dry_run=True)  # dry: builds clients, writes nothing to Plex
             with self._sessions() as session:
                 profiles = self.enabled_profiles(session)
-            for profile in profiles:
+            total = len(profiles)
+            emit("sync.progress", {"done": 0, "total": total})
+            for i, profile in enumerate(profiles, start=1):
                 try:
                     profile.history = ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
                 except Exception as e:
                     logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
+                emit("sync.progress", {"done": i, "total": total})
             self._reconcile_watched(profiles)
             with self._sessions() as session:
                 # Stamp the sync so the dashboard can show "watch status synced N ago".
                 SettingsStore(session).set("report.watch_synced_at", datetime.now(UTC).isoformat())
-            return len(profiles)
+            return total
 
         async with self._lock:
             try:
                 count = await loop.run_in_executor(None, work)
                 logger.info("watch-sync: refreshed watch status for {} user(s)", count)
+                self._bus.publish("sync.finished", {"kind": "watched", "ok": True, "count": count})
             except Exception as e:  # e.g. Plex not configured yet — never crash the scheduler
                 logger.info("watch-sync skipped: {}", type(e).__name__)
+                self._bus.publish("sync.finished", {"kind": "watched", "ok": False, "error": type(e).__name__})
 
     # -- execution -----------------------------------------------------------------------
 
@@ -204,8 +216,15 @@ class RunService:
                 with self._sessions() as session:
                     run = session.get(Run, run_id)
                     run.status = "running"
-                    session.commit()
                     profiles = self.enabled_profiles(session, user_ids)
+                    run.stats = {
+                        **(run.stats or {}),
+                        "expected_users": [
+                            {"slug": p.slug, "username": p.username, "display_name": p.nickname or p.username}
+                            for p in profiles
+                        ],
+                    }
+                    session.commit()
                 ctx = self.build_context(
                     dry_run=dry_run,
                     loop=loop,
@@ -315,23 +334,24 @@ class RunService:
 
                 # Only picks recent enough to still be creditable: a pick older than the window can
                 # never become a hit, so scanning every unwatched pick ever recorded is dead work
-                # that grows without bound.
+                # that grows without bound. Uses the pick's own created_at (when it was delivered),
+                # not the run's started_at — so picks that outlive their run (after clear/prune) are
+                # still creditable.
                 cutoff = datetime.now(UTC) - timedelta(days=HIT_WINDOW_DAYS)
                 unwatched = (
-                    session.query(PickRow, Run.started_at)
-                    .join(Run, PickRow.run_id == Run.id)
+                    session.query(PickRow)
                     .filter(
                         PickRow.user_id == user.id,
                         PickRow.watched_at.is_(None),
-                        Run.started_at >= cutoff,
+                        PickRow.created_at >= cutoff,
                     )
                     .all()
                 )
-                for pick, recommended_at in unwatched:
+                for pick in unwatched:
                     watched = latest_watch.get((pick.tmdb_id, pick.media_type))
                     if watched is None:
                         continue
-                    since = recommended_at if recommended_at.tzinfo else recommended_at.replace(tzinfo=UTC)
+                    since = pick.created_at if pick.created_at.tzinfo else pick.created_at.replace(tzinfo=UTC)
                     if since <= watched <= since + timedelta(days=HIT_WINDOW_DAYS):
                         pick.watched_at = watched
             session.commit()
@@ -396,35 +416,30 @@ class RunService:
             self._finalize_run(run, report, status, error, ok, errors, skipped)
             from shortlist.server.settings_store import SettingsStore
 
-            self._prune_runs(session, int(SettingsStore(session).get("runs.retention")))
+            months = int(SettingsStore(session).get("runs.retention"))
+            # Legacy DBs store the old count-based "100" — values beyond the new 24-month max are
+            # treated as 0 (keep forever) until the owner visits Settings and sets a real month value.
+            self._prune_runs(session, months if 0 < months <= 24 else 0)
             session.commit()
 
     @staticmethod
-    def _prune_runs(session: Session, keep: int) -> None:
-        """Keep the newest `keep` runs (and their picks + per-user rows), deleting the rest. 0 = keep
-        everything. The just-finalized run has the highest id, so it's always kept.
+    def _prune_runs(session: Session, retention_months: int) -> None:
+        """Delete runs older than `retention_months`. 0 = keep everything forever.
 
-        A run beyond `keep` is ONLY pruned once it's also older than the hit-window: `_reconcile_watched`
-        credits a watch to a pick whose run started within `HIT_WINDOW_DAYS`, so deleting such a run
-        early would silently drop hits the report still owes. The scheduler fires one run per row-cron,
-        so a low `keep` can span far less than the window — the time floor closes that gap. Picks and
-        run_users aren't ORM-cascaded off Run (and a bulk delete bypasses the cascade anyway), so both
-        are deleted explicitly."""
-        if keep <= 0:
+        Picks are KEPT (their run_id is nulled) so the dashboard's lifetime metrics survive. Only the
+        run history (the Runs list, per-user detail/trace) is pruned — those are the storage hog
+        (~100 KB per user per run in trace blobs).
+        """
+        if retention_months <= 0:
             return
-        cutoff = datetime.now(UTC) - timedelta(days=HIT_WINDOW_DAYS)
-
-        def _older_than_window(started_at: datetime | None) -> bool:
-            if started_at is None:
-                return True
-            aware = started_at if started_at.tzinfo else started_at.replace(tzinfo=UTC)
-            return aware < cutoff
-
-        beyond_keep = session.query(Run.id, Run.started_at).order_by(Run.id.desc()).offset(keep).all()
-        old_ids = [rid for rid, started_at in beyond_keep if _older_than_window(started_at)]
+        cutoff = datetime.now(UTC) - timedelta(days=retention_months * 30)
+        old = session.query(Run.id).filter(Run.started_at < cutoff).all()
+        old_ids = [rid for (rid,) in old]
         if not old_ids:
             return
-        session.query(PickRow).filter(PickRow.run_id.in_(old_ids)).delete(synchronize_session=False)
+        session.query(PickRow).filter(PickRow.run_id.in_(old_ids)).update(
+            {PickRow.run_id: None}, synchronize_session=False
+        )
         session.query(RunUser).filter(RunUser.run_id.in_(old_ids)).delete(synchronize_session=False)
         session.query(Run).filter(Run.id.in_(old_ids)).delete(synchronize_session=False)
 
@@ -479,6 +494,7 @@ class RunService:
                 exa_searches=user_report.exa_searches,
                 diff=user_report.diff.__dict__ if user_report.diff else {},
                 breakdown=user_report.breakdown,
+                trace=user_report.trace,
             )
         )
         if not dry_run:
@@ -692,7 +708,8 @@ class RunService:
         run.status = status or ("ok" if report.ok else "error")
         run.finished_at = datetime.now(UTC)
         # Run-total AI cost, summed from every user (real + shared). by_step merges each user's
-        # {curate/llm_web/llm_library: n} so the run header can show WHERE the tokens went.
+        # {llm_web: n} so the run header can show WHERE the tokens went. (Since the curate step was
+        # removed, llm_web — web-search title discovery — is the only paid AI path left.)
         tokens_by_step: dict[str, int] = {}
         for user_report in report.users:
             for step, n in user_report.llm_tokens_by_step.items():
@@ -715,6 +732,10 @@ class RunService:
             "llm_tokens": sum(u.llm_tokens for u in report.users),
             "llm_tokens_by_step": tokens_by_step,
             "exa_searches": sum(u.exa_searches for u in report.users),
+            # Cache hits served from the shared 14-day web-search cache. Reported so the UI can read
+            # "1 searched · N from cache" — without it a fully-cached run shows a bare exa_searches:1
+            # and looks like the source did nothing (it didn't: the cache did the work).
+            "exa_cache_hits": sum(u.exa_cache_hits for u in report.users),
             "error": error or report.error,
             # Every account whose share filter Plex refused this run. These are the reason nothing
             # was promoted, so the UI can say so instead of leaving "Failed" unexplained (issue #1).

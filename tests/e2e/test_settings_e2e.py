@@ -63,9 +63,11 @@ class TestDefaults:
         type the address their server is known by, and have it persist under the right key (#7).
         """
         page.goto("/settings")
-        title = page.get_by_text("AI curator").first
+        # The provider config lives on the "AI provider" connection card now (the old standalone
+        # "AI curator" section was removed — the provider only powers the web-search source).
+        title = page.get_by_text("AI provider").first
         expect(title).to_be_visible(timeout=LOAD)
-        # Scope to the AI-curator card: every connection card has an identical Edit/Test pair.
+        # Scope to the AI-provider card: every connection card has an identical Edit/Test pair.
         card = title.locator('xpath=ancestor::div[contains(@class,"rounded")][1]')
         card.get_by_role("button", name=re.compile("^(Edit|Set up)$")).first.click()
 

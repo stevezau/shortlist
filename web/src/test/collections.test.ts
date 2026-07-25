@@ -32,7 +32,6 @@ function collection(patch: Partial<Collection> = {}): Collection {
     placement: "both",
     pin_top: false,
     hub_anchor: {},
-    prompt: { tone: "", guidance: "", template: "" }, // blank = inherit the global style
     ...patch,
   } as Collection;
 }
@@ -69,51 +68,6 @@ describe("rowOverrides", () => {
   it("falls back to the key for a library the server no longer reports", () => {
     const parts = rowOverrides(collection({ library_keys: ["9"] }), LIBRARIES);
     expect(parts).toContain("Libraries: Library 9");
-  });
-
-  it("badges a row with its own curation instructions as a custom style", () => {
-    // The style UI is now one Instructions box (stored as guidance) — any instructions = custom style.
-    expect(
-      rowOverrides(
-        collection({
-          prompt: { tone: "", guidance: "keep it short", template: "" },
-        }),
-        LIBRARIES,
-      ),
-    ).toContain("Custom style");
-
-    // Rows saved by the old three-field UI (a lingering tone/template) still read as custom.
-    expect(
-      rowOverrides(
-        collection({
-          prompt: { tone: "", guidance: "", template: "You are..." },
-        }),
-        LIBRARIES,
-      ),
-    ).toContain("Custom style");
-    expect(
-      rowOverrides(
-        collection({
-          prompt: { tone: "cinephile", guidance: "", template: "" },
-        }),
-        LIBRARIES,
-      ),
-    ).toContain("Style: Cinephile");
-  });
-
-  it("never claims a style override on the default row — the engine curates it with the global recipe", () => {
-    const parts = rowOverrides(
-      collection({
-        slug: "picked",
-        name: "Picked for You",
-        candidate_sources: ["trakt"],
-        library_keys: ["2"],
-        prompt: { tone: "cinephile", guidance: "notes", template: "custom" },
-      }),
-      LIBRARIES,
-    );
-    // Its sources and libraries ARE its own; only name/size/style follow the global settings.
-    expect(parts).toEqual(["Sources: Trakt", "Libraries: 4K Movies"]);
   });
 
   it("badges a row's own watched cap tersely, by percentage", () => {
@@ -185,14 +139,16 @@ describe("rowOverrides", () => {
       collection({
         candidate_sources: ["trakt"],
         library_keys: ["2"],
-        prompt: { tone: "cinephile", guidance: "", template: "" },
+        watched_pct: 0,
+        freshness: 1,
       }),
       LIBRARIES,
     );
     expect(parts).toEqual([
       "Sources: Trakt",
       "Libraries: 4K Movies",
-      "Style: Cinephile",
+      "Watched: all fresh",
+      "Freshness: nightly",
     ]);
   });
 });

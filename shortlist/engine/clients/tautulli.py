@@ -13,7 +13,9 @@ class TautulliClient:
         self._api_key = api_key
         self._timeout = timeout
 
-    def _cmd(self, cmd: str, **params) -> dict:
+    def _cmd(self, cmd: str, **params) -> dict | list:
+        # Returns the response `data`, whose shape is per-command: get_users → list of user dicts,
+        # get_history → {data: [...], recordsFiltered: ...}. Callers must know their command's shape.
         r = http_retry.get(
             f"{self._base_url}/api/v2",
             params={"apikey": self._api_key, "cmd": cmd, **params},
@@ -37,10 +39,13 @@ class TautulliClient:
 
         Tautulli is where most people have already renamed "mrjohnpoz" to something human, so it's a
         better default row title than the Plex username — but only a DEFAULT: Shortlist's own
-        nickname always wins. Entries whose friendly name is just the username again are dropped, so
-        an untouched Tautulli install contributes nothing.
+        nickname always wins.
         """
-        rows = self._cmd("get_users").get("data", [])
+        # get_users returns the user list AS the response `data` — unlike get_history, whose `data`
+        # is a {data: [...], recordsFiltered: ...} envelope. `_cmd` already unwraps `data`, so this
+        # is the list; calling `.get("data")` on it raised AttributeError, which sync_users swallowed
+        # (0 friendly names for everyone — SFLIX shipped that way).
+        rows = self._cmd("get_users")
         names: dict[int, str] = {}
         for row in rows:
             try:
@@ -48,7 +53,10 @@ class TautulliClient:
             except (TypeError, ValueError):
                 continue
             friendly = (row.get("friendly_name") or "").strip()
-            if account_id and friendly and friendly != (row.get("username") or "").strip():
+            # Include ALL friendly names, even if they match the username — Tautulli might have
+            # capitalization/formatting differences (e.g., "john" vs "John"), and the UI can
+            # decide whether to show it. Empty strings are still dropped.
+            if account_id and friendly:
                 names[account_id] = friendly
         return names
 

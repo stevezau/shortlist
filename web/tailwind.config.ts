@@ -87,11 +87,18 @@ export default {
           "0%": { transform: "translateX(-100%)" },
           "100%": { transform: "translateX(0)" },
         },
+        // Indeterminate progress: a sliver sweeps left-to-right while an opaque call is in flight.
+        "progress-indeterminate": {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(400%)" },
+        },
       },
       animation: {
         "row-in": "row-in 7s ease-in-out infinite",
         "fade-in": "fade-in 0.3s ease-out",
         "slide-in-left": "slide-in-left 0.2s ease-out",
+        "progress-indeterminate":
+          "progress-indeterminate 1.2s ease-in-out infinite",
       },
     },
   },

@@ -8,7 +8,6 @@ import {
   Rows3,
   SlidersHorizontal,
   Sparkles,
-  Wand2,
 } from "lucide-react";
 
 /** The clusters the sections fall into, in display order — so the 9-item list reads as four intents
@@ -30,22 +29,21 @@ export type NavSection = {
 
 /**
  * The Settings page sections, in the order a new owner works down them: connect things → decide
- * where titles come from → how they're written → row defaults → where rows sit → optional requests →
- * advanced → API access → danger. Each carries the `group` it renders under (headers in the sidebar
- * sub-nav). Schedules are per-row now (each row's editor), not a global Settings section. Shared by
- * the page (which renders each section's content, keyed by `id`) and the sidebar sub-nav (which
- * lists them, grouped, and jumps to `#id`). Keep entries contiguous by group — the sub-nav emits a
- * group header on each change and assumes a group's items don't reappear later.
+ * where titles come from → row defaults → where rows sit → optional requests → advanced → API
+ * access → danger. Each carries the `group` it renders under (headers in the sidebar sub-nav).
+ * Schedules are per-row now (each row's editor), not a global Settings section. Shared by the page
+ * (which renders each section's content, keyed by `id`) and the sidebar sub-nav (which lists them,
+ * grouped, and jumps to `#id`). Keep entries contiguous by group — the sub-nav emits a group header
+ * on each change and assumes a group's items don't reappear later.
  */
 export const SETTINGS_SECTIONS: NavSection[] = [
   { id: "connections", label: "Connections", icon: Cable, group: "Connect" },
   {
     id: "recommendations",
-    label: "Recommendations",
+    label: "Finding titles",
     icon: Sparkles,
     group: "Rows",
   },
-  { id: "curation", label: "Curation style", icon: Wand2, group: "Rows" },
   { id: "defaults", label: "Row defaults", icon: Rows3, group: "Rows" },
   { id: "placement", label: "Row placement", icon: ListOrdered, group: "Rows" },
   { id: "requests", label: "Requests", icon: Inbox, group: "Add-ons" },

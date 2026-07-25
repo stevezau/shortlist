@@ -3,6 +3,7 @@ import type {
   ApiTokenStatus,
   AppNotification,
   ArrOptions,
+  Backup,
   EffectivenessReport,
   OwnedCollectionsAudit,
   PlexLibrary,
@@ -16,8 +17,6 @@ import type {
   PosterInput,
   PinStatus,
   PlexServer,
-  PromptPreview,
-  PromptPreviewRequest,
   ProbeRequest,
   ProbeResult,
   RequestCandidate,
@@ -29,13 +28,16 @@ import type {
   LogPage,
   RunRequest,
   RunsSummary,
+  RunUserTraceResponse,
   RowOverridePatch,
   Session,
   Settings,
   SetupState,
+  SyncsInfo,
   TestableService,
   UninstallResult,
   User,
+  VersionInfo,
   UserPatch,
   UserRow,
   UserRunSummary,
@@ -191,8 +193,28 @@ export const api = {
       body: JSON.stringify({ enabled }),
     }),
 
-  syncUsers: (): Promise<unknown> =>
+  /** Re-pull shared + Home users (and the owner) from plex.tv/Tautulli. Returns how many rows the
+   *  sync added vs. updated, and the total roster size, so the UI can report a real result. */
+  syncUsers: (): Promise<{ added: number; updated: number; total: number }> =>
     request("/api/users/sync", { method: "POST" }),
+
+  blockSeed: (
+    userId: number,
+    tmdbId: number,
+    title: string,
+  ): Promise<{ blocked_seeds: number[] }> =>
+    request(`/api/users/${userId}/blocked-seeds`, {
+      method: "POST",
+      body: JSON.stringify({ tmdb_id: tmdbId, title }),
+    }),
+
+  unblockSeed: (
+    userId: number,
+    tmdbId: number,
+  ): Promise<{ blocked_seeds: number[] }> =>
+    request(`/api/users/${userId}/blocked-seeds/${tmdbId}`, {
+      method: "DELETE",
+    }),
 
   getUserRows: (id: number): Promise<UserRow[]> =>
     request(`/api/users/${id}/rows`),
@@ -223,6 +245,13 @@ export const api = {
     ),
 
   getRun: (id: number): Promise<RunDetail> => request(`/api/runs/${id}`),
+
+  /** The full pipeline trace for one user in one run (fetched on demand — the blob is large). */
+  getRunUserTrace: (
+    runId: number,
+    userId: number,
+  ): Promise<RunUserTraceResponse> =>
+    request(`/api/runs/${runId}/users/${userId}/trace`),
 
   /** Totals for the Runs page header (count, succeeded/failed, last run). */
   getRunsSummary: (): Promise<RunsSummary> => request("/api/runs/summary"),
@@ -290,9 +319,8 @@ export const api = {
   /** The server's Plex libraries, for the Rows editor's per-row delivery-target picker. */
   getLibraries: (): Promise<PlexLibrary[]> => request("/api/system/libraries"),
 
-  /** The running app version (for the footer + prefilled bug reports). */
-  getVersion: (): Promise<{ version: string }> =>
-    request("/api/system/version"),
+  /** The running app version + update check (for the footer + update banner). */
+  getVersion: (): Promise<VersionInfo> => request("/api/system/version"),
 
   /** Whether an owner API token exists (+ when it was made and its last-4 hint) — never the token. */
   getApiToken: (): Promise<ApiTokenStatus> => request("/api/system/api-token"),
@@ -328,6 +356,9 @@ export const api = {
       );
     return response.text();
   },
+
+  /** When each sync last ran and when it next fires (Tools page). */
+  getSyncs: (): Promise<SyncsInfo> => request("/api/system/syncs"),
 
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
   getReport: (): Promise<EffectivenessReport> => request("/api/report"),
@@ -418,17 +449,6 @@ export const api = {
     return response.blob();
   },
 
-  /** Assemble the prompt from a recipe against sample data, to preview its effect before saving. */
-  previewPrompt: (body: PromptPreviewRequest): Promise<PromptPreview> =>
-    request("/api/settings/prompt-preview", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  /** The built-in prompt as an editable template, to pre-fill the "write the whole prompt" box. */
-  getPromptDefault: (shared: boolean): Promise<{ template: string }> =>
-    request(`/api/settings/prompt-default?shared=${shared}`),
-
   // --- Requests (Sonarr/Radarr approval inbox) ---
   listRequests: (): Promise<RequestCandidate[]> => request("/api/requests"),
 
@@ -466,6 +486,10 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
 
+  // Fetch Arr download status for all sent requests
+  getArrStatus: (): Promise<Record<number, string | null>> =>
+    request("/api/requests/status"),
+
   // --- System ---
   /**
    * Full uninstall (or a dry-run preview of it). The backend requires the
@@ -475,6 +499,19 @@ export const api = {
     request("/api/system/uninstall", {
       method: "POST",
       body: JSON.stringify({ confirm: "UNINSTALL", dry_run: dryRun }),
+    }),
+
+  getBackups: (): Promise<Backup[]> => request("/api/system/backups"),
+
+  createBackup: (): Promise<{ name: string; size_bytes: number }> =>
+    request("/api/system/backups", { method: "POST" }),
+
+  restoreBackup: (
+    name: string,
+  ): Promise<{ restored: string; message: string }> =>
+    request("/api/system/backups/restore", {
+      method: "POST",
+      body: JSON.stringify({ name }),
     }),
 };
 

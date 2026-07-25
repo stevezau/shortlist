@@ -1,24 +1,15 @@
-"""Google curator — response_schema on generate_content (google-genai SDK)."""
+"""Google curator — web-search title discovery via Gemini's Google Search grounding tool."""
 
 from __future__ import annotations
-
-import json
-import time
 
 from loguru import logger
 
 from shortlist.engine.curator.base import (
-    CuratorError,
     ThreadLocalTokens,
-    build_prompts,
     build_web_prompt,
-    log_curate_request,
-    log_curate_response,
     parse_web_titles,
-    picks_schema,
-    validate_picks,
 )
-from shortlist.engine.models import Candidate, Pick, UserProfile
+from shortlist.engine.models import UserProfile
 
 DEFAULT_MODEL = "gemini-2.5-flash"
 
@@ -26,7 +17,7 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 class GoogleCurator:
     name = "google"
     supports_native_web_search = True  # Gemini's Google Search grounding tool (see recommend_web)
-    last_tokens = ThreadLocalTokens()  # per-thread, so parallel per-user curation doesn't race
+    last_tokens = ThreadLocalTokens()  # per-thread, so parallel per-user web search doesn't race
 
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, timeout: float = 60.0):
         try:
@@ -54,35 +45,6 @@ class GoogleCurator:
             if name:
                 out.append(name)
         return sorted(out)
-
-    def curate(self, profile: UserProfile, candidates: list[Candidate], k: int) -> list[Pick]:
-        system, user = build_prompts(profile, candidates, k)
-        log_curate_request(self.name, self._model, system, user, len(candidates), k)
-        started = time.monotonic()
-        try:
-            r = self._client.models.generate_content(
-                model=self._model,
-                contents=user,
-                config={
-                    "system_instruction": system,
-                    "response_mime_type": "application/json",
-                    "response_json_schema": picks_schema(),
-                },
-            )
-        except Exception as e:  # google-genai raises provider-specific exceptions
-            # NEVER interpolate {e}: google-genai embeds the API key in the error as `?key=AIza…`,
-            # a shape redact() doesn't cover. Type only — this reaches the run report + events row.
-            raise CuratorError(f"Google error ({type(e).__name__})") from e
-        usage = getattr(r, "usage_metadata", None)
-        self.last_tokens = getattr(usage, "total_token_count", 0) or 0
-        text = r.text or ""
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as e:
-            raise CuratorError("Google returned unparseable JSON") from e
-        picks = validate_picks(data.get("picks", []), candidates, k, self.name)
-        log_curate_response(self.name, self._model, len(picks), self.last_tokens, time.monotonic() - started, text)
-        return picks
 
     def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
         """Propose up to k titles via Gemini's Google Search grounding tool (the ``llm_web`` source).

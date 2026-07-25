@@ -6,7 +6,6 @@ import { QueryBoundary } from "@/components/query-boundary";
 import { AdvancedSection } from "@/components/settings/advanced-section";
 import { ApiAccessCard } from "@/components/settings/api-access-card";
 import { ConnectionsSection } from "@/components/settings/connections-section";
-import { CurationSection } from "@/components/settings/curation-section";
 import { DangerZoneSection } from "@/components/settings/danger-zone-section";
 import { DefaultsSection } from "@/components/settings/defaults-section";
 import { RecommendationsSection } from "@/components/settings/recommendations-section";
@@ -22,7 +21,6 @@ function sectionContent(settings: Settings): Record<string, ReactNode> {
   return {
     connections: <ConnectionsSection settings={settings} />,
     recommendations: <RecommendationsSection settings={settings} />,
-    curation: <CurationSection settings={settings} />,
     defaults: <DefaultsSection settings={settings} />,
     placement: <RowPlacementSection settings={settings} />,
     requests: <RequestsSection settings={settings} />,

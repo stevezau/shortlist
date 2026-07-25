@@ -143,6 +143,7 @@ a pure set‑difference over every `shortlist_*` label. The generalization repla
 def desired_excludes(own_label, stored_labels):
     return {lbl for lbl in stored_labels.values() if lbl != own_label}
 
+
 # generalized: audience-aware. `visible_to(user)` = labels this user is allowed to see
 def desired_excludes(user, all_labels, visible_to_user):
     return {lbl for lbl in all_labels if lbl not in visible_to_user}

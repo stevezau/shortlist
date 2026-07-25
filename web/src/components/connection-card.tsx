@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { ExternalLink, PlugZap } from "lucide-react";
+import { ExternalLink, PlugZap, Trash2 } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { Segmented } from "@/components/segmented";
@@ -84,6 +84,9 @@ export function ConnectionCard({
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
   const save = useSaveSettings();
   const [editing, setEditing] = useState(false);
+  // Idle-card "Remove" is a two-tap confirm: removing a connection is destructive (it wipes the
+  // saved URL/key), so the first tap asks and the second commits — no accidental one-click wipe.
+  const [confirmRemove, setConfirmRemove] = useState(false);
   const [values, setValues] = useState<Record<string, string>>(() =>
     initialValues(settings, fields),
   );
@@ -179,6 +182,7 @@ export function ConnectionCard({
     save.mutate(payload, {
       onSuccess: () => {
         setEditing(false);
+        setConfirmRemove(false);
         test.reset();
       },
     });
@@ -204,23 +208,57 @@ export function ConnectionCard({
             </span>
             {title}
           </span>
-          {!editing && (
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={openEditor}>
-                {configured ? "Edit" : "Set up"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => test.mutate()}
-                loading={test.isPending}
-                disabled={!configured}
-              >
-                {!test.isPending && <PlugZap aria-hidden="true" />}
-                Test
-              </Button>
-            </div>
-          )}
+          {!editing &&
+            (confirmRemove ? (
+              // Inline confirm on the idle card — the destructive tap and its "keep it" escape sit
+              // right where Remove was, so it never wipes a connection on a single click.
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Remove?</span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={clear}
+                  loading={save.isPending}
+                >
+                  Remove
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirmRemove(false)}
+                  disabled={save.isPending}
+                >
+                  Keep
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={openEditor}>
+                  {configured ? "Edit" : "Set up"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => test.mutate()}
+                  loading={test.isPending}
+                  disabled={!configured}
+                >
+                  {!test.isPending && <PlugZap aria-hidden="true" />}
+                  Test
+                </Button>
+                {configured && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove ${title} connection`}
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => setConfirmRemove(true)}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </Button>
+                )}
+              </div>
+            ))}
         </CardTitle>
         <CardDescription>{purpose}</CardDescription>
       </CardHeader>

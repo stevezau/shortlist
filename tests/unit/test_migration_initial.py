@@ -96,7 +96,7 @@ def test_an_incomplete_db_at_a_squashed_revision_is_not_silently_healed(tmp_path
     db = tmp_path / "shortlist.db"
     conn = sqlite3.connect(db)
     conn.execute("update alembic_version set version_num = '0028'")
-    conn.execute("drop table watch_events")  # schema now incomplete
+    conn.execute("drop table events")  # schema now incomplete
     conn.commit()
     conn.close()
 
@@ -181,3 +181,84 @@ class TestOllamaProviderMerge:
 
         assert self._read(tmp_path, "curator.provider") == "anthropic"
         assert not self._read(tmp_path, "curator.openai_base_url"), "nothing else may be written either"
+
+
+class TestCurateSettingsCleared:
+    """0036 clears the dead curation-recipe settings and the cut `llm_library` source.
+
+    Seeded through the real stores/models — whatever the app writes is what the migration must read
+    — then the DB is stamped back to 0035 so `run_migrations` genuinely replays 0036. A DB already at
+    head replays nothing, so stamping back is what actually exercises the migration.
+    """
+
+    @staticmethod
+    def _seed_and_replay(tmp_path: Path) -> tuple[int, int]:
+        import sqlite3
+
+        from sqlalchemy.orm import Session
+
+        from shortlist.server.db.models import Collection, CollectionUserOverride, User
+        from shortlist.server.settings_store import SettingsStore
+
+        run_migrations(tmp_path)  # full schema at head
+        engine = make_engine(tmp_path)
+        with Session(engine) as session:
+            store = SettingsStore(session)
+            store.set("curator.prompt_tone", "adventurous")
+            store.set("curator.prompt_guidance", "be bold")
+            store.set("curator.prompt_template", "tpl")
+            store.set("candidates.sources", ["tmdb_similar", "llm_library", "llm_web"])
+            store.set("curator.provider", "anthropic")  # a real, untouched setting
+            user = User(
+                plex_account_id=1,
+                username="bob",
+                slug="bob",
+                prefs={"prompt_tone": "x", "prompt_guidance": "y", "excluded_genres": ["Horror"]},
+            )
+            session.add(user)
+            row = Collection(
+                slug="scifi",
+                name="SciFi",
+                media="movie",
+                build="per_person",
+                candidate_sources=["llm_library", "tmdb_discover"],
+                prompt={"tone": "dark"},
+            )
+            session.add(row)
+            session.flush()
+            session.add(CollectionUserOverride(collection_id=row.id, user_id=user.id, prompt={"tone": "z"}))
+            session.commit()
+            ids = (row.id, user.id)
+        engine.dispose()
+
+        # Stamp back to 0035 and re-migrate — twice, to prove idempotency (a second replay is a no-op).
+        db = tmp_path / "shortlist.db"
+        for _ in range(2):
+            conn = sqlite3.connect(db)
+            conn.execute("update alembic_version set version_num = '0035'")
+            conn.commit()
+            conn.close()
+            run_migrations(tmp_path)
+        return ids
+
+    def test_dead_recipe_settings_and_cut_source_are_gone(self, tmp_path: Path):
+        from sqlalchemy.orm import Session
+
+        from shortlist.server.db.models import Collection, CollectionUserOverride, User
+        from shortlist.server.settings_store import SettingsStore
+
+        collection_id, user_id = self._seed_and_replay(tmp_path)
+
+        with Session(make_engine(tmp_path)) as session:
+            store = SettingsStore(session)
+            assert store.get("curator.prompt_tone") is None
+            assert store.get("curator.prompt_guidance") is None
+            assert store.get("curator.prompt_template") is None
+            assert store.get("candidates.sources") == ["tmdb_similar", "llm_web"]  # llm_library stripped
+            # A real setting and a non-prompt pref are untouched.
+            assert store.get("curator.provider") == "anthropic"
+            assert session.get(User, user_id).prefs == {"excluded_genres": ["Horror"]}
+            row = session.get(Collection, collection_id)
+            assert row.candidate_sources == ["tmdb_discover"]  # llm_library stripped, order kept
+            assert row.prompt == {}  # dead recipe cleared
+            assert session.get(CollectionUserOverride, (collection_id, user_id)).prompt == {}

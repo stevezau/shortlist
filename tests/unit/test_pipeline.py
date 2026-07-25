@@ -1,4 +1,4 @@
-"""Pipeline orchestration: per-user isolation, curator fallback, cold start, dry-run,
+"""Pipeline orchestration: per-user isolation, code-based pick selection, cold start, dry-run,
 and the leak-safe ordering (deliver unpromoted → sync filters → promote last)."""
 
 from __future__ import annotations
@@ -7,10 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.clients.tmdb import NullCache
-from shortlist.engine.curator.base import CuratorError
-from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec
+from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec, UserType
 from shortlist.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -19,6 +19,22 @@ def _ranked(items: list[dict], affinity: float = 1.0) -> list[tuple[dict, float]
     """`TmdbClient.suggestions` returns (item, affinity) pairs. These tests predate affinity and
     don't exercise it, so everything sits at the neutral top-of-list 1.0."""
     return [(item, affinity) for item in items]
+
+
+def spy_build_picks(monkeypatch) -> list[list]:
+    """Record the candidate pools handed to ``picker.build_picks`` — the code-based pick-selection
+    step that replaced the old LLM ``curate`` call. Returns one entry per call: the candidate list
+    that row+library was offered. ``build_picks`` still runs for real, so the picks are unchanged.
+    """
+    calls: list[list] = []
+    real = picker_mod.build_picks
+
+    def spy(candidates, k):
+        calls.append(list(candidates))
+        return real(candidates, k)
+
+    monkeypatch.setattr(picker_mod, "build_picks", spy)
+    return calls
 
 
 @pytest.fixture
@@ -31,7 +47,7 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     plex.sections_by_type.return_value = {MediaType.MOVIE: movie_section}
     movie_section.collections.return_value = []
     # Library: watched item 900 (ratingKey 999) + candidates 10 and 20.
-    plex.build_library_index.return_value = ({900: 999, 10: 1010, 20: 1020}, {})
+    plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020}
     plex.owned_collections.return_value = {}
     plex.find_owned_collections.return_value = []  # delivery finds by title; promotion enumerates rows
     plex.stored_label.side_effect = lambda collection, label: label.replace("shortlist", "Shortlist", 1)
@@ -66,17 +82,10 @@ def ctx(engine_config: EngineConfig, mock_plextv, mock_tmdb, mock_curator) -> En
     )
 
 
-def curated_picks(profile, ranked, k):
-    from shortlist.engine.curator.null import NullCurator
-
-    return NullCurator().curate(profile, ranked, k)
-
-
 class TestRun:
     def test_happy_path_delivers_syncs_then_promotes(self, ctx: EngineContext, mock_plextv):
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
 
         # A row does not exist until created (delivery takes the create path); capture each created
         # collection by the label it is stored under, so promotion — which enumerates a user's rows
@@ -112,7 +121,6 @@ class TestRun:
         """Leak-window regression: no promote call may precede the plex.tv filter writes."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
         order = []
         original_put = mock_plextv.update_user_filters.side_effect
 
@@ -137,7 +145,6 @@ class TestRun:
     def test_sync_failure_blocks_promotion(self, ctx: EngineContext, mock_plextv):
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
         mock_plextv.update_user_filters.side_effect = RuntimeError("plex.tv down")
 
         report = pipeline_mod.run(ctx, [sarah, mike])
@@ -151,7 +158,6 @@ class TestRun:
         finds the exclude missing, sets sync_failed, and nothing is promoted."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
         mock_plextv.update_user_filters.side_effect = lambda *a: None  # write returns ok but doesn't persist
 
         report = pipeline_mod.run(ctx, [sarah, mike])
@@ -169,7 +175,6 @@ class TestRun:
         once to build the roster, once to verify; only the second (verify) read raises here."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
         calls = {"n": 0}
 
         def list_users():
@@ -193,7 +198,6 @@ class TestRun:
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         full = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
         mock_plextv.users = full
-        ctx.curator.curate.side_effect = curated_picks
         calls = {"n": 0}
 
         def list_users():
@@ -209,12 +213,63 @@ class TestRun:
         assert not report.ok
         ctx.plex.promote.assert_not_called()
 
+    def test_filter_write_refused_on_restricted_account_does_not_block_promotion(self, ctx: EngineContext, mock_plextv):
+        """A restricted account gets a 422 from plex.tv — this must NOT block promotion for everyone
+        else. The restricted account is simply skipped (live-verified: they see 0 collections)."""
+        from shortlist.engine.clients.plextv import PlexTvUser
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        sarah_remote = plextv_user(100, "sarah")
+        kid_remote = PlexTvUser(
+            id=500,
+            username="kid",
+            user_type=UserType.MANAGED,
+            home=True,
+            restricted=True,
+            protected=False,
+            filters={
+                "filterAll": "",
+                "filterMovies": "",
+                "filterTelevision": "",
+                "filterMusic": "",
+                "filterPhotos": "",
+            },
+        )
+        mock_plextv.users = [sarah_remote, kid_remote]
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+
+        # Promotion proceeds (the restricted kid is skipped in privacy.py before the write even fires).
+        assert report.ok
+        assert not report.promotion_blockers
+
+    def test_filter_write_refused_on_non_restricted_account_blocks_promotion(self, ctx: EngineContext, mock_plextv):
+        """A 422 on a NON-restricted account is an unknown failure — must block promotion (leak risk)."""
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+
+        def refuse_mike(account_id, fields):
+            if account_id == 200:
+                raise FilterWriteRefused("plex.tv 422 for account 200")
+            mock_plextv.users[0].filters.update(fields)
+
+        mock_plextv.update_user_filters.side_effect = refuse_mike
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        assert report.promotion_blockers  # promotion was blocked
+        assert any("200" in b for b in report.promotion_blockers)
+        ctx.plex.promote.assert_not_called()
+
     def test_on_user_done_fires_once_per_user(self, ctx: EngineContext, mock_plextv):
         """The live-persist hook fires as each user finishes (so the UI fills in person by person),
         with that user's finished report."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
         seen: list[tuple[str, str]] = []
         ctx.on_user_done = lambda profile, report: seen.append((profile.slug, report.status))
 
@@ -228,7 +283,6 @@ class TestRun:
         is the backstop."""
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
         ran = []
 
         def boom(_profile, _report):
@@ -244,7 +298,6 @@ class TestRun:
     def test_one_user_failing_never_stops_the_others(self, ctx: EngineContext, mock_plextv):
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
         good_history = ctx.history_source.fetch.return_value
 
         def fetch(user, *, min_completion):
@@ -263,10 +316,11 @@ class TestRun:
         # Privacy sync still ran for the errored user (delivery and sync are independent).
         assert by_slug["sarah"].privacy_synced or by_slug["sarah"].error
 
-    def test_curator_failure_degrades_to_heuristic(self, ctx: EngineContext, mock_plextv):
+    def test_picks_are_built_in_code_with_because_you_watched_reasons(self, ctx: EngineContext, mock_plextv):
+        """There is no LLM curate step: picks are selected and reasoned in code (picker.build_picks).
+        A default run delivers a full row whose reasons point back at the seeding history."""
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = CuratorError("LLM down")
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -275,10 +329,11 @@ class TestRun:
         assert user_report.counts.picks > 0
         assert user_report.picks[0].reason.startswith("Because you watched")
 
-    def test_short_curator_output_padded_from_heuristic_order(self, ctx: EngineContext, mock_plextv):
+    def test_a_pool_smaller_than_the_row_delivers_what_it_has_ranked_in_order(self, ctx: EngineContext, mock_plextv):
+        """The row size is 5 but only two candidates exist in the library; the row fills to what the
+        pool holds (no invented titles), ranked 1..n."""
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = lambda profile, ranked, k: curated_picks(profile, ranked, 1)
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -301,11 +356,37 @@ class TestRun:
         assert [p.title for p in user_report.picks] == ["Top Rated"]
         assert user_report.picks[0].reason == "Popular on this server"
 
+    def test_cold_start_files_a_trace_so_the_how_we_picked_button_appears(self, ctx: EngineContext, mock_plextv):
+        # A cold user used to file picks but NO trace, so the run page showed no "How we picked" button
+        # and they read as skipped (the reported Cassie bug). The cold path must file a history stage
+        # (their thin watches, no seeds — nothing was searched) plus a synthetic cold_start gather.
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.history_source.fetch.return_value = [make_watched("Only One")]
+        ctx.history_source.fetch.side_effect = None
+        ctx.plex.top_rated.return_value = [(50, fake_media_item(1, "Top Rated", tmdb_id=50))]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        trace = report.users[0].trace
+        assert trace, "a cold user must file a trace — has_trace gates the 'How we picked' button"
+        # History stage present with the honest full count, and NO seeds (nothing was searched from them).
+        assert trace["history"]["total"] == 1
+        assert trace["seeds"] == []
+        # Exactly one synthetic cold_start gather, labelled by media, contributing the delivered picks.
+        gathers = trace["gathers"]
+        assert [g["pool"] for g in gathers] == ["movie · cold_start"]
+        assert gathers[0]["sources"][0] == {
+            "source": "cold_start",
+            "status": "ok",
+            "contributed": 1,
+            "detail": "",
+        }
+
     def test_dry_run_makes_zero_plex_writes(self, ctx: EngineContext, mock_plextv):
         ctx.config.dry_run = True
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah, mike])
 
@@ -336,7 +417,6 @@ class TestRun:
                 filters={"filterMovies": "label!=Shortlist_sarah", "filterTelevision": "label!=Shortlist_sarah"},
             ),
         ]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah, mike])
 
@@ -348,7 +428,6 @@ class TestRun:
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
         ctx.tmdb.suggestions.return_value = _ranked([])  # nothing suggested -> no candidates
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -358,12 +437,11 @@ class TestRun:
 
 
 class TestPerRowOverrides:
-    """A per-user override can mute, resize, or restyle one row without touching it for others."""
+    """A per-user override can mute or resize one row without touching it for others."""
 
     def test_picks_are_tagged_with_their_row_slug(self, ctx: EngineContext, mock_plextv):
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -376,7 +454,6 @@ class TestPerRowOverrides:
     def test_muting_the_only_row_delivers_nothing(self, ctx: EngineContext, mock_plextv):
         sarah = make_profile("sarah", account_id=100, row_overrides={"picked": RowOverride(muted=True)})
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -388,68 +465,37 @@ class TestPerRowOverrides:
         # The fixture pool has 2 candidates; an override of size 1 must cap this user's row at 1.
         sarah = make_profile("sarah", account_id=100, row_overrides={"picked": RowOverride(size=1)})
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
 
         assert len(report.users[0].picks) == 1
 
-    def test_a_tone_only_override_keeps_the_rows_guidance_and_template(self, ctx: EngineContext, mock_plextv):
-        """The headline overlay bug: a per-person override REPLACED the row's whole recipe, so setting
-        only a tone for one person wiped that row's guidance and custom prompt. It must overlay,
-        field by field — blank means inherit."""
-        from shortlist.engine.models import PromptConfig, RowSpec
+    def test_per_user_recent_count_override_reaches_the_gather(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # recent_count caps how many recent watches the llm_web source searches. A per-user override
+        # must reach the gather as its resolved recent_count — beating the row's own value AND the
+        # global default. (That the gather then slices seeds[:recent_count] is test_candidates' job.)
+        from shortlist.engine import candidates as candidates_mod
 
+        seen: list[int] = []
+        real_gather = candidates_mod.gather_candidates
+
+        def spy_gather(*args, **kwargs):
+            seen.append(kwargs["recent_count"])
+            return real_gather(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_mod.rows.candidates_mod, "gather_candidates", spy_gather)
+        ctx.config.recent_count = 10  # global default
+        # The row sets its own recent_count too, so seen==[3] proves the user override beats BOTH the
+        # row's value (8) and the global default (10) — not just the global.
         ctx.config.rows = [
-            RowSpec(
-                slug="picked",
-                name_template="",
-                size=5,
-                prompt=PromptConfig(tone="cinephile", guidance="deep cuts", template="ROW TEMPLATE"),
-            )
+            RowSpec(slug="picked", name_template="", size=5, candidate_sources=["llm_web"], recent_count=8)
         ]
-        sarah = make_profile(
-            "sarah",
-            account_id=100,
-            row_overrides={"picked": RowOverride(prompt=PromptConfig(tone="playful"))},  # tone only
-        )
+        sarah = make_profile("sarah", account_id=100, row_overrides={"picked": RowOverride(recent_count=3)})
         mock_plextv.users = [plextv_user(100, "sarah")]
-        seen: dict[str, str] = {}
 
-        def capture(profile, ranked, k):
-            seen["tone"] = profile.prompt.tone
-            seen["guidance"] = profile.prompt.guidance
-            seen["template"] = profile.prompt.template
-            return curated_picks(profile, ranked, k)
-
-        ctx.curator.curate.side_effect = capture
         pipeline_mod.run(ctx, [sarah])
 
-        assert seen["tone"] == "playful"  # the person's override
-        assert "deep cuts" in seen["guidance"]  # the row's guidance SURVIVES
-        assert seen["template"] == "ROW TEMPLATE"  # ...and its template
-
-    def test_per_row_prompt_override_reaches_the_curator(self, ctx: EngineContext, mock_plextv):
-        from shortlist.engine.models import PromptConfig
-
-        sarah = make_profile(
-            "sarah",
-            account_id=100,
-            prompt=PromptConfig(tone="balanced"),
-            row_overrides={"picked": RowOverride(prompt=PromptConfig(tone="playful", guidance="be spooky"))},
-        )
-        mock_plextv.users = [plextv_user(100, "sarah")]
-        seen: dict[str, str] = {}
-
-        def capture(profile, ranked, k):
-            seen["tone"] = profile.prompt.tone
-            seen["guidance"] = profile.prompt.guidance
-            return curated_picks(profile, ranked, k)
-
-        ctx.curator.curate.side_effect = capture
-        pipeline_mod.run(ctx, [sarah])
-
-        assert seen == {"tone": "playful", "guidance": "be spooky"}  # the row override, not the base
+        assert seen == [3]  # the person's override, beating the row's 8 and the global 10
 
     def test_per_row_candidate_sources_gate_which_apis_run(self, ctx: EngineContext, mock_plextv):
         # A row pinned to tmdb_discover only must query discover and NOT the tmdb_similar endpoint —
@@ -461,7 +507,6 @@ class TestPerRowOverrides:
         ]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         pipeline_mod.run(ctx, [sarah])
 
@@ -477,7 +522,6 @@ class TestPerRowOverrides:
         ]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
         ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
         ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: []
 
@@ -502,14 +546,12 @@ class TestPerRowOverrides:
         lib2.title = "4K Movies"
         ctx.plex.sections.return_value = [lib1, lib2]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: lib1}  # lowest-key only
-        ctx.plex.build_library_index.side_effect = lambda s, ep=None: (
-            {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010, 20: 2020},
-            {},
+        ctx.plex.build_library_index.side_effect = lambda s: (
+            {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010, 20: 2020}
         )
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, library_keys=["2"])]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         made: list[MagicMock] = []
 
@@ -530,8 +572,10 @@ class TestPerRowOverrides:
         promoted_sections = {getattr(call.args[0], "_section", None) for call in ctx.plex.promote.call_args_list}
         assert lib2 in promoted_sections, "the row in the non-lowest-key library was never promoted (leak)"
 
-    def test_a_pinned_row_only_recommends_titles_its_own_library_holds(self, ctx: EngineContext, mock_plextv):
-        """A row pinned to a library was curated against the UNION of every library of its type, and
+    def test_a_pinned_row_only_recommends_titles_its_own_library_holds(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """A row pinned to a library was selected against the UNION of every library of its type, and
         delivery then dropped every pick the pinned library didn't hold — a short row, or an empty
         one, reported as ok. The pool must be narrowed to the row's own libraries first."""
         lib1 = MagicMock()
@@ -545,28 +589,22 @@ class TestPerRowOverrides:
         ctx.plex.sections.return_value = [lib1, lib2]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: lib1}
         # Candidate 10 is in BOTH libraries; candidate 20 lives only in lib1.
-        ctx.plex.build_library_index.side_effect = lambda s, ep=None: (
-            {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010},
-            {},
+        ctx.plex.build_library_index.side_effect = lambda s: (
+            {900: 999, 10: 1010, 20: 1020} if s is lib1 else {900: 999, 10: 2010}
         )
         ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, library_keys=["2"])]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        offered: list[int] = []
-
-        def curate(profile, candidates, k):
-            offered.extend(c.tmdb_id for c in candidates)
-            return curated_picks(profile, candidates, k)
-
-        ctx.curator.curate.side_effect = curate
+        offered = spy_build_picks(monkeypatch)
 
         pipeline_mod.run(ctx, [sarah])
 
-        # 20 isn't in lib2, so the curator must never have been offered it.
-        assert 10 in offered
-        assert 20 not in offered, "the row was offered a title its own library doesn't hold"
+        # 20 isn't in lib2, so the pick builder must never have been offered it.
+        offered_ids = {c.tmdb_id for call in offered for c in call}
+        assert 10 in offered_ids
+        assert 20 not in offered_ids, "the row was offered a title its own library doesn't hold"
 
-    def test_a_shows_only_row_survives_a_movie_heavy_pool(self, ctx: EngineContext, mock_plextv):
+    def test_a_shows_only_row_survives_a_movie_heavy_pool(self, ctx: EngineContext, mock_plextv, monkeypatch):
         """The media filter used to run AFTER the pre-rank truncation, so a movie-heavy watcher's
         shows-only row could lose every show to the 40-candidate cut and deliver nothing."""
         movie_section = MagicMock()
@@ -582,7 +620,7 @@ class TestPerRowOverrides:
         ctx.config.candidates_pre_rank = 5  # a tiny cut, so crowding-out is easy to trigger
         movies = {900: 999, **{i: 1000 + i for i in range(1, 60)}}
         shows = {5000: 5999, 5001: 5001}
-        ctx.plex.build_library_index.side_effect = lambda s, ep=None: (movies if s is movie_section else shows, {})
+        ctx.plex.build_library_index.side_effect = lambda s: movies if s is movie_section else shows
         ctx.config.rows = [RowSpec(slug="tv", name_template="TV Picks", size=2, media="show")]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
@@ -605,34 +643,13 @@ class TestPerRowOverrides:
             *[make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)],
             make_watched("Breaking Bad", days_ago=2, rating_key=5999, media_type=MediaType.SHOW),
         ]
-        offered: list[int] = []
-
-        def curate(profile, candidates, k):
-            offered.extend(c.tmdb_id for c in candidates)
-            return curated_picks(profile, candidates, k)
-
-        ctx.curator.curate.side_effect = curate
+        offered = spy_build_picks(monkeypatch)
 
         pipeline_mod.run(ctx, [sarah])
 
-        assert offered, "the shows-only row was offered no candidates at all"
-        assert all(i >= 5000 for i in offered), f"a shows-only row was offered movies: {offered}"
-
-    def test_the_ai_library_catalog_is_built_when_only_a_ROW_asks_for_it(self, ctx: EngineContext, mock_plextv):
-        """A row overriding its sources to llm_library found an empty catalog — it was only built when
-        the GLOBAL setting listed the source — so it produced nothing, forever, reporting ok."""
-        ctx.config.candidate_sources = ["tmdb_similar"]  # global set does NOT include llm_library
-        ctx.config.rows = [RowSpec(slug="gems", name_template="Gems", size=5, candidate_sources=["llm_library"])]
-        ctx.plex.build_library_catalog.return_value = [
-            {"tmdb_id": 10, "rating_key": 1010, "title": "Owned Ten", "year": 2010, "genres": []},
-        ]
-        sarah = make_profile("sarah", account_id=100)
-        mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
-
-        pipeline_mod.run(ctx, [sarah])
-
-        assert ctx.plex.build_library_catalog.called, "the AI-from-library catalog was never built"
+        offered_ids = [c.tmdb_id for call in offered for c in call]
+        assert offered_ids, "the shows-only row was offered no candidates at all"
+        assert all(i >= 5000 for i in offered_ids), f"a shows-only row was offered movies: {offered_ids}"
 
     def test_one_rows_dead_source_does_not_kill_the_users_other_rows(self, ctx: EngineContext, mock_plextv):
         """A row pinned to a single source (Trakt-only) whose source is down must fail alone. It used
@@ -646,7 +663,6 @@ class TestPerRowOverrides:
         ]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -686,7 +702,6 @@ class TestPerRowOverrides:
         ctx.config.rows_defined = False
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         pipeline_mod.run(ctx, [sarah])
 
@@ -708,7 +723,7 @@ class TestPerRowOverrides:
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movie_section, MediaType.SHOW: show_section}
         movies = {900: 999, **{i: 1000 + i for i in range(1, 40)}}
         shows = {5000: 5999, **{5000 + i: 6000 + i for i in range(1, 40)}}
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (movies if sec is movie_section else shows, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: movies if sec is movie_section else shows
 
         def suggestions(tid, mt):  # returns (item, affinity) pairs
             # Plenty of BOTH movie and show candidates in the pool.
@@ -727,7 +742,6 @@ class TestPerRowOverrides:
         ctx.config.min_history = 1  # 2 watches is enough here — exercise the real curate path, not cold start
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -737,8 +751,10 @@ class TestPerRowOverrides:
         assert len(movie_picks) == 10, f"movie row should fill to 10, got {len(movie_picks)}"
         assert len(show_picks) == 10, f"show row should fill to 10, got {len(show_picks)}"
 
-    def test_a_row_curates_each_library_from_that_librarys_own_contents(self, ctx: EngineContext, mock_plextv):
-        """Two libraries of the SAME media type each get their OWN full row, curated only from the
+    def test_a_row_builds_each_library_from_that_librarys_own_contents(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """Two libraries of the SAME media type each get their OWN full row, built only from the
         titles that library holds — not one recommendation split between them. This is what makes a
         row 'per library': a server with a Movies and a 4K library fills both, from their own shelves.
         """
@@ -749,7 +765,7 @@ class TestPerRowOverrides:
         # Disjoint catalogues: Movies holds tmdb 10-15, 4K holds tmdb 50-55 (seed 900 in both).
         idx_std = {900: 999, **{i: 1000 + i for i in range(10, 16)}}
         idx_4k = {900: 999, **{i: 2000 + i for i in range(50, 56)}}
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (idx_std if sec is movies else idx_4k, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: idx_std if sec is movies else idx_4k
         # The candidate pool spans BOTH libraries' titles; each library must pick only its own.
         pool = [
             {"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in [*range(10, 16), *range(50, 56)]
@@ -761,14 +777,14 @@ class TestPerRowOverrides:
         ctx.config.candidates_pre_rank = 50  # keep the whole 12-title pool; don't truncate either library
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
+        offered = spy_build_picks(monkeypatch)
 
         pipeline_mod.run(ctx, [sarah])
 
-        # One curate call per library, each seeing ONLY that library's tmdb ids.
-        seen = [{c.tmdb_id for c in call.args[1]} for call in ctx.curator.curate.call_args_list]
-        assert {10, 11, 12, 13, 14, 15} in seen, f"Movies library should curate from its own ids, saw {seen}"
-        assert {50, 51, 52, 53, 54, 55} in seen, f"4K library should curate from its own ids, saw {seen}"
+        # One build_picks call per library, each seeing ONLY that library's tmdb ids.
+        seen = [{c.tmdb_id for c in call} for call in offered]
+        assert {10, 11, 12, 13, 14, 15} in seen, f"Movies library should build from its own ids, saw {seen}"
+        assert {50, 51, 52, 53, 54, 55} in seen, f"4K library should build from its own ids, saw {seen}"
 
     def test_run_records_a_breakdown_entry_per_library(self, ctx: EngineContext, mock_plextv):
         """The per-user report carries a per-(row, library) breakdown so the UI can show 'added X to
@@ -779,7 +795,7 @@ class TestPerRowOverrides:
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         idx_std = {900: 999, **{i: 1000 + i for i in range(10, 16)}}
         idx_4k = {900: 999, **{i: 2000 + i for i in range(50, 56)}}
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (idx_std if sec is movies else idx_4k, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: idx_std if sec is movies else idx_4k
         pool = [
             {"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in [*range(10, 16), *range(50, 56)]
         ]
@@ -790,7 +806,6 @@ class TestPerRowOverrides:
         ctx.config.candidates_pre_rank = 50
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -808,7 +823,7 @@ class TestPerRowOverrides:
         ctx.plex.sections.return_value = [movies]
         ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
         idx = {900: 999, **{i: 1000 + i for i in range(10, 20)}}
-        ctx.plex.build_library_index.return_value = (idx, {})
+        ctx.plex.build_library_index.return_value = idx
         pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 20)]
         ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
@@ -833,33 +848,36 @@ class TestPerRowOverrides:
             for i, t in enumerate(tmdb_ids)
         ]
 
-    def test_non_refresh_night_reuses_prior_picks_without_curating(self, ctx: EngineContext, mock_plextv):
+    def test_non_refresh_night_reuses_prior_picks_without_rebuilding(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
         """Freshness 0 = a frozen row: after the first build it redelivers last run's picks unchanged
-        and never calls the (token-costing, non-deterministic) curator — the fix for nightly churn."""
+        and never rebuilds the row (no wasted work, and delivery's unchanged-skip avoids the Plex
+        write too) — the fix for nightly churn."""
         self._movie_row_ctx(ctx, freshness=0.0, run_day=5)
         ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([12, 13, 14, 15, 16])}
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
+        built = spy_build_picks(monkeypatch)
 
         report = pipeline_mod.run(ctx, [sarah])
 
-        ctx.curator.curate.assert_not_called()  # reused, not re-curated
+        assert built == []  # reused, not rebuilt
         picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
         assert [p["tmdb_id"] for p in picks] == [12, 13, 14, 15, 16]  # exactly last run's row, in order
 
-    def test_refresh_night_keeps_the_strong_top_and_swaps_the_rest(self, ctx: EngineContext, mock_plextv):
+    def test_refresh_night_keeps_the_strong_top_and_swaps_the_rest(self, ctx: EngineContext, mock_plextv, monkeypatch):
         """On a refresh night the strongest ~two-thirds carry over and the rest are swapped for titles
         NOT already in the row, so a just-rotated-out pick can't immediately bounce back."""
         self._movie_row_ctx(ctx, freshness=1.0, run_day=5)  # 1.0 = refresh every night
         ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([12, 13, 14, 15, 16])}
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
+        built = spy_build_picks(monkeypatch)
 
         report = pipeline_mod.run(ctx, [sarah])
 
-        ctx.curator.curate.assert_called()  # a refresh night DOES curate the swapped-in slots
+        assert built  # a refresh night DOES rebuild the swapped-in slots
         picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
         ids = [p["tmdb_id"] for p in picks]
         assert ids[:3] == [12, 13, 14], f"keep the strongest two-thirds of last run's row, got {ids}"
@@ -874,7 +892,6 @@ class TestPerRowOverrides:
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
         # Both watch the same title, so it clears the 2-distinct-watchers floor for a public row.
         ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah, mike])
 
@@ -882,27 +899,22 @@ class TestPerRowOverrides:
         assert shared_report.breakdown, "the shared row records a breakdown"
         assert all(e["row_slug"] == "popular" for e in shared_report.breakdown)
 
-    def test_a_shared_row_accounts_its_llm_tokens(self, ctx: EngineContext, mock_plextv):
-        """Shared-row LLM spend used to vanish — only the per-person path accumulated tokens. Each
-        curated library section adds its curator's token count to the shared report."""
-        ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
-        sarah = make_profile("sarah", account_id=100)
-        mike = make_profile("mike", account_id=200)
-        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
-        ctx.curator.curate.side_effect = curated_picks
-        ctx.curator.last_tokens = 37  # each curated section reports this
+    def test_per_person_tokens_come_from_the_web_search_source_and_land_under_its_step(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The ONLY AI cost now is finding titles: the ``llm_web`` source. A run using it records that
+        source's tokens into the user total AND under its own step bucket. Ranking/pick selection is
+        code (picker.build_picks) with no LLM, so there is no 'curate' step and no per-row token spend."""
 
-        report = pipeline_mod.run(ctx, [sarah, mike])
+        class _WebCurator:
+            supports_native_web_search = True
+            last_tokens = 50  # the tokens the one web-search LLM call reports
 
-        shared_report = next(u for u in report.users if u.slug == "shared_popular")
-        sections = len({e["library_key"] for e in shared_report.breakdown})
-        assert shared_report.llm_tokens == 37 * sections, "shared-row tokens sum across curated libraries"
+            def recommend_web(self, profile, seeds, k):
+                return [{"title": "Web Pick", "year": 2020, "media": "movie"}]
 
-    def test_per_person_tokens_are_split_by_step_and_stamped_per_row(self, ctx: EngineContext, mock_plextv):
-        """A per-person run records curate tokens into the total, the 'curate' step, AND each
-        (row, library) breakdown entry — so the UI can show per-run, per-user, per-step and per-row
-        AI cost. Default sources are TMDB-only, so every token here is curation (no gather/Exa)."""
+        ctx.curator = _WebCurator()
+        ctx.config.candidate_sources = ["tmdb_similar", "llm_web"]
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
         ctx.tmdb.suggestions.return_value = _ranked(
@@ -911,36 +923,37 @@ class TestPerRowOverrides:
                 {"id": 20, "title": "Fresh Twenty", "genre_ids": [], "vote_average": 7.0},
             ]
         )
-        ctx.plex.build_library_index.return_value = ({900: 999, 10: 1010, 20: 1020}, {})
-        ctx.curator.curate.side_effect = curated_picks
-        ctx.curator.last_tokens = 50  # each curated (row, library) section reports this
+        # The web source's proposed title resolves to a real TMDB id, so llm_web actually contributes.
+        ctx.tmdb.search.side_effect = lambda title, mt, year=None: (
+            {"id": 30, "title": "Web Pick", "genre_ids": [], "vote_average": 8.5} if title == "Web Pick" else None
+        )
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020, 30: 1030}
 
         report = pipeline_mod.run(ctx, [sarah])
 
         u = report.users[0]
-        assert u.llm_tokens > 0
-        # Every token is curation (no AI candidate source ran), tracked under the 'curate' step.
-        assert u.llm_tokens_by_step == {"curate": u.llm_tokens}
-        assert u.exa_searches == 0  # no Exa without the llm_web external backend
-        # Per-row: each breakdown entry carries its own curate cost, and they sum to the user total.
-        assert u.breakdown and all(e["llm_tokens"] == 50 for e in u.breakdown)
-        assert sum(e["llm_tokens"] for e in u.breakdown) == u.llm_tokens
+        assert u.llm_tokens == 50
+        # Tokens are attributed to the SOURCE that spent them (llm_web), not a curate step.
+        assert u.llm_tokens_by_step == {"llm_web": 50}
+        assert u.exa_searches == 0  # native web search, no external Exa backend
+        # No per-row LLM spend anymore: breakdown entries carry no token key.
+        assert u.breakdown and all("llm_tokens" not in e for e in u.breakdown)
 
-    def test_a_cancelled_run_skips_every_remaining_user(self, ctx: EngineContext, mock_plextv):
-        """A cancel signalled before delivery skips every user's gather/curate/deliver — no LLM call,
+    def test_a_cancelled_run_skips_every_remaining_user(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """A cancel signalled before delivery skips every user's gather/build/deliver — no pick work,
         no picks — and each is marked 'skipped'. An in-flight user isn't interrupted mid-work (the
         check is per-user), so this never leaves a half-applied user."""
         ctx.cancelled = lambda: True
         sarah = make_profile("sarah", account_id=100)
         mike = make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
+        built = spy_build_picks(monkeypatch)
 
         report = pipeline_mod.run(ctx, [sarah, mike])
 
         assert [u.status for u in report.users] == ["skipped", "skipped"]
         assert not any(u.picks for u in report.users)
-        assert not ctx.curator.curate.called  # cancelled before any gather/curate ran
+        assert built == []  # cancelled before any gather/build ran
 
     def test_a_partial_cancel_still_merges_filters_and_promotes_the_delivered_user(
         self, ctx: EngineContext, mock_plextv
@@ -951,7 +964,6 @@ class TestPerRowOverrides:
         delivered row visible to the wrong person."""
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
         mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
-        ctx.curator.curate.side_effect = curated_picks
         # Cancel becomes true after the first per-user check: sarah delivers, mike (and shared) skip.
         seen = {"n": 0}
 
@@ -999,8 +1011,7 @@ class TestPerRowOverrides:
                 {"id": 20, "title": "Fresh Twenty", "genre_ids": [], "vote_average": 7.0},
             ]
         )
-        ctx.plex.build_library_index.return_value = ({900: 999, 10: 1010, 20: 1020}, {})
-        ctx.curator.curate.side_effect = curated_picks
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 1010, 20: 1020}
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -1027,8 +1038,7 @@ class TestPerRowOverrides:
                 {"id": 10, "title": "Fresh Ten", "genre_ids": [], "vote_average": 8.0},
             ]
         )
-        ctx.plex.build_library_index.return_value = ({900: 999, 50: 550, 10: 1010}, {})
-        ctx.curator.curate.side_effect = curated_picks
+        ctx.plex.build_library_index.return_value = {900: 999, 50: 550, 10: 1010}
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -1099,7 +1109,6 @@ class TestRequestsWiring:
     def test_disabled_by_default_never_calls_the_request_pass(self, ctx: EngineContext, mock_plextv, monkeypatch):
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
         self._suggest_a_missing_title(ctx)
         called = []
         monkeypatch.setattr(pipeline_mod.requests_mod, "request_missing", lambda *a, **k: called.append(a))
@@ -1115,7 +1124,6 @@ class TestRequestsWiring:
 
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
         self._suggest_a_missing_title(ctx)
         ctx.config.requests = RequestConfig(
             enabled=True,
@@ -1166,7 +1174,6 @@ class TestRequestsWiring:
         ]
         sarah = make_profile("sarah", account_id=100, request_tag="sarah")
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
         ctx.tmdb.genre_ids_for.side_effect = lambda tid, mt: [18]
         ctx.tmdb.discover.side_effect = lambda mt, gids, **kw: [
             {"id": 30, "title": "Missing Gem", "genre_ids": [], "vote_average": 8.4}
@@ -1380,7 +1387,7 @@ class TestPlacement:
         # Movies is fed by Fargo (ids 10-15), 4K by Heat (ids 50-55).
         idx_std = {900: 999, 800: 888, **{i: 1000 + i for i in range(10, 16)}}
         idx_4k = {900: 999, 800: 888, **{i: 2000 + i for i in range(50, 56)}}
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: (idx_std if sec is movies else idx_4k, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: idx_std if sec is movies else idx_4k
 
         def suggestions(tid, mt):  # returns (item, affinity) pairs
             base = 10 if tid == 900 else 50  # Fargo -> Movies ids, Heat -> 4K ids
@@ -1405,7 +1412,6 @@ class TestPlacement:
         )
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
 
         report = pipeline_mod.run(ctx, [sarah])
 
@@ -1441,7 +1447,7 @@ class TestLibraryScoping:
         ctx.config.rows_defined = True
         ctx.plex.section_signature.return_value = None  # force a scan (no cache)
         scanned: list[str] = []
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: scanned.append(str(sec.key)) or ({}, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
 
         pipeline_mod._build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, sports, shows])
 
@@ -1456,7 +1462,7 @@ class TestLibraryScoping:
         ctx.config.rows_defined = False
         ctx.plex.section_signature.return_value = None
         scanned: list[str] = []
-        ctx.plex.build_library_index.side_effect = lambda sec, ep=None: scanned.append(str(sec.key)) or ({}, {})
+        ctx.plex.build_library_index.side_effect = lambda sec: scanned.append(str(sec.key)) or {}
 
         pipeline_mod._build_indexes(ctx, [make_profile("sarah", account_id=100)], [movies, shows])
 
@@ -1493,7 +1499,7 @@ class TestLibraryIndexCache:
         ctx.index_cache = cache
         ctx.progress = None  # _emit only logs
         ctx.plex.section_signature.return_value = "100:200"
-        ctx.plex.build_library_index.return_value = ({42: 1}, {42: 10})
+        ctx.plex.build_library_index.return_value = {42: 1}
         return ctx
 
     def test_unchanged_library_serves_the_cached_index_without_re_scanning(self):
@@ -1501,7 +1507,7 @@ class TestLibraryIndexCache:
         section = MagicMock(key="1", title="Movies")
         first = pipeline_mod._library_index(ctx, section)
         second = pipeline_mod._library_index(ctx, section)
-        assert first == second == ({42: 1}, {42: 10})
+        assert first == second == {42: 1}
         assert ctx.plex.build_library_index.call_count == 1  # second run served from cache
 
     def test_a_changed_signature_re_scans(self):
@@ -1542,7 +1548,6 @@ class TestParallelRuns:
 
         users = self._users(mock_plextv)
         ctx.concurrency = 3
-        ctx.curator.curate.side_effect = curated_picks
 
         created: dict[str, object] = {}
 
@@ -1578,7 +1583,6 @@ class TestParallelRuns:
     def test_concurrency_preserves_user_order_and_excludes(self, ctx: EngineContext, mock_plextv):
         users = self._users(mock_plextv)
         ctx.concurrency = 3
-        ctx.curator.curate.side_effect = curated_picks
         created: dict[str, object] = {}
 
         def stored_label(collection, label):
@@ -1629,10 +1633,20 @@ class TestEffectiveRowSources:
 
 class TestPerDeliveryTimeoutRetry:
     """A PMS timeout retries JUST the idempotent delivery write, NOT the whole user — so a Plex hiccup
-    never re-runs the expensive gather + LLM curate (the amplifier that made SFLIX run 3 catastrophic).
-    A delivery that keeps timing out still fails only that user (rule 6 resume-safety)."""
+    never re-runs the expensive gather + pick selection (the amplifier that made SFLIX run 3
+    catastrophic). A delivery that keeps timing out still fails only that user (rule 6 resume-safety)."""
 
-    def test_a_transient_delivery_timeout_retries_only_the_write_not_curation(
+    def _full_movie_pool(self, ctx: EngineContext) -> None:
+        """Five in-library candidates for a size-5 row, so ``build_picks`` fires ONCE per section
+        (no short-row padding second call) and its call count cleanly reflects the pick work."""
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie")]
+        ids = [10, 11, 12, 13, 14]
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in ids]
+        )
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 1000 + i for i in ids}}
+
+    def test_a_transient_delivery_timeout_retries_only_the_write_not_pick_selection(
         self, ctx: EngineContext, mock_plextv, monkeypatch
     ):
         import requests
@@ -1642,7 +1656,8 @@ class TestPerDeliveryTimeoutRetry:
         monkeypatch.setattr(plex_pms.time, "sleep", lambda _s: None)  # no real backoff waits
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
+        self._full_movie_pool(ctx)
+        built = spy_build_picks(monkeypatch)
 
         # Inject the timeout at the actual PMS WRITE (create_collection), NOT at our deliver_rows
         # helper — so real deliver_rows (and its idempotent re-read) runs on BOTH attempts.
@@ -1659,8 +1674,8 @@ class TestPerDeliveryTimeoutRetry:
         report = pipeline_mod.run(ctx, [sarah])
 
         assert create_calls["n"] == 2  # the write was retried once, against real deliver_rows
-        # Curation ran ONCE — the retry did not re-run the LLM (the whole point of the change).
-        assert ctx.curator.curate.call_count == 1
+        # Pick selection ran ONCE — the retry did not re-run the gather+build (the point of the change).
+        assert len(built) == 1
         user = next(u for u in report.users if u.slug == "sarah")
         assert user.status != "error"
         # The retry did not double-count the per-library audit breakdown (idempotent report state).
@@ -1674,13 +1689,14 @@ class TestPerDeliveryTimeoutRetry:
         monkeypatch.setattr(plex_pms.time, "sleep", lambda _s: None)
         sarah = make_profile("sarah", account_id=100)
         mock_plextv.users = [plextv_user(100, "sarah")]
-        ctx.curator.curate.side_effect = curated_picks
+        self._full_movie_pool(ctx)
+        built = spy_build_picks(monkeypatch)
         ctx.plex.create_collection.side_effect = requests.exceptions.ReadTimeout("down")
 
         report = pipeline_mod.run(ctx, [sarah])
 
         assert next(u for u in report.users if u.slug == "sarah").status == "error"
-        assert ctx.curator.curate.call_count == 1  # curation ran once, was not re-run on the failures
+        assert len(built) == 1  # pick selection ran once, was not re-run on the failures
         ctx.plex.promote.assert_not_called()  # nothing delivered -> nothing promoted
 
 

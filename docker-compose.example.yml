@@ -6,6 +6,11 @@ services:
       - "5959:5959"
     volumes:
       - ./config:/config
+      # Optional, and only if Shortlist runs on the same machine as Plex: mounting Plex's database
+      # READ-ONLY lets Shortlist see titles people MARKED watched. Plex's history API only reports
+      # what was actually played, so without this a marked-watched title can be recommended back.
+      # Then set Settings -> Advanced -> "Read watched state from the Plex database" to /plexdb.
+      # - "/path/to/plex/Library/Application Support/Plex Media Server/Plug-in Support/Databases:/plexdb:ro"
     environment:
       - TZ=Etc/UTC
       - PUID=1000

@@ -17,6 +17,7 @@ export interface User {
   /** nickname → friendly_name → username, resolved server-side. */
   display_name?: string;
   user_type: UserType;
+  restricted: boolean;
   enabled: boolean;
   cold_start: boolean;
   history_depth: number;
@@ -67,7 +68,6 @@ export interface Collection {
   pin_top: boolean;
   /** Per-library Recommended-shelf override for THIS row; {} inherits the global default. */
   hub_anchor: HubAnchorMap;
-  prompt: { tone?: string; guidance?: string; template?: string };
   /** This row's custom poster; mode "" leaves Plex's own artwork alone. */
   poster: Poster;
 }
@@ -158,7 +158,6 @@ export interface CollectionInput {
   placement: "both" | "home" | "library";
   pin_top: boolean;
   hub_anchor: HubAnchorMap;
-  prompt: { tone: string; guidance: string; template: string };
   poster: PosterInput;
 }
 
@@ -167,36 +166,10 @@ export interface UserPrefs {
   row_name_tpl?: string;
   row_size?: number;
   excluded_genres?: string[];
+  blocked_seeds?: number[];
   max_rating?: string | null;
   paused?: boolean;
-  // Per-person curation-recipe overrides. Empty string = inherit the global default.
-  prompt_tone?: string;
-  prompt_guidance?: string;
-  prompt_template?: string;
 }
-
-/** POST /api/settings/prompt-preview request + response. */
-export interface PromptPreviewRequest {
-  tone?: string;
-  guidance?: string;
-  template?: string;
-  shared?: boolean;
-}
-
-export interface PromptPreview {
-  system: string;
-  user: string;
-}
-
-/** The tone presets the curation recipe offers. */
-export const PROMPT_TONES = [
-  "balanced",
-  "warm",
-  "concise",
-  "cinephile",
-  "playful",
-] as const;
-export type PromptTone = (typeof PROMPT_TONES)[number];
 
 export interface UserPatch {
   nickname?: string;
@@ -238,6 +211,8 @@ export interface RunStats {
   llm_tokens_by_step?: Record<string, number>;
   /** Exa web searches run this run (billed per search, not per token — shown separately). */
   exa_searches?: number;
+  /** Searches served from the shared 14-day cache instead of billed — "1 searched · N from cache". */
+  exa_cache_hits?: number;
 }
 
 /** GET /api/runs — one row per pipeline run. */
@@ -277,13 +252,13 @@ export interface UserRow {
   name: string;
   media: string;
   size: number;
+  /** The row's effective recent-watches depth (its own, else the global) — what an override falls back to. */
+  recent_count: number;
   is_default: boolean;
   muted: boolean;
   override: {
     row_size: number | null;
-    prompt_tone: string;
-    prompt_guidance: string;
-    prompt_template: string;
+    recent_count: number | null;
   };
   picks: Pick[];
 }
@@ -292,9 +267,7 @@ export interface UserRow {
 export interface RowOverridePatch {
   muted?: boolean;
   row_size?: number | null;
-  prompt_tone?: string;
-  prompt_guidance?: string;
-  prompt_template?: string;
+  recent_count?: number | null;
 }
 
 /** GET /api/users/{id}/runs — one of this user's recent run results. */
@@ -352,6 +325,8 @@ export interface RunLibraryBreakdown {
 /** Per-user slice of GET /api/runs/{id}. */
 export interface RunUserResult {
   username: string;
+  /** nickname → friendly_name → username, resolved server-side (same as User.display_name). */
+  display_name?: string;
   slug: string;
   status: string;
   error: string | null;
@@ -367,11 +342,159 @@ export interface RunUserResult {
   picks: Pick[];
   /** Per-(row, library) breakdown; empty on legacy runs (render the merged diff + picks instead). */
   breakdown: RunLibraryBreakdown[];
+  /** Whether a full pipeline trace was recorded for this user (fetch it from the trace endpoint). */
+  has_trace?: boolean;
 }
 
 /** GET /api/runs/{id} — the run plus its per-user results. */
 export interface RunDetail extends Run {
   users: RunUserResult[];
+}
+
+/** One recent watch shown in a trace. */
+export interface TraceWatch {
+  title: string;
+  media: string;
+  /** Display name of the Plex library it lives in ("" when unknown — fall back to a media label). */
+  library: string;
+  year: number | null;
+  watched_at: string | null;
+}
+
+/** A seed derived from history — a history title used to find candidates. */
+export interface TraceSeed {
+  title: string;
+  media: string;
+  /** Display name of the Plex library it lives in ("" when unknown — fall back to a media label). */
+  library: string;
+  tmdb_id: number;
+  weight: number;
+  /** The two ingredients behind `weight` — so the influence bar reads "watched 4×, 3 days ago". */
+  watch_count?: number;
+  recency_days?: number;
+}
+
+/** What happened to a candidate a source returned: kept into the pool, or dropped and why. */
+export type TraceFate =
+  | "kept"
+  | "already_watched"
+  | "not_in_your_libraries"
+  | "excluded_genre"
+  | "lost_ranking_cutoff"
+  | "not_returned";
+
+/** One title a source returned for a seed, tagged with its fate through selection. */
+export interface TraceReturn {
+  tmdb_id: number;
+  title: string;
+  /** Kept/dropped verdict (absent on legacy runs recorded before disposition tracking). */
+  fate?: TraceFate;
+}
+
+/** One seed's query against a source: what it searched for and a sample of what came back. */
+export interface TraceSeedQuery {
+  seed: string;
+  media: string;
+  returned: TraceReturn[];
+  /** Total returned before the `returned` sample was capped — so the UI can say "+N more". */
+  total: number;
+}
+
+/** One candidate source's contribution in a gather. */
+export interface TraceSource {
+  source: string;
+  status: "ok" | "failed";
+  contributed: number;
+  detail: string;
+  /** Per-seed query sample (seeded TMDB/Trakt sources only; empty for discover/llm_web). */
+  queries?: TraceSeedQuery[];
+  /** Fate tally across this source's returned sample: {kept, already_watched, ...} counts. */
+  disposition?: Record<string, number>;
+}
+
+/** One Exa search: the query sent for a seed and the titles it returned. */
+export interface TraceWebSearch {
+  seed: string;
+  query: string;
+  cached: boolean;
+  returned: string[];
+}
+
+/** One title the AI proposed from the web search, resolved to a real TMDB id, tagged with whether it
+ *  made the library's shortlist (kept) or the reason it fell out — the same fate a TMDB/Trakt return
+ *  carries. Hallucinations (no TMDB match) never reach here; they stay in `unresolved`. */
+export interface TraceWebProposal {
+  title: string;
+  tmdb_id: number;
+  media: string;
+  fate?: TraceFate;
+}
+
+/** The web-search (llm_web) detail of a gather: what was searched and what the LLM proposed. */
+export interface TraceWeb {
+  mode: string;
+  searches?: TraceWebSearch[];
+  rag_system?: string;
+  rag_user?: string;
+  proposed?: string[];
+  native_proposed?: string[];
+  resolved?: string[];
+  unresolved?: string[];
+  /** Resolved proposals with their fate through selection — kept into the row, or why they dropped. */
+  proposals?: TraceWebProposal[];
+}
+
+/** One candidate pool a user's rows gathered (usually one, shared across rows). */
+export interface TraceGather {
+  pool: string;
+  sources?: TraceSource[];
+  discover_genres?: Record<string, string[]>;
+  web?: TraceWeb;
+}
+
+/** What the request subsystem did with a wanted-but-missing title (Sonarr/Radarr). Overlaid onto a
+ *  "not in your libraries" fate so a drop reads "→ requested from Radarr" instead of a dead end. */
+export interface TraceRequestOutcome {
+  /** pending = queued for the owner's approval; sent = asked of Sonarr/Radarr; rejected = dismissed. */
+  status: "pending" | "sent" | "rejected";
+  /** The send outcome, or why it's queued. */
+  detail: string;
+  /** Sonarr/Radarr titleSlug once sent, for a deep link (null when queued/before this was recorded). */
+  arr_slug: string | null;
+  /** On the arr's import-exclusion list — approving it is a no-op until the owner clears it. */
+  excluded: boolean;
+}
+
+/** The full pipeline trace for one user in one run (GET /api/runs/{id}/users/{uid}/trace). */
+export interface RunUserTrace {
+  history?: {
+    total: number;
+    recent: TraceWatch[];
+    watched_movies: number;
+    watched_shows: number;
+    /** True distinct-title watched totals per library NAME, split by media type — exact per library
+     *  even when several libraries share a media type. Absent on runs recorded before this was added. */
+    watched_by_library?: Record<string, { movie: number; show: number }>;
+  };
+  seeds?: TraceSeed[];
+  gathers?: TraceGather[];
+}
+
+/** GET /api/runs/{id}/users/{uid}/trace response. */
+export interface RunUserTraceResponse {
+  username: string;
+  display_name?: string;
+  status: string;
+  /** Why the run failed for this person (null unless status is "error"). */
+  error: string | null;
+  /** Plain-English reason a non-failing person was skipped (null otherwise). */
+  reason: string | null;
+  trace: RunUserTrace;
+  /** The delivered ending: per-(row, library) picks with reasons. [] on legacy runs. */
+  breakdown: RunLibraryBreakdown[];
+  /** What the request subsystem did with each wanted-but-missing title, keyed "<tmdb_id>:<media_type>"
+   *  — the trace overlays it onto "not in your libraries" drops. {} when requests are off/legacy. */
+  requests?: Record<string, TraceRequestOutcome>;
 }
 
 /** POST /api/runs body. */
@@ -535,7 +658,7 @@ export interface RunLogEntry {
   run_id?: number | null;
   user: string;
   stage: string;
-  counts: Record<string, number>;
+  counts: Record<string, number | string>;
   reason?: string | null;
 }
 
@@ -554,6 +677,37 @@ export interface UninstallProgressEvent {
   /** For filter-restore steps: how many done out of the total. */
   done?: number;
   total?: number;
+}
+
+/** Which Tools-page sync a `sync.*` event belongs to. */
+export type SyncKind = "watched" | "users";
+
+/**
+ * Live progress for a Tools-page sync (SSE `sync.progress`).
+ *
+ * The watched sync is one determinate loop (`done`/`total` users). The users sync has two phases:
+ * an indeterminate `fetch` (the opaque plex.tv round-trip), then a determinate `save` bar.
+ */
+export interface SyncProgressEvent {
+  kind: SyncKind;
+  /** Only the users sync sends phases; the watched sync is a single implicit "save" loop. */
+  phase?: "fetch" | "save";
+  done?: number;
+  total?: number;
+}
+
+/** A Tools-page sync finished (SSE `sync.finished`). */
+export interface SyncFinishedEvent {
+  kind: SyncKind;
+  ok: boolean;
+  /** watched sync: how many users were refreshed. */
+  count?: number;
+  /** users sync: the same counts the POST returns, echoed so the bar can settle on them. */
+  added?: number;
+  updated?: number;
+  total?: number;
+  /** On failure (watched sync), the exception class name — never a tokened message (rule 9). */
+  error?: string | null;
 }
 
 /**
@@ -625,6 +779,8 @@ export interface EffectivenessReport {
   trend: { week: string; watched: number }[];
   per_user: {
     username: string;
+    /** nickname → friendly_name → username, resolved server-side. */
+    display_name?: string;
     slug: string;
     delivered: number;
     watched: number;
@@ -643,6 +799,8 @@ export interface EffectivenessReport {
   }[];
   recent: {
     username: string;
+    /** nickname → friendly_name → username, resolved server-side. */
+    display_name?: string;
     title: string;
     media_type: string;
     row: string;
@@ -709,7 +867,6 @@ export interface RequestSendResult {
   outcomes: RequestSendOutcome[];
 }
 
-
 /** One parsed line from the rotating log file (GET /api/system/logs). A traceback is folded into
  *  the entry it belongs to, so `message` can span several lines. */
 export interface LogLine {
@@ -726,4 +883,24 @@ export interface LogPage {
   truncated: boolean;
   /** The file these came from, or null when the instance has not written any logs yet. */
   file: string | null;
+}
+
+/** Sync schedule info for the Tools page — when each sync last ran and next fires. */
+export interface SyncsInfo {
+  watched: { last: string | null; next: string | null; cron: string };
+  users: { last: string | null; next: string | null; cron: string };
+  backup: { next: string | null; cron: string; max_keep: number };
+}
+
+export interface Backup {
+  name: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface VersionInfo {
+  current_version: string;
+  latest_version: string | null;
+  update_available: boolean;
+  install_type: string;
 }

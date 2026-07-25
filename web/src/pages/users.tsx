@@ -8,7 +8,11 @@ import { OwnerNote } from "@/components/owner-note";
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { UserAvatar } from "@/components/user-avatar";
-import { ColdStartBadge, UserTypeBadge } from "@/components/user-badges";
+import {
+  ColdStartBadge,
+  RestrictedBadge,
+  UserTypeBadge,
+} from "@/components/user-badges";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -76,9 +80,10 @@ export function UsersPage() {
               variant="outline"
               onClick={() => sync.mutate()}
               loading={sync.isPending}
+              title="Pull the latest users from Plex and friendly names from Tautulli (if connected)"
             >
               <RefreshCw aria-hidden="true" />
-              Sync from Plex
+              Sync users
             </Button>
             <Button
               variant="outline"
@@ -196,7 +201,7 @@ export function UsersPage() {
         empty={
           <EmptyState
             title="No users yet"
-            hint="Shortlist hasn’t imported any Plex users. Use “Sync from Plex” above, or check the Plex connection under Settings."
+            hint="Shortlist hasn’t imported any Plex users. Use “Sync users” above, or check the Plex connection under Settings."
           />
         }
       >
@@ -224,15 +229,19 @@ export function UsersPage() {
                         <Link
                           to={`/users/${user.id}`}
                           className="flex items-center gap-3 rounded-sm font-medium text-foreground group-hover:text-primary"
+                          title={`Plex username: ${user.username}`}
                         >
                           <UserAvatar name={user.username} size="sm" />
                           <span className="group-hover:underline">
-                            {user.username}
+                            {user.display_name || user.username}
                           </span>
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <UserTypeBadge user={user} />
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          <UserTypeBadge user={user} />
+                          <RestrictedBadge user={user} />
+                        </span>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {/* "New viewer" belongs HERE, next to the number it explains — it's a
@@ -252,7 +261,13 @@ export function UsersPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <Switch
-                          checked={user.enabled}
+                          checked={user.enabled && !user.restricted}
+                          disabled={user.restricted}
+                          title={
+                            user.restricted
+                              ? "Plex parental controls hide all collections from this account — remove the age restriction to enable"
+                              : undefined
+                          }
                           onCheckedChange={(enabled) =>
                             patchUser.mutate({
                               id: user.id,

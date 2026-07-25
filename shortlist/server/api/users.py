@@ -26,7 +26,6 @@ from shortlist.server.db.models import (
     RunUser,
     Server,
     User,
-    WatchEvent,
     iso_utc,
 )
 from shortlist.server.safe_mode import force_dry_run
@@ -57,11 +56,8 @@ class UserPrefs(BaseModel):
     # (PUT /users/{id}/rows/{collection_id}), which the UI actually exposes.
     row_name_tpl: str | None = None
     excluded_genres: list[str] | None = None
+    blocked_seeds: list[int] | None = None
     paused: bool | None = None
-    # Per-person curation-recipe overrides. Empty string = inherit the global default.
-    prompt_tone: str | None = None
-    prompt_guidance: str | None = None
-    prompt_template: str | None = None
 
 
 class UserPatch(BaseModel):
@@ -94,9 +90,10 @@ def _serialize(
         # What Tautulli calls them, when it has its own name for them — the default a blank
         # nickname falls back to, shown in the UI so the field's placeholder can be honest.
         "friendly_name": user.friendly_name or "",
-        "display_name": user.nickname or user.friendly_name or user.username,
+        "display_name": user.display_name,
         "avatar_url": user.avatar_url,
         "user_type": user.user_type,
+        "restricted": user.restricted,
         "enabled": user.enabled,
         "cold_start": user.cold_start,
         "request_tag": user.request_tag or "",
@@ -110,23 +107,20 @@ def _serialize(
 
 
 def _watch_depths(session) -> dict[int, int]:
-    """user_id -> how many DISTINCT titles we have watch events for.
+    """user_id -> how many DISTINCT watched titles we last read for them.
 
-    Read from the local watch mirror rather than `prefs["history_depth"]`, which is only written
-    after a run actually processes someone — so a user who was skipped, or who has simply never had
-    a successful run, showed "0 titles" forever. A beta user was looking at a Users page reporting 0
-    for all 42 of his accounts while the log showed 170 events synced for one of them, which is a
-    terrible thing to be told while working out why nothing was recommended.
-
-    Distinct rating_key, not row count: watch_events holds one row per PLAY, so a 40-episode binge
-    is one title here — matching what "N titles" claims.
+    ``prefs["history_depth"]`` is the count of their watched set from the last read, which the
+    share-token source returns as one item per distinct title (a 40-episode binge is one title). The
+    daily ``sync_watched`` job refreshes it for EVERY enabled user, not just ones a run processed — so
+    a skipped or never-run user no longer shows "0 titles" forever (the beta bug that reported 0 for
+    all 42 accounts while the log showed watches synced).
     """
-    rows = (
-        session.query(WatchEvent.user_id, func.count(func.distinct(WatchEvent.rating_key)))
-        .group_by(WatchEvent.user_id)
-        .all()
-    )
-    return {user_id: count for user_id, count in rows}
+    depths: dict[int, int] = {}
+    for user in session.query(User).all():
+        depth = (user.prefs or {}).get("history_depth")
+        if isinstance(depth, int):
+            depths[user.id] = depth
+    return depths
 
 
 @router.get("")
@@ -293,6 +287,43 @@ async def _rename_after_nickname(state) -> None:
         await run_row_rename(state, slug=slug, new_template=template, scope="user.nickname")
 
 
+class BlockSeedBody(BaseModel):
+    tmdb_id: int
+    title: str = ""
+
+
+@router.post("/{user_id}/blocked-seeds")
+async def block_seed(user_id: int, body: BlockSeedBody, request: Request) -> dict:
+    """Block a title from being used as a seed for this user's recommendations."""
+    with request.app.state.sessions() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        prefs = dict(user.prefs or {})
+        blocked = set(prefs.get("blocked_seeds") or [])
+        blocked.add(body.tmdb_id)
+        prefs["blocked_seeds"] = sorted(blocked)
+        user.prefs = prefs
+        session.commit()
+    return {"blocked_seeds": sorted(blocked)}
+
+
+@router.delete("/{user_id}/blocked-seeds/{tmdb_id}")
+async def unblock_seed(user_id: int, tmdb_id: int, request: Request) -> dict:
+    """Unblock a title so it can be used as a seed again."""
+    with request.app.state.sessions() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        prefs = dict(user.prefs or {})
+        blocked = set(prefs.get("blocked_seeds") or [])
+        blocked.discard(tmdb_id)
+        prefs["blocked_seeds"] = sorted(blocked)
+        user.prefs = prefs
+        session.commit()
+    return {"blocked_seeds": sorted(blocked)}
+
+
 @router.get("/{user_id}/runs")
 async def user_runs(user_id: int, request: Request, limit: int = 15) -> list[dict]:
     """This user's recent run results — status, what changed, and the picks with their reasons."""
@@ -404,9 +435,8 @@ def _sync_owner(
             owner_account_id,
         )
         return None
-    # `username`, never `title`: PMS names the owner's LOCAL account after their plex.tv username
-    # ("S_FLIX"), not their display title ("SFLIX_Admin") — and that name is how their watch history
-    # is found (see PlexClient.system_account_id + tests/fixtures/pms_accounts.xml.txt).
+    # `username`, never `title`: store the owner's plex.tv username ("S_FLIX"), not their display
+    # title ("SFLIX_Admin"), to match how every other account is keyed on the roster.
     username = account.get("username") or account.get("title") or "owner"
     # The owner is in Tautulli like anyone else, so their `{user}` row should honour the name set
     # there rather than falling straight through to their Plex username.
@@ -443,8 +473,19 @@ def _sync_owner(
 
 @router.post("/sync")
 async def sync_users(request: Request) -> dict:
-    """Pull shared + Home users — and the owner — from plex.tv into the users table (idempotent)."""
+    """Pull shared + Home users — and the owner — from plex.tv into the users table (idempotent).
+
+    Streams ``sync.progress``/``sync.finished`` (``kind="users"``) over the SSE bus so the Tools page
+    can show a live bar: an indeterminate ``fetch`` phase for the one opaque plex.tv round-trip, then
+    a determinate ``save`` bar over the roster upsert.
+    """
     state = request.app.state
+    bus = state.bus
+
+    def emit(event: str, data: dict) -> None:
+        # This handler runs on the event loop, so publish directly — no thread hop needed.
+        bus.publish(event, {"kind": "users", **data})
+
     with state.sessions() as session:
         store = SettingsStore(session, state.secrets)
         token = store.get("plex.token")
@@ -477,13 +518,16 @@ async def sync_users(request: Request) -> dict:
                 logger.warning("could not read friendly names from Tautulli ({})", type(e).__name__)
         return users, account, friendly
 
+    emit("sync.progress", {"phase": "fetch"})  # indeterminate: one opaque plex.tv + Tautulli round-trip
     remote, owner_account, friendly_names = await asyncio.get_running_loop().run_in_executor(None, fetch)
     added = updated = 0
     # if plex.tv ever does list the owner, `_sync_owner` is the one that writes them — not both
     roster = [r for r in remote if r.id != owner_account_id]
+    total = len(roster) + 1  # + the owner's own transaction below
+    emit("sync.progress", {"phase": "save", "done": 0, "total": total})
     with state.sessions() as session:
         before = {u.id: u.nickname or u.friendly_name or u.username for u in session.query(User)}
-        for r in roster:
+        for i, r in enumerate(roster, start=1):
             user = session.query(User).filter_by(plex_account_id=r.id).one_or_none()
             if user is None:
                 session.add(
@@ -493,6 +537,7 @@ async def sync_users(request: Request) -> dict:
                         slug=unique_slug(session, r.username),
                         avatar_url=r.avatar_url,
                         user_type=r.user_type.value,
+                        restricted=r.restricted,
                         friendly_name=friendly_names.get(r.id, ""),
                     )
                 )
@@ -501,10 +546,12 @@ async def sync_users(request: Request) -> dict:
                 user.username = r.username
                 user.avatar_url = r.avatar_url
                 user.user_type = r.user_type.value
+                user.restricted = r.restricted
                 # Refreshed every sync so a rename in Tautulli follows through — but `nickname`
                 # (the owner's own choice) is never touched, so an override always survives.
                 user.friendly_name = friendly_names.get(r.id, user.friendly_name)
                 updated += 1
+            emit("sync.progress", {"phase": "save", "done": i, "total": total})
         # A Tautulli rename changes what `{user}` renders to, exactly like a nickname edit — and the
         # rows already on Plex still carry the old title. Without the same reconcile `patch_user`
         # does, a multi-row user keeps the stale copy alongside the new one forever: `remove_row`
@@ -527,8 +574,14 @@ async def sync_users(request: Request) -> dict:
         added += 1
     elif owner == "updated":
         updated += 1
+    emit("sync.progress", {"phase": "save", "done": total, "total": total})
     with state.sessions() as session:  # the owner's own name can drift on the same sync
         display_changed = display_changed or _display_names_drifted(session, before)
     if display_changed:
         await _rename_after_nickname(state)
-    return {"added": added, "updated": updated, "total": len(roster) + (1 if owner else 0)}
+    with state.sessions() as session:
+        SettingsStore(session, state.secrets).set("report.users_synced_at", datetime.now(UTC).isoformat())
+        session.commit()
+    result = {"added": added, "updated": updated, "total": len(roster) + (1 if owner else 0)}
+    emit("sync.finished", {"ok": True, **result})
+    return result

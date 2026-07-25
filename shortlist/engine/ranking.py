@@ -1,18 +1,19 @@
-"""Heuristic pre-rank. Also the full ranking in None-mode (no AI curator).
+"""Candidate ranking — the whole of it, now that the LLM curate step is gone.
 
-Two rules, both learned the hard way:
+Three rules, all learned the hard way:
 
 1. Seed provenance ADDS to a title's score, it does not multiply it. When the score was
    ``seed_frequency x rating x weight``, every candidate from a seedless source — tmdb_discover,
-   llm_library, llm_web — scored exactly 0 and sorted below the worst seeded title on the list.
+   llm_web — scored exactly 0 and sorted below the worst seeded title on the list.
 2. Rating is not similarity. Without `affinity` the only thing separating two single-seed
    candidates was TMDB's average vote — so a well-rated but unrelated show beat an obviously
    similar one, and a row seeded by a medical drama filled up with fantasy and sci-fi. Affinity
    carries "how near the top of TMDB's list for THIS seed was it", which is the actual claim.
-3. Each source gets a fair SHARE of the pool handed to the curator. Ranking alone cannot fix this:
-   30 seeds x TMDB suggestions is hundreds of seeded candidates, so a single global sort fills
-   every slot with tmdb_similar however good the rest are, and the other sources — including the
-   LLM calls we paid for — never reach the curator at all.
+3. Each source gets a fair SHARE of the pool (`pre_rank`), then each seed gets a fair share of the
+   final row (`diversify_by_seed`). Ranking by score alone cannot do this: 30 seeds x TMDB
+   suggestions is hundreds of seeded candidates, so a single global sort fills every slot with
+   tmdb_similar however good the rest are, and the other sources — including the web searches we
+   paid for — never reach the row at all.
 """
 
 from __future__ import annotations
@@ -75,3 +76,44 @@ def pre_rank(candidates: list[Candidate], keep: int) -> list[Candidate]:
         if not progressed:  # every queue is exhausted
             break
     return sorted(picked, key=_sort_key)
+
+
+def diversify_by_seed(candidates: list[Candidate], keep: int) -> list[Candidate]:
+    """Top `keep` candidates spread across the tastes that seeded them (best-first within each seed).
+
+    This is the final row-selection step that used to be the LLM curate call's job. `pre_rank` gives
+    each *source* a fair share; this gives each *seed* one. Without it a single heavily-watched title
+    dominates the row: a person with 30 Breaking Bad look-alikes and a handful of everything else got
+    a row of nothing but Breaking Bad, and their other tastes dropped off entirely (measured: 2 of 4
+    tastes survived to an 8-slot row; with this step, all 4 do). The single best-scoring title is
+    always kept first, so diversifying never displaces the strongest pick.
+
+    Input must already be best-first (``pre_rank`` output). Candidates sharing a ``top_seed`` queue
+    together; seeds are visited in the order their best candidate appears, one taken per seed per pass
+    until `keep` is full. Seedless candidates (discover / web / library) share one queue keyed ``None``.
+    """
+    if len(candidates) <= keep:
+        return candidates
+
+    queues: dict[int | None, list[Candidate]] = {}
+    order: list[int | None] = []  # seeds in order of their strongest candidate's rank
+    for candidate in candidates:  # already best-first, so each queue is too
+        key = candidate.top_seed.tmdb_id if candidate.top_seed else None
+        if key not in queues:
+            queues[key] = []
+            order.append(key)
+        queues[key].append(candidate)
+
+    picked: list[Candidate] = []
+    while len(picked) < keep:
+        progressed = False
+        for key in order:
+            queue = queues[key]
+            if queue:
+                picked.append(queue.pop(0))
+                progressed = True
+                if len(picked) >= keep:
+                    break
+        if not progressed:  # every queue is exhausted
+            break
+    return picked

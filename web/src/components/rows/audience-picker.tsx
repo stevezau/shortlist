@@ -102,7 +102,7 @@ export function AudiencePicker({
                   >
                     <span className="flex items-center gap-2 text-sm">
                       <UserAvatar name={user.username} size="sm" />
-                      {user.username}
+                      {user.display_name || user.username}
                     </span>
                     <Switch
                       checked={on}

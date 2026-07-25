@@ -22,7 +22,7 @@ import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
-from shortlist.engine.clients.plextv import PlexTvClient
+from shortlist.engine.clients.plextv import FilterWriteRefused, PlexTvClient
 from shortlist.engine.clients.poster import PosterArtist
 from shortlist.engine.clients.search import WebSearchProvider
 from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
@@ -87,18 +87,9 @@ class EngineContext:
     # them from Shortlist entirely. A non-Shortlist account that merely shares the server is NOT here,
     # so it still sees public shared rows.
     disabled_account_ids: set[int] = field(default_factory=set)
-    # media_type -> [{tmdb_id, rating_key, title, year, genres}] for the delivery libraries, built
-    # once per run and only when the AI-from-library candidate source is enabled (else empty).
-    library_catalog: dict[MediaType, list[dict]] = field(default_factory=dict)
-    # The same catalog split per library, so a row pinned to specific libraries only ever offers
-    # the AI titles it could actually deliver.
-    section_catalog: dict[str, list[dict]] = field(default_factory=dict)
     # section key -> {tmdb_id: ratingKey}: per-library index so a row delivered into a specific
     # library uses that library's ratingKeys. Built by _build_indexes each run.
     section_index: dict[str, dict[int, int]] = field(default_factory=dict)
-    # tmdb_id -> total episode count (leafCount) for every show, so the watched-filter can tell a
-    # finished show from a sampled one or one with a new season. Built by _build_indexes.
-    episode_counts: dict[int, int] = field(default_factory=dict)
     # Every library rows may be delivered to (all movie + show sections), for resolving a row's
     # library_keys to real sections. Built by _build_indexes each run.
     delivery_sections: list = field(default_factory=list)
@@ -241,57 +232,33 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 
 # The real invalidation is the section SIGNATURE (item count + last-updated): the moment the library
 # changes, the key changes and this is bypassed. This TTL is only a backstop for the rare change the
-# signature can't see (a 1-for-1 swap that doesn't bump updatedAt) — kept short so even that self-heals
-# within a couple of days rather than lingering.
-INDEX_CACHE_TTL_S = 2 * 24 * 3600
+# signature can't see (a 1-for-1 swap that doesn't bump updatedAt); 7 days matches the TMDB/Trakt
+# caches — a 1-for-1 swap that never bumps updatedAt is rare enough that a fortnight-scale backstop
+# still self-heals it, and the signature catches every real change immediately regardless.
+INDEX_CACHE_TTL_S = 7 * 24 * 3600
 
 
-def _library_index(ctx: EngineContext, section) -> tuple[dict[int, int], dict[int, int]]:
-    """This section's ``(index, episodes)`` — from the cross-run cache when the library is unchanged.
+def _library_index(ctx: EngineContext, section) -> dict[int, int]:
+    """This section's ``tmdb_id -> ratingKey`` index — from the cross-run cache when unchanged.
 
     Keyed on the section + a cheap change signature (item count + last-updated); a signature change
     (a title added/removed/edited) misses and re-scans. JSON object keys are strings, so tmdb ids
     round-trip through ``str()``/``int()``. A missing signature or NullCache just always re-scans.
     """
     signature = ctx.plex.section_signature(section)
-    cache_key = f"index:{section.key}:{signature}" if signature else None
+    # v2 key: the cached payload dropped the old {"index", "episodes"} envelope for the bare index
+    # dict. A new prefix makes any old-format entry a clean miss (re-scan) instead of a parse crash.
+    cache_key = f"index2:{section.key}:{signature}" if signature else None
     if cache_key and (cached := ctx.index_cache.get(cache_key)):
-        data = json.loads(cached)
-        index = {int(k): v for k, v in data["index"].items()}
-        episodes = {int(k): v for k, v in data["episodes"].items()}
+        index = {int(k): v for k, v in json.loads(cached).items()}
         _emit(ctx, section.title, "indexed (cached)", {"items": len(index)})
-        return index, episodes
+        return index
     _emit(ctx, section.title, "indexing", {})
-    index, episodes = ctx.plex.build_library_index(section)
+    index = ctx.plex.build_library_index(section)
     if cache_key:
-        payload = {
-            "index": {str(k): v for k, v in index.items()},
-            "episodes": {str(k): v for k, v in episodes.items()},
-        }
-        ctx.index_cache.set(cache_key, json.dumps(payload), INDEX_CACHE_TTL_S)
+        ctx.index_cache.set(cache_key, json.dumps({str(k): v for k, v in index.items()}), INDEX_CACHE_TTL_S)
     _emit(ctx, section.title, "indexed", {"items": len(index)})
-    return index, episodes
-
-
-def _library_catalog(ctx: EngineContext, section) -> list[dict]:
-    """This section's AI-from-library catalog — from the cross-run cache when the library is unchanged.
-
-    Same signature-keyed cross-run cache as ``_library_index`` right next to it. Without this the
-    llm_library source re-walked every targeted library in full (``section.all()``) on EVERY run, even
-    when nothing changed — a second full library scan beside the (already-cached) index. A signature
-    change (a title added/removed/edited) misses and re-scans; a missing signature / NullCache always
-    re-scans (same safe fallback as the index)."""
-    signature = ctx.plex.section_signature(section)
-    cache_key = f"catalog:{section.key}:{signature}" if signature else None
-    if cache_key and (cached := ctx.index_cache.get(cache_key)):
-        catalog = json.loads(cached)
-        _emit(ctx, section.title, "catalogued (cached)", {"items": len(catalog)})
-        return catalog
-    _emit(ctx, section.title, "cataloguing", {})
-    catalog = ctx.plex.build_library_catalog(section)
-    if cache_key:
-        ctx.index_cache.set(cache_key, json.dumps(catalog), INDEX_CACHE_TTL_S)
-    return catalog
+    return index
 
 
 def _build_indexes(
@@ -325,8 +292,6 @@ def _build_indexes(
     seed_index: dict[int, int] = {}
     library_index: dict[MediaType, dict[int, int]] = {MediaType.MOVIE: {}, MediaType.SHOW: {}}
     section_index: dict[str, dict[int, int]] = {}
-    section_catalog: dict[str, list[dict]] = {}
-    episode_counts: dict[int, int] = {}
     # Only when there is someone to recommend to. The indexes walk every item in every TARGETED
     # library, and are read only inside _run_user — so with no users this is thousands of PMS reads
     # thrown away, in front of the sweep, on the one path (a closed gate) where the sweep is the entire
@@ -349,43 +314,15 @@ def _build_indexes(
         index_sections = []
     for section in index_sections:
         kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-        index, episodes = _library_index(ctx, section)
-        episode_counts.update(episodes)
+        index = _library_index(ctx, section)
         seed_index.update({rating_key: tmdb_id for tmdb_id, rating_key in index.items()})
         # Every library of a deliverable type is both a recommendation source (union) and a possible
         # delivery target (its own per-section index) — a row picks which ones under library_keys.
         library_index[kind].update(index)
         section_index[section.key] = index
     ctx.section_index = section_index
-    ctx.episode_counts = episode_counts
     ctx.delivery_sections = index_sections
-    # The AI-from-library source needs titles/genres. Built when ANY row wants it — not just the
-    # global setting: a row overriding its sources to llm_library found an empty catalog and
-    # produced nothing, forever, while reporting ok. And built from every TARGETED library, not one
-    # representative per type, or a row pinned to "4K Movies" would be offered the "Movies" catalog.
-    if users and _wants_library_catalog(ctx.config):
-        catalog: dict[MediaType, list[dict]] = {MediaType.MOVIE: [], MediaType.SHOW: []}
-        seen: dict[MediaType, set[int]] = {MediaType.MOVIE: set(), MediaType.SHOW: set()}
-        for section in index_sections:
-            kind = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
-            items = _library_catalog(ctx, section)  # cross-run cached, like the index
-            section_catalog[section.key] = items
-            # Deduped across libraries: the same film in "Movies" and "4K Movies" is one title to
-            # recommend, and listing it twice would spend the LLM's slice of the catalog on itself.
-            for item in items:
-                if item["tmdb_id"] not in seen[kind]:
-                    seen[kind].add(item["tmdb_id"])
-                    catalog[kind].append(item)
-        ctx.library_catalog = catalog
-        ctx.section_catalog = section_catalog
     return seed_index, library_index
-
-
-def _wants_library_catalog(config) -> bool:
-    """Whether any row on this server uses the AI-from-library source (globally or as an override)."""
-    if "llm_library" in config.candidate_sources:
-        return True
-    return any("llm_library" in (spec.candidate_sources or []) for spec in config.rows)
 
 
 def _sweep_phase(ctx: EngineContext, report: RunReport) -> bool:
@@ -620,6 +557,17 @@ def _privacy_sync_phase(
                     to_verify[user.plex_account_id] = {field: after for field, (_before, after) in written.items()}
             if user_report is not None:
                 user_report.privacy_synced = bool(written)
+        except FilterWriteRefused as e:
+            # plex.tv permanently refused the write (422). Only safe to skip for restricted accounts
+            # (live-verified: they see 0 collections). An unexpected 422 on a non-restricted account
+            # must block promotion — it's an unknown failure, not a known-safe skip.
+            remote_user = roster.get(user.plex_account_id)
+            if remote_user and remote_user.restricted:
+                logger.warning("{}: plex.tv refused filter write (restricted account), skipping", user.username)
+            else:
+                sync_failed = True
+                report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
+                logger.error("{}: plex.tv 422 on a NON-restricted account — blocking promotion", user.username)
         except Exception as e:
             # One user's filter not being written means the rows are not private. Nothing gets
             # promoted this run — including for users whose own sync succeeded.
@@ -836,6 +784,12 @@ def _order_phase(ctx: EngineContext, report: RunReport) -> None:
     global_anchors = ctx.config.hub_anchors
     any_override = any(spec.hub_anchors for spec in ctx.config.rows)
     if not global_anchors and not any_override:
+        # No explicit anchors configured — default to moving all owned rows to the top of each
+        # library's Recommended shelf. Without this, aborted runs or new promotions scatter rows to
+        # wherever Plex appends them, which looks broken (issue: some at top, some at bottom).
+        for section in ctx.delivery_sections:
+            default = HubAnchor(anchor_title="", before=False, to_top=True)
+            _apply_order(ctx, report, section, default, only_titles=None)
         return
     titles_by_slug = _row_titles_by_slug(report) if any_override else {}
     for section in ctx.delivery_sections:

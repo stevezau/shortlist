@@ -9,14 +9,18 @@ import { ApiError } from "@/lib/api";
 import type { User, UserPatch } from "@/lib/types";
 import { UsersPage } from "@/pages/users";
 
-const { getUsers, patchUser, setAllUsersEnabled, syncUsers } = vi.hoisted(() => ({
-  getUsers: vi.fn(),
-  patchUser: vi.fn(),
-  syncUsers: vi.fn(() => Promise.resolve({ added: 1, updated: 48, total: 49 })),
-  setAllUsersEnabled: vi.fn((_enabled: boolean) =>
-    Promise.resolve({ updated: 1, cleaned: 0, enabled: true }),
-  ),
-}));
+const { getUsers, patchUser, setAllUsersEnabled, syncUsers } = vi.hoisted(
+  () => ({
+    getUsers: vi.fn(),
+    patchUser: vi.fn(),
+    syncUsers: vi.fn(() =>
+      Promise.resolve({ added: 1, updated: 48, total: 49 }),
+    ),
+    setAllUsersEnabled: vi.fn((_enabled: boolean) =>
+      Promise.resolve({ updated: 1, cleaned: 0, enabled: true }),
+    ),
+  }),
+);
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -36,6 +40,7 @@ const SARAH: User = {
   username: "sarah",
   slug: "sarah",
   user_type: "shared",
+  restricted: false,
   enabled: true,
   cold_start: false,
   history_depth: 120,
@@ -164,7 +169,6 @@ describe("UsersPage", () => {
   });
 });
 
-
 describe("UsersPage — pulling the roster again", () => {
   beforeEach(() => {
     getUsers.mockReset();
@@ -178,18 +182,22 @@ describe("UsersPage — pulling the roster again", () => {
     // The whole feature lives in the cache invalidation, not the POST: assert the ROSTER refreshes.
     // Asserting only that syncUsers was called would pass just as happily with the invalidation
     // deleted, or pointed at the wrong query key.
-    getUsers
-      .mockResolvedValueOnce([SARAH])
-      .mockResolvedValue([
-        SARAH,
-        { ...SARAH, id: 9, username: "steve", slug: "steve", user_type: "owner" },
-      ]);
+    getUsers.mockResolvedValueOnce([SARAH]).mockResolvedValue([
+      SARAH,
+      {
+        ...SARAH,
+        id: 9,
+        username: "steve",
+        slug: "steve",
+        user_type: "owner",
+      },
+    ]);
     renderPage();
     expect(await screen.findByText("sarah")).toBeInTheDocument();
     expect(screen.queryByText("steve")).toBeNull();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /Sync from Plex/i }),
+      await screen.findByRole("button", { name: /Sync users/i }),
     );
 
     await waitFor(() => expect(syncUsers).toHaveBeenCalledTimes(1));
@@ -202,7 +210,7 @@ describe("UsersPage — pulling the roster again", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /Sync from Plex/i }),
+      await screen.findByRole("button", { name: /Sync users/i }),
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/plex.tv/i);
@@ -229,7 +237,9 @@ describe("UsersPage — the Type column", () => {
   });
 
   it("puts 'New viewer' beside the watch history it explains, not under Type", async () => {
-    getUsers.mockResolvedValue([{ ...SARAH, cold_start: true, history_depth: 0 }]);
+    getUsers.mockResolvedValue([
+      { ...SARAH, cold_start: true, history_depth: 0 },
+    ]);
 
     renderPage();
 

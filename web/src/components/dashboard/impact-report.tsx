@@ -191,7 +191,7 @@ function ReportBody({ report }: { report: EffectivenessReport }) {
                 key={u.slug}
                 className="flex items-center justify-between gap-3 text-sm"
               >
-                <span className="truncate">{u.username}</span>
+                <span className="truncate">{u.display_name || u.username}</span>
                 <HitBar {...u} />
               </div>
             ))}
@@ -279,7 +279,7 @@ function ReportBody({ report }: { report: EffectivenessReport }) {
                 className="flex flex-wrap items-baseline gap-x-2 text-muted-foreground"
               >
                 <span className="font-medium text-foreground">
-                  {w.username}
+                  {w.display_name || w.username}
                 </span>
                 watched
                 <span className="text-foreground">{w.title}</span>

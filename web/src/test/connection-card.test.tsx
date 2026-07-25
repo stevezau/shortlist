@@ -319,4 +319,28 @@ describe("ConnectionCard", () => {
 
     expect(putSettings.mock.calls[0]?.[0]).toEqual({ "tmdb.apikey": "" });
   });
+
+  it("removes a connection from the idle card, behind a two-tap confirm", async () => {
+    // The gap the owner hit: Clear was only reachable inside Edit. The idle card now offers Remove
+    // directly — but only after confirming, so a single click can't wipe a live connection.
+    renderCard({ "tmdb.apikey": "•••••" }, [
+      { key: "tmdb.apikey", label: "API key", kind: "password" },
+    ]);
+    await userEvent.click(
+      screen.getByRole("button", { name: /Remove TMDB connection/i }),
+    );
+    // First tap only reveals the confirm — nothing saved yet.
+    expect(putSettings).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /^Remove$/i }));
+    expect(putSettings.mock.calls[0]?.[0]).toEqual({ "tmdb.apikey": "" });
+  });
+
+  it("does not offer Remove on an unconfigured connection", () => {
+    renderCard({}, [
+      { key: "tmdb.apikey", label: "API key", kind: "password" },
+    ]);
+    expect(
+      screen.queryByRole("button", { name: /Remove TMDB connection/i }),
+    ).not.toBeInTheDocument();
+  });
 });

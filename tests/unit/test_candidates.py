@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -161,55 +162,6 @@ class TestGatherCandidates:
     def test_default_sources_do_not_call_discover(self, mock_tmdb):
         gather_candidates(mock_tmdb, [seed(1)])  # unset -> default (tmdb_similar only)
         assert mock_tmdb.discover.called is False
-
-    def test_llm_library_source_proposes_owned_titles(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
-        catalog = {
-            MediaType.MOVIE: [
-                {"tmdb_id": 500, "rating_key": 1, "title": "Owned A", "year": 2020, "genres": ["Drama"]},
-                {"tmdb_id": 501, "rating_key": 2, "title": "Owned B", "year": 2021, "genres": ["Comedy"]},
-            ]
-        }
-        pool = gather_candidates(
-            mock_tmdb,
-            [seed(1)],
-            sources=["llm_library"],
-            curator=_PickFirstCurator(),
-            catalog=catalog,
-            profile=object(),
-        )
-        assert {c.tmdb_id for c in pool} == {500}  # only the curator's pick from the owned library
-
-    def test_llm_library_failure_keeps_the_other_sources(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
-            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
-        )
-        catalog = {MediaType.MOVIE: [{"tmdb_id": 5, "rating_key": 1, "title": "X", "year": 2020, "genres": []}]}
-        pool = gather_candidates(
-            mock_tmdb,
-            [seed(1)],
-            sources=["tmdb_similar", "llm_library"],
-            curator=_BoomCurator(),
-            catalog=catalog,
-            profile=object(),
-        )
-        assert {c.tmdb_id for c in pool} == {1}  # similar survives; the LLM source's failure is swallowed
-
-    def test_llm_library_is_a_noop_without_a_real_curator(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
-            [{"id": 1, "title": "S", "genre_ids": [], "vote_average": 7.0}]
-        )
-        catalog = {MediaType.MOVIE: [{"tmdb_id": 5, "rating_key": 1, "title": "X", "year": 2020, "genres": []}]}
-        # NullCurator isn't AI -> the source no-ops (matches the UI gate); only tmdb_similar contributes.
-        pool = gather_candidates(
-            mock_tmdb,
-            [seed(1)],
-            sources=["tmdb_similar", "llm_library"],
-            curator=NullCurator(),
-            catalog=catalog,
-            profile=object(),
-        )
-        assert {c.tmdb_id for c in pool} == {1}
 
     def test_trakt_source_adds_related_titles(self, mock_tmdb):
         mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
@@ -525,6 +477,7 @@ class TestPerTitleWebSearchCache:
         search = _FakeSearch([make_result("Result", "text")])
         cache = _DictCache()
         cache.set("exasearch:movie:1", "[]", 1)  # Dune already searched by a prior user this window
+        stats = GatherStats()
         gather_candidates(
             mock_tmdb,
             [seed(1, "Dune")],
@@ -533,8 +486,13 @@ class TestPerTitleWebSearchCache:
             profile=web_profile(),
             search=search,
             web_search_cache=cache,
+            stats=stats,
         )
         assert search.queries == []  # served from cache — no billable Exa search
+        # A cache hit is not a billed search, but it IS counted — else a fully-cached run reads
+        # exa_searches:0 and looks like the source did nothing (it was the cache doing the work).
+        assert stats.exa_searches == 0
+        assert stats.exa_cache_hits == 1
 
     def test_recent_count_caps_how_many_titles_are_searched(self, mock_tmdb):
         self._tmdb(mock_tmdb)
@@ -657,11 +615,37 @@ class TestFilterCandidates:
 
         assert [c.title for c in kept] == ["Some Show"]
 
+    def test_records_drop_reasons_without_changing_the_kept_list(self):
+        """The optional `dropped` out-list is pure observation: the kept list is identical whether or
+        not a caller passes it, and each drop is labelled with the reason it fell out — the data the
+        trace needs to show every title in and out."""
+        cands = [
+            make_candidate(10, "Kept"),
+            make_candidate(99, "Off-server"),
+            make_candidate(20, "Watched"),
+            make_candidate(30, "Horror", genres=["Horror"]),
+        ]
+        kwargs = dict(
+            watched_tmdb_ids={(20, MediaType.MOVIE)},
+            excluded_genres={"horror"},
+            recent_pick_ids=set(),
+        )
+        without = filter_candidates([replace(c) for c in cands], self._index(), **kwargs)
+        dropped: list[tuple] = []
+        with_obs = filter_candidates([replace(c) for c in cands], self._index(), dropped=dropped, **kwargs)
+
+        assert [c.tmdb_id for c in without] == [c.tmdb_id for c in with_obs] == [10]  # kept list unchanged
+        assert {c.tmdb_id: reason for c, reason in dropped} == {
+            99: "not_in_your_libraries",
+            20: "already_watched",
+            30: "excluded_genre",
+        }
+
 
 class TestGatherStats:
     """gather_candidates folds the AI candidate sources' token/Exa spend into a passed-in GatherStats.
 
-    Regression cover for a real gap: llm_web/llm_library set the curator's `last_tokens` but nothing
+    Regression cover for a real gap: llm_web set the curator's `last_tokens` but nothing
     read it, so every AI-source run undercounted its cost. These lock the accounting down per source.
     """
 
@@ -719,29 +703,6 @@ class TestGatherStats:
         )
         assert stats.tokens_by_source == {"llm_web": 99}
         assert stats.exa_searches == 1  # the search request itself, billed per search
-
-    def test_llm_library_tokens_are_recorded(self, mock_tmdb):
-        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
-        catalog = {
-            MediaType.MOVIE: [{"tmdb_id": 500, "rating_key": 1, "title": "Owned A", "year": 2020, "genres": ["Drama"]}]
-        }
-
-        class _C:
-            last_tokens = 0
-
-            def curate(self, profile, candidates, k):
-                self.last_tokens = 210
-                c = candidates[0]
-                return [
-                    Pick(tmdb_id=c.tmdb_id, rating_key=1, title=c.title, rank=1, reason="fits", media_type=c.media_type)
-                ]
-
-        stats = GatherStats()
-        gather_candidates(
-            mock_tmdb, [seed(1)], sources=["llm_library"], curator=_C(), catalog=catalog, profile=object(), stats=stats
-        )
-        assert stats.tokens_by_source == {"llm_library": 210}
-        assert stats.exa_searches == 0
 
     def test_tmdb_only_sources_record_no_ai_cost(self, mock_tmdb):
         mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(

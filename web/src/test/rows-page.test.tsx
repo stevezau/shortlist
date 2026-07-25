@@ -50,7 +50,6 @@ const SUBSET_ROW: Collection = {
   placement: "both",
   pin_top: false,
   hub_anchor: {},
-  prompt: { tone: "balanced", guidance: "", template: "" },
   poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
 };
 
@@ -94,6 +93,7 @@ describe("RowsPage", () => {
         username: "sarah",
         slug: "sarah",
         user_type: "shared",
+    restricted: false,
         enabled: true,
         cold_start: false,
         history_depth: 10,

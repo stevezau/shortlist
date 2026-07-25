@@ -1,9 +1,4 @@
-import {
-  DEFAULT_ROW_SLUG,
-  freshnessBadgeLabel,
-  TONE_LABELS,
-  watchedBadgeLabel,
-} from "@/lib/constants";
+import { freshnessBadgeLabel, watchedBadgeLabel } from "@/lib/constants";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
 import type {
   Collection,
@@ -36,7 +31,6 @@ export function blankInput(): CollectionInput {
     placement: "both",
     pin_top: false,
     hub_anchor: {},
-    prompt: { tone: "", guidance: "", template: "" },
     poster: { mode: "", title: "", subtitle: "", style: "" },
   };
 }
@@ -64,11 +58,6 @@ export function toInput(collection: Collection): CollectionInput {
     placement: collection.placement ?? "both",
     pin_top: collection.pin_top ?? false,
     hub_anchor: collection.hub_anchor ?? {},
-    prompt: {
-      tone: collection.prompt.tone ?? "",
-      guidance: collection.prompt.guidance ?? "",
-      template: collection.prompt.template ?? "",
-    },
     poster: {
       // Legacy "generate" rows edit as "ai" (the renamed engine).
       mode:
@@ -86,7 +75,10 @@ export function toInput(collection: Collection): CollectionInput {
 export function audienceSummary(collection: Collection, users: User[]): string {
   if (collection.audience === "everyone") return "Everyone";
   const names = collection.audience_user_ids
-    .map((id) => users.find((u) => u.id === id)?.username)
+    .map((id) => {
+      const user = users.find((u) => u.id === id);
+      return user && (user.display_name || user.username);
+    })
     .filter(Boolean);
   if (names.length === 0) return "No one yet";
   return names.length <= 2
@@ -168,16 +160,6 @@ export function rowOverrides(
   if (collection.pin_top || anchors.some((a) => a.top))
     parts.push("Pinned to top");
   else if (anchors.some((a) => a.anchor)) parts.push("Custom shelf position");
-
-  // The default row's style is the GLOBAL recipe — the server discards its stored prompt — so
-  // badging one here would advertise a setting no run will ever apply.
-  if (collection.slug !== DEFAULT_ROW_SLUG) {
-    const { tone, guidance, template } = collection.prompt ?? {};
-    // Curation style is now one "Instructions" box (stored as guidance); tone/template linger only on
-    // rows saved by the old three-field UI. Any of them means this row has its own style.
-    if (guidance || template) parts.push("Custom style");
-    else if (tone) parts.push(`Style: ${TONE_LABELS[tone] ?? tone}`);
-  }
 
   return parts;
 }

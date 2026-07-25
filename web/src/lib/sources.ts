@@ -3,8 +3,8 @@ import { settingString } from "@/lib/format";
 
 /**
  * The candidate sources the engine knows how to run. Shortlist pools every enabled source, keeps
- * only what's already in the library, then the AI re-ranks. Enabled globally in Settings →
- * Recommendations, or overridden per row in the row editor. Mirrors engine `KNOWN_SOURCES`.
+ * only what's already in the library, then ranks them in code. Enabled globally in Settings →
+ * Finding titles, or overridden per row in the row editor. Mirrors engine `KNOWN_SOURCES`.
  */
 export interface SourceInfo {
   id: string;
@@ -13,7 +13,7 @@ export interface SourceInfo {
   /** Compact name for summaries where the full label won't fit (e.g. a row card). */
   short?: string;
   /** A dependency this source needs before it can run; the toggle is disabled until it's satisfied. */
-  requires?: "curator" | "trakt" | "web_search";
+  requires?: "trakt" | "web_search";
 }
 
 /** Curator providers that can search the web themselves (a native web-search tool). Ollama can't. */
@@ -33,13 +33,6 @@ export const SOURCES: readonly SourceInfo[] = [
     desc: "Widens the net to popular, well-rated titles in the genres each person leans toward.",
   },
   {
-    id: "llm_library",
-    label: "AI — suggests from your library",
-    short: "AI from library",
-    desc: "Your AI curator reads each person's taste and scans your whole library for matches. Honest note: in our testing it adds the fewest new picks for the most AI cost — the other sources already find most of them. Turn it off first if you want to cut AI cost.",
-    requires: "curator",
-  },
-  {
     id: "trakt",
     label: "Trakt — related titles",
     short: "Trakt",
@@ -50,7 +43,7 @@ export const SOURCES: readonly SourceInfo[] = [
     id: "llm_web",
     label: "AI — web search for what to watch next",
     short: "AI web search",
-    desc: "Searches the live web for current, well-reviewed titles, then keeps the ones already in your library. Uses your curator's own web search (Claude, GPT, or Gemini) or an Exa key — choose which under Search backend below.",
+    desc: "Searches the live web for current, well-reviewed titles, then keeps the ones already in your library. Uses your AI provider's own web search (Claude, GPT, or Gemini) or an Exa key — choose which under Search backend below.",
     requires: "web_search",
   },
 ];
@@ -97,8 +90,8 @@ export function hasExa(settings: Settings): boolean {
  * Whether the llm_web source can actually search under the chosen backend — the mode decides which
  * capability is required, so the toggle can never claim "on" where it would silently do nothing.
  *
- * EVERY backend needs a real AI curator: even the Exa path only SEARCHES externally, then hands the
- * results to the curator to pick titles from. With no curator (heuristic mode) the engine's own
+ * EVERY backend needs a real AI provider: even the Exa path only SEARCHES externally, then hands the
+ * results to the provider to pick titles from. With no provider (heuristic mode) the engine's own
  * `llm_ready` gate skips the source entirely — so an Exa key alone must NOT un-block the toggle.
  */
 export function hasWebSearch(settings: Settings): boolean {
@@ -114,20 +107,18 @@ export function sourceBlockedReason(
   source: SourceInfo,
   settings: Settings,
 ): string | null {
-  if (source.requires === "curator" && !hasCurator(settings))
-    return "Needs an AI curator — set one up in Connections first.";
   if (source.requires === "trakt" && !hasTrakt(settings))
     return "Needs a Trakt API key — add it in Connections first.";
   if (source.requires === "web_search" && !hasWebSearch(settings)) {
-    // A curator is needed in every mode — it picks the titles from the search results. Report that
-    // first, since without it no search backend can help.
+    // An AI provider is needed in every mode — it picks the titles from the search results. Report
+    // that first, since without it no search backend can help.
     if (!hasCurator(settings))
-      return "Needs an AI curator to choose titles from the results — set one up in Connections first.";
+      return "Needs an AI provider to choose titles from the results — set one up in Connections first.";
     const mode = webSearchProvider(settings);
     if (mode === "exa")
       return "Needs an Exa API key — add it in Connections, or switch the search backend to Auto.";
     if (mode === "native")
-      return "Needs Claude, GPT, or Gemini — Ollama can’t web-search. Change your curator, or use the Exa backend.";
+      return "Needs Claude, GPT, or Gemini — Ollama can't web-search. Change your AI provider, or use the Exa backend.";
     return "Needs Claude, GPT, or Gemini — or an Exa API key in Connections (required for Ollama).";
   }
   return null;

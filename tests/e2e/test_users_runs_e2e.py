@@ -254,9 +254,12 @@ class TestRuns:
         # counting — this test asserts EVERY pick carries its reason, not just the first few.
         for toggle in page.get_by_role("button", name=re.compile(r"Show all \d+")).all():
             toggle.click()
-        # Each pick renders its "Because you watched …" reason inside its list item (the PickList now
-        # combines title + reason + seed in one line). sarah watches movies AND TV, so both appear.
-        reasons = page.get_by_role("listitem").filter(has_text=re.compile(r"Because you watched (Movie|Show) \d+"))
+        # Each pick renders its "because you…" reason inside its list item (the PickList now combines
+        # title + reason + seed in one line). The reason names the seeding title from their own
+        # library — as "Because you liked <genres> like <seed>" when the candidate carries genres, or
+        # the bare "Because you watched <seed>" otherwise. sarah watches movies AND TV, so both appear.
+        reason_re = re.compile(r"Because you (?:liked [\w, ]+ like|watched) (?:Movie|Show) \d+")
+        reasons = page.get_by_role("listitem").filter(has_text=reason_re)
         expect(reasons).to_have_count(len(sarah_picks))
         assert {p["title"].split()[0] for p in sarah_picks} == {"Movie", "Show"}, (
             "sarah's row should mix both libraries — otherwise this test proves nothing about them"

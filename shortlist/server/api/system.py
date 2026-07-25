@@ -27,14 +27,54 @@ _TOKEN_CREATED_KEY = "api.token_created_at"
 router = APIRouter(prefix="/system", tags=["system"])
 
 
+@router.get("/version", dependencies=[Depends(require_owner)])
+async def version(request: Request) -> dict:
+    """Current + latest version and whether an update is available."""
+    from shortlist.server.services.version_check import version_info
+
+    return version_info()
+
+
 @router.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": shortlist.__version__}
 
 
-@router.get("/version", dependencies=[Depends(require_owner)])
-async def version() -> dict:
-    return {"version": shortlist.__version__}
+@router.get("/syncs", dependencies=[Depends(require_owner)])
+async def syncs(request: Request) -> dict:
+    """When each sync last ran and when it next fires — for the Tools page "last synced" lines."""
+    from shortlist.server.scheduler import BACKUP_JOB_ID, USER_SYNC_JOB_ID, WATCH_SYNC_JOB_ID
+    from shortlist.server.services.backup import DEFAULT_MAX_BACKUPS
+
+    with request.app.state.sessions() as session:
+        store = SettingsStore(session)
+        last_watched = store.get("report.watch_synced_at")
+        last_users = store.get("report.users_synced_at")
+        watch_cron = store.get("sync.watch_cron")
+        users_cron = store.get("sync.users_cron")
+        backup_cron = store.get("backup.cron")
+        backup_max_keep = store.get("backup.max_keep")
+    scheduler = getattr(request.app.state, "scheduler", None)
+    watch_job = scheduler.get_job(WATCH_SYNC_JOB_ID) if scheduler else None
+    users_job = scheduler.get_job(USER_SYNC_JOB_ID) if scheduler else None
+    backup_job = scheduler.get_job(BACKUP_JOB_ID) if scheduler else None
+    return {
+        "watched": {
+            "last": last_watched,
+            "next": iso_utc(watch_job.next_run_time) if watch_job and watch_job.next_run_time else None,
+            "cron": watch_cron or "",
+        },
+        "users": {
+            "last": last_users,
+            "next": iso_utc(users_job.next_run_time) if users_job and users_job.next_run_time else None,
+            "cron": users_cron or "",
+        },
+        "backup": {
+            "next": iso_utc(backup_job.next_run_time) if backup_job and backup_job.next_run_time else None,
+            "cron": backup_cron or "",
+            "max_keep": backup_max_keep if isinstance(backup_max_keep, int) else DEFAULT_MAX_BACKUPS,
+        },
+    }
 
 
 @router.get("/api-token", dependencies=[Depends(require_owner)])
@@ -393,3 +433,44 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
     logger.warning("UNINSTALL {}: {}", "preview" if body.dry_run else "executed", result)
     message = "Preview only — nothing was changed." if body.dry_run else "Your server is as we found it."
     return {**result, "message": message}
+
+
+# -- Backups -----------------------------------------------------------------------------------
+
+
+@router.get("/backups", dependencies=[Depends(require_owner)])
+async def get_backups(request: Request):
+    """List available DB backups, newest first."""
+    from shortlist.server.services.backup import list_backups
+
+    return list_backups(request.app.state.config_dir)
+
+
+@router.post("/backups", dependencies=[Depends(require_owner)])
+async def create_backup(request: Request):
+    """Take a manual backup now."""
+    from shortlist.server.services.backup import take_backup
+
+    path = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: take_backup(request.app.state.config_dir, label="manual")
+    )
+    if path is None:
+        raise HTTPException(500, "backup failed")
+    return {"name": path.name, "size_bytes": path.stat().st_size}
+
+
+class RestoreRequest(BaseModel):
+    name: str
+
+
+@router.post("/backups/restore", dependencies=[Depends(require_owner)])
+async def restore_backup_endpoint(body: RestoreRequest, request: Request):
+    """Restore from a named backup. The app will need to be restarted after."""
+    from shortlist.server.services.backup import restore_backup
+
+    ok = await asyncio.get_running_loop().run_in_executor(
+        None, lambda: restore_backup(request.app.state.config_dir, body.name)
+    )
+    if not ok:
+        raise HTTPException(404, "backup not found")
+    return {"restored": body.name, "message": "Restored. Restart the container to pick up the restored database."}

@@ -14,8 +14,9 @@ import { useSettings } from "@/lib/queries";
 import type { StepProps } from "./step-props";
 
 /**
- * Step 2 — optional Tautulli. Saving writes the settings then tests them;
- * skipping falls back to Plex's own history API (always works, zero config).
+ * Step 2 — required TMDB key + optional Tautulli. Watch history is read straight from Plex per user
+ * (no configuration), so Tautulli here is only for the friendlier display names it knows people by.
+ * Saving writes the settings then tests them; skipping just uses each account's Plex username.
  */
 export function StepHistory({ data, update, next }: StepProps) {
   const [tmdbKey, setTmdbKey] = useState("");
@@ -121,9 +122,9 @@ export function StepHistory({ data, update, next }: StepProps) {
           <span className="font-normal text-muted-foreground">(optional)</span>
         </h3>
         <p className="text-sm text-muted-foreground">
-          Tautulli gives richer, more accurate watch history. Skip it and
-          Shortlist uses Plex&rsquo;s own history instead — that always works
-          with no setup, so you can move on without it.
+          Watch history comes straight from Plex, per user, with no setup.
+          Tautulli is only used for the friendlier names it knows people by
+          &mdash; skip it and Shortlist uses each account&rsquo;s Plex username.
         </p>
       </div>
 
@@ -173,7 +174,7 @@ export function StepHistory({ data, update, next }: StepProps) {
             next();
           }}
         >
-          Skip — Plex's own history works without it
+          Skip — use Plex usernames
         </Button>
       </div>
 
@@ -186,10 +187,10 @@ export function StepHistory({ data, update, next }: StepProps) {
       )}
 
       {data.history_source === "tautulli" && (
-        <Badge variant="success">Using Tautulli for watch history</Badge>
+        <Badge variant="success">Using Tautulli for display names</Badge>
       )}
       {data.history_source === "plex" && (
-        <Badge variant="secondary">Using Plex's built-in history</Badge>
+        <Badge variant="secondary">Using Plex usernames</Badge>
       )}
     </div>
   );

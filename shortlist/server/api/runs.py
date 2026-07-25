@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import PickRow, Run, RunUser, iso_utc
+from shortlist.server.db.models import PickRow, RequestCandidate, Run, RunUser, iso_utc
 
 router = APIRouter(prefix="/runs", tags=["runs"], dependencies=[Depends(require_owner)])
 
@@ -69,13 +69,17 @@ async def runs_summary(request: Request) -> dict:
 
 @router.delete("")
 async def clear_runs(request: Request) -> dict:
-    """Delete ALL run history: every run, its per-user rows, and its picks. This also clears the
-    effectiveness report (it's built from picks). Irreversible; it changes nothing on Plex."""
+    """Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the
+    dashboard's lifetime metrics survive — only the browsable history is cleared. Changes nothing
+    on Plex. Note: the next run will re-curate from scratch (no carry-forward) since picks lose
+    their run association."""
     with request.app.state.sessions() as session:
         deleted = session.query(func.count(Run.id)).scalar() or 0
-        # Picks aren't ORM-cascaded off Run, and a bulk delete bypasses the RunUser cascade too, so
-        # clear all three tables explicitly (order doesn't matter — no DB-level FK enforcement here).
-        session.query(PickRow).delete(synchronize_session=False)
+        # Detach picks from their runs (null run_id) so the dashboard metrics survive, then delete
+        # the run history itself (per-user traces are the storage hog at ~100 KB per user per run).
+        session.query(PickRow).filter(PickRow.run_id.isnot(None)).update(
+            {PickRow.run_id: None}, synchronize_session=False
+        )
         session.query(RunUser).delete(synchronize_session=False)
         session.query(Run).delete(synchronize_session=False)
         session.commit()
@@ -109,6 +113,28 @@ def _with_provenance(breakdown: list[dict], picks: list) -> list[dict]:
     return out
 
 
+def _request_outcomes(session) -> dict[str, dict]:
+    """What became of every wanted-but-missing title, keyed ``"<tmdb_id>:<media_type>"``.
+
+    The trace's "not in your libraries" drops are the titles the curator wanted that no delivery
+    library held; some of those become Sonarr/Radarr requests. This joins the request inbox back so
+    the trace can say WHICH — "requested from Radarr" vs "queued for your approval". Run-wide (one row
+    per title, whoever wanted it), so the key is title-only; the trace overlays it only where a drop
+    matches. `hidden` rows are kept: they're still `status="sent"` — the request DID happen, and the
+    trace records what happened, not what's currently in the inbox.
+    """
+    rows = session.query(RequestCandidate).all()
+    return {
+        f"{r.tmdb_id}:{r.media_type}": {
+            "status": r.status,  # pending | sent | rejected
+            "detail": r.detail or "",
+            "arr_slug": r.arr_slug,
+            "excluded": r.excluded,  # on the arr's import-exclusion list — approving is a no-op
+        }
+        for r in rows
+    }
+
+
 @router.get("/{run_id}")
 async def get_run(run_id: int, request: Request) -> dict:
     with request.app.state.sessions() as session:
@@ -123,6 +149,9 @@ async def get_run(run_id: int, request: Request) -> dict:
             users.append(
                 {
                     "username": run_user.user.username,
+                    # nickname → Tautulli friendly name → username; the runs view shows this so a
+                    # person reads the same in runs as on the Users page (see User.display_name).
+                    "display_name": run_user.user.display_name,
                     "slug": run_user.user.slug,
                     "status": run_user.status,
                     "error": run_user.error,
@@ -149,9 +178,70 @@ async def get_run(run_id: int, request: Request) -> dict:
                     ],
                     # Per-(row, library) breakdown; [] on legacy runs -> UI falls back to diff + picks.
                     "breakdown": _with_provenance(run_user.breakdown or [], picks),
+                    # Whether a full pipeline trace was recorded for this user (fetched on demand from
+                    # the trace endpoint — the blob is large, so it stays out of the detail payload).
+                    "has_trace": bool(run_user.trace),
                 }
             )
-        return {**_run_summary(run), "users": users}
+        # Users who haven't finished yet show as "pending" so the UI can pre-populate the list
+        # during a live run instead of only showing people after they complete.
+        completed_slugs = {ru.user.slug for ru in run.users}
+        expected = (run.stats or {}).get("expected_users", [])
+        pending = [
+            {
+                "username": u["username"],
+                "display_name": u.get("display_name", u["username"]),
+                "slug": u["slug"],
+                "status": "pending",
+                "error": None,
+                "reason": None,
+                "duration_ms": None,
+                "llm_tokens": 0,
+                "llm_tokens_by_step": {},
+                "exa_searches": 0,
+                "diff": {},
+                "picks": [],
+                "breakdown": [],
+                "has_trace": False,
+            }
+            for u in expected
+            if u["slug"] not in completed_slugs
+        ]
+        return {**_run_summary(run), "users": users + pending}
+
+
+@router.get("/{run_id}/users/{user_id}/trace")
+async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dict:
+    """The full pipeline trace for one user in one run: seeds derived, each candidate source's
+    queries and returns, the web-search / RAG prompts, and the titles proposed. Fetched on demand
+    (it's a large blob) so the run-detail page stays light. Empty ``{}`` on a run predating the
+    feature or a skipped/cold user — the UI reads that as "no trace for this run", not an error."""
+    with request.app.state.sessions() as session:
+        run_user = session.get(RunUser, (run_id, user_id))
+        if run_user is None:
+            raise HTTPException(status_code=404, detail="no such user in this run")
+        # The delivered ending of the flow — what each library's row ended up with, and why — lives on
+        # the picks table + breakdown blob, not in the trace dict. Join it here so the trace page can
+        # show "what we built per library" as the last stage without a second fetch.
+        picks = session.query(PickRow).filter_by(run_id=run_id, user_id=run_user.user_id).order_by(PickRow.rank).all()
+        return {
+            "username": run_user.user.username,
+            "display_name": run_user.user.display_name,
+            "status": run_user.status,
+            # Surfaced so the trace page can explain a failed/skipped person, not just show partial
+            # stages: `error` for a failure, `reason` for a (non-failing) skip.
+            "error": run_user.error,
+            "reason": run_user.reason,
+            "trace": run_user.trace or {},
+            "breakdown": _with_provenance(run_user.breakdown or [], picks),
+            # What became of the titles the curator wanted but no library held. The trace marks those
+            # "not in your libraries"; this says whether the request subsystem then asked Sonarr/Radarr
+            # for them (or queued them for the owner), keyed by "<tmdb_id>:<media_type>" so the UI can
+            # overlay the outcome onto that fate. Run-WIDE state (a title is requested once for the
+            # whole server, whoever wanted it) — the overlay is scoped by only matching this user's
+            # missing titles. Empty on a deployment with requests off.
+            "requests": _request_outcomes(session),
+        }
 
 
 @router.get("/{run_id}/log")

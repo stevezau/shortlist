@@ -16,7 +16,6 @@ from urllib.parse import urlparse, urlunparse
 
 from loguru import logger
 
-from shortlist.engine.curator.base import picks_schema
 from shortlist.engine.curator.openai import DEFAULT_MODEL, OpenAICurator
 
 
@@ -75,13 +74,8 @@ class OpenAICompatibleCurator(OpenAICurator):
         if resolved != base_url.strip().rstrip("/"):
             logger.debug("curator: using {} for the OpenAI-compatible endpoint", resolved)
         super().__init__(api_key=api_key or "not-needed", model=model, timeout=timeout, base_url=resolved)
-        # INDEX into the `_chat` ladder of the shape this server accepted. An index, not the shape
-        # itself: `None` is a legitimate rung (send no response_format at all), so storing the shape
-        # would make "not yet known" indistinguishable from "this server wants no format" — and the
-        # first call would skip straight to the last rung.
-        self._format_from = 0
 
-    def _resolve_model(self) -> str:
+    def _send_model(self) -> str:
         """The model name to send. Asks the server what it has if we weren't told.
 
         Inheriting OpenAI's `gpt-4o-mini` default would be actively wrong here: llama.cpp ignores the
@@ -114,54 +108,6 @@ class OpenAICompatibleCurator(OpenAICurator):
                 self._model,
             )
         return self._model
-
-    def _chat(self, system: str, user: str):
-        """Ask for JSON, degrading through what these servers actually implement.
-
-        `json_schema` + `strict` is an OpenAI extension. llama.cpp, LM Studio and vLLM support it
-        only in recent versions and reject it outright in older ones, so insisting on it would make
-        this provider fail on the servers it was added for. The ladder tries the strictest form
-        first, falls back to plain JSON mode, then to no format at all — the prompt asks for JSON
-        regardless, and `validate_picks` downstream is what actually guarantees the result is sane.
-
-        The rung that worked is remembered, so a run costs one attempt per user, not three.
-
-        Only a *rejection of the shape* moves us down the ladder. A timeout or a 500 says nothing
-        about what the server supports, and the curator instance lives for the whole run — so
-        treating a blip as "json_schema unsupported" would silently drop every remaining user in the
-        night's run to a weaker guarantee. Those propagate instead, to the existing CuratorError →
-        heuristic path.
-        """
-        import openai
-
-        model = self._resolve_model()
-        formats: list[dict | None] = [
-            {"type": "json_schema", "json_schema": {"name": "picks", "strict": True, "schema": picks_schema()}},
-            {"type": "json_object"},
-            None,
-        ]
-        unsupported = (openai.BadRequestError, openai.UnprocessableEntityError)
-        last: Exception | None = None
-        for index in range(self._format_from, len(formats)):
-            response_format = formats[index]
-            kwargs = {"response_format": response_format} if response_format else {}
-            try:
-                reply = self._client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
-                    **kwargs,
-                )
-            except unsupported as e:
-                last = e
-                logger.warning(
-                    "local server rejected response_format={} ({}) — trying a simpler request",
-                    (response_format or {}).get("type", "none"),
-                    type(e).__name__,
-                )
-                continue
-            self._format_from = index
-            return reply
-        raise last if last else RuntimeError("the local server refused every request shape")
 
     def list_models(self) -> list[str]:
         """Every model the server offers, UNFILTERED.

@@ -12,8 +12,8 @@ const PLACEHOLDER_HINT = (
   <p className="text-sm text-muted-foreground">
     Use <span className="font-mono">{"{user}"}</span> for each person's name,{" "}
     <span className="font-mono">{"{library_name}"}</span> for the library, or{" "}
-    <span className="font-mono">{"{top_seed}"}</span> for their top watched
-    title.
+    <span className="font-mono">{"{top_seed}"}</span> for a title they recently
+    watched.
   </p>
 );
 

@@ -28,7 +28,8 @@ export const STAGE_LABELS: Record<string, string> = {
  * human terms rather than raw jargon (a "seed" is one of the person's favourites used to find similar
  * titles — never shown as "28 seeds").
  */
-export function countLabel(key: string, value: number): string {
+export function countLabel(key: string, value: number | string): string {
+  if (key === "row") return String(value);
   switch (key) {
     case "position":
       return `#${value} in line`;

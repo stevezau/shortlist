@@ -14,6 +14,8 @@ export const queryKeys = {
   users: ["users"] as const,
   runs: ["runs"] as const,
   run: (id: number) => ["runs", id] as const,
+  runUserTrace: (runId: number, userId: number) =>
+    ["runs", runId, "trace", userId] as const,
   settings: ["settings"] as const,
   collections: ["collections"] as const,
   requests: ["requests"] as const,
@@ -72,7 +74,7 @@ export function useClearRuns() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: api.clearRuns,
-    // Clearing runs also empties picks, so the dashboard report resets too — refresh both.
+    // Picks survive (metrics preserved), but the runs list and the dashboard's "Runs" card refresh.
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.runs });
       queryClient.invalidateQueries({ queryKey: ["report"] });
@@ -88,8 +90,22 @@ export function useRun(id: number, enabled = true) {
   });
 }
 
+/** The full-pipeline trace for one user in one run — fetched on demand (the blob is large), so
+ *  callers gate it on `has_trace` and only enable it once the trace page is actually open. */
+export function useRunUserTrace(runId: number, userId: number, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.runUserTrace(runId, userId),
+    queryFn: () => api.getRunUserTrace(runId, userId),
+    enabled,
+  });
+}
+
 export function useSettings() {
   return useQuery({ queryKey: queryKeys.settings, queryFn: api.getSettings });
+}
+
+export function useSyncs() {
+  return useQuery({ queryKey: ["syncs"], queryFn: api.getSyncs });
 }
 
 /** Whether the AI provider can generate poster images — for the row editor's Generate gate. */
@@ -216,8 +232,12 @@ export function useSaveCollection() {
   return useMutation({
     mutationFn: ({ id, body }: { id: number | null; body: CollectionInput }) =>
       id === null ? api.createCollection(body) : api.updateCollection(id, body),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: queryKeys.collections }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.collections });
+      // Renaming the default row writes the shared `row.name_template` setting, so refresh Settings
+      // too — otherwise Settings → Defaults would still show the old name until a reload.
+      queryClient.invalidateQueries({ queryKey: queryKeys.settings });
+    },
   });
 }
 
@@ -325,7 +345,7 @@ export function useUserHistory(id: number) {
   return useQuery({
     queryKey: queryKeys.userHistory(id),
     queryFn: () => api.getUserHistory(id),
-    retry: false, // a live Plex/Tautulli fetch; surface the error rather than hammering
+    retry: false, // a live per-user Plex read; surface the error rather than hammering
   });
 }
 
@@ -346,6 +366,14 @@ export function useSetUserRowOverride(userId: number) {
 
 export function useRequests() {
   return useQuery({ queryKey: queryKeys.requests, queryFn: api.listRequests });
+}
+
+export function useArrStatus() {
+  return useQuery({
+    queryKey: ["arrStatus"],
+    queryFn: api.getArrStatus,
+    staleTime: 30_000, // status changes slowly, cache 30s
+  });
 }
 
 export function useNotifications() {
@@ -371,7 +399,8 @@ export function useVersion() {
   return useQuery({
     queryKey: ["version"],
     queryFn: api.getVersion,
-    staleTime: Infinity, // the running build doesn't change under the user's feet
+    staleTime: 3600_000, // check once per hour
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -443,7 +472,6 @@ export function useClearRequests() {
       queryClient.invalidateQueries({ queryKey: queryKeys.requests }),
   });
 }
-
 
 /** The app's log file. `follow` polls so a live run narrates itself without the operator reloading;
  *  `keepPreviousData` stops the list blanking out on every poll or filter change. */

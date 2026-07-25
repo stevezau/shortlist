@@ -11,6 +11,7 @@ import {
   Search,
   Shuffle,
   Sparkles,
+  Telescope,
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -60,16 +61,16 @@ function ActivityLog({
   entries: RunLogEntry[];
   running: boolean;
 }) {
-  const endRef = useRef<HTMLDivElement>(null);
-  // Follow the tail as new lines arrive, but don't yank the page for reduced-motion users.
+  const logRef = useRef<HTMLDivElement>(null);
+  // Follow the tail as new lines arrive by scrolling the log box ITSELF — never scrollIntoView,
+  // which walks up and scrolls the whole page too, yanking it to the bottom every time a user
+  // completes. Only auto-follow when the operator is already near the bottom, so scrolling up to
+  // read an earlier line isn't fought on the next update.
   useEffect(() => {
-    const reduce = window.matchMedia?.(
-      "(prefers-reduced-motion: reduce)",
-    )?.matches;
-    endRef.current?.scrollIntoView?.({
-      block: "nearest",
-      behavior: reduce ? "auto" : "smooth",
-    });
+    const box = logRef.current;
+    if (!box) return;
+    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    if (nearBottom) box.scrollTop = box.scrollHeight;
   }, [entries.length]);
 
   return (
@@ -85,6 +86,7 @@ function ActivityLog({
       </CardHeader>
       <CardContent>
         <div
+          ref={logRef}
           className="max-h-72 space-y-1 overflow-y-auto rounded-md bg-muted/40 p-3 font-mono text-xs"
           role="log"
           aria-live="polite"
@@ -97,7 +99,6 @@ function ActivityLog({
           ) : (
             entries.map((entry, i) => <LogLine key={i} entry={entry} />)
           )}
-          <div ref={endRef} />
         </div>
       </CardContent>
     </Card>
@@ -108,7 +109,7 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
   const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
   const label = STAGE_LABELS[entry.stage] ?? entry.stage;
   const detail = Object.entries(entry.counts ?? {})
-    .map(([k, v]) => countLabel(k, Number(v)))
+    .map(([k, v]) => countLabel(k, v))
     .join(" · ");
   return (
     <div className="flex gap-2">
@@ -257,7 +258,8 @@ function tokenStepInline(byStep?: Record<string, number>): string {
  *  nothing rendered: the page said "Failed" and left the operator reading container logs (issue #1). */
 function RunFailureBanner({ run }: { run: RunDetail }) {
   const blockers = run.promotion_blockers ?? [];
-  if (run.status !== "error" || (!run.error && blockers.length === 0)) return null;
+  if (run.status !== "error" || (!run.error && blockers.length === 0))
+    return null;
   return (
     <div
       role="alert"
@@ -272,9 +274,11 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
         <p className="text-muted-foreground">
           Rows are only put on Home once every other account is set to hide
           them. Plex refused that change for{" "}
-          {blockers.length === 1 ? "this account" : `${blockers.length} accounts`}
-          , so the rows were built but deliberately left hidden rather than
-          risk showing one person’s row to someone else.
+          {blockers.length === 1
+            ? "this account"
+            : `${blockers.length} accounts`}
+          , so the rows were built but deliberately left hidden rather than risk
+          showing one person’s row to someone else.
         </p>
       )}
       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive">
@@ -295,6 +299,7 @@ function RunStatTiles({ run }: { run: RunDetail }) {
   const requested = s.titles_requested ?? 0;
   const tokens = s.llm_tokens ?? 0;
   const exa = s.exa_searches ?? 0;
+  const exaCacheHits = s.exa_cache_hits ?? 0;
   // "web search 467,463 · final picks 52,625 tokens" — the trailing unit makes clear these are token
   // counts, not the (separate) Exa search count shown in its own tile below.
   const stepInline = tokenStepInline(s.llm_tokens_by_step);
@@ -350,13 +355,19 @@ function RunStatTiles({ run }: { run: RunDetail }) {
           title="Total AI tokens this run cost, split by what the AI did. Turn AI sources off in Settings → Recommendations to lower it."
         />
       )}
-      {exa > 0 && (
+      {(exa > 0 || exaCacheHits > 0) && (
         <StatTile
           icon={Search}
           label="Exa searches"
           value={exa}
-          hint="web lookups · billed per search"
-          title="Number of Exa web-search requests this run made — a count, not tokens. Exa bills per search."
+          // A warm cache means most lookups aren't billed — showing only the billed "1" made a
+          // fully-cached run look like the source did nothing. The hint names what the cache served.
+          hint={
+            exaCacheHits > 0
+              ? `billed · ${exaCacheHits.toLocaleString()} from cache`
+              : "web lookups · billed per search"
+          }
+          title="Billable Exa web-search requests this run made — a count, not tokens. Exa bills per search; results are cached for two weeks and shared across everyone, so most lookups are served from cache and cost nothing."
         />
       )}
     </div>
@@ -485,7 +496,15 @@ function ResultsLegend() {
 }
 
 /** The selected user's result: an error, or their rows grouped from the per-(row, library) breakdown. */
-function UserPanel({ run, result }: { run: RunDetail; result: RunUserResult }) {
+function UserPanel({
+  run,
+  result,
+  liveLog,
+}: {
+  run: RunDetail;
+  result: RunUserResult;
+  liveLog?: RunLogEntry[];
+}) {
   if (result.error !== null) {
     return (
       <div role="alert" className="space-y-3 rounded-md bg-destructive/10 p-3">
@@ -523,13 +542,27 @@ function UserPanel({ run, result }: { run: RunDetail; result: RunUserResult }) {
     );
   }
   if (result.breakdown.length === 0) {
-    // Still running (this user hasn't finished) or a legacy run with no breakdown.
+    // Still running (this user hasn’t finished) or a legacy run with no breakdown.
     if (result.picks.length > 0)
       return <PickList picks={result.picks} className="mt-1" />;
+    if (result.status === "ok" || result.status === "cold_start") {
+      return (
+        <p className="text-sm text-muted-foreground">
+          No changes — this person’s rows were already up to date.
+        </p>
+      );
+    }
+    // Show the latest stage from the live log for this user.
+    const userLog = liveLog?.filter((e) => e.user === result.slug);
+    const latest = userLog?.at(-1);
+    const stageLabel = latest
+      ? (STAGE_LABELS[latest.stage] ?? latest.stage)
+      : null;
+    const rowName = latest?.counts?.row as string | undefined;
     return (
       <p className="text-sm text-muted-foreground">
-        {result.status === "ok" || result.status === "cold_start"
-          ? "No changes — this person’s rows were already up to date."
+        {stageLabel
+          ? `${stageLabel}${rowName ? ` — ${rowName}` : ""}…`
           : "Working on this person…"}
       </p>
     );
@@ -575,15 +608,19 @@ function UserRow({
     >
       <UserAvatar name={result.username} size="sm" />
       <span className="min-w-0 flex-1 truncate font-medium">
-        {result.username}
+        {result.display_name || result.username}
       </span>
       {failed ? (
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive">
           <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
           Failed
         </span>
+      ) : result.status === "pending" ? (
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          Pending
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        </span>
       ) : result.status === "skipped" ? (
-        // A green tick on someone who built nothing is the row-level version of "all succeeded".
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
           Skipped
           <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
@@ -613,31 +650,38 @@ function UserTabs({
   const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
   const q = query.trim().toLowerCase();
   const failedTotal = results.filter((r) => r.error !== null).length;
+  const pendingTotal = results.filter((r) => r.status === "pending").length;
   const skippedTotal = results.filter(
     (r) => r.error === null && r.status === "skipped",
   ).length;
-  const okTotal = results.length - failedTotal - skippedTotal;
-  // Three outcomes, so classify by all three EVERYWHERE. Grouping on `error === null` alone put
-  // skipped people under a "Succeeded" heading while their own row said "Skipped" — the same
-  // contradiction the stat tile had, surviving one level down.
+  const okTotal = results.length - failedTotal - skippedTotal - pendingTotal;
+  const isPending = (r: RunUserResult) => r.status === "pending";
   const isSkipped = (r: RunUserResult) =>
     r.error === null && r.status === "skipped";
-  const isOk = (r: RunUserResult) => r.error === null && !isSkipped(r);
+  const isOk = (r: RunUserResult) =>
+    r.error === null && !isSkipped(r) && !isPending(r);
   const mixed = failedTotal > 0 && okTotal + skippedTotal > 0; // a filter only helps when there's a mix
   const byStatus =
     !mixed || filter === "all"
       ? results
-      : results.filter((r) => (filter === "failed" ? r.error !== null : !r.error));
+      : results.filter((r) =>
+          filter === "failed" ? r.error !== null : !r.error,
+        );
   const shown = q
-    ? byStatus.filter((r) => r.username.toLowerCase().includes(q))
+    ? byStatus.filter(
+        (r) =>
+          r.username.toLowerCase().includes(q) ||
+          (r.display_name ?? "").toLowerCase().includes(q),
+      )
     : byStatus;
   const failed = shown.filter((r) => r.error !== null);
+  const pending = shown.filter(isPending);
   const ok = shown.filter(isOk);
   const skipped = shown.filter(isSkipped);
   const many = results.length > 10;
-  // Show group labels only when more than one group is on screen — otherwise the summary says it.
   const bothGroups =
-    [failed.length, ok.length, skipped.length].filter(Boolean).length > 1;
+    [failed.length, ok.length, skipped.length, pending.length].filter(Boolean)
+      .length > 1;
 
   return (
     <div className="space-y-3" role="tablist" aria-label="Users in this run">
@@ -655,14 +699,16 @@ function UserTabs({
           />
         ) : (
           <p className="text-sm text-muted-foreground">
-            {failedTotal > 0 ? (
+            {pendingTotal > 0 && okTotal === 0 && failedTotal === 0 ? (
+              `${pendingTotal} pending…`
+            ) : failedTotal > 0 ? (
               <span className="font-medium text-destructive">
                 {failedTotal} failed
               </span>
             ) : okTotal === 0 && skippedTotal > 0 ? (
               `${skippedTotal} skipped — nothing was built`
             ) : (
-              `${okTotal} succeeded${skippedTotal > 0 ? `, ${skippedTotal} skipped` : ""}`
+              `${okTotal} succeeded${skippedTotal > 0 ? `, ${skippedTotal} skipped` : ""}${pendingTotal > 0 ? `, ${pendingTotal} pending` : ""}`
             )}
           </p>
         )}
@@ -706,6 +752,17 @@ function UserTabs({
             <GroupLabel>Skipped · {skipped.length}</GroupLabel>
           )}
           {skipped.map((result) => (
+            <UserRow
+              key={result.slug}
+              result={result}
+              selected={selected}
+              onSelect={onSelect}
+            />
+          ))}
+          {bothGroups && pending.length > 0 && (
+            <GroupLabel>Pending · {pending.length}</GroupLabel>
+          )}
+          {pending.map((result) => (
             <UserRow
               key={result.slug}
               result={result}
@@ -937,21 +994,14 @@ export function RunDetailPage() {
                           </p>
                         </div>
                       )}
-                      <div
-                        className={cn(
-                          run.users.length > 1 &&
-                            "grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start",
-                        )}
-                      >
-                        {run.users.length > 1 && (
-                          <div className="lg:sticky lg:top-4">
-                            <UserTabs
-                              results={ordered}
-                              selected={selected.slug}
-                              onSelect={setSelectedSlug}
-                            />
-                          </div>
-                        )}
+                      <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
+                        <div className="lg:sticky lg:top-4">
+                          <UserTabs
+                            results={ordered}
+                            selected={selected.slug}
+                            onSelect={setSelectedSlug}
+                          />
+                        </div>
                         <Card
                           className={cn(
                             "min-w-0",
@@ -966,10 +1016,10 @@ export function RunDetailPage() {
                                   to={`/users/${userId}`}
                                   className="rounded-sm hover:text-primary hover:underline"
                                 >
-                                  {selected.username}
+                                  {selected.display_name || selected.username}
                                 </Link>
                               ) : (
-                                selected.username
+                                selected.display_name || selected.username
                               )}
                               <Badge
                                 variant={
@@ -981,18 +1031,40 @@ export function RunDetailPage() {
                                 {runStatusLabel(selected.status)}
                               </Badge>
                             </CardTitle>
-                            <p className="text-sm text-muted-foreground">
-                              {formatDuration(selected.duration_ms)}
-                              {selected.llm_tokens > 0
-                                ? ` · ${selected.llm_tokens.toLocaleString()} AI tokens${tokenStepSummary(
-                                    selected.llm_tokens_by_step,
-                                  )}`
-                                : ""}
-                              {exaSummary(selected.exa_searches)}
-                            </p>
+                            <div className="flex items-center gap-3">
+                              <p className="text-sm text-muted-foreground">
+                                {formatDuration(selected.duration_ms)}
+                                {selected.llm_tokens > 0
+                                  ? ` · ${selected.llm_tokens.toLocaleString()} AI tokens${tokenStepSummary(
+                                      selected.llm_tokens_by_step,
+                                    )}`
+                                  : ""}
+                                {exaSummary(selected.exa_searches)}
+                              </p>
+                              {selected.has_trace && userId !== null && (
+                                <Button
+                                  asChild
+                                  variant="secondary"
+                                  size="sm"
+                                  className="gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                                >
+                                  <Link to={`/runs/${run.id}/trace/${userId}`}>
+                                    <Telescope
+                                      className="h-3.5 w-3.5"
+                                      aria-hidden="true"
+                                    />
+                                    How we picked
+                                  </Link>
+                                </Button>
+                              )}
+                            </div>
                           </CardHeader>
                           <CardContent>
-                            <UserPanel run={run} result={selected} />
+                            <UserPanel
+                              run={run}
+                              result={selected}
+                              liveLog={liveLog}
+                            />
                           </CardContent>
                         </Card>
                       </div>

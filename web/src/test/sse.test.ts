@@ -95,6 +95,21 @@ describe("useSSE", () => {
     expect(onRunUserStage).not.toHaveBeenCalled();
   });
 
+  it("dispatches sync.progress and sync.finished to their handlers", () => {
+    const onSyncProgress = vi.fn();
+    const onSyncFinished = vi.fn();
+    renderHook(() => useSSE({ onSyncProgress, onSyncFinished }));
+
+    const progress = { kind: "watched", done: 2, total: 5 };
+    act(() => latestSource().emit("sync.progress", JSON.stringify(progress)));
+    expect(onSyncProgress).toHaveBeenCalledExactlyOnceWith(progress);
+    expect(onSyncFinished).not.toHaveBeenCalled();
+
+    const finished = { kind: "watched", ok: true, count: 5 };
+    act(() => latestSource().emit("sync.finished", JSON.stringify(finished)));
+    expect(onSyncFinished).toHaveBeenCalledExactlyOnceWith(finished);
+  });
+
   it("uses the latest handlers without reopening the connection", () => {
     const first = vi.fn();
     const second = vi.fn();
