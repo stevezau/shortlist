@@ -5,8 +5,11 @@ import { useLocation, useParams } from "react-router-dom";
 
 import { BackLink } from "@/components/back-link";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ProgressBar } from "@/components/ui/progress-bar";
-import { apiUrl } from "@/lib/api";
+import { api, apiUrl } from "@/lib/api";
 import { useCollections } from "@/lib/queries";
 
 interface RenameEvent {
@@ -27,80 +30,89 @@ export function RowRenamePage() {
   const collections = useCollections();
   const collection = collections.data?.find((c) => c.id === collectionId);
   const location = useLocation();
-  const oldTemplate = (location.state as { oldTemplate?: string } | null)
+  const navOldTemplate = (location.state as { oldTemplate?: string } | null)
     ?.oldTemplate;
+
+  // If we arrived from the row-card dialog, oldTemplate is set and we auto-start.
+  // If we arrived from the editor's Rename button, we need to ask first.
+  const [confirmed, setConfirmed] = useState(!!navOldTemplate);
+  const [newName, setNewName] = useState(
+    collection?.name_template || collection?.name || "",
+  );
+  const [saving, setSaving] = useState(false);
+  const [oldTemplate, setOldTemplate] = useState(navOldTemplate ?? "");
+
   const [events, setEvents] = useState<RenameEvent[]>([]);
-  const [running, setRunning] = useState(true);
+  const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (!collection) return;
-    const controller = new AbortController();
-
-    async function stream() {
-      try {
-        const response = await fetch(
-          apiUrl(`/api/collections/${collectionId}/rename`),
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-shortlist-csrf": "1",
-            },
-            credentials: "include",
-            body: JSON.stringify({
-              name_template: "",
-              old_template: oldTemplate ?? "",
-            }),
-            signal: controller.signal,
+  async function startRename(template: string, prevTemplate: string) {
+    setRunning(true);
+    setSaving(false);
+    try {
+      const response = await fetch(
+        apiUrl(`/api/collections/${collectionId}/rename`),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-shortlist-csrf": "1",
           },
-        );
-        if (!response.ok || !response.body) {
-          setError(`Server returned ${response.status}`);
-          setRunning(false);
-          return;
-        }
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n\n");
-          buffer = lines.pop() ?? "";
-          for (const chunk of lines) {
-            const dataLine = chunk
-              .split("\n")
-              .find((l) => l.startsWith("data: "));
-            if (!dataLine) continue;
-            const event: RenameEvent = JSON.parse(dataLine.slice(6));
-            if (event.error) {
-              setError(event.error);
-              setRunning(false);
-              return;
-            }
-            setEvents((prev) => [...prev, event]);
-            if (event.done) {
-              setRunning(false);
-              queryClient.invalidateQueries({ queryKey: ["collections"] });
-            }
+          credentials: "include",
+          body: JSON.stringify({
+            name_template: template,
+            old_template: prevTemplate,
+          }),
+        },
+      );
+      if (!response.ok || !response.body) {
+        setError(`Server returned ${response.status}`);
+        setRunning(false);
+        return;
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n\n");
+        buffer = lines.pop() ?? "";
+        for (const chunk of lines) {
+          const dataLine = chunk
+            .split("\n")
+            .find((l) => l.startsWith("data: "));
+          if (!dataLine) continue;
+          const event: RenameEvent = JSON.parse(dataLine.slice(6));
+          if (event.error) {
+            setError(event.error);
+            setRunning(false);
+            return;
+          }
+          setEvents((prev) => [...prev, event]);
+          if (event.done) {
+            setRunning(false);
+            queryClient.invalidateQueries({ queryKey: ["collections"] });
           }
         }
-        setRunning(false);
-        queryClient.invalidateQueries({ queryKey: ["collections"] });
-      } catch (e) {
-        if ((e as Error).name !== "AbortError") {
-          setError((e as Error).message);
-          setRunning(false);
-        }
       }
+      setRunning(false);
+      queryClient.invalidateQueries({ queryKey: ["collections"] });
+    } catch (e) {
+      setError((e as Error).message);
+      setRunning(false);
     }
+  }
 
-    stream();
-    return () => controller.abort();
-  }, [collection, collectionId]);
+  // Auto-start if we came from the row-card dialog (oldTemplate is set).
+  useEffect(() => {
+    if (confirmed && collection && !running && events.length === 0) {
+      startRename("", oldTemplate);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmed, collection]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -109,18 +121,65 @@ export function RowRenamePage() {
   const renamed = events.filter((e) => e.user && !e.done);
   const doneEvent = events.find((e) => e.done);
 
+  async function handleSubmit() {
+    if (!collection) return;
+    const prev = collection.name_template || collection.name;
+    setSaving(true);
+    try {
+      await api.updateCollection(collection.id, {
+        name: newName,
+        name_template: newName,
+      } as never);
+      setOldTemplate(prev);
+      setConfirmed(true);
+      startRename(newName, prev);
+    } catch (e) {
+      setError((e as Error).message);
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <BackLink to="/rows" label="Back to Rows" />
       <header className="space-y-1">
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
           <Pen className="h-5 w-5" aria-hidden="true" />
-          Renaming {collection?.name || "row"}
+          {confirmed
+            ? `Renaming ${collection?.name || "row"}`
+            : `Rename ${collection?.name || "row"}`}
         </h1>
         <p className="text-sm text-muted-foreground">
-          Renaming every collection on Plex for every user who has this row.
+          {confirmed
+            ? "Renaming every collection on Plex for every user who has this row."
+            : "This renames every collection on Plex for every user who has this row."}
         </p>
       </header>
+
+      {!confirmed && collection && (
+        <div className="max-w-md space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="rename-input">New name</Label>
+            <Input
+              id="rename-input"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g. ✨ {library_name} Picked for You"
+            />
+            <p className="text-xs text-muted-foreground">
+              Use {"{library_name}"} for the library, {"{user}"} for each
+              person's name.
+            </p>
+          </div>
+          <Button
+            loading={saving}
+            disabled={!newName.trim()}
+            onClick={handleSubmit}
+          >
+            Rename on Plex
+          </Button>
+        </div>
+      )}
 
       {running && (
         <ProgressBar
