@@ -134,21 +134,46 @@ def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=USER_SYNC_JOB_ID, replace_existing=True)
 
 
+def _resolve_backup_settings(app) -> tuple[str, int]:
+    """Read backup cron + max_keep from settings, falling back to defaults."""
+    from shortlist.server.services.backup import DEFAULT_MAX_BACKUPS
+    from shortlist.server.settings_store import SettingsStore
+
+    cron = _BACKUP_CRON
+    max_keep = DEFAULT_MAX_BACKUPS
+    with app.state.sessions() as session:
+        store = SettingsStore(session)
+        custom_cron = store.get("backup.cron")
+        custom_keep = store.get("backup.max_keep")
+    if custom_cron and isinstance(custom_cron, str) and custom_cron.strip():
+        try:
+            CronTrigger.from_crontab(custom_cron.strip())
+            cron = custom_cron.strip()
+        except ValueError:
+            logger.warning("invalid backup.cron {!r} — falling back to default", custom_cron)
+    if custom_keep and isinstance(custom_keep, int) and 1 <= custom_keep <= 100:
+        max_keep = custom_keep
+    return cron, max_keep
+
+
 def _register_backup(scheduler: AsyncIOScheduler, app) -> None:
-    """Daily DB backup — keeps the last N copies so a bad migration or data loss is recoverable."""
+    """Scheduled DB backup — keeps the last N copies so a bad migration or data loss is recoverable."""
     from shortlist.server.services.backup import take_backup
 
     config_dir = app.state.config_dir
+    cron, max_keep = _resolve_backup_settings(app)
 
     async def fire():
         try:
             import asyncio
 
-            await asyncio.get_running_loop().run_in_executor(None, lambda: take_backup(config_dir, label="scheduled"))
+            await asyncio.get_running_loop().run_in_executor(
+                None, lambda: take_backup(config_dir, label="scheduled", max_keep=max_keep)
+            )
         except Exception:
-            logger.exception("daily backup failed")
+            logger.exception("scheduled backup failed")
 
-    scheduler.add_job(fire, CronTrigger.from_crontab(_BACKUP_CRON), id=BACKUP_JOB_ID, replace_existing=True)
+    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=BACKUP_JOB_ID, replace_existing=True)
 
 
 def build_scheduler(app) -> AsyncIOScheduler:

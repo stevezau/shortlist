@@ -40,7 +40,8 @@ async def version() -> dict:
 @router.get("/syncs", dependencies=[Depends(require_owner)])
 async def syncs(request: Request) -> dict:
     """When each sync last ran and when it next fires — for the Tools page "last synced" lines."""
-    from shortlist.server.scheduler import USER_SYNC_JOB_ID, WATCH_SYNC_JOB_ID
+    from shortlist.server.scheduler import BACKUP_JOB_ID, USER_SYNC_JOB_ID, WATCH_SYNC_JOB_ID
+    from shortlist.server.services.backup import DEFAULT_MAX_BACKUPS
 
     with request.app.state.sessions() as session:
         store = SettingsStore(session)
@@ -48,9 +49,12 @@ async def syncs(request: Request) -> dict:
         last_users = store.get("report.users_synced_at")
         watch_cron = store.get("sync.watch_cron")
         users_cron = store.get("sync.users_cron")
+        backup_cron = store.get("backup.cron")
+        backup_max_keep = store.get("backup.max_keep")
     scheduler = getattr(request.app.state, "scheduler", None)
     watch_job = scheduler.get_job(WATCH_SYNC_JOB_ID) if scheduler else None
     users_job = scheduler.get_job(USER_SYNC_JOB_ID) if scheduler else None
+    backup_job = scheduler.get_job(BACKUP_JOB_ID) if scheduler else None
     return {
         "watched": {
             "last": last_watched,
@@ -61,6 +65,11 @@ async def syncs(request: Request) -> dict:
             "last": last_users,
             "next": iso_utc(users_job.next_run_time) if users_job and users_job.next_run_time else None,
             "cron": users_cron or "",
+        },
+        "backup": {
+            "next": iso_utc(backup_job.next_run_time) if backup_job and backup_job.next_run_time else None,
+            "cron": backup_cron or "",
+            "max_keep": backup_max_keep if isinstance(backup_max_keep, int) else DEFAULT_MAX_BACKUPS,
         },
     }
 

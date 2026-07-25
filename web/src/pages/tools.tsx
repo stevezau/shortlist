@@ -392,8 +392,18 @@ function SyncUsersCard({
   );
 }
 
+const RETENTION_OPTIONS = [
+  { value: 5, label: "5" },
+  { value: 10, label: "10" },
+  { value: 20, label: "20" },
+  { value: 30, label: "30" },
+];
+
 function BackupsCard() {
   const queryClient = useQueryClient();
+  const syncs = useSyncs();
+  const settings = useSettings();
+  const saveSettings = useSaveSettings();
   const backups = useQuery({
     queryKey: ["backups"],
     queryFn: api.getBackups,
@@ -406,6 +416,10 @@ function BackupsCard() {
     mutationFn: api.restoreBackup,
   });
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+
+  const backupCron = ((settings.data ?? {})["backup.cron"] as string) ?? "";
+  const backupMaxKeep =
+    ((settings.data ?? {})["backup.max_keep"] as number) ?? 10;
 
   function formatSize(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
@@ -421,11 +435,49 @@ function BackupsCard() {
           Backups
         </CardTitle>
         <CardDescription>
-          A backup is taken automatically every day at 3 AM and before every
-          upgrade. Keeps the last 10.
+          Automatic backups of your database. Also taken before every upgrade.
+          {syncs.data?.backup?.next && (
+            <span className="ml-1">
+              Next: {timeUntil(syncs.data.backup.next)}
+            </span>
+          )}
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <CronPicker
+            value={backupCron}
+            onChange={(cron) =>
+              saveSettings.mutate(
+                { "backup.cron": cron },
+                {
+                  onSuccess: () =>
+                    queryClient.invalidateQueries({ queryKey: ["syncs"] }),
+                },
+              )
+            }
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Keep:</span>
+            <Segmented
+              value={String(backupMaxKeep)}
+              onChange={(v) =>
+                saveSettings.mutate(
+                  { "backup.max_keep": Number(v) },
+                  {
+                    onSuccess: () =>
+                      queryClient.invalidateQueries({ queryKey: ["syncs"] }),
+                  },
+                )
+              }
+              options={RETENTION_OPTIONS.map((o) => ({
+                value: String(o.value),
+                label: o.label,
+              }))}
+            />
+          </div>
+        </div>
+
         <Button
           size="sm"
           variant="outline"

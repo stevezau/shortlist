@@ -889,6 +889,7 @@ export interface LogPage {
 export interface SyncsInfo {
   watched: { last: string | null; next: string | null; cron: string };
   users: { last: string | null; next: string | null; cron: string };
+  backup: { next: string | null; cron: string; max_keep: number };
 }
 
 export interface Backup {
