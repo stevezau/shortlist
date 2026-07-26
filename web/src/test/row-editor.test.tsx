@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,6 +52,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     recent_count: null,
     placement: "both",
+    placement_friends: "both",
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
@@ -162,15 +163,23 @@ describe("RowEditor — placement", () => {
 
   it("reflects the saved placement as the pressed chip", () => {
     renderEditor(row({ placement: "library" }));
+    const group = screen.getByRole("group", {
+      name: "Owner/home user visibility",
+    });
     expect(
-      screen.getByRole("button", { name: "Library only" }),
+      within(group).getByRole("button", { name: "Library only" }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("round-trips a changed placement into the PATCH body", async () => {
     renderEditor(row({ placement: "both" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "Home only" }));
+    const group = screen.getByRole("group", {
+      name: "Owner/home user visibility",
+    });
+    await userEvent.click(
+      within(group).getByRole("button", { name: "Home only" }),
+    );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
     );

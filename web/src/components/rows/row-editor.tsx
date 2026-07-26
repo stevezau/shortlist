@@ -315,20 +315,46 @@ export function RowEditor({
           <div className="space-y-3 border-t pt-4">
             <Label>Where it shows</Label>
             <p className="text-sm text-muted-foreground">
-              Which Plex screens this row appears on once it&rsquo;s built.
+              Which Plex screens this row appears on. Owner/home users and
+              friends can be set independently.
             </p>
-            <Segmented
-              value={input.placement}
-              onChange={(placement) =>
-                set({ placement: placement as CollectionInput["placement"] })
-              }
-              ariaLabel="Where the row shows"
-              options={[
-                { value: "both", label: "Home & Library" },
-                { value: "home", label: "Home only" },
-                { value: "library", label: "Library only" },
-              ]}
-            />
+            <div className="space-y-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                Owner &amp; home users
+              </span>
+              <Segmented
+                value={input.placement}
+                onChange={(placement) =>
+                  set({ placement: placement as CollectionInput["placement"] })
+                }
+                ariaLabel="Owner/home user visibility"
+                options={[
+                  { value: "both", label: "Home & Library" },
+                  { value: "home", label: "Home only" },
+                  { value: "library", label: "Library only" },
+                ]}
+              />
+            </div>
+            <div className="space-y-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                Friends (shared users)
+              </span>
+              <Segmented
+                value={input.placement_friends}
+                onChange={(v) =>
+                  set({
+                    placement_friends:
+                      v as CollectionInput["placement_friends"],
+                  })
+                }
+                ariaLabel="Friends visibility"
+                options={[
+                  { value: "both", label: "Home & Library" },
+                  { value: "home", label: "Home only" },
+                  { value: "library", label: "Library only" },
+                ]}
+              />
+            </div>
             <div className="space-y-2 pt-2">
               <span className="text-sm font-medium">
                 Position in the Recommended shelf

@@ -702,11 +702,9 @@ def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None) -> None:
     if spec is None:
         ctx.plex.promote(collection, shared=True)
         return
-    # A per-person row lands on its owner's Home via `home` and on a shared user's Home via `shared`;
-    # setting both from one flag covers owner and friend without the caller knowing which this is.
     ctx.plex.promote(
         collection,
-        shared=spec.show_home,
+        shared=spec.show_friends_home,
         home=spec.show_home,
         recommended=spec.show_library,
         pin_top=spec.pin_top,

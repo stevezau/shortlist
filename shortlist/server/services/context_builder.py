@@ -463,6 +463,7 @@ class ContextBuilder:
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     placement=collection.placement or "both",
+                    placement_friends=collection.placement_friends or "both",
                     pin_top=bool(collection.pin_top),
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],
