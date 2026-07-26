@@ -120,7 +120,7 @@ VALIDATORS = {
     "log.level": _one_of("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"),
     # "ollama" stays accepted: it is the pre-merge name for openai_compatible, and an instance
     # configured before the merge still has it stored.
-    "curator.provider": _one_of("anthropic", "openai", "openai_compatible", "google", "ollama", "none"),
+    "curator.provider": _one_of("anthropic", "openai", "openai_compatible", "google", "ollama", "none", ""),
     "requests.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     "requests.min_rating": _bounded_float(0.0, 10.0),
     "requests.auto_min_rating": _bounded_float(0.0, 10.0),

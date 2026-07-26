@@ -212,24 +212,31 @@ export function ConnectionCard({
             (confirmRemove ? (
               // Inline confirm on the idle card — the destructive tap and its "keep it" escape sit
               // right where Remove was, so it never wipes a connection on a single click.
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Remove?</span>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={clear}
-                  loading={save.isPending}
-                >
-                  Remove
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setConfirmRemove(false)}
-                  disabled={save.isPending}
-                >
-                  Keep
-                </Button>
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Remove?</span>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={clear}
+                    loading={save.isPending}
+                  >
+                    Remove
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setConfirmRemove(false)}
+                    disabled={save.isPending}
+                  >
+                    Keep
+                  </Button>
+                </div>
+                {save.isError && (
+                  <p className="text-xs text-destructive">
+                    {apiErrorMessage(save.error, "Remove failed.")}
+                  </p>
+                )}
               </div>
             ) : (
               <div className="flex items-center gap-2">
