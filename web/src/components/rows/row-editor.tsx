@@ -28,6 +28,79 @@ import { blankInput, toInput } from "@/lib/collections";
 import { useSaveCollection } from "@/lib/queries";
 import type { Collection, CollectionInput, User } from "@/lib/types";
 
+type Placement = "both" | "home" | "library";
+
+function PlacementToggles({
+  placement,
+  placementFriends,
+  onChange,
+}: {
+  placement: Placement;
+  placementFriends: Placement;
+  onChange: (placement: Placement, placementFriends: Placement) => void;
+}) {
+  const recommended =
+    placement === "both" ||
+    placement === "library" ||
+    placementFriends === "both" ||
+    placementFriends === "library";
+  const home = placement === "both" || placement === "home";
+  const friendsHome =
+    placementFriends === "both" || placementFriends === "home";
+
+  function update(rec: boolean, h: boolean, f: boolean) {
+    const p: Placement =
+      rec && h ? "both" : h ? "home" : rec ? "library" : "library";
+    const pf: Placement =
+      rec && f ? "both" : f ? "home" : rec ? "library" : "library";
+    onChange(p, pf);
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium">Library Recommended</p>
+          <p className="text-xs text-muted-foreground">
+            Shows in the library&rsquo;s Recommended shelf for everyone
+          </p>
+        </div>
+        <Switch
+          aria-label="Library Recommended"
+          checked={recommended}
+          onCheckedChange={(v) => update(v, home, friendsHome)}
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium">Home</p>
+          <p className="text-xs text-muted-foreground">
+            Shows on the owner&rsquo;s and home users&rsquo; Home screen
+          </p>
+        </div>
+        <Switch
+          aria-label="Home"
+          checked={home}
+          onCheckedChange={(v) => update(recommended, v, friendsHome)}
+        />
+      </div>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium">Friends&rsquo; Home</p>
+          <p className="text-xs text-muted-foreground">
+            Shows on friends&rsquo; (shared users&rsquo;) Home screen
+          </p>
+        </div>
+        <Switch
+          aria-label="Friends' Home"
+          checked={friendsHome}
+          onCheckedChange={(v) => update(recommended, home, v)}
+        />
+      </div>
+    </div>
+  );
+}
+
 /** The add/edit-a-row dialog. `collection` is null when adding. */
 /**
  * A shared row is built only from titles SEVERAL people have watched, so one whose audience holds
@@ -315,46 +388,16 @@ export function RowEditor({
           <div className="space-y-3 border-t pt-4">
             <Label>Where it shows</Label>
             <p className="text-sm text-muted-foreground">
-              Which Plex screens this row appears on. Owner/home users and
-              friends can be set independently.
+              Which Plex screens this row appears on — matches Plex&rsquo;s
+              collection visibility toggles.
             </p>
-            <div className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">
-                Owner &amp; home users
-              </span>
-              <Segmented
-                value={input.placement}
-                onChange={(placement) =>
-                  set({ placement: placement as CollectionInput["placement"] })
-                }
-                ariaLabel="Owner/home user visibility"
-                options={[
-                  { value: "both", label: "Home & Library" },
-                  { value: "home", label: "Home only" },
-                  { value: "library", label: "Library only" },
-                ]}
-              />
-            </div>
-            <div className="space-y-2">
-              <span className="text-xs font-medium text-muted-foreground">
-                Friends (shared users)
-              </span>
-              <Segmented
-                value={input.placement_friends}
-                onChange={(v) =>
-                  set({
-                    placement_friends:
-                      v as CollectionInput["placement_friends"],
-                  })
-                }
-                ariaLabel="Friends visibility"
-                options={[
-                  { value: "both", label: "Home & Library" },
-                  { value: "home", label: "Home only" },
-                  { value: "library", label: "Library only" },
-                ]}
-              />
-            </div>
+            <PlacementToggles
+              placement={input.placement}
+              placementFriends={input.placement_friends}
+              onChange={(placement, placementFriends) =>
+                set({ placement, placement_friends: placementFriends })
+              }
+            />
             <div className="space-y-2 pt-2">
               <span className="text-sm font-medium">
                 Position in the Recommended shelf

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -161,32 +161,31 @@ describe("RowEditor — placement", () => {
     updateCollection.mockClear();
   });
 
-  it("reflects the saved placement as the pressed chip", () => {
-    renderEditor(row({ placement: "library" }));
-    const group = screen.getByRole("group", {
-      name: "Owner/home user visibility",
-    });
+  it("reflects the saved placement as switch states", () => {
+    // placement="library" means: recommended=on, home=off, friends inherit
+    renderEditor(row({ placement: "library", placement_friends: "library" }));
     expect(
-      within(group).getByRole("button", { name: "Library only" }),
-    ).toHaveAttribute("aria-pressed", "true");
+      screen.getByRole("switch", { name: /Library Recommended/i }),
+    ).toBeChecked();
+    expect(screen.getByRole("switch", { name: /^Home$/i })).not.toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: /Friends' Home/i }),
+    ).not.toBeChecked();
   });
 
   it("round-trips a changed placement into the PATCH body", async () => {
-    renderEditor(row({ placement: "both" }));
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
 
-    const group = screen.getByRole("group", {
-      name: "Owner/home user visibility",
-    });
-    await userEvent.click(
-      within(group).getByRole("button", { name: "Home only" }),
-    );
+    // Turn off Home (owner) — leaves recommended + friends' home on
+    await userEvent.click(screen.getByRole("switch", { name: /^Home$/i }));
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
     );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
     const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
-    expect(body.placement).toBe("home");
+    expect(body.placement).toBe("library");
+    expect(body.placement_friends).toBe("both");
   });
 });
 
