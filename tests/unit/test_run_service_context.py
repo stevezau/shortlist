@@ -249,11 +249,35 @@ class TestBuildRequests:
                 "requests.radarr.url": "http://radarr:7878",
                 "requests.sonarr.url": "http://sonarr:8989",
                 "requests.sonarr.apikey": "sk",
+                "requests.sonarr.quality_profile_id": 1,
+                "requests.sonarr.root_folder": "/tv",
             },
         )
         cfg = ContextBuilder._build_requests(store)
         assert cfg.radarr is None  # no key -> not built, rather than erroring mid-run
         assert cfg.sonarr is not None
+
+    def test_incomplete_target_missing_profile_or_folder(self, sessions, tmp_path):
+        # URL+key set but no quality profile or root folder -> treated as not configured, with warning.
+        store = self._store(
+            sessions,
+            tmp_path,
+            {
+                "requests.enabled": True,
+                "requests.radarr.url": "http://radarr:7878",
+                "requests.radarr.apikey": "rk",
+                "requests.sonarr.url": "http://sonarr:8989",
+                "requests.sonarr.apikey": "sk",
+                "requests.sonarr.quality_profile_id": 1,
+                "requests.sonarr.root_folder": "/tv",
+            },
+        )
+        cfg = ContextBuilder._build_requests(store)
+        assert cfg.radarr is None  # key present but no profile/folder -> None
+        assert cfg.sonarr is not None  # fully configured
+        assert len(cfg.incomplete_targets) == 1
+        assert "Radarr" in cfg.incomplete_targets[0]
+        assert "quality profile" in cfg.incomplete_targets[0]
 
 
 class TestRequestTag:

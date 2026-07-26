@@ -126,7 +126,7 @@ def request_missing(
     auto-worthy titles that overflowed the cap, is returned in ``report.queued`` for manual review.
     One title's failure never stops the rest: each is caught and recorded as its own outcome.
     """
-    report = RequestReport()
+    report = RequestReport(warnings=list(cfg.incomplete_targets))
     # Titles the owner has already actioned — asked for, or said no to — are out of the running
     # entirely. Two bugs lived here: a title still DOWNLOADING was still "missing", so it re-won a
     # slot every night and `max_per_run` starved forever on the same five titles; and a REJECTED
@@ -411,7 +411,9 @@ def _request_one(
     try:
         if title.media_type is MediaType.MOVIE:
             if radarr is None:
-                return outcome("skipped_no_target", "Radarr isn't configured")
+                return outcome(
+                    "skipped_no_target", "Radarr not fully configured (check quality profile and root folder)"
+                )
             status, detail, slug = radarr.add_movie(title.tmdb_id, dry_run=dry_run, extra_tags=title.tags)
             return outcome(status, detail, slug)
         # Shows: Sonarr keys on TVDB, so cross the namespace first. The TVDB lookup is a TMDB call,
@@ -419,7 +421,7 @@ def _request_one(
         # so one show's lookup hiccup becomes that title's outcome, never an escape that discards the
         # whole pass's recorded outcomes (the run-level handler would otherwise lose the audit trail).
         if sonarr is None:
-            return outcome("skipped_no_target", "Sonarr isn't configured")
+            return outcome("skipped_no_target", "Sonarr not fully configured (check quality profile and root folder)")
         # Reuse the TVDB id if the arr-state check already resolved it this run; else look it up now.
         tvdb_id = title.tvdb_id
         if tvdb_id is None:

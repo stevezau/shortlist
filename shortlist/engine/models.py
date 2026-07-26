@@ -337,6 +337,9 @@ class RequestConfig:
     auto_send: bool = True
     auto_min_demand: int = 3  # auto-send only titles wanted by at least this many distinct people
     auto_min_rating: float = 8.0  # ...and rated at least this high on the chosen source
+    # Populated by the context builder when a target was connected (URL+key) but incomplete (no
+    # profile or folder selected). Surfaces in the run report so the UI can explain the skip.
+    incomplete_targets: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -434,6 +437,9 @@ class RequestReport:
     # rest, and the server raises a notification so the owner knows some ratings weren't the chosen
     # source tonight.
     ratings_rate_limited: bool = False
+    # User-facing warnings about the request config itself (e.g. incomplete Arr setup). Surfaced in
+    # the run stats so the UI can explain WHY nothing was sent, not just that nothing was sent.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def requested(self) -> int:

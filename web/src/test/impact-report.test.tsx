@@ -110,7 +110,7 @@ describe("ImpactReport", () => {
 
     expect(await screen.findByText("Hit rate")).toBeTruthy();
     expect(screen.getAllByText("40%").length).toBeGreaterThan(0); // overall + row hit rate
-    expect(screen.getByText(/of 10 delivered/i)).toBeTruthy(); // Watched tile hint
+    expect(screen.getByText(/of 10 picks watched/i)).toBeTruthy(); // Hit rate tile hint
     expect(screen.getByText(/sent to Sonarr\/Radarr/i)).toBeTruthy(); // requests impact
     expect(
       screen.getByRole("link", { name: /full send log/i }),

@@ -205,6 +205,8 @@ export interface RunStats {
   titles_removed?: number;
   /** Titles requested from Sonarr/Radarr this run (0 when requests are off). */
   titles_requested?: number;
+  /** Warnings about incomplete Arr config (e.g. missing quality profile or root folder). */
+  requests_warnings?: string[];
   /** Total AI tokens this run cost (curate + the AI candidate sources). Absent on legacy runs. */
   llm_tokens?: number;
   /** That total split by where it went: { curate, llm_web, llm_library }. */

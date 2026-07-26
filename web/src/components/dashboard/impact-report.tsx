@@ -1,7 +1,6 @@
 import {
   CalendarClock,
   Clock,
-  Play,
   RefreshCw,
   Send,
   Target,
@@ -57,6 +56,17 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
       <p className="text-sm text-muted-foreground">
         No watches recorded yet — this fills in as people watch their picks.
       </p>
+    );
+  if (recent.length < 3)
+    return (
+      <div className="flex h-20 flex-col items-center justify-center gap-1">
+        <p className="text-2xl font-semibold tabular-nums">
+          {recent.reduce((s, t) => s + t.watched, 0)}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          watched this week — chart fills in after a few weeks
+        </p>
+      </div>
     );
   return (
     <div className="flex h-20 items-end gap-1" aria-hidden="true">
@@ -133,18 +143,12 @@ function ReportBody({ report }: { report: EffectivenessReport }) {
   return (
     <div className="space-y-6">
       {/* Headline metrics */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <StatTile
           icon={Target}
           label="Hit rate"
           value={pct(overall.hit_rate)}
-          hint="picks watched"
-        />
-        <StatTile
-          icon={Play}
-          label="Watched"
-          value={overall.watched}
-          hint={`of ${overall.delivered} delivered`}
+          hint={`${overall.watched} of ${overall.delivered} picks watched`}
         />
         <StatTile
           icon={TrendingUp}
