@@ -2,16 +2,22 @@ name: CI
 
 on:
   push:
-    branches: [dev]
+    # master included so the stable branch gets its own CI signal after a promotion
+    # PR merges. It never publishes — see the docker job's `if:`, which is pinned to
+    # dev + tags rather than to "any push".
+    branches: [dev, master]
     tags: ["v*"]
   pull_request:
     branches: [master, dev]
   workflow_dispatch:
 
-# Cancel superseded PR runs; never cancel an in-flight push to dev/tags so a
-# partially-pushed image manifest is not aborted mid-write.
+# PRs supersede their own older runs. Pushes deliberately DON'T share a group: they used
+# to serialise on `ci-<ref>`, so merging several PRs in a row queued each full run (tests
+# AND publish) behind the previous one — minutes of dead waiting for no safety benefit,
+# since the test jobs are independent. Only the publish must not overlap, and that is
+# enforced by a job-level concurrency group on `docker` instead.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -22,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install ruff
@@ -36,15 +42,17 @@ jobs:
       # 3.12 only, deliberately: the shipped artifact is a single Docker image built
       # FROM python:3.12-slim, so 3.12 is the only interpreter this runs on in
       # production. Bump this in the same change as the Dockerfile base image.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev]"
       # --cov-report=xml adds an XML report on top of the term-missing one in
       # pyproject addopts, so Codecov has a file to ingest (badge stays "unknown"
       # without it).
       - run: pytest --cov-report=xml
-      - uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v7
         continue-on-error: true
         with:
           files: ./coverage.xml
@@ -63,7 +71,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -82,46 +90,73 @@ jobs:
     needs: [test-web]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: web/dist
       - run: pip install -e ".[dev]"
-      - run: playwright install --with-deps chromium
+      # Cache the downloaded browser. Keyed on the resolved playwright version rather than
+      # on pyproject, because the pin is a floor (">=1.45") — keying on the manifest would
+      # keep serving a stale browser after pip resolved a newer playwright.
+      - id: pw
+        run: |
+          echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium
+      # install-deps is the apt half and must run every time (system libs aren't cached);
+      # the browser download itself is skipped when the cache above hits.
+      - run: playwright install-deps chromium
+      - run: playwright install chromium
       - run: pytest -m e2e --no-cov --reruns 2 --reruns-delay 5
 
   docker:
     # Publish gate: build + push the image ONLY after lint, both Python versions,
-    # web tests, and e2e are all green. Runs on push events only (dev branch +
-    # v* tags) — never on pull_request (a PR must not publish) and never on
-    # workflow_dispatch (a manual run from a non-dev/non-tag ref would compute an
-    # empty tag set and push nothing). dev push -> :dev; tag push -> :latest + :<version>.
+    # web tests, and e2e are all green. Restricted to pushes on dev + v* tags —
+    # never on pull_request (a PR must not publish), never on workflow_dispatch, and
+    # never on master. The ref test is load-bearing, not belt-and-braces: master is a
+    # push trigger so the stable branch gets CI, but every `type=raw`/`type=semver`
+    # rule below is gated on dev-or-tag, so a master push would reach build-push-action
+    # with `push: true` and an EMPTY tag list.
+    # dev push -> :dev; tag push -> :latest + :<version> + :dev.
     needs: [lint, test-python, test-web, e2e]
-    if: github.event_name == 'push'
+    if: >-
+      github.event_name == 'push'
+      && (github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
+    # Publishes must not overlap: two in-flight builds pushing the same tag can
+    # interleave a partial manifest. This is the ONLY thing that needs serialising,
+    # which is why the workflow-level group no longer queues pushes.
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            # `dev` on a dev push AND on a release tag: a tag is cut FROM dev, so leaving :dev
-            # pointing at the previous build meant the newest code was on :latest but not on the
-            # tag people testing pre-release are actually pulling.
+            # `dev` on a dev push AND on a release tag. Tags are cut from master after a
+            # dev -> master promotion PR, at which point the two branches are identical, so
+            # :dev must move too — otherwise the newest code sits on :latest but not on the
+            # tag pre-release testers are actually pulling.
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/v') }}
             type=semver,pattern={{version}}
             # During 0.x beta, :latest intentionally follows EVERY release tag
