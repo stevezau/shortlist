@@ -15,24 +15,24 @@ framework-agnostic; the app layer (Flask+SocketIO+Jinja in MPG) is NOT what Shor
 
 ### Reuse manifest (port from MPG → shortlist)
 
-| Asset                                                                                                                                                                                | Action                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.claude/rules/{python,testing,commenting,docker,docs,shell}.md`                                                                                                                     | Port near-verbatim; add `frontend.md` (React/TS) + `plex-safety.md` (Shortlist-specific, §8)                                                |
-| `.claude/CLAUDE.md`                                                                                                                                                                  | Rewrite content, keep the proven section structure (Commands / Architecture / Code Style / Conventions / Security / Test Fixtures)          |
-| `.claude/agents/architecture-review.md`                                                                                                                                              | Port — pre-commit arch-review agent, blocking on HIGH findings (this caught 8 production-bug shapes in MPG; keep the discipline from day 1) |
-| `.claude/skills/release`                                                                                                                                                             | Port release skill                                                                                                                          |
-| `.claude/settings.json`                                                                                                                                                              | Port permission-allowlist pattern (+ pnpm/vitest/playwright allows, same `.env` denies)                                                     |
-| `.github/workflows/ci.yml`                                                                                                                                                           | Adapt: ruff + pytest/codecov jobs stay; add `web` job (pnpm lint/typecheck/vitest/build); docker buildx multi-arch publish                  |
-| `.github/workflows/docker-pr.yml` + `docker-pr-cleanup.yml`                                                                                                                          | Port — **PR preview images** (each PR gets a pullable tag; this is how Steve already tests MPG `:dev` on the plex host)                     |
-| `.github/workflows/architecture-review.yml`                                                                                                                                          | Port                                                                                                                                        |
-| `.github/ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`                                                                                                                                | Port                                                                                                                                        |
-| `.pre-commit-config.yaml`, `.codecov.yml`, `.gitattributes`, `.dockerignore`                                                                                                         | Port                                                                                                                                        |
-| `README.md` structure                                                                                                                                                                | Port the shape: shields (+ AI-Assisted badge), logo, About/Problem/Solution, screenshots table, Quick Start, docs-hub table                 |
-| `docs/` hub (`README/getting-started/guides/reference/faq`)                                                                                                                          | Port structure                                                                                                                              |
-| `docker-compose.example.yml`, `unraid-templates/`                                                                                                                                    | Port patterns (Unraid = big homelab reach)                                                                                                  |
-| `llms.txt`                                                                                                                                                                           | Port (AI-readable repo summary)                                                                                                             |
-| `CONTRIBUTING.md`                                                                                                                                                                    | Port + adapt                                                                                                                                |
-| Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                              |
+| Asset                                                                                                                                                                                | Action                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.claude/rules/{python,testing,commenting,docker,docs,shell}.md`                                                                                                                     | Port near-verbatim; add `frontend.md` (React/TS) + `plex-safety.md` (Shortlist-specific, §8)                                                             |
+| `.claude/CLAUDE.md`                                                                                                                                                                  | Rewrite content, keep the proven section structure (Commands / Architecture / Code Style / Conventions / Security / Test Fixtures)                       |
+| `.claude/agents/architecture-review.md`                                                                                                                                              | Port — pre-commit arch-review agent, blocking on HIGH findings (this caught 8 production-bug shapes in MPG; keep the discipline from day 1)              |
+| `.claude/skills/release`                                                                                                                                                             | Port release skill                                                                                                                                       |
+| `.claude/settings.json`                                                                                                                                                              | Port permission-allowlist pattern (+ pnpm/vitest/playwright allows, same `.env` denies)                                                                  |
+| `.github/workflows/ci.yml`                                                                                                                                                           | Adapt: ruff + pytest/codecov jobs stay; add `web` job (pnpm lint/typecheck/vitest/build); docker buildx multi-arch publish                               |
+| `.github/workflows/docker-pr.yml` + `docker-pr-cleanup.yml`                                                                                                                          | **Not ported.** PR preview images were dropped — `ci.yml` publishes on `dev` pushes and `v*` tags only. Revisit if per-PR pullable tags are wanted again |
+| `.github/workflows/architecture-review.yml`                                                                                                                                          | **Not ported.** The Architecture Review runs as an on-demand agent, not a workflow — see the dispatch criteria in CLAUDE.md                              |
+| `.github/ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`                                                                                                                                | Port                                                                                                                                                     |
+| `.pre-commit-config.yaml`, `.codecov.yml`, `.gitattributes`, `.dockerignore`                                                                                                         | Port                                                                                                                                                     |
+| `README.md` structure                                                                                                                                                                | Port the shape: shields (+ AI-Assisted badge), logo, About/Problem/Solution, screenshots table, Quick Start, docs-hub table                              |
+| `docs/` hub (`README/getting-started/guides/reference/faq`)                                                                                                                          | Port structure                                                                                                                                           |
+| `docker-compose.example.yml`, `unraid-templates/`                                                                                                                                    | Port patterns (Unraid = big homelab reach)                                                                                                               |
+| `llms.txt`                                                                                                                                                                           | Port (AI-readable repo summary)                                                                                                                          |
+| `CONTRIBUTING.md`                                                                                                                                                                    | Port + adapt                                                                                                                                             |
+| Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                                           |
 
 ### Deliberate deltas from MPG
 
@@ -185,13 +185,38 @@ competitor tests.
 
 ---
 
-## 7. CI/CD (ported ci.yml shape)
+## 7. CI/CD
 
-`lint (ruff)` → `test-python (pytest+codecov)` → `test-web (pnpm typecheck/vitest/build)` →
-`e2e (playwright, sharded)` → `docker (buildx multi-arch)` → publish by ref (`master→dev`,
-`tag→latest+semver`, `PR→pr-<n>`); `architecture-review.yml` on PRs; `docker-pr-cleanup` on close.
-Release via the ported `.claude/skills/release` skill: Conventional Commits → changelog → tag →
-GitHub Release → images.
+One workflow, `.github/workflows/ci.yml`. Five jobs:
+
+`lint (ruff)`, `test-python (pytest + codecov)` and `test-web (pnpm lint/vitest/build)` run in
+parallel; `e2e (playwright)` waits on `test-web` for the `web-dist` artifact; `docker` (buildx,
+linux/amd64 + linux/arm64) waits on all four and is the publish gate.
+
+What runs, by event:
+
+| Event         | Jobs               | Publishes                         |
+| ------------- | ------------------ | --------------------------------- |
+| push `dev`    | all five           | `:dev`                            |
+| push `master` | the four test jobs | nothing                           |
+| pull request  | the four test jobs | nothing                           |
+| push tag `v*` | all five           | `:latest` + `:<version>` + `:dev` |
+
+`docker` is gated on `github.event_name == 'push' && (ref == refs/heads/dev || ref starts with
+refs/tags/v)`. The ref half is load-bearing, not defensive: `master` is a push trigger so the stable
+branch gets CI, but every tag rule in `metadata-action` is gated on dev-or-tag, so a master push
+reaching `build-push-action` would arrive with `push: true` and an **empty tag list**.
+
+Concurrency: pull requests supersede their own older runs; pushes key the group on the SHA so they
+run in parallel. Only `docker` serialises, via its own job-level group — two overlapping builds can
+interleave a partial manifest push.
+
+Both branches are protected: force-pushes and deletions are blocked on each, and `master`
+additionally requires `lint`/`test-python`/`test-web`/`e2e` to pass, so it can only advance through
+a green promotion PR. `dev` deliberately has no required checks — they would block the direct
+pushes that are the normal way to work on it.
+
+Releases are cut by hand: promote `dev` → `master` via PR, then tag `vX.Y.Z` on `master`.
 
 ---
 
