@@ -48,6 +48,7 @@ from shortlist.engine.models import (
     RunReport,
     UserProfile,
     UserRunReport,
+    UserType,
 )
 from shortlist.engine.privacy import (
     SnapshotStore,
@@ -676,7 +677,7 @@ def _promote_phase(
             # person meant to see them.
             for section in ctx.delivery_sections:
                 for collection in ctx.plex.find_owned_collections(section, user.label):
-                    _promote_one(ctx, collection, placements.get(collection.title))
+                    _promote_one(ctx, collection, placements.get(collection.title), user.user_type)
         except Exception as e:
             user_report.status = "error"
             user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
@@ -696,16 +697,38 @@ def _promote_phase(
             logger.exception("shared row '{}': promote failed", spec.slug)
 
 
-def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None) -> None:
-    """Promote one collection with its row's placement. Unmatched (spec is None) falls back to the
-    legacy everywhere-visible behaviour, so a title we couldn't map is never left browse-visible."""
+def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type: UserType | None = None) -> None:
+    """Promote one collection with its row's placement, respecting the user type.
+
+    Friends (shared users) use the Friends' Home flag; home users and the owner use the Home flag.
+    Each user's per-person collection gets only the flag relevant to their type, so a friend's row
+    doesn't clutter the owner's Home and vice versa.
+    """
     if spec is None:
-        ctx.plex.promote(collection, shared=True)
+        if user_type == UserType.SHARED:
+            ctx.plex.promote(collection, shared=True, home=False)
+        elif user_type is not None:
+            ctx.plex.promote(collection, shared=False, home=True)
+        else:
+            ctx.plex.promote(collection, shared=True)
         return
+    # A friend's collection shows on Friends' Home; a home user's shows on Home.
+    # Shared rows (user_type=None) set both flags from the spec.
+    if user_type == UserType.SHARED:
+        home = False
+        shared = spec.show_friends_home
+    elif user_type is None:
+        # Shared row or legacy call — both flags from spec
+        home = spec.show_home
+        shared = spec.show_friends_home
+    else:
+        # Owner or managed/home user — only Home flag
+        home = spec.show_home
+        shared = False
     ctx.plex.promote(
         collection,
-        shared=spec.show_friends_home,
-        home=spec.show_home,
+        shared=shared,
+        home=home,
         recommended=spec.show_library,
         pin_top=spec.pin_top,
     )

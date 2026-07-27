@@ -212,7 +212,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
             collection = state.collections[rating_key]
             assert collection.item_keys, slug
             assert collection.mode == 0  # hidden from library browsing
-            assert collection.promoted_shared_home and collection.promoted_own_home  # promoted post-sync
+            assert collection.promoted_shared_home and not collection.promoted_own_home  # friends: shared home only
             # Every item matches the library the collection lives in, so a `label!=` exclude can
             # actually match it. A mixed-type collection is unfilterable and leaks to everyone.
             assert state.filterable(collection), f"{slug}: row in section {collection.section_id} is unfilterable"
@@ -234,11 +234,12 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         assert snapshot is not None
         assert snapshot.filters["filterMovies"] == ""
 
-    # Owner /hubs shows every promoted row.
+    # Owner /hubs does NOT show friends' rows (home=False for shared users). Friends' rows
+    # are on Friends' Home only — the owner's Home stays uncluttered.
     all_ids = {key for row in owned.values() for key in row.rating_keys}
     r = httpx.get(f"{pms_url}/hubs", headers={"X-Plex-Token": state.owner_token, "Accept": "application/json"})
     owner_hub_ids = {collection_id_from_hub(h) for h in r.json()["MediaContainer"]["Hub"]}
-    assert all_ids <= owner_hub_ids
+    assert not (all_ids & owner_hub_ids), "friends' rows should not appear on the owner's Home"
 
     # Canary /hubs (switch -> resources -> server token) shows its own row and NONE of the others'
     # — including sarah's TV row, which lives in a different library than her movie row.
@@ -335,7 +336,9 @@ def test_a_row_builds_in_every_movie_library_with_that_librarys_own_rating_keys(
     # BOTH are promoted: hidden from library browse (mode 0) and on shared Home.
     for section_id, row in rows_by_library.items():
         assert row.mode == 0, f"the row in section {section_id} is still visible in library browse"
-        assert row.promoted_shared_home and row.promoted_own_home, f"the row in section {section_id} was not promoted"
+        assert row.promoted_shared_home and not row.promoted_own_home, (
+            f"the row in section {section_id} was not promoted"
+        )
         assert state.filterable(row)
 
     # And the excludes hide every one of them from everyone else — through the canary's own eyes.
@@ -393,7 +396,8 @@ def test_two_per_person_rows_share_one_label_and_are_both_hidden(fakes, tmp_path
     for rating_key in owned["sarah"].rating_keys:
         collection = state.collections[rating_key]
         assert collection.item_keys
-        assert collection.promoted_shared_home and collection.promoted_own_home
+        # Friends' rows show on Friends' Home, not the owner's Home
+        assert collection.promoted_shared_home and not collection.promoted_own_home
         assert state.filterable(collection)
 
     # One exclude of the single label hides all of sarah's rows from mike (and vice-versa).
