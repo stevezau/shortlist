@@ -252,7 +252,8 @@ class TestRuns:
         expect(picks.first).to_be_visible(timeout=LOAD)
         # Rows collapse to the first 5 picks (PickList collapseAfter=5), so expand every row before
         # counting — this test asserts EVERY pick carries its reason, not just the first few.
-        for toggle in page.get_by_role("button", name=re.compile(r"Show all \d+")).all():
+        # Re-query each iteration: clicking one toggle re-renders the DOM and stales the locator list.
+        while (toggle := page.get_by_role("button", name=re.compile(r"Show all \d+")).first).is_visible():
             toggle.click()
         # Each pick renders its "because you…" reason inside its list item (the PickList now combines
         # title + reason + seed in one line). The reason names the seeding title from their own
