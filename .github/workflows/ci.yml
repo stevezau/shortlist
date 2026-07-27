@@ -21,7 +21,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -32,7 +32,7 @@ jobs:
   test-python:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 3.12 only, deliberately: the shipped artifact is a single Docker image built
       # FROM python:3.12-slim, so 3.12 is the only interpreter this runs on in
       # production. Bump this in the same change as the Dockerfile base image.
@@ -54,10 +54,15 @@ jobs:
   test-web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      # No `version:` — the action reads `packageManager` from web/package.json, the same field
+      # corepack honours in the Dockerfile. Keeping one source of truth is deliberate: CI used to
+      # pin pnpm 10 while the image build floated to latest, so pnpm 11's minimumReleaseAge default
+      # (1440min, 0 before v11) rejected fresh transitive deps in the publish job that all four PR
+      # checks had passed. Green CI must mean the image builds.
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          package_json_file: web/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -76,11 +81,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test-web]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: web/dist
@@ -101,7 +106,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
