@@ -120,7 +120,7 @@ VALIDATORS = {
     "log.level": _one_of("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"),
     # "ollama" stays accepted: it is the pre-merge name for openai_compatible, and an instance
     # configured before the merge still has it stored.
-    "curator.provider": _one_of("anthropic", "openai", "openai_compatible", "google", "ollama", "none"),
+    "curator.provider": _one_of("anthropic", "openai", "openai_compatible", "google", "ollama", "none", ""),
     "requests.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     "requests.min_rating": _bounded_float(0.0, 10.0),
     "requests.auto_min_rating": _bounded_float(0.0, 10.0),
@@ -170,7 +170,7 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
             from shortlist.logging_config import configure_logging
 
             configure_logging(str(update.values["log.level"]))
-        if "sync.watch_cron" in update.values or "sync.users_cron" in update.values:
+        if set(update.values) & {"sync.watch_cron", "sync.users_cron", "backup.cron", "backup.max_keep"}:
             from shortlist.server.scheduler import rebuild_schedule
 
             rebuild_schedule(request.app)

@@ -49,6 +49,8 @@ function row(patch: Partial<UserRow> = {}): UserRow {
     slug: "picked",
     name: "Picked for You",
     media: "both",
+    library: "",
+    section_key: "",
     size: 15,
     recent_count: 10,
     is_default: true,

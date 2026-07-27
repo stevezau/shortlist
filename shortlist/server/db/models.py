@@ -126,8 +126,10 @@ class Collection(Base):
     library_keys: Mapped[list] = mapped_column(JSON, default=list)
     min_watchers: Mapped[int] = mapped_column(Integer, default=2)  # shared: aggregate-privacy threshold
     request_tag: Mapped[str] = mapped_column(String(64), default="")  # tag added to titles requested via this row
-    # Where the row shows once promoted: "both" (Home + Library Recommended), "home", or "library".
+    # Where the row shows for the owner / home users: "both" (Home + Library), "home", or "library".
     placement: Mapped[str] = mapped_column(String(16), default="both")
+    # Where the row shows for friends (shared users): "both" (Friends Home + Library), "home", or "library".
+    placement_friends: Mapped[str] = mapped_column(String(16), default="both")
     # Pin the row to the TOP of its library's Recommended shelf (server-wide order, not per-user).
     pin_top: Mapped[bool] = mapped_column(Boolean, default=False)
     # Per-library override of where THIS row sits in the Recommended shelf: {sectionKey: {anchor, before}}.

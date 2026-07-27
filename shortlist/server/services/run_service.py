@@ -601,6 +601,11 @@ class RunService:
         # with the app's own outcome message, dry-run included (plex-safety rule 10 spirit).
         # A separate, always-checked signal (independent of whether any title was sent): MDBList ran
         # out of quota mid-run, so ratings fell back to TMDB. Drives the owner's quota notification.
+        if report.requests is not None and report.requests.warnings:
+            for msg in report.requests.warnings:
+                cls._add_event(
+                    session, "requests.incomplete_config", "warning", run_id, dry_run=report.dry_run, detail=msg
+                )
         if report.requests is not None and report.requests.ratings_rate_limited:
             cls._add_event(session, "requests.rate_limited", "warning", run_id, dry_run=report.dry_run)
         if report.requests is None or not report.requests.outcomes:
@@ -729,6 +734,7 @@ class RunService:
             "titles_added": titles_added,
             "titles_removed": titles_removed,
             "titles_requested": report.requests.requested if report.requests else 0,
+            "requests_warnings": report.requests.warnings if report.requests else [],
             "llm_tokens": sum(u.llm_tokens for u in report.users),
             "llm_tokens_by_step": tokens_by_step,
             "exa_searches": sum(u.exa_searches for u in report.users),

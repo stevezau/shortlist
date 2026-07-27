@@ -28,6 +28,91 @@ import { blankInput, toInput } from "@/lib/collections";
 import { useSaveCollection } from "@/lib/queries";
 import type { Collection, CollectionInput, User } from "@/lib/types";
 
+type Placement = "both" | "home" | "library";
+
+function PlacementToggles({
+  placement,
+  placementFriends,
+  onChange,
+}: {
+  placement: Placement;
+  placementFriends: Placement;
+  onChange: (placement: Placement, placementFriends: Placement) => void;
+}) {
+  const ownerLibrary = placement === "both" || placement === "library";
+  const ownerHome = placement === "both" || placement === "home";
+  const friendsLibrary =
+    placementFriends === "both" || placementFriends === "library";
+  const friendsHome =
+    placementFriends === "both" || placementFriends === "home";
+
+  function encode(lib: boolean, hom: boolean): Placement {
+    if (lib && hom) return "both";
+    if (hom) return "home";
+    return "library";
+  }
+
+  return (
+    <div className="space-y-3 rounded-md border p-4">
+      <div className="space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Owner &amp; home users
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Plex Home members who share your Home screen.
+        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm">Library Recommended</p>
+          <Switch
+            aria-label="Owner Library Recommended"
+            checked={ownerLibrary}
+            onCheckedChange={(v) =>
+              onChange(encode(v, ownerHome), placementFriends)
+            }
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <p className="text-sm">Home</p>
+          <Switch
+            aria-label="Owner Home"
+            checked={ownerHome}
+            onCheckedChange={(v) =>
+              onChange(encode(ownerLibrary, v), placementFriends)
+            }
+          />
+        </div>
+      </div>
+      <div className="space-y-3 border-t pt-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Friends (shared users)
+        </p>
+        <p className="text-xs text-muted-foreground">
+          People you&rsquo;ve shared the server with &mdash; they have their own
+          Home screen.
+        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm">Library Recommended</p>
+          <Switch
+            aria-label="Friends Library Recommended"
+            checked={friendsLibrary}
+            onCheckedChange={(v) => onChange(placement, encode(v, friendsHome))}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <p className="text-sm">Friends&rsquo; Home</p>
+          <Switch
+            aria-label="Friends' Home"
+            checked={friendsHome}
+            onCheckedChange={(v) =>
+              onChange(placement, encode(friendsLibrary, v))
+            }
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The add/edit-a-row dialog. `collection` is null when adding. */
 /**
  * A shared row is built only from titles SEVERAL people have watched, so one whose audience holds
@@ -315,19 +400,15 @@ export function RowEditor({
           <div className="space-y-3 border-t pt-4">
             <Label>Where it shows</Label>
             <p className="text-sm text-muted-foreground">
-              Which Plex screens this row appears on once it&rsquo;s built.
+              Which Plex screens this row appears on — matches Plex&rsquo;s
+              collection visibility toggles.
             </p>
-            <Segmented
-              value={input.placement}
-              onChange={(placement) =>
-                set({ placement: placement as CollectionInput["placement"] })
+            <PlacementToggles
+              placement={input.placement}
+              placementFriends={input.placement_friends}
+              onChange={(placement, placementFriends) =>
+                set({ placement, placement_friends: placementFriends })
               }
-              ariaLabel="Where the row shows"
-              options={[
-                { value: "both", label: "Home & Library" },
-                { value: "home", label: "Home only" },
-                { value: "library", label: "Library only" },
-              ]}
             />
             <div className="space-y-2 pt-2">
               <span className="text-sm font-medium">

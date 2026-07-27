@@ -1321,7 +1321,9 @@ class TestPlacement:
 
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
-        ctx.plex.promote.assert_called_once_with(coll, shared=True)  # unmapped dynamic → safe fallback
+        ctx.plex.promote.assert_called_once_with(
+            coll, shared=True, home=False
+        )  # unmapped dynamic → safe fallback; friend → no home
 
     def test_fallback_skips_a_row_this_user_is_not_in_the_audience_for(self, ctx: EngineContext):
         """Audience is honoured by the no-picks fallback: a per-person row this user is excluded from
@@ -1346,7 +1348,9 @@ class TestPlacement:
 
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
-        ctx.plex.promote.assert_called_once_with(coll, shared=True)  # excluded → NOT mapped
+        ctx.plex.promote.assert_called_once_with(
+            coll, shared=True, home=False
+        )  # excluded → NOT mapped; friend → no home
 
     def test_fallback_leaves_shared_rows_to_the_shared_promote_loop(self, ctx: EngineContext):
         """A shared row must never be picked up by the PER-PERSON fallback (it promotes in the separate
@@ -1372,7 +1376,9 @@ class TestPlacement:
 
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
-        ctx.plex.promote.assert_called_once_with(coll, shared=True)  # shared spec skipped → NOT mapped
+        ctx.plex.promote.assert_called_once_with(
+            coll, shared=True, home=False
+        )  # shared spec skipped → NOT mapped; friend → no home
 
     def test_a_top_seed_row_records_a_placement_title_per_library(self, ctx: EngineContext, mock_plextv):
         """A {top_seed} row spanning two libraries writes a DIFFERENT title in each (each curated from

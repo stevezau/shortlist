@@ -29,6 +29,7 @@ export function blankInput(): CollectionInput {
     freshness: null,
     recent_count: null,
     placement: "both",
+    placement_friends: "both",
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "" },
@@ -56,6 +57,7 @@ export function toInput(collection: Collection): CollectionInput {
     freshness: collection.freshness ?? null,
     recent_count: collection.recent_count ?? null,
     placement: collection.placement ?? "both",
+    placement_friends: collection.placement_friends ?? "both",
     pin_top: collection.pin_top ?? false,
     hub_anchor: collection.hub_anchor ?? {},
     poster: {
@@ -152,9 +154,29 @@ export function rowOverrides(
     parts.push(`Recent watches: ${collection.recent_count}`);
   }
 
-  // "both" is the default placement (Home + Library), so only badge a narrowed one.
-  if (collection.placement === "home") parts.push("Shows on: Home");
-  else if (collection.placement === "library") parts.push("Shows on: Library");
+  // Only badge when placement differs from the "both" default.
+  if (
+    collection.placement !== "both" ||
+    collection.placement_friends !== "both"
+  ) {
+    const owner =
+      collection.placement === "home"
+        ? "Home"
+        : collection.placement === "library"
+          ? "Library"
+          : "Home & Library";
+    const friends =
+      collection.placement_friends === "home"
+        ? "Home"
+        : collection.placement_friends === "library"
+          ? "Library"
+          : "Home & Library";
+    if (collection.placement === collection.placement_friends) {
+      if (collection.placement !== "both") parts.push(`Shows on: ${owner}`);
+    } else {
+      parts.push(`Owner: ${owner} · Friends: ${friends}`);
+    }
+  }
   // Legacy row-level pin, or a per-library "Top" set via the Position control.
   const anchors = Object.values(collection.hub_anchor ?? {});
   if (collection.pin_top || anchors.some((a) => a.top))

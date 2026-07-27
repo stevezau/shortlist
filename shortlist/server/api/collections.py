@@ -80,7 +80,8 @@ class CollectionIn(BaseModel):
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
-    placement: str = "both"  # both | home | library — which surfaces the row shows on
+    placement: str = "both"  # both | home | library — owner/home users' visibility
+    placement_friends: str = "both"  # both | home | library — friends' (shared users') visibility
     pin_top: bool = False  # pin to top of the library's Recommended shelf
     # Per-library Recommended-shelf override for this row, keyed by section key. {} -> inherit the
     # global default (settings `rows.hub_anchor`).
@@ -100,6 +101,8 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(422, f"unknown candidate source(s) {unknown}; valid: {sorted(KNOWN_SOURCES)}")
     if body.placement not in PLACEMENTS:
         raise HTTPException(422, f"placement must be one of {sorted(PLACEMENTS)}")
+    if body.placement_friends not in PLACEMENTS:
+        raise HTTPException(422, f"placement_friends must be one of {sorted(PLACEMENTS)}")
     if body.poster.mode not in POSTER_MODES:
         raise HTTPException(422, f"poster mode must be one of {sorted(POSTER_MODES)}")
     if body.schedule.strip():
@@ -176,6 +179,7 @@ def _serialize(session, collection: Collection) -> dict:
         "freshness": collection.freshness,
         "recent_count": collection.recent_count,
         "placement": collection.placement or "both",
+        "placement_friends": collection.placement_friends or "both",
         "pin_top": bool(collection.pin_top),
         "hub_anchor": collection.hub_anchor or {},
         "library_keys": [str(k) for k in (collection.library_keys or [])],
@@ -239,6 +243,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             freshness=body.freshness,
             recent_count=body.recent_count,
             placement=body.placement,
+            placement_friends=body.placement_friends,
             pin_top=body.pin_top,
             hub_anchor={k: v.model_dump() for k, v in body.hub_anchor.items()},
             library_keys=body.library_keys,
@@ -271,6 +276,7 @@ _PATCHABLE_COLUMNS = (
     "freshness",
     "recent_count",
     "placement",
+    "placement_friends",
     "pin_top",
     "library_keys",
 )

@@ -344,7 +344,12 @@ function RunStatTiles({ run }: { run: RunDetail }) {
         icon={Download}
         label="Requested"
         value={requested}
-        hint="to Sonarr / Radarr"
+        hint={
+          s.requests_warnings?.length
+            ? s.requests_warnings.join("; ")
+            : "to Sonarr / Radarr"
+        }
+        tone={s.requests_warnings?.length ? "warning" : undefined}
       />
       {tokens > 0 && (
         <StatTile

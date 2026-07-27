@@ -30,6 +30,7 @@ function collection(patch: Partial<Collection> = {}): Collection {
     watched_pct: null,
     freshness: null,
     placement: "both",
+    placement_friends: "both",
     pin_top: false,
     hub_anchor: {},
     ...patch,
@@ -104,19 +105,31 @@ describe("rowOverrides", () => {
   });
 
   it("badges a narrowed placement and a pinned row, but not the default both/unpinned", () => {
+    // Same placement for both -> simple badge
     expect(
-      rowOverrides(collection({ placement: "home" }), LIBRARIES),
+      rowOverrides(
+        collection({ placement: "home", placement_friends: "home" }),
+        LIBRARIES,
+      ),
     ).toContain("Shows on: Home");
+    // Split placement -> shows both
     expect(
-      rowOverrides(collection({ placement: "library" }), LIBRARIES),
-    ).toContain("Shows on: Library");
+      rowOverrides(
+        collection({ placement: "library", placement_friends: "both" }),
+        LIBRARIES,
+      ),
+    ).toContain("Owner: Library · Friends: Home & Library");
     expect(rowOverrides(collection({ pin_top: true }), LIBRARIES)).toContain(
       "Pinned to top",
     );
-    // Defaults (both / not pinned) add nothing.
+    // Defaults (both/both / not pinned) add nothing.
     expect(
       rowOverrides(
-        collection({ placement: "both", pin_top: false }),
+        collection({
+          placement: "both",
+          placement_friends: "both",
+          pin_top: false,
+        }),
         LIBRARIES,
       ),
     ).toEqual([]);

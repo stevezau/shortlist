@@ -62,8 +62,10 @@ export interface Collection {
   freshness: number | null;
   /** Recent watches the web-search source searches (1..25); null inherits the global recent_count. */
   recent_count: number | null;
-  /** Where the row shows once promoted: both (Home + Library), home only, or library only. */
+  /** Where the row shows for the owner / home users: both (Home + Library), home only, or library only. */
   placement: "both" | "home" | "library";
+  /** Where the row shows for friends (shared users): both (Friends Home + Library), home only, or library only. */
+  placement_friends: "both" | "home" | "library";
   /** Pin the row to the top of its library's Recommended shelf (server-wide, not per viewer). */
   pin_top: boolean;
   /** Per-library Recommended-shelf override for THIS row; {} inherits the global default. */
@@ -156,6 +158,7 @@ export interface CollectionInput {
   freshness: number | null;
   recent_count: number | null;
   placement: "both" | "home" | "library";
+  placement_friends: "both" | "home" | "library";
   pin_top: boolean;
   hub_anchor: HubAnchorMap;
   poster: PosterInput;
@@ -205,6 +208,8 @@ export interface RunStats {
   titles_removed?: number;
   /** Titles requested from Sonarr/Radarr this run (0 when requests are off). */
   titles_requested?: number;
+  /** Warnings about incomplete Arr config (e.g. missing quality profile or root folder). */
+  requests_warnings?: string[];
   /** Total AI tokens this run cost (curate + the AI candidate sources). Absent on legacy runs. */
   llm_tokens?: number;
   /** That total split by where it went: { curate, llm_web, llm_library }. */
@@ -251,6 +256,9 @@ export interface UserRow {
   slug: string;
   name: string;
   media: string;
+  /** Which Plex library this card represents (e.g. "Movies", "TV Shows"). Empty for legacy/single-lib rows. */
+  library: string;
+  section_key: string;
   size: number;
   /** The row's effective recent-watches depth (its own, else the global) — what an override falls back to. */
   recent_count: number;

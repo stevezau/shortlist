@@ -42,6 +42,8 @@ def _pick_dict(pick: PickRow) -> dict:
         "reason": pick.reason,
         "media_type": pick.media_type,
         "collection_slug": pick.collection_slug or DEFAULT_SLUG,  # legacy blank rows are the default row
+        "library": pick.library or "",
+        "section_key": pick.section_key or "",
         "seed_title": pick.seed_title,
         # Provenance: which source(s) surfaced it, and how strongly they vouched. Blank/1.0 on rows
         # written before 0035, which the UI renders as "not recorded" rather than "a perfect match".

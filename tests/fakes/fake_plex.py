@@ -705,7 +705,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             {"key": "/hubs/home/continueWatching", "title": "Continue Watching", "type": "mixed", "promoted": True}
         ]
         for collection in state.collections.values():
-            promoted = collection.promoted_shared_home if user else collection.promoted_own_home
+            promoted = collection.promoted_own_home if user is None or user.home else collection.promoted_shared_home
             if not promoted:
                 continue
             excluded = bool({label.lower() for label in collection.labels} & excludes)

@@ -51,14 +51,16 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
 
-        # Latest run's picks for this user, grouped by row (legacy blank slug -> the default row).
+        # Latest run's picks for this user, grouped by (row, library). A row spanning multiple
+        # libraries is one Plex collection per library — show them as separate cards.
         latest = session.query(RunUser.run_id).filter_by(user_id=user.id).order_by(RunUser.run_id.desc()).first()
-        picks_by_row: dict[str, list[dict]] = {}
+        picks_by_row_lib: dict[tuple[str, str], list[dict]] = {}
         if latest is not None:
             for pick in (
                 session.query(PickRow).filter_by(user_id=user.id, run_id=latest.run_id).order_by(PickRow.rank).all()
             ):
-                picks_by_row.setdefault(pick.collection_slug or DEFAULT_SLUG, []).append(_pick_dict(pick))
+                key = (pick.collection_slug or DEFAULT_SLUG, pick.section_key or "")
+                picks_by_row_lib.setdefault(key, []).append(_pick_dict(pick))
 
         overrides = {o.collection_id: o for o in session.query(CollectionUserOverride).filter_by(user_id=user.id).all()}
         # The default 'picked' row's size follows the global setting, not its own stored column
@@ -74,23 +76,33 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
         for collection in _applicable_rows(session, user):
             override = overrides.get(collection.id)
             row_recent_count = collection.recent_count if collection.recent_count is not None else global_recent_count
-            out.append(
-                {
-                    "collection_id": collection.id,
-                    "slug": collection.slug,
-                    "name": collection.name,
-                    "media": collection.media,
-                    "size": global_size if collection.slug == DEFAULT_SLUG else collection.size,
-                    "recent_count": row_recent_count,
-                    "is_default": collection.slug == DEFAULT_SLUG,
-                    "muted": bool(override and override.muted),
-                    "override": {
-                        "row_size": override.row_size if override else None,
-                        "recent_count": override.recent_count if override else None,
-                    },
-                    "picks": picks_by_row.get(collection.slug, []),
-                }
-            )
+            slug = collection.slug
+            # Collect all library keys this row delivered to, preserving order from the picks.
+            lib_keys = list(dict.fromkeys(k for (s, k) in picks_by_row_lib if s == slug))
+            if not lib_keys:
+                lib_keys = [""]
+            for section_key in lib_keys:
+                picks = picks_by_row_lib.get((slug, section_key), [])
+                library_name = picks[0]["library"] if picks else ""
+                out.append(
+                    {
+                        "collection_id": collection.id,
+                        "slug": slug,
+                        "name": collection.name,
+                        "media": collection.media,
+                        "library": library_name,
+                        "section_key": section_key,
+                        "size": global_size if slug == DEFAULT_SLUG else collection.size,
+                        "recent_count": row_recent_count,
+                        "is_default": slug == DEFAULT_SLUG,
+                        "muted": bool(override and override.muted),
+                        "override": {
+                            "row_size": override.row_size if override else None,
+                            "recent_count": override.recent_count if override else None,
+                        },
+                        "picks": picks,
+                    }
+                )
         return out
 
 

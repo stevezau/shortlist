@@ -463,6 +463,7 @@ class ContextBuilder:
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     placement=collection.placement or "both",
+                    placement_friends=collection.placement_friends or "both",
                     pin_top=bool(collection.pin_top),
                     hub_anchors=self._row_hub_anchors(collection),
                     library_keys=[str(k) for k in (collection.library_keys or [])],
@@ -584,16 +585,31 @@ class ContextBuilder:
         if not store.get("requests.enabled"):
             return None
 
+        incomplete: list[str] = []
+
         def target(prefix: str) -> ArrTarget | None:
             url = (store.get(f"{prefix}.url") or "").strip()
             api_key = store.get(f"{prefix}.apikey") or ""
             if not url or not api_key:
                 return None
+            quality_profile_id = int(store.get(f"{prefix}.quality_profile_id") or 0)
+            root_folder = (store.get(f"{prefix}.root_folder") or "").strip()
+            if not quality_profile_id or not root_folder:
+                app = prefix.split(".")[-1].title()  # "requests.radarr" -> "Radarr"
+                missing = []
+                if not quality_profile_id:
+                    missing.append("quality profile")
+                if not root_folder:
+                    missing.append("root folder")
+                msg = f"{app} connected but {' and '.join(missing)} not selected"
+                logger.warning("{} — requests for that media type will be skipped", msg)
+                incomplete.append(msg)
+                return None
             return ArrTarget(
                 url=url,
                 api_key=api_key,
-                quality_profile_id=int(store.get(f"{prefix}.quality_profile_id") or 0),
-                root_folder=(store.get(f"{prefix}.root_folder") or "").strip(),
+                quality_profile_id=quality_profile_id,
+                root_folder=root_folder,
                 tag=(store.get("requests.tag") or "").strip(),
             )
 
@@ -601,6 +617,7 @@ class ContextBuilder:
             enabled=True,
             radarr=target("requests.radarr"),
             sonarr=target("requests.sonarr"),
+            incomplete_targets=incomplete,
             rating_source=store.get("requests.rating_source") or "tmdb",
             mdblist_api_key=store.get("requests.mdblist.apikey") or "",
             min_rating=float(store.get("requests.min_rating")),

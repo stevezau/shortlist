@@ -38,7 +38,15 @@ class AnthropicCurator:
 
     def list_models(self) -> list[str]:
         """Model ids this key can use, newest first — populates the setup model picker."""
-        return [m.id for m in self._client.models.list(limit=100).data]
+        try:
+            return [m.id for m in self._client.models.list(limit=100).data]
+        except Exception:
+            return [
+                "claude-sonnet-5",
+                "claude-haiku-4-5",
+                "claude-opus-4",
+                "claude-sonnet-4",
+            ]
 
     def recommend_web(self, profile: UserProfile, seeds: list, k: int) -> list[dict]:
         """Propose up to k titles to watch next via Claude's web-search tool (the ``llm_web`` source).

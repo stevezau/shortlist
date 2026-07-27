@@ -266,9 +266,12 @@ class RowSpec:
     # broader reach. Only affects the llm_web source; TMDB/Trakt still use the full seed set. None ->
     # inherit EngineConfig.recent_count.
     recent_count: int | None = None
-    # Where the row's collection appears once promoted: "both" (Home + Library Recommended, the
-    # default and legacy behaviour), "home" (Home only), or "library" (Library Recommended only).
+    # Where the row's collection appears for the owner / home users: "both" (Home + Library
+    # Recommended, the default), "home" (Home only), or "library" (Library Recommended only).
     placement: str = "both"
+    # Where the row's collection appears for friends (shared users). None = inherit from `placement`
+    # (backward compat); set explicitly to diverge from the owner's placement.
+    placement_friends: str | None = None
     # Pin the row to the TOP of its library's Recommended shelf (ManagedHub.move). This is a
     # server-wide managed-recommendations order, NOT per-viewing-user — Plex exposes no per-user order.
     pin_top: bool = False
@@ -280,12 +283,25 @@ class RowSpec:
     poster: PosterSpec | None = None
 
     @property
+    def _effective_friends_placement(self) -> str:
+        """Resolved friends placement: explicit override, or inherit from owner placement."""
+        return self.placement_friends if self.placement_friends is not None else self.placement
+
+    @property
     def show_home(self) -> bool:
+        """Owner / home users see this on their Home screen."""
         return self.placement in ("both", "home")
 
     @property
     def show_library(self) -> bool:
-        return self.placement in ("both", "library")
+        """Show in the Library's Recommended shelf."""
+        fp = self._effective_friends_placement
+        return self.placement in ("both", "library") or fp in ("both", "library")
+
+    @property
+    def show_friends_home(self) -> bool:
+        """Friends (shared users) see this on their Home screen."""
+        return self._effective_friends_placement in ("both", "home")
 
     @property
     def label(self) -> str | None:
@@ -337,6 +353,9 @@ class RequestConfig:
     auto_send: bool = True
     auto_min_demand: int = 3  # auto-send only titles wanted by at least this many distinct people
     auto_min_rating: float = 8.0  # ...and rated at least this high on the chosen source
+    # Populated by the context builder when a target was connected (URL+key) but incomplete (no
+    # profile or folder selected). Surfaces in the run report so the UI can explain the skip.
+    incomplete_targets: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -434,6 +453,9 @@ class RequestReport:
     # rest, and the server raises a notification so the owner knows some ratings weren't the chosen
     # source tonight.
     ratings_rate_limited: bool = False
+    # User-facing warnings about the request config itself (e.g. incomplete Arr setup). Surfaced in
+    # the run stats so the UI can explain WHY nothing was sent, not just that nothing was sent.
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def requested(self) -> int:

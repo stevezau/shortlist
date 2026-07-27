@@ -61,6 +61,7 @@ def upgrade() -> None:
             sa.Column("min_watchers", sa.Integer(), nullable=False),
             sa.Column("request_tag", sa.String(length=64), nullable=False),
             sa.Column("placement", sa.String(length=16), nullable=False),
+            sa.Column("placement_friends", sa.String(length=16), nullable=False, server_default="both"),
             sa.Column("pin_top", sa.Boolean(), nullable=False),
             sa.Column("hub_anchor", sa.JSON(), nullable=False),
             sa.Column("prompt", sa.JSON(), nullable=False),
@@ -283,10 +284,10 @@ def _seed_default_row(bind: sa.engine.Connection) -> None:
             "INSERT INTO collections "
             "(slug, name, build, audience, enabled, schedule, size, media, sort_order, name_template, "
             " candidate_sources, watched_pct, freshness, recent_count, library_keys, min_watchers, "
-            " request_tag, placement, pin_top, hub_anchor, prompt, poster, created_at, updated_at) "
+            " request_tag, placement, placement_friends, pin_top, hub_anchor, prompt, poster, created_at, updated_at) "
             "VALUES "
             "('picked', :name, 'per_person', 'everyone', 1, '', 15, 'both', 0, '', "
-            " '[]', NULL, NULL, NULL, '[]', 2, '', 'both', 0, '{}', '{}', '{}', :now, :now)"
+            " '[]', NULL, NULL, NULL, '[]', 2, '', 'both', 'both', 0, '{}', '{}', '{}', :now, :now)"
         ),
         {"name": "✨ Picked for You", "now": now},
     )

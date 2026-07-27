@@ -52,6 +52,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     recent_count: null,
     placement: "both",
+    placement_friends: "both",
     pin_top: false,
     hub_anchor: {},
     poster: { mode: "", title: "", subtitle: "", style: "", has_image: false },
@@ -160,24 +161,35 @@ describe("RowEditor — placement", () => {
     updateCollection.mockClear();
   });
 
-  it("reflects the saved placement as the pressed chip", () => {
-    renderEditor(row({ placement: "library" }));
+  it("reflects the saved placement as switch states", () => {
+    renderEditor(row({ placement: "library", placement_friends: "library" }));
     expect(
-      screen.getByRole("button", { name: "Library only" }),
-    ).toHaveAttribute("aria-pressed", "true");
+      screen.getByRole("switch", { name: /Owner Library Recommended/i }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: /Owner Home/i }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: /Friends Library Recommended/i }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: /Friends' Home/i }),
+    ).not.toBeChecked();
   });
 
   it("round-trips a changed placement into the PATCH body", async () => {
-    renderEditor(row({ placement: "both" }));
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "Home only" }));
+    // Turn off Home (owner) — leaves owner library + friends unchanged
+    await userEvent.click(screen.getByRole("switch", { name: /Owner Home/i }));
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
     );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
     const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
-    expect(body.placement).toBe("home");
+    expect(body.placement).toBe("library");
+    expect(body.placement_friends).toBe("both");
   });
 });
 
