@@ -33,9 +33,7 @@ function renderCard(props: Partial<UserCardProps> = {}) {
   };
   const merged = { ...defaults, ...props };
   render(
-    <MemoryRouter
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
+    <MemoryRouter>
       <UserCard {...merged} />
     </MemoryRouter>,
   );

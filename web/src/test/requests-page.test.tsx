@@ -78,10 +78,7 @@ function renderPage(initialEntry = "/requests") {
   });
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter
-        initialEntries={[initialEntry]}
-        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-      >
+      <MemoryRouter initialEntries={[initialEntry]}>
         <RequestsPage />
       </MemoryRouter>
     </QueryClientProvider>,
