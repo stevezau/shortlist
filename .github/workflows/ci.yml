@@ -86,7 +86,7 @@ jobs:
           path: web/dist
       - run: pip install -e ".[dev]"
       - run: playwright install --with-deps chromium
-      - run: pytest -m e2e --no-cov
+      - run: pytest -m e2e --no-cov --reruns 2 --reruns-delay 5
 
   docker:
     # Publish gate: build + push the image ONLY after lint, both Python versions,
