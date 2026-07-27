@@ -53,10 +53,13 @@ function PlacementToggles({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 rounded-md border p-4">
       <div className="space-y-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Owner &amp; home users
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Plex Home members who share your Home screen.
         </p>
         <div className="flex items-center justify-between">
           <p className="text-sm">Library Recommended</p>
@@ -79,9 +82,13 @@ function PlacementToggles({
           />
         </div>
       </div>
-      <div className="space-y-3 border-t pt-4">
+      <div className="space-y-3 border-t pt-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Friends (shared users)
+        </p>
+        <p className="text-xs text-muted-foreground">
+          People you&rsquo;ve shared the server with &mdash; they have their own
+          Home screen.
         </p>
         <div className="flex items-center justify-between">
           <p className="text-sm">Library Recommended</p>
