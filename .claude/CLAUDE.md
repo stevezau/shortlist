@@ -104,8 +104,14 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
 
 - **Branch model** (mirrors media_preview_generator): `dev` is the default/working branch — commit
   and push here; every green `dev` push publishes `ghcr.io/stevezau/shortlist:dev`. `master` is the
-  stable branch, advanced only by promoting `dev` → `master` via PR at release time. Releases are cut
-  by tagging `vX.Y.Z` (CI builds `:latest` + `:X.Y.Z`). Publishing is gated on lint+tests+e2e green.
+  stable branch, advanced only by promoting `dev` → `master` via PR at release time. A `master` push
+  runs the four test jobs but never publishes — only `dev` pushes and `v*` tags do. Releases are cut
+  by tagging `vX.Y.Z` on `master` (CI builds `:latest` + `:X.Y.Z` + `:dev`). Publishing is gated on
+  lint+tests+e2e green.
+- **Branch protection.** Force-pushes and deletions are blocked on both branches. `master` also
+  requires `lint`/`test-python`/`test-web`/`e2e`, so it only advances via a green PR. `dev` has no
+  required checks on purpose — they would block the direct pushes that are how you work on it.
+  `enforce_admins` is off on both, leaving an override for a genuine emergency.
 - **Conventional Commits** (`feat:`, `fix:`, `docs:`, `test:`, `chore:`)
 - **Architecture Review — by risk, not by habit.** The agent
   (`.claude/agents/architecture-review.md`) costs ~100k tokens a run, so spend it where bugs are
