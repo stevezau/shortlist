@@ -39,63 +39,68 @@ function PlacementToggles({
   placementFriends: Placement;
   onChange: (placement: Placement, placementFriends: Placement) => void;
 }) {
-  const recommended =
-    placement === "both" ||
-    placement === "library" ||
-    placementFriends === "both" ||
-    placementFriends === "library";
-  const home = placement === "both" || placement === "home";
+  const ownerLibrary = placement === "both" || placement === "library";
+  const ownerHome = placement === "both" || placement === "home";
+  const friendsLibrary =
+    placementFriends === "both" || placementFriends === "library";
   const friendsHome =
     placementFriends === "both" || placementFriends === "home";
 
-  function update(rec: boolean, h: boolean, f: boolean) {
-    const p: Placement =
-      rec && h ? "both" : h ? "home" : rec ? "library" : "library";
-    const pf: Placement =
-      rec && f ? "both" : f ? "home" : rec ? "library" : "library";
-    onChange(p, pf);
+  function encode(lib: boolean, hom: boolean): Placement {
+    if (lib && hom) return "both";
+    if (hom) return "home";
+    return "library";
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium">Library Recommended</p>
-          <p className="text-xs text-muted-foreground">
-            Shows in the library&rsquo;s Recommended shelf for everyone
-          </p>
+    <div className="space-y-4">
+      <div className="space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Owner &amp; home users
+        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm">Library Recommended</p>
+          <Switch
+            aria-label="Owner Library Recommended"
+            checked={ownerLibrary}
+            onCheckedChange={(v) =>
+              onChange(encode(v, ownerHome), placementFriends)
+            }
+          />
         </div>
-        <Switch
-          aria-label="Library Recommended"
-          checked={recommended}
-          onCheckedChange={(v) => update(v, home, friendsHome)}
-        />
+        <div className="flex items-center justify-between">
+          <p className="text-sm">Home</p>
+          <Switch
+            aria-label="Owner Home"
+            checked={ownerHome}
+            onCheckedChange={(v) =>
+              onChange(encode(ownerLibrary, v), placementFriends)
+            }
+          />
+        </div>
       </div>
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium">Home</p>
-          <p className="text-xs text-muted-foreground">
-            Shows on the owner&rsquo;s and home users&rsquo; Home screen
-          </p>
+      <div className="space-y-3 border-t pt-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Friends (shared users)
+        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm">Library Recommended</p>
+          <Switch
+            aria-label="Friends Library Recommended"
+            checked={friendsLibrary}
+            onCheckedChange={(v) => onChange(placement, encode(v, friendsHome))}
+          />
         </div>
-        <Switch
-          aria-label="Home"
-          checked={home}
-          onCheckedChange={(v) => update(recommended, v, friendsHome)}
-        />
-      </div>
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-medium">Friends&rsquo; Home</p>
-          <p className="text-xs text-muted-foreground">
-            Shows on friends&rsquo; (shared users&rsquo;) Home screen
-          </p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm">Friends&rsquo; Home</p>
+          <Switch
+            aria-label="Friends' Home"
+            checked={friendsHome}
+            onCheckedChange={(v) =>
+              onChange(placement, encode(friendsLibrary, v))
+            }
+          />
         </div>
-        <Switch
-          aria-label="Friends' Home"
-          checked={friendsHome}
-          onCheckedChange={(v) => update(recommended, home, v)}
-        />
       </div>
     </div>
   );
