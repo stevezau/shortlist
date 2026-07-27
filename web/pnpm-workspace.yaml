@@ -1,2 +1,10 @@
 allowBuilds:
   esbuild: true
+
+overrides:
+  # GHSA-52cp-r559-cp3m: js-yaml < 4.3.0 burns quadratic CPU on YAML merge-key chains.
+  # Reached only via openapi-typescript -> @redocly/openapi-core, which pins js-yaml to an
+  # exact 4.2.0 and has no fixed release on that line. Build-time only (`pnpm gen:api`), but
+  # 4.2.0 -> 4.3.0 is a same-major minor, so forcing it is safe. Drop this once
+  # openapi-typescript ships a @redocly/openapi-core that no longer pins a vulnerable js-yaml.
+  js-yaml@>=4.0.0 <4.3.0: 4.3.0
