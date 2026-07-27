@@ -256,6 +256,9 @@ export interface UserRow {
   slug: string;
   name: string;
   media: string;
+  /** Which Plex library this card represents (e.g. "Movies", "TV Shows"). Empty for legacy/single-lib rows. */
+  library: string;
+  section_key: string;
   size: number;
   /** The row's effective recent-watches depth (its own, else the global) — what an override falls back to. */
   recent_count: number;

@@ -69,7 +69,9 @@ function UserRowCard({ userId, row }: { userId: number; row: UserRow }) {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium">{row.name}</span>
+              <span className="font-medium">
+                {row.library ? `${row.name} — ${row.library}` : row.name}
+              </span>
               {row.is_default && <Badge variant="outline">default</Badge>}
               {muted && <Badge variant="secondary">muted</Badge>}
             </div>
