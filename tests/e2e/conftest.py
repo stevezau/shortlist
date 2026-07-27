@@ -350,7 +350,10 @@ def _owner_page(browser: Browser, app: ShortlistApp) -> Page:
     cookie = session_serializer(app.session_secret).dumps({"account_id": OWNER_ACCOUNT_ID, "username": "owner"})
     context = browser.new_context(base_url=app.url)
     context.add_cookies([{"name": SESSION_COOKIE, "value": cookie, "url": app.url}])
-    return context.new_page()
+    page = context.new_page()
+    # GH Actions runners are slow; the default 30s intermittently fires on cold-boot paths.
+    page.set_default_timeout(60_000)
+    return page
 
 
 @pytest.fixture
