@@ -34,7 +34,7 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     needsKey: true,
     needsUrl: false,
     keyUrl: "https://console.anthropic.com/settings/keys",
-    cost: "~$2/night on Haiku (the default). Good quality, higher cost than OpenAI/Google.",
+    cost: "Great quality. Costs more than OpenAI/Google — bring your own API key.",
   },
   {
     id: "openai",
@@ -44,7 +44,7 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     needsKey: true,
     needsUrl: false,
     keyUrl: "https://platform.openai.com/api-keys",
-    cost: "~$0.40/night on the mini tier. Cheapest hosted option with web search.",
+    cost: "Usually the cheapest hosted option. Bring your own API key.",
   },
   {
     id: "google",
@@ -54,7 +54,7 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     needsKey: true,
     needsUrl: false,
     keyUrl: "https://aistudio.google.com/apikey",
-    cost: "~$0.40/night on Flash. Cheapest hosted option with web search.",
+    cost: "Usually the cheapest hosted option. Bring your own API key.",
   },
   {
     // ONE entry for every self-hosted runtime: Ollama, llama.cpp, LM Studio, vLLM, LocalAI — and
