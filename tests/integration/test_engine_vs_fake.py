@@ -161,7 +161,11 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         snapshots=FileSnapshotStore(tmp_path / "snapshots"),
     )
     users = [
-        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        UserProfile(
+            username=u.username,
+            plex_account_id=u.id,
+            user_type=UserType.MANAGED if u.home else UserType.SHARED,
+        )
         for u in sorted(plextv.list_users(), key=lambda u: u.id)
     ]
     assert [u.username for u in users] == ["sarah", "mike", "canary"]
@@ -207,12 +211,20 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         # than a row of films they never asked for.
         "canary": [state.section_id, state.show_section_id],
     }
+    user_by_slug = {u.username.lower(): u for u in users}
     for slug, row in owned.items():
         for rating_key in row.rating_keys:
             collection = state.collections[rating_key]
             assert collection.item_keys, slug
             assert collection.mode == 0  # hidden from library browsing
-            assert collection.promoted_shared_home and not collection.promoted_own_home  # friends: shared home only
+            if user_by_slug[slug].user_type == UserType.SHARED:
+                assert collection.promoted_shared_home and not collection.promoted_own_home, (
+                    f"{slug}: friends get shared home only"
+                )
+            else:
+                assert collection.promoted_own_home and not collection.promoted_shared_home, (
+                    f"{slug}: home users get own home only"
+                )
             # Every item matches the library the collection lives in, so a `label!=` exclude can
             # actually match it. A mixed-type collection is unfilterable and leaks to everyone.
             assert state.filterable(collection), f"{slug}: row in section {collection.section_id} is unfilterable"
@@ -234,12 +246,17 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         assert snapshot is not None
         assert snapshot.filters["filterMovies"] == ""
 
-    # Owner /hubs does NOT show friends' rows (home=False for shared users). Friends' rows
-    # are on Friends' Home only — the owner's Home stays uncluttered.
-    all_ids = {key for row in owned.values() for key in row.rating_keys}
+    # Owner /hubs shows home users' rows (promoted_own_home=True) but NOT friends' rows.
+    friend_ids = {
+        key for slug, row in owned.items() if user_by_slug[slug].user_type == UserType.SHARED for key in row.rating_keys
+    }
+    home_ids = {
+        key for slug, row in owned.items() if user_by_slug[slug].user_type != UserType.SHARED for key in row.rating_keys
+    }
     r = httpx.get(f"{pms_url}/hubs", headers={"X-Plex-Token": state.owner_token, "Accept": "application/json"})
     owner_hub_ids = {collection_id_from_hub(h) for h in r.json()["MediaContainer"]["Hub"]}
-    assert not (all_ids & owner_hub_ids), "friends' rows should not appear on the owner's Home"
+    assert not (friend_ids & owner_hub_ids), "friends' rows should not appear on the owner's Home"
+    assert home_ids <= owner_hub_ids, "home users' rows should appear on the owner's Home"
 
     # Canary /hubs (switch -> resources -> server token) shows its own row and NONE of the others'
     # — including sarah's TV row, which lives in a different library than her movie row.
@@ -255,7 +272,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     report2 = engine_run(ctx, users)
     assert report2.ok
     assert all(not u.privacy_synced for u in report2.users)
-    assert len(state.collections) == len(all_ids)  # no duplicate rows created on a re-run
+    assert len(state.collections) == len(friend_ids) + len(home_ids)  # no duplicate rows created on a re-run
     for account_id, merged in expected.items():
         assert state.users[account_id].filters["filterMovies"] == merged
 
