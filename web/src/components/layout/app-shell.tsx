@@ -201,24 +201,6 @@ function NavBody() {
   );
 }
 
-function UpdateBanner() {
-  const version = useVersion();
-  if (!version.data?.update_available) return null;
-  return (
-    <a
-      href="https://github.com/stevezau/rowarr/releases"
-      target="_blank"
-      rel="noopener noreferrer"
-      className="mb-4 flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/10 px-4 py-2.5 text-sm text-warning-foreground transition-colors hover:bg-warning/20"
-    >
-      <span className="font-medium">Update available</span>
-      <span className="text-muted-foreground">
-        v{version.data.current_version} → v{version.data.latest_version}
-      </span>
-    </a>
-  );
-}
-
 export function AppShell() {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -314,7 +296,6 @@ export function AppShell() {
             the screen at max-w-6xl. A high cap keeps line lengths sane on an ultrawide without floating
             a narrow block in the middle. Individual pages that want to stay narrow cap their own content. */}
         <div className="mx-auto max-w-[1800px] animate-fade-in">
-          <UpdateBanner />
           <Outlet />
         </div>
       </main>

@@ -30,8 +30,8 @@ def _update_available(store: SettingsStore, current_version: str) -> dict | None
     return {
         "id": f"update-{update['latest']}",
         "severity": "info",
-        "title": f"Shortlist {update['latest']} is available",
-        "body": "A newer version has been released — see what changed and how to update.",
+        "title": "Update available",
+        "body": f"v{current_version} → v{update['latest']}",
         "action_url": update["url"],
         "action_label": "View release",
         "dismissable": True,
