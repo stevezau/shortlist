@@ -702,6 +702,10 @@ class RunReport:
     # by an older build). Run level for the same reason as the sweep: these people are by definition
     # absent from the user list, so a per-user report would never show it (plex-safety rule 10).
     converged: list[str] = field(default_factory=list)
+    # Labels of collections DELETED because Shortlist no longer knows the user they belong to.
+    # Separate from `converged` because this is the one irreversible action converge takes, and
+    # "what was destroyed at 03:31" must be answerable on its own (plex-safety rule 10).
+    orphans_removed: list[str] = field(default_factory=list)
     # Share filters we changed, keyed by plex account id. Editing someone's Plex share permissions
     # is the most sensitive write Shortlist makes, and most of the accounts we write to are not in
     # any run's user list — so without this, "what changed on whose share at 03:31" would have no

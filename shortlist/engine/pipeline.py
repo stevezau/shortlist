@@ -110,6 +110,11 @@ class EngineContext:
     # re-promote rather than a full LLM rebuild. They are absent from every run by definition, so
     # converge is the only thing that can act on them.
     paused_slugs: set[str] = field(default_factory=set)
+    # May converge DELETE a collection it cannot attribute to anyone, or only hide it? True is set by
+    # the server adapter, which knows its DB read succeeded and that `known_slugs` therefore lists
+    # every user Shortlist has. Deleting on a partial picture would wipe live rows, so the default is
+    # False and every other caller (direct engine runs, tests) only ever demotes.
+    may_delete_orphans: bool = False
     # (tmdb_id, media_type) the owner has already actioned in the Requests inbox — sent or rejected.
     # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
     # by a later auto-send. Empty for direct engine runs, which have no inbox.
@@ -780,6 +785,7 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
     shared_prefix = SHARED_LABEL_PREFIX.lower()
     live_shared = {spec.label.lower() for spec in ctx.config.shared_rows() if spec.label}
     demoted: list[str] = []
+    deleted: list[str] = []
     try:
         for section in ctx.plex.sections():
             for collection in section.collections():
@@ -815,6 +821,34 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
                             demoted.append(label)
                     continue
 
+                # ORPHAN: a per-person label whose user Shortlist no longer knows. Deleting is the
+                # only thing that actually removes it — demoting leaves it in the Collections tab and
+                # keeps its exclude in all ~47 share filters for ever.
+                #
+                # Gated on `may_delete_orphans` AND a non-empty roster, both deliberately. Deleting is
+                # the one irreversible action here, and "I could not read the users" is
+                # indistinguishable from "this user does not exist" — so an incomplete picture hides
+                # rather than destroys. Owner decision 2026-07-28: delete, but only when sure.
+                known = {slug.lower() for slug in ctx.known_slugs.values()}
+                own_slug = label[len(prefix) :].lower()
+                is_orphan = bool(known) and not label.lower().startswith(shared_prefix) and own_slug not in known
+
+                if is_orphan and not ctx.may_delete_orphans:
+                    if ctx.plex.claims_any_surface(collection):
+                        wrote = ctx.config.dry_run or ctx.plex.demote_all(collection, reason="unknown owner")
+                        if wrote:
+                            demoted.append(label)
+                    continue
+
+                if is_orphan:
+                    if ctx.config.dry_run:
+                        logger.info("[dry-run] {}: would DELETE (no such user)", collection.title)
+                    else:
+                        with ctx.write_lock:
+                            ctx.plex.delete_owned_collection(collection, ctx.config.label_prefix)
+                    deleted.append(label)
+                    continue
+
                 if label.lower() in allowed:
                     continue  # legitimately on the owner's Home
                 # Read the hub even in dry-run: the preview an operator reads before running for real
@@ -832,6 +866,13 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
         # Best-effort: the run's real work is already done and this only ever removes visibility, so a
         # PMS wobble here must not fail the run. Next run converges again.
         logger.exception("converge: could not finish demoting stranded rows — next run retries")
+    if deleted:
+        report.orphans_removed = sorted(deleted)
+        logger.warning(
+            "converge: removed {} orphaned collection(s) whose user no longer exists ({})",
+            len(deleted),
+            ", ".join(sorted(set(deleted))),
+        )
     if demoted:
         report.converged = sorted(demoted)
         logger.warning(

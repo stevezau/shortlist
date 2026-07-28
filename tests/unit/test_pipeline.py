@@ -2245,3 +2245,77 @@ class TestConverge:
 
         report = self._run(ctx, [exploding], promoted=set())  # must not raise
         assert report.converged == []
+
+
+class TestOrphanDeletion:
+    """Converge may DELETE a collection whose user Shortlist no longer knows — the one irreversible
+    action it takes, so it is gated on having a complete picture.
+
+    Demoting an orphan is not enough: it stays in the Collections tab and keeps its `label!=` exclude
+    in every other account's share filter for ever.
+    """
+
+    def _collection(self, rating_key: int, label: str):
+        collection = MagicMock()
+        collection.ratingKey = rating_key
+        collection.title = f"row-{rating_key}"
+        collection.labels = [MagicMock(tag=label)]
+        hub = collection.visibility.return_value
+        hub.promotedToOwnHome = True
+        hub.promotedToRecommended = True
+        hub.promotedToSharedHome = True
+        return collection
+
+    def _run(self, ctx, collections, *, known: dict, may_delete: bool, dry_run: bool = False):
+        from shortlist.engine.models import RunReport
+        from shortlist.engine.pipeline import _converge_phase
+
+        ctx.owner_slug = "steve"
+        ctx.known_slugs = known
+        ctx.may_delete_orphans = may_delete
+        ctx.config.dry_run = dry_run
+        ctx.plex.sections.return_value[0].collections.return_value = collections
+        ctx.plex.claims_any_surface.return_value = True
+        ctx.plex.demote_all.return_value = True
+        report = RunReport(started_at=datetime.now(UTC))
+        _converge_phase(ctx, set(), report)
+        return report
+
+    def test_a_collection_whose_user_is_gone_is_deleted(self, ctx: EngineContext):
+        orphan = self._collection(1, "Shortlist_ghost")
+        report = self._run(ctx, [orphan], known={100: "steve", 200: "sarah"}, may_delete=True)
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert report.orphans_removed == ["Shortlist_ghost"]
+
+    def test_a_known_users_collection_is_never_deleted(self, ctx: EngineContext):
+        live = self._collection(1, "Shortlist_sarah")
+        report = self._run(ctx, [live], known={100: "steve", 200: "sarah"}, may_delete=True)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == []
+
+    def test_an_incomplete_picture_demotes_instead_of_deleting(self, ctx: EngineContext):
+        """ "I could not read the users" and "this user does not exist" look identical from here.
+        Deleting on the first would wipe live rows, so it only ever hides."""
+        orphan = self._collection(1, "Shortlist_ghost")
+        report = self._run(ctx, [orphan], known={100: "steve"}, may_delete=False)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == []
+        assert report.converged == ["Shortlist_ghost"]
+
+    def test_an_empty_roster_never_deletes_anything(self, ctx: EngineContext):
+        """An empty `known_slugs` means the picture is missing, not that everyone left."""
+        orphan = self._collection(1, "Shortlist_ghost")
+        report = self._run(ctx, [orphan], known={}, may_delete=True)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == []
+
+    def test_dry_run_reports_the_deletion_without_making_it(self, ctx: EngineContext):
+        orphan = self._collection(1, "Shortlist_ghost")
+        report = self._run(ctx, [orphan], known={100: "steve"}, may_delete=True, dry_run=True)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == ["Shortlist_ghost"]

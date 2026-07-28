@@ -572,3 +572,51 @@ class TestSelfExclusionIsHealed:
         after = (written or {}).get("filterMovies", ("", "label!=Shortlist_mike,Shortlist_canary"))[1]
         assert "Shortlist_mike" in after
         assert "Shortlist_canary" in after  # stale, but pruning it is the leak direction
+
+
+class TestRestrictedAccountFilters:
+    """Pins the real shape of a RESTRICTED (managed) account's share filters — recorded from a live
+    PMS, per plex-safety rule 11.
+
+    This is the assumption behind `sync_user_restrictions` skipping these accounts entirely. The
+    fixture shows the skip is not because there is nowhere to write: the account already carries
+    `contentRating=` filters, and a `label!=` condition merges alongside one like any other.
+    """
+
+    def _fixture(self) -> dict:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "fixtures" / "plextv_restricted_user.json"
+        return json.loads(path.read_text())
+
+    def test_a_restricted_account_carries_content_rating_filters_not_label_ones(self):
+        from shortlist.engine.privacy import parse_filter, shortlist_labels_in
+
+        raw = self._fixture()["filters"]["filterMovies"]
+        fields = {c.field for c in parse_filter(raw)}
+
+        assert fields == {"contentRating"}  # a parental profile, not a Shortlist exclude
+        assert shortlist_labels_in(raw, "shortlist") == set()
+
+    def test_merging_excludes_preserves_the_parental_filter_byte_for_byte(self):
+        """The reason issue #20 is fixable: writing label excludes for a managed user does not mean
+        touching their parental controls. Rule 3 — merge, never rebuild."""
+        from shortlist.engine.privacy import merge_label_excludes, parse_filter
+
+        raw = self._fixture()["filters"]["filterMovies"]
+        merged = merge_label_excludes(raw, {"Shortlist_sarah", "Shortlist_mike"})
+
+        original, *rest = parse_filter(merged)
+        assert original == parse_filter(raw)[0]  # the contentRating condition is untouched
+        assert [c.field for c in rest] == ["label"]
+        assert set(rest[0].values) == {"Shortlist_mike", "Shortlist_sarah"}
+        assert raw in merged  # byte-preserved, URL-encoding and all
+
+    def test_the_merge_round_trips(self):
+        """`serialize_filter(parse_filter(s)) == s` must hold for anything plex.tv hands us — these
+        values are URL-encoded and must never be decoded on the way through."""
+        from shortlist.engine.privacy import parse_filter, serialize_filter
+
+        for raw in self._fixture()["filters"].values():
+            assert serialize_filter(parse_filter(raw)) == raw

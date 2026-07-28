@@ -1,0 +1,28 @@
+{
+  "_source": "Live capture from a real PMS (SFLIX), 2026-07-28, via PlexTvClient.list_users().",
+  "_why": [
+    "plex-safety rule 11: any assumption about a plex.tv response shape gets a recorded fixture.",
+    "The assumption this pins is the one behind privacy.py's decision to SKIP share-filter writes for",
+    "restricted accounts. Note what is actually here: the account carries filterMovies/filterTelevision",
+    "already, but they are a contentRating= parental-control filter, NOT label!=. So:",
+    "  1. A restricted account CAN hold share filters — 'restricted' does not mean 'no filters'.",
+    "  2. Merging label excludes in is mechanically ordinary: contentRating= is just another condition",
+    "     for merge_label_excludes to byte-preserve alongside a new label!= one.",
+    "  3. This account HAS a rating profile set. The 2026-07-25 note that a restricted account 'sees",
+    "     ZERO collections' was therefore recorded against a profiled account — which is exactly the",
+    "     distinction issue #20's reporters draw (managed users with NO age restriction see everything).",
+    "Values are URL-encoded exactly as plex.tv returned them and must stay that way: parse/serialize",
+    "round-trips raw strings, never decoded ones."
+  ],
+  "restricted": true,
+  "home": true,
+  "protected": false,
+  "user_type": "managed",
+  "filters": {
+    "filterAll": "",
+    "filterMovies": "contentRating=G%2CTV-G%2CTV-Y%2Cgb%2FUc%2Cgb%2FU%2CUK%3A+Uc%2CUK%3A+U%2Cde%2F0%2CFSK+0%2CAb+0+Jahren%2Cau%2FG%2Cca%2FG%2Cfr%2FTous+publics%2Cfr%2FU%2Cbr%2FL%2Cbr%2FLivre%2Cch%2F0%2Cnl%2FAL%2Ces%2FAPTA%2Cdk%2FA%2Ckr%2FA%2Cse%2FBtl%2CCSM+3%2CCSM+4%2CCSM+5%2C0%2C0%2B%2C2%2C3%2C4%2C5%2CUS%2FG%2CUS%2FTV-G%2CUS%2FTV-Y",
+    "filterTelevision": "contentRating=G%2CTV-G%2CTV-Y%2Cgb%2FUc%2Cgb%2FU%2CUK%3A+Uc%2CUK%3A+U%2Cde%2F0%2CFSK+0%2CAb+0+Jahren%2Cau%2FG%2Cca%2FG%2Cfr%2FTous+publics%2Cfr%2FU%2Cbr%2FL%2Cbr%2FLivre%2Cch%2F0%2Cnl%2FAL%2Ces%2FAPTA%2Cdk%2FA%2Ckr%2FA%2Cse%2FBtl%2CCSM+3%2CCSM+4%2CCSM+5%2C0%2C0%2B%2C2%2C3%2C4%2C5%2CUS%2FG%2CUS%2FTV-G%2CUS%2FTV-Y",
+    "filterMusic": "",
+    "filterPhotos": ""
+  }
+}

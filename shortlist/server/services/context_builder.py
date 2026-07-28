@@ -206,6 +206,9 @@ class ContextBuilder:
             known_slugs=known_slugs,
             owner_slug=owner_slug,
             paused_slugs=paused_slugs,
+            # The DB read above succeeded, so `known_slugs` lists every user Shortlist has — the
+            # complete picture converge needs before it may DELETE an unattributable collection.
+            may_delete_orphans=True,
             handled_requests=self._handled_requests(session),
             progress=progress,
         )
