@@ -651,8 +651,18 @@ function SyncCheckCard() {
             </Button>
           )}
         </div>
-        <MutationAlert mutation={preview} />
-        <MutationAlert mutation={fix} />
+        {preview.isError && (
+          <MutationAlert
+            error={preview.error}
+            fallback="Couldn’t run the sync check. Try again."
+          />
+        )}
+        {fix.isError && (
+          <MutationAlert
+            error={fix.error}
+            fallback="Couldn’t fix those rows. Try again."
+          />
+        )}
         {/* `status` matters: the queue skips a drain while a run is writing to Plex, which is
             exactly when someone presses this. That leaves the job `queued` with no result and no
             error — reporting "everything is in sync" for a check that never ran would be a lie. */}
