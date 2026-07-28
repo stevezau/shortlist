@@ -6,13 +6,13 @@ import {
   Download,
   RefreshCw,
   ShieldCheck,
-  TriangleAlert,
   Users as UsersIcon,
   Wrench,
 } from "lucide-react";
 import { useState } from "react";
 
 import { CronInput } from "@/components/cron-input";
+import { JobsTable } from "@/components/jobs-table";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { Segmented } from "@/components/segmented";
@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { api } from "@/lib/api";
-import { jobStatusLabel, timeAgo, timeUntil } from "@/lib/format";
+import { timeAgo, timeUntil } from "@/lib/format";
 import {
   queryKeys,
   useSettings,
@@ -128,8 +128,8 @@ export function ToolsPage() {
     <div>
       <PageHeader
         icon={Wrench}
-        title="Tools"
-        subtitle="On-demand maintenance. Run these when something has drifted — a new user, or watched state that's out of sync — rather than waiting for the nightly run."
+        title="Jobs"
+        subtitle="Maintenance jobs you can run now, and what they did. Use these when something has drifted — a new user, or watched state that's out of sync — rather than waiting for the nightly run."
       />
       <div className="grid gap-4">
         <SyncHistoryCard
@@ -166,6 +166,11 @@ export function ToolsPage() {
         <SyncCheckCard />
         <BackupsCard />
       </div>
+
+      {/* What running these actually did. On the same page as the buttons on purpose: "I pressed it,
+          did it work?" is one question, and jobs retry themselves — so a failure that resolved on
+          the second attempt has no other place to be seen. */}
+      <JobsTable />
     </div>
   );
 }
@@ -589,7 +594,6 @@ function BackupsCard() {
  */
 function SyncCheckCard() {
   const queryClient = useQueryClient();
-  const jobs = useQuery({ queryKey: ["jobs"], queryFn: api.getJobs });
   // Preview first, then act. Converge only ever REMOVES visibility so a live pass is never unsafe,
   // but "press a button, we silently rewrite every library" is the wrong default — the operator
   // should see what would change before authorising it.
@@ -604,7 +608,6 @@ function SyncCheckCard() {
   });
   const drifted =
     preview.data?.status === "done" ? (preview.data.fixed ?? []) : [];
-  const recent = (jobs.data ?? []).slice(0, 5);
 
   return (
     <Card>
@@ -676,41 +679,6 @@ function SyncCheckCard() {
           )}
         {fix.data && !fix.data.error && (
           <p className="text-sm text-muted-foreground">{fix.data.detail}</p>
-        )}
-
-        {recent.length > 0 && (
-          <div className="border-t pt-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Recent background jobs
-            </p>
-            <ul className="space-y-1.5">
-              {recent.map((job) => (
-                <li
-                  key={job.id}
-                  className="flex flex-wrap items-baseline gap-x-2 text-sm"
-                >
-                  {job.status === "failed" && (
-                    <TriangleAlert
-                      aria-hidden="true"
-                      className="size-3.5 shrink-0 self-center text-destructive"
-                    />
-                  )}
-                  <span className="font-medium">{job.kind}</span>
-                  <span className="text-muted-foreground">
-                    {jobStatusLabel(job)}
-                  </span>
-                  {job.detail && (
-                    <span className="text-muted-foreground">
-                      &mdash; {job.detail}
-                    </span>
-                  )}
-                  {job.error && (
-                    <span className="text-destructive">{job.error}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
         )}
       </CardContent>
     </Card>

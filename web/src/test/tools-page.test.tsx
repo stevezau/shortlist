@@ -316,18 +316,18 @@ describe("ToolsPage — sync check", () => {
     expect(await screen.findByText(/corrected 1/i)).toBeInTheDocument();
   });
 
-  it("shows a retrying job as retrying, not as merely queued", async () => {
-    // A job back in `queued` AFTER an attempt failed is the queue doing its job. Rendering that as
-    // "Queued" would read as "nothing has happened yet" — the opposite of the truth.
+  it("lists what the jobs actually did, below the buttons", async () => {
+    // "I pressed it — did it work?" is one question, so the history lives on the same page as the
+    // triggers. Per-status rendering is covered in jobs-table.test.tsx.
     getJobs.mockResolvedValue([
       {
-        id: 4,
-        kind: "user.cleanup",
-        status: "queued",
-        attempts: 2,
+        id: 9,
+        kind: "privacy.sync",
+        status: "done",
+        attempts: 1,
         max_attempts: 3,
-        detail: "",
-        error: "ConnectError",
+        detail: "Share filters merged for every account",
+        error: null,
         created_at: "2026-07-28T10:00:00Z",
         started_at: null,
         finished_at: null,
@@ -335,31 +335,9 @@ describe("ToolsPage — sync check", () => {
     ]);
     renderPage();
 
+    expect(await screen.findByText(/background jobs/i)).toBeInTheDocument();
     expect(
-      await screen.findByText(/retrying \(attempt 2\)/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/ConnectError/)).toBeInTheDocument();
-  });
-
-  it("names how many attempts a failed job used", async () => {
-    getJobs.mockResolvedValue([
-      {
-        id: 5,
-        kind: "user.cleanup",
-        status: "failed",
-        attempts: 3,
-        max_attempts: 3,
-        detail: "",
-        error: "Plex unreachable",
-        created_at: "2026-07-28T10:00:00Z",
-        started_at: null,
-        finished_at: "2026-07-28T10:05:00Z",
-      },
-    ]);
-    renderPage();
-
-    expect(
-      await screen.findByText(/failed after 3 attempts/i),
+      await screen.findByText(/share filters merged for every account/i),
     ).toBeInTheDocument();
   });
 });

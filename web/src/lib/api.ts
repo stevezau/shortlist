@@ -203,7 +203,10 @@ export const api = {
   // --- Background jobs ---
   getJobs: (): Promise<Job[]> => request("/api/system/jobs"),
 
-  runJob: (kind: string, payload: Record<string, unknown> = {}): Promise<JobResult> =>
+  runJob: (
+    kind: string,
+    payload: Record<string, unknown> = {},
+  ): Promise<JobResult> =>
     request("/api/system/jobs", {
       method: "POST",
       body: JSON.stringify({ kind, payload }),

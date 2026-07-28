@@ -37,7 +37,7 @@ const SARAH: User = {
   username: "sarah",
   slug: "sarah",
   user_type: "shared",
-    restricted: false,
+  restricted: false,
   enabled: true,
   cold_start: false,
   history_depth: 120,
@@ -101,7 +101,6 @@ describe("StepUsers select all/none", () => {
   });
 });
 
-
 describe("StepUsers — the owner's own line", () => {
   beforeEach(() => {
     getUsers.mockReset();
@@ -126,7 +125,9 @@ describe("StepUsers — the owner's own line", () => {
     renderStep();
 
     expect(
-      await screen.findByText(/switch yourself on below to get a row of your own/i),
+      await screen.findByText(
+        /switch yourself on below to get a row of your own/i,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/switched on like everyone else/i)).toBeNull();
   });
@@ -144,10 +145,10 @@ describe("StepUsers — the owner's own line", () => {
     getUsers.mockResolvedValue([SARAH, OWNER]);
     renderStep();
 
-    expect(await screen.findByText(/Heads up, server owner/i)).toBeInTheDocument();
-    // The sentence is split by an <em>, so match the fragment that lives in one text node.
     expect(
-      screen.getByText(/people.s rows from you/i),
+      await screen.findByText(/Heads up, server owner/i),
     ).toBeInTheDocument();
+    // The sentence is split by an <em>, so match the fragment that lives in one text node.
+    expect(screen.getByText(/people.s rows from you/i)).toBeInTheDocument();
   });
 });

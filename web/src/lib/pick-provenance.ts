@@ -45,8 +45,11 @@ export function provenanceLabel(pick: Pick): string {
   const sources = pick.sources ?? [];
   if (sources.length === 0) return "";
   // Both TMDB sources on one pick would read "TMDB (your genres) + TMDB", which looks like a bug.
-  const both = sources.includes("tmdb_similar") && sources.includes("tmdb_discover");
-  const shown = both ? ["tmdb_both", ...sources.filter((s) => !s.startsWith("tmdb_"))] : sources;
+  const both =
+    sources.includes("tmdb_similar") && sources.includes("tmdb_discover");
+  const shown = both
+    ? ["tmdb_both", ...sources.filter((s) => !s.startsWith("tmdb_"))]
+    : sources;
   const names = shown.map(sourceLabel).join(" + ");
   // ONLY tmdb_similar ranks its suggestions. tmdb_discover is "popular in genres you like" — it is
   // permanently 1.0, so matching it here would stamp "close match" on every discover pick forever.

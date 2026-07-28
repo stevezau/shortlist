@@ -10,7 +10,6 @@ import {
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
-import { JobsTable } from "@/components/jobs-table";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { RunRowsDialog } from "@/components/runs/run-rows-dialog";
@@ -375,11 +374,6 @@ export function RunsPage() {
           </div>
         )}
       </QueryBoundary>
-
-      {/* Runs and jobs are different animals — a run has per-user results and its own page; a
-          job is a short mechanical fix-up. They share this page because "what has this server
-          been doing?" is one question. Hidden on a row-filtered view, which is about one row. */}
-      {!rowSlug && <JobsTable />}
     </div>
   );
 }
