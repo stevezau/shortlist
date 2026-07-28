@@ -145,4 +145,4 @@ tokens encrypted at rest, never logged; everything supports `--dry-run`.
 ## Key dependencies
 
 Python 3.12 (the Docker runtime; the only version CI tests) | FastAPI | SQLAlchemy 2 + Alembic | APScheduler | plexapi | httpx | loguru | Pydantic v2
-| React 18 + Vite + TypeScript + Tailwind + shadcn/ui | pytest (+xdist, hypothesis) | Playwright
+| React 19 + Vite + TypeScript + Tailwind + shadcn/ui | pytest (+xdist, hypothesis) | Playwright

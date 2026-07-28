@@ -79,7 +79,7 @@ shortlist/
 │   │   ├── services/             # run_service (engine adapter + SSE emit), snapshot_service, hit_rate, secrets (Fernet @ /config/secret.key)
 │   │   └── settings_store.py     # typed settings table access; env-var seeding on first boot (MPG pattern)
 │   └── logging_config.py         # loguru + Rich (ported)
-├── web/                          # React 18 + Vite + TypeScript + Tailwind + shadcn/ui
+├── web/                          # React 19 + Vite + TypeScript + Tailwind + shadcn/ui
 │   └── src/
 │       ├── features/wizard/      # steps 0–7 (see design doc §3), state machine, resumable
 │       ├── features/dashboard/ · users/ · runs/ · settings/
