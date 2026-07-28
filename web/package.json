@@ -48,7 +48,7 @@
     "jsdom": "^30.0.0",
     "openapi-typescript": "^7.13.0",
     "postcss": "^8.5.18",
-    "tailwindcss": "^3.4.17",
+    "tailwindcss": "^4.3.3",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "~5.7.3",
     "typescript-eslint": "^8.65.0",
