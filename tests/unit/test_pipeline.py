@@ -2068,6 +2068,7 @@ class TestConverge:
         ctx.paused_slugs = paused or set()
         ctx.plex.sections.return_value[0].collections.return_value = collections
         ctx.plex.demote_all.side_effect = lambda c, **kw: PlexClient.demote_all(ctx.plex, c, **kw)
+        ctx.plex.claims_any_surface.side_effect = lambda c: PlexClient.claims_any_surface(ctx.plex, c)
         # Exercise the REAL demote, so the test covers the read-then-write contract, not a stub.
         ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
         ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
@@ -2222,6 +2223,19 @@ class TestConverge:
             recommended=False, home=False, shared=False
         )
         assert report.converged == ["Shortlist__shared_retired"]
+
+    def test_a_dry_run_does_not_offer_to_fix_a_paused_row_already_down(self, ctx: EngineContext):
+        """Caught on the live server: the preview said 2 and the live pass corrected 0, because the
+        paused branch reported every candidate without reading whether it claimed anything. The Tools
+        button then offered to "fix" rows that were already hidden."""
+        ctx.config.dry_run = True
+        settled = self._collection(1, "Shortlist_sarah", on_owner_home=False)
+        settled.visibility.return_value.promotedToRecommended = False
+        settled.visibility.return_value.promotedToSharedHome = False
+
+        report = self._run(ctx, [settled], promoted=set(), paused={"sarah"})
+
+        assert report.converged == []
 
     def test_a_pms_failure_never_fails_the_run(self, ctx: EngineContext):
         """Converge runs after the real work and only ever removes visibility — a wobble here must

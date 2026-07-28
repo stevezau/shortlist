@@ -802,6 +802,10 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
                 # everyone else's exclude still matches and unpausing is a re-promote, not a rebuild.
                 if label.lower() in paused_labels or retired_shared:
                     reason = "row switched off" if retired_shared else "paused"
+                    # Read first, exactly as the own-home branch does: a preview must list what would
+                    # actually change, not every candidate considered.
+                    if not ctx.plex.claims_any_surface(collection):
+                        continue
                     if ctx.config.dry_run:
                         logger.info("[dry-run] {}: would take off every surface", collection.title)
                         demoted.append(label)

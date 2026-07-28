@@ -435,6 +435,22 @@ class PlexClient:
         """
         return bool(getattr(collection.visibility(), "promotedToOwnHome", False))
 
+    def claims_any_surface(self, collection: Collection) -> bool:
+        """Does this collection claim ANY surface right now? A read, never a write.
+
+        The dry-run twin of ``demote_all``. Without it a preview counts every candidate rather than
+        the ones that would actually change — so the Tools button offered to "fix" rows that were
+        already down (caught on the live server: preview said 2, the live pass corrected 0).
+        """
+        hub = collection.visibility()
+        return any(
+            (
+                bool(getattr(hub, "promotedToRecommended", False)),
+                bool(getattr(hub, "promotedToOwnHome", False)),
+                bool(getattr(hub, "promotedToSharedHome", False)),
+            )
+        )
+
     def demote_all(self, collection: Collection, *, reason: str = "") -> bool:
         """Take a collection off EVERY surface, leaving it (and its label) in place.
 
