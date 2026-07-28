@@ -68,7 +68,7 @@ jobs:
       # pin pnpm 10 while the image build floated to latest, so pnpm 11's minimumReleaseAge default
       # (1440min, 0 before v11) rejected fresh transitive deps in the publish job that all four PR
       # checks had passed. Green CI must mean the image builds.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
       - uses: actions/setup-node@v7
