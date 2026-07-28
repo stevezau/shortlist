@@ -304,3 +304,43 @@ describe("RowEditor — a shared row that can never build", () => {
     expect(warning()).toBeNull();
   });
 });
+
+describe("RowEditor — name template variables", () => {
+  function renderNewRow() {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={client}>
+          <RowEditor collection={null} users={[]} onClose={() => {}} />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("tells you which variables the name accepts", () => {
+    renderNewRow();
+    // Without this the Name box looks like plain text and nobody discovers per-person naming.
+    expect(screen.getByText("{user}")).toBeInTheDocument();
+    expect(screen.getByText("{library_name}")).toBeInTheDocument();
+    expect(screen.getByText("{top_seed}")).toBeInTheDocument();
+  });
+
+  it("previews what a templated name becomes on Plex", async () => {
+    const user = userEvent.setup();
+    renderNewRow();
+
+    // `{{` is user-event's escape for a literal brace, so this types "{user}'s Picks".
+    await user.type(screen.getByLabelText("Name"), "{{user}'s Picks");
+    expect(screen.getByText(/Sarah's Picks/)).toBeInTheDocument();
+  });
+
+  it("shows no preview for a plain name — there is nothing to substitute", async () => {
+    const user = userEvent.setup();
+    renderNewRow();
+
+    await user.type(screen.getByLabelText("Name"), "Hidden Gems");
+    expect(screen.queryByText(/would see/)).not.toBeInTheDocument();
+  });
+});

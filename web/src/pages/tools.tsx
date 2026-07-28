@@ -10,11 +10,11 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 
+import { CronInput } from "@/components/cron-input";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Card,
   CardContent,
@@ -50,41 +50,28 @@ function CronPicker({
 }) {
   const matchesPreset = SYNC_PRESETS.some((p) => p.value === value);
   const [custom, setCustom] = useState(!matchesPreset && value !== "");
-  const [draft, setDraft] = useState(value);
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-muted-foreground">Frequency:</span>
-      <Segmented
-        value={custom ? "__custom__" : value}
-        onChange={(v) => {
-          if (v === "__custom__") {
-            setCustom(true);
-            setDraft(value);
-          } else {
-            setCustom(false);
-            onChange(v);
-          }
-        }}
-        options={[
-          ...SYNC_PRESETS.map((p) => ({ value: p.value, label: p.label })),
-          { value: "__custom__", label: "Custom" },
-        ]}
-      />
-      {custom && (
-        <Input
-          className="h-8 w-44 font-mono text-xs"
-          placeholder="e.g. 0 */2 * * *"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => {
-            if (draft.trim()) onChange(draft.trim());
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-muted-foreground">Frequency:</span>
+        <Segmented
+          value={custom ? "__custom__" : value}
+          onChange={(v) => {
+            if (v === "__custom__") {
+              setCustom(true);
+            } else {
+              setCustom(false);
+              onChange(v);
+            }
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) onChange(draft.trim());
-          }}
+          options={[
+            ...SYNC_PRESETS.map((p) => ({ value: p.value, label: p.label })),
+            { value: "__custom__", label: "Custom" },
+          ]}
         />
-      )}
+      </div>
+      {custom && <CronInput value={value} onChange={onChange} />}
     </div>
   );
 }
@@ -435,7 +422,8 @@ function BackupsCard() {
           Backups
         </CardTitle>
         <CardDescription>
-          Automatic backups of your database. Also taken before every upgrade.
+          A copy of Shortlist’s whole database, taken on the schedule below and
+          again before every upgrade.
           {syncs.data?.backup?.next && (
             <span className="ml-1">
               Next: {timeUntil(syncs.data.backup.next)}
@@ -444,7 +432,34 @@ function BackupsCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="space-y-1.5 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+          <p>
+            <span className="font-medium text-foreground">What’s in one:</span>{" "}
+            your settings and connections, your rows and who can see them, every
+            person Shortlist knows about, run history and the picks each run
+            made, the request inbox — and the snapshot of each user’s original
+            Plex share filters.
+          </p>
+          <p>
+            <span className="font-medium text-foreground">Why it matters:</span>{" "}
+            those share-filter snapshots are the only record of how your
+            server’s sharing looked before Shortlist touched it. Uninstall puts
+            people back using them, so losing the database means losing the way
+            back. Everything else is a rebuild-from-scratch: reconnecting Plex,
+            re-picking rows, and starting run history over.
+          </p>
+          <p>
+            Backups live beside the database in{" "}
+            <span className="font-mono text-xs">/config/backups</span>, so they
+            survive removing and recreating the container — but not losing the
+            volume. Copy them off the host if that’s a risk you care about.{" "}
+            <span className="font-mono text-xs">/config/secret.key</span> is{" "}
+            <span className="font-medium text-foreground">not</span> in a
+            backup: restoring without that same file leaves your saved Plex and
+            AI keys unreadable, so keep a copy of it too.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-4">
           <CronPicker
             value={backupCron}
             onChange={(cron) =>

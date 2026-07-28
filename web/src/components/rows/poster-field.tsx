@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { TemplateVarsHint } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,14 +9,7 @@ import { api, apiErrorMessage } from "@/lib/api";
 import { useImageProvider } from "@/lib/queries";
 import type { PosterInput } from "@/lib/types";
 
-const PLACEHOLDER_HINT = (
-  <p className="text-sm text-muted-foreground">
-    Use <span className="font-mono">{"{user}"}</span> for each person's name,{" "}
-    <span className="font-mono">{"{library_name}"}</span> for the library, or{" "}
-    <span className="font-mono">{"{top_seed}"}</span> for a title they recently
-    watched.
-  </p>
-);
+const PLACEHOLDER_HINT = <TemplateVarsHint />;
 
 /**
  * The row editor's "Poster" section: leave Plex's own artwork alone, upload an image, or generate one

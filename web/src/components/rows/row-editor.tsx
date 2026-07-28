@@ -6,6 +6,7 @@ import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import { RowSourcesField } from "@/components/rows/row-sources-field";
+import { TemplateVarsHintWithPreview } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
@@ -227,12 +228,15 @@ export function RowEditor({
                 </Button>
               </div>
             ) : (
-              <Input
-                id="row-name"
-                value={input.name}
-                onChange={(e) => set({ name: e.target.value })}
-                placeholder="e.g. Hidden Gems"
-              />
+              <>
+                <Input
+                  id="row-name"
+                  value={input.name}
+                  onChange={(e) => set({ name: e.target.value })}
+                  placeholder="e.g. ✨ Hidden Gems for {user}"
+                />
+                <TemplateVarsHintWithPreview template={input.name} />
+              </>
             )}
           </div>
 

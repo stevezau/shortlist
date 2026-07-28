@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 
+import { CronInput } from "@/components/cron-input";
 import { Segmented } from "@/components/segmented";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,15 +11,9 @@ type Mode = "nightly" | "weekly" | "custom" | "off";
 const MODES: { value: Mode; label: string }[] = [
   { value: "nightly", label: "Nightly" },
   { value: "weekly", label: "Weekly" },
-  { value: "custom", label: "Custom (cron)" },
+  { value: "custom", label: "Custom" },
   { value: "off", label: "Off" },
 ];
-
-/** Five non-empty fields — a cheap client gate so we don't save an obviously incomplete cron; the
- *  server (APScheduler) stays the authority on validity. */
-function looksLikeCron(value: string): boolean {
-  return value.trim().split(/\s+/).length === 5;
-}
 
 /**
  * When THIS row rebuilds on its own — a nightly/weekly preset, a raw cron, or Off (never runs on a
@@ -88,28 +83,18 @@ export function RowScheduleField({
 
       {mode === "custom" && (
         <div className="space-y-2">
-          <Label htmlFor={cronId}>Cron expression</Label>
-          <Input
+          <Label htmlFor={cronId}>Your own schedule</Label>
+          <CronInput
             id={cronId}
             value={cronText}
-            onChange={(event) => {
-              setCronText(event.target.value);
-              apply("custom", time, event.target.value);
+            onChange={(next) => {
+              setCronText(next);
+              apply("custom", time, next);
             }}
-            placeholder="30 3 * * *"
-            spellCheck={false}
-            className="max-w-xs font-mono"
           />
           <p className="text-sm text-muted-foreground">
-            Five fields: minute, hour, day-of-month, month, day-of-week — in
-            server time. For example{" "}
-            <span className="font-mono">0 */6 * * *</span> runs every 6 hours.
+            Times are the server&rsquo;s, not yours.
           </p>
-          {!looksLikeCron(cronText) && cronText.trim() !== "" && (
-            <p className="text-sm text-destructive">
-              A cron needs five space-separated fields.
-            </p>
-          )}
         </div>
       )}
 

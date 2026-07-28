@@ -55,11 +55,24 @@
 ## Schedules
 
 **Every row runs on its own schedule** — there is no single server-wide one. Open a row (Rows → edit)
-and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom (cron)**
-for any 5-field expression (e.g. `0 */6 * * *` for every six hours, or `0 4 * * 1` for Mondays at
-4am), or **Off** to only run that row by hand. New rows default to nightly at 03:30 server-local;
+and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for
+anything else, or **Off** to only run that row by hand. New rows default to nightly at 03:30 server-local;
 on upgrade, existing rows keep whatever your old global schedule was. Rows that share a cron run
 together. To skip a person entirely, pause them on their detail page.
+
+### Writing a custom schedule
+
+Every **Custom** schedule box in Shortlist — a row's schedule, and the watch-history / user-sync /
+backup pickers on Tools — takes either form:
+
+- **Plain English**: `every 30 minutes`, `every 4 hours`, `every 4 hours at 17 past`, `hourly`,
+  `nightly at 3:30am`, `daily at 21:15`, `mondays at 9pm`, `weekdays at 6am`, `weekends at 10am`.
+- **A cron expression**, if you already think that way: five fields — minute, hour, day-of-month,
+  month, day-of-week. `0 */6 * * *` is every six hours; `0 4 * * 1` is Mondays at 4am.
+
+Whichever you type, the line underneath tells you what it will actually do and what gets saved, and
+nothing saves until it parses — so a typo can't quietly leave you on the built-in default. Times are
+the server's, not your browser's.
 
 ## Naming a row
 
@@ -409,6 +422,39 @@ logs what it _would_ ask for. Every request (and every skip) is recorded in the 
 run's detail page shows how many titles it requested.
 
 Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
+
+### Why is a title still waiting?
+
+The auto-send bar is deliberately higher than the bar to be requestable at all: a title is sent
+without asking only if it clears **both** `requests.auto_min_demand` (default 3 distinct people) and
+`requests.auto_min_rating` (default 8.0) — a 7.9 wanted by twenty people still waits. Beyond that:
+
+- **On an exclusion list** — a past delete in Radarr/Sonarr leaves the title on an import-exclusion
+  list, and Shortlist will never auto-send one (the app would refuse the add anyway). The card says
+  so; clear it in Radarr/Sonarr first, then approve.
+- **Over the per-run cap** — `requests.max_per_run` auto-worthy titles go per run; the rest wait.
+- **Already in Radarr/Sonarr** — the card shows a **Downloaded / Downloading / Searching / Not
+  monitored** badge if either app already tracks it, which normally means it was added by hand after
+  it landed here. It drops off the list on the next run.
+
+## Backups
+
+Shortlist copies its whole database to `/config/backups` on a schedule (Tools → Backups; nightly at
+3 AM by default), before every upgrade, and before any restore. It keeps the newest 10 by default.
+
+A backup holds everything Shortlist knows: settings and connections, your rows and their audiences,
+the people it tracks, run history and each run's picks, the request inbox — and, most importantly,
+the `restriction_snapshots` of each user's original Plex share filters. Those snapshots are the only
+record of how your server's sharing looked before Shortlist touched it, and **Uninstall restores
+from them**. Everything else is rebuildable by hand; that isn't.
+
+Two things worth knowing:
+
+- Backups sit beside the database in the `/config` volume, so they survive removing and recreating
+  the container — but not losing the volume. Copy them off the host if that matters to you.
+- `/config/secret.key` is **not** in a backup. It's the key your Plex token and AI keys are
+  encrypted with, so restoring a database without that same file leaves those credentials unreadable
+  and you'll have to re-enter them. Keep a copy of it alongside your backups.
 
 ## Troubleshooting
 
