@@ -200,7 +200,10 @@ def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:
         except Exception:
             logger.exception("job sweep failed")
 
-    scheduler.add_job(drain, "interval", seconds=10, id="jobs.drain", max_instances=1, replace_existing=True)
+    # 60s, not 10s: every path that queues a job also drains it inline, so this tick only catches
+    # work queued while something else held the lock, or retries after a backoff. Ten seconds bought
+    # nothing and cost a pair of scheduler log lines every ten seconds, all day.
+    scheduler.add_job(drain, "interval", seconds=60, id="jobs.drain", max_instances=1, replace_existing=True)
     scheduler.add_job(sweep, "interval", minutes=5, id="jobs.sweep", max_instances=1, replace_existing=True)
 
 
