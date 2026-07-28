@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Navigate } from "react-router-dom";
+import { Navigate } from "react-router";
 
 import { Logo } from "@/components/brand";
 import { PlexPinButton } from "@/components/plex-pin-button";

@@ -7,7 +7,7 @@ import {
   TrendingUp,
   Users as UsersIcon,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { QueryBoundary } from "@/components/query-boundary";
 import { StatTile } from "@/components/stat-tile";

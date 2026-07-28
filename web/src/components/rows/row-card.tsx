@@ -8,7 +8,7 @@ import {
   Users as UsersIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { Badge } from "@/components/ui/badge";

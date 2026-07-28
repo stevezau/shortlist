@@ -1,5 +1,5 @@
 import { RefreshCw } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { UserAvatar } from "@/components/user-avatar";

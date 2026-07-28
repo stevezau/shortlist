@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { PickList } from "@/components/pick-list";
