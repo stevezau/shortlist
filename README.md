@@ -34,9 +34,13 @@ everyone can actually discover from.
 
 ## Why this couldn't exist before 2026
 
-Per-user private collections were impossible until Plex fixed label restrictions on
-Home/Recommended (v1.43.1) and Related hubs (v1.43.2). Shortlist is built on that fix: each row is a
-labeled collection excluded on every other account's share, so only its owner ever sees it.
+A row that only one person can see was simply impossible until recently. Plex had no per-user
+collections, and the "hide this by label" setting it does have wasn't applied everywhere — so a
+row meant for one person still showed up for others.
+
+Plex fixed that in 2026: label hiding now works on the Home and Recommended shelves (v1.43.1) and
+on Related rows (v1.43.2). Shortlist is built on that fix — each row is labelled, and every other
+account is told to hide that label, so only its owner ever sees it.
 
 ## Features
 
@@ -128,7 +132,7 @@ picks your server, and walks you to your first rows (about 10 minutes).
 > 💡 Want to try it without touching your server first? Add `-e SHORTLIST_DRY_RUN=1` — Shortlist
 > will show you exactly what it _would_ do and write nothing to Plex.
 
-Requirements: PMS ≥ 1.43.2.10687 · Plex Pass on the admin account · a free TMDB key.
+Requirements: Plex Media Server ≥ 1.43.2.10687 · Plex Pass on the admin account · a free TMDB key.
 Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-started.md).
 
 ## Documentation

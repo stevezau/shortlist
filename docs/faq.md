@@ -1,70 +1,124 @@
 # FAQ
 
-**How is this private? Plex doesn't have per-user collections.**
-Since PMS 1.43.2, label-based share restrictions are enforced on Home, Recommended and
-Related hubs. Shortlist gives each user's collections a unique label and excludes that label on
-every _other_ user's share, so only its owner ever sees it. Rows are delivered hidden and only
-promoted once those exclusions are in place, and your share filters are snapshotted first so
-Uninstall restores them exactly.
+## How is this private? Plex doesn't have per-user collections.
 
-**Why do I get two rows — one under Movies and one under TV Shows?**
-A Plex collection lives in exactly one library, and Plex applies share filters per library
-(`filterMovies`, `filterTelevision`). So a user who watches both gets one row in each library,
-both carrying the same label. This is not cosmetic: a collection holding the wrong type for
-its library is matched by neither filter, which means it could not be hidden from anyone.
-Your `row.size` is the budget across those rows: a library with at least one pick gets a row,
-and a library with none gets none.
+It does, indirectly. Plex lets you hide things from someone by **label**, so Shortlist gives each
+person's row a label of its own and tells every _other_ account to hide that label. The result is a
+row only its owner can see.
 
-**Does Shortlist touch the share settings of users I haven't enabled?**
-Yes — it adds label excludes to the share filter of **every** account your server is shared with,
-not just the ones you gave a row to. It has to: a Plex collection is visible to anyone whose share
-filter does not exclude its label, so if Shortlist only touched the accounts it manages, everyone
-else would see those people's private rows. Nothing else in their filter is altered (the write is
-a read-modify-write merge), the original is snapshotted first, and `uninstall` restores every one
-of them byte-for-byte.
+The order matters: a row is created **hidden**, and only made visible once the "hide this from
+everyone else" rules are already in place — so there's no window where the wrong person could see
+it. Your existing sharing settings are saved beforehand, and **Uninstall** puts them back exactly.
 
-**Do I get a row myself?**
-Yes. plex.tv's user list never includes the account that owns the server, so Shortlist adds you to
-the Users page separately, badged `owner`. Turn yourself on and you get a Picked-for-You row built
-from your own watch history — which is all a one-person server needs.
+This needs Plex Media Server **1.43.2.10687 or newer**. Older versions ignore the hiding rule.
 
-**What can the server owner see?**
-Everything — Plex cannot restrict the owner. Your Home shows all users' rows, not just yours.
-If you share the server with others and want the clean experience, watch on a Plex Home user and
-keep the admin account for administration.
+## Why do I get two rows — one under Movies and one under TV Shows?
 
-**Does the AI hallucinate recommendations you don't have?**
-It can't. The LLM only re-ranks candidates that are already verified to exist in your
-library and unwatched by that user. Anything else it returns is dropped and logged. And
-with provider "None", Shortlist works with no AI at all.
+Because a Plex collection can only live in one library, and Plex applies its hiding rules per
+library. Someone who watches both films and TV gets one row in each, both carrying the same label.
 
-**What does the AI actually do, and do I have to pay for it?**
-No — Shortlist runs fine with no AI. Most titles are found by the free TMDB sources, and the final
-pick and ranking are plain code (no AI, no per-title cost). The AI's one paid job is an optional
-_web-search_ source that finds acclaimed titles TMDB misses — the one worth paying for. Set the AI
-provider to "None" and you still get full private rows with plain "Because you watched…" reasons. See
-[How Shortlist uses AI](guides.md#how-shortlist-uses-ai-and-how-to-control-the-cost) for the full
-breakdown and cost-tuning tips.
+This isn't cosmetic. A row containing the wrong type for its library matches neither hiding rule,
+which would make it impossible to hide from anyone.
 
-**Will it fight with Kometa?**
-No. Shortlist only ever modifies or deletes collections carrying a `shortlist_*` label. Anything
-else — Kometa overlays, your own collections — is detected and left alone.
+Your row size is the budget **across** both: a library with at least one pick gets a row, a library
+with none gets nothing.
 
-**What does it send to the LLM?**
-Titles only — the AI's one job is a web search for what to watch next, so it sees a short list of
-titles the person recently enjoyed. No usernames, account ids, genres, or viewing timestamps.
+## Does Shortlist change sharing settings for users I haven't enabled?
 
-**What if I uninstall?**
-One flow, with a preview: every user's share filters are restored from the snapshot taken
-before Shortlist's first write, every shortlist collection is deleted, and the report says exactly
-what changed. Your server is as we found it.
+Yes — and it has to. Plex shows a collection to anyone who isn't explicitly told to hide it, so if
+Shortlist only touched the accounts you gave rows to, **everyone else would see those private
+rows**.
 
-**Managed users / kids' accounts?**
-Supported as canaries and recommendation targets. Their _restriction profiles_ (parental
-controls) are never modified — Shortlist only merges label filters on shares.
+So it adds hide-this-label rules to every account your server is shared with. Nothing else in their
+settings is touched — Shortlist reads what's there, adds only its own entries, and leaves the rest
+byte-for-byte identical. The original is saved first, and Uninstall restores all of them.
 
-**What happens if Plex breaks label restrictions in an update?**
-Shortlist merges the label exclusions on every run, but it doesn't watch for Plex regressing that
-behaviour — a broken update wouldn't be caught automatically. That's why the label-based hiding
-needs PMS **≥ 1.43.2.10687**; older builds ignore the exclusion. Stay on that build or newer, and
-watch the README for version advisories.
+## Do I get a row myself?
+
+Yes. Plex's user list never includes the server's own owner, so Shortlist adds you separately,
+badged `owner`. Switch yourself on and you get a row built from your own history — which is the
+whole point on a one-person server.
+
+## What can the server owner see?
+
+Everything. Plex cannot hide collections from the owner, so your Home shows every user's row, not
+just your own.
+
+If you share with other people and want a clean Home, watch on a Plex Home user and keep the admin
+account for admin.
+
+## Does the AI invent recommendations I don't have?
+
+It can't. The AI only ever chooses among titles already confirmed to exist in your library and
+unwatched by that person. Anything else it suggests is discarded and logged. With the provider set
+to **None**, no AI is involved at all.
+
+## What does the AI actually do, and do I have to pay?
+
+**No — Shortlist runs fine with no AI, and no key.** Most titles come from the free TMDB sources,
+and the final choosing and ranking is ordinary code with no per-title cost.
+
+The AI has exactly one paid job: an optional **web search** for what to watch next, which finds
+well-reviewed titles TMDB simply doesn't return. It's off by default.
+
+See [How Shortlist uses AI](guides.md#how-shortlist-uses-ai-and-how-to-control-the-cost) for the
+full breakdown and cost controls.
+
+## What is Exa, and should I use it?
+
+[Exa](https://exa.ai) is a search engine built for AI to read rather than for people to browse.
+Instead of a page of blue links, it returns ranked results with the **relevant text already pulled
+out**, so a model gets straight to the useful part.
+
+In Shortlist it powers the optional web-search source. You have three choices:
+
+| Option                        | Works with                         | Trade-off                                              |
+| ----------------------------- | ---------------------------------- | ------------------------------------------------------ |
+| Your AI provider's own search | Claude, GPT, Gemini only           | no extra signup; unavailable on local models           |
+| **Exa key**                   | **every provider, local included** | one extra free-tier signup                             |
+| **Auto** (default)            | uses both when both are set up     | widest coverage — they find noticeably different films |
+
+**Why we suggest adding an Exa key**, even if your provider can already search:
+
+- **It's the only option that works with a local model.** An Ollama or LM Studio server on your own
+  hardware has no way to search the internet. With Exa, _Shortlist_ does the searching and hands the
+  findings over — so a completely offline model can still recommend current titles.
+- **Your results stop depending on which AI you picked.** Switch from Claude to a local model to
+  save money and the search half stays identical. Only the choosing changes.
+- **The cost is predictable.** Exa bills per search, not per word, and Shortlist reports those
+  searches separately from AI usage. Results are reused for 14 days and shared across everyone on
+  your server, so a popular film is looked up once — not once per person.
+- **It's built for this job.** Because the results arrive as extracted text, the model spends its
+  effort judging films rather than wading through web pages.
+
+It's genuinely optional. Leave it empty and everything still works — you'd just be limited to your
+provider's own search, or to no web search at all.
+
+## Will it fight with Kometa?
+
+No. Shortlist only ever touches collections carrying its own `shortlist_*` label. Kometa overlays
+and your own collections are detected and left alone.
+
+## What information is sent to the AI?
+
+Titles, and nothing else — a short list of what someone recently enjoyed, so it can search for
+what to watch next. No usernames, no account IDs, no genres, no viewing times.
+
+## What if I uninstall?
+
+One flow, with a preview first. Every account's sharing settings are restored from the copy taken
+before Shortlist's first change, every Shortlist collection is deleted, and you get a report of
+exactly what changed. Your server ends up as we found it.
+
+## Managed users and kids' accounts?
+
+Supported, both as test accounts and as people who get rows. Their **parental controls are never
+modified** — Shortlist only ever merges label rules into sharing settings.
+
+## What if a Plex update breaks label hiding?
+
+Shortlist re-applies the hiding rules on every run, but it doesn't watch for Plex itself regressing
+the feature — a broken update wouldn't be caught automatically.
+
+That's why the minimum is Plex Media Server **1.43.2.10687**: older builds ignore the rule
+entirely. Stay on that build or newer, and watch the README for advisories.

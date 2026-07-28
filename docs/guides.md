@@ -274,11 +274,31 @@ from current web results.
 
 You choose the search backend on the "AI web search" card:
 
-| Backend                        | Works with                         | Notes                                                                                        |
-| ------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------- |
-| Your provider's own web search | Claude, GPT, Gemini only           | no extra key or bill                                                                         |
-| [Exa](https://exa.ai) key      | every provider, local models too   | a search API built for feeding LLMs — returns ranked results with the text already extracted |
-| **Auto** (default)             | both, unioned when both are set up | they surface noticeably different titles                                                     |
+| Backend                        | Works with                         | Trade-off                                               |
+| ------------------------------ | ---------------------------------- | ------------------------------------------------------- |
+| Your provider's own web search | Claude, GPT, Gemini only           | no extra signup; unavailable on local models            |
+| [Exa](https://exa.ai) key      | **every provider, local included** | one extra free-tier signup                              |
+| **Auto** (default)             | both, unioned when both are set up | widest coverage — they find noticeably different titles |
+
+**Why we suggest adding an Exa key**, even when your provider can already search:
+
+[Exa](https://exa.ai) is a search engine built for AI to read rather than for people to browse — it
+returns ranked results with the relevant text already pulled out, so the model spends its effort
+judging films instead of wading through web pages. In practice that buys you four things:
+
+1. **It's the only option that works with a local model.** An Ollama or LM Studio server on your own
+   hardware has no way to reach the internet. With Exa, Shortlist does the searching and hands over
+   the findings, so a fully offline model still recommends current titles.
+2. **Your results stop depending on which AI you picked.** Switch from Claude to a cheap local model
+   and the search half stays identical — only the choosing changes.
+3. **The cost is predictable.** Exa bills per search rather than per word, and those searches are
+   reported separately from AI tokens. Results are reused for 14 days and shared across everyone on
+   the server, so a popular film is looked up once, not once per person.
+4. **Auto gives you both.** Left on the default with both configured, Shortlist unions the two —
+   they reliably surface different films, so coverage is wider than either alone.
+
+Entirely optional: leave it empty and everything still works, you're just limited to your provider's
+own search (or to none at all).
 
 ### If you don't want to use AI
 
@@ -304,9 +324,9 @@ levers:
    plenty; you don't need a flagship model to read a few search results.
 4. **Run less often.** Nightly is the default; a longer schedule means fewer runs and fewer searches.
 
-The "AI web search" card also lets you pick the **search backend** — your provider's own web search
-(Claude/GPT/Gemini), an **Exa** key (works with any provider, and the only option for a local model),
-or **Auto**, which uses both when available because they tend to find different titles.
+5. **Use a local model.** An Ollama or LM Studio server on your own hardware costs nothing per run.
+   This needs an Exa key, since a local model can't search the web itself — see
+   [the backend comparison above](#the-one-ai-powered-source).
 
 **Seeing where the tokens go.** Every run records its AI cost so there's no guessing. Open a run
 (Runs → click a run) and you'll see the **total AI tokens** for the run, then per person a breakdown
@@ -401,7 +421,7 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 - **A user says they can see someone else's row** — run Shortlist again (Run now): every run
   re-merges the `label!=` exclusions into each account's share filters. Check whether the share
   was edited by hand in plex.tv (Shortlist re-merges but never deletes filter conditions it
-  didn't add), and confirm the PMS is ≥ 1.43.2.10687 (older builds ignore the exclusion).
+  didn't add), and confirm Plex Media Server is ≥ 1.43.2.10687 (older builds ignore the exclusion).
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
 - **A watched title keeps getting recommended** — the watched set is read per run, so a title you
