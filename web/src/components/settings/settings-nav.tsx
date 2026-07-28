@@ -1,25 +1,41 @@
+import { useEffect, useState } from "react";
 import { useLocation } from "react-router";
 
-import {
-  activeSectionId,
-  SETTINGS_SECTIONS,
-} from "@/components/settings/sections";
+import { SETTINGS_SECTIONS } from "@/components/settings/sections";
 import { cn } from "@/lib/utils";
 
 /**
  * The Settings section list, nested under "Settings" in the MAIN sidebar. Shown only while the
  * Settings page is open, so the page itself is a single full-width column (no middle rail eating
- * horizontal space). Each entry SWITCHES the page to that one section rather than scrolling a long
- * stack — the stack made every section's own sub-headings ("Title sources", "AI enhancement") read
- * as siblings of the section above them, so "what belongs to Finding titles?" had no visible answer.
- * The `#id` anchors are kept as the selector, so existing deep links like `/settings#connections`
- * still land on the right pane.
+ * horizontal space). Jumps use native `#id` anchors — always valid because the sub-nav only renders
+ * on `/settings`, where those anchors exist — and the active item tracks the section in view via
+ * IntersectionObserver (progressive enhancement; degrades to "first section" where unavailable, e.g. jsdom).
  */
 export function SettingsSubNav() {
-  const { pathname, hash } = useLocation();
+  const { pathname } = useLocation();
   const onSettings =
     pathname === "/settings" || pathname.startsWith("/settings/");
-  const active = activeSectionId(hash);
+  const [active, setActive] = useState(SETTINGS_SECTIONS[0]?.id ?? "");
+
+  useEffect(() => {
+    if (!onSettings || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const inView = entries
+          .filter((e) => e.isIntersecting)
+          .sort(
+            (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
+          )[0];
+        if (inView) setActive(inView.target.id);
+      },
+      { rootMargin: "-15% 0px -75% 0px" },
+    );
+    const seen = SETTINGS_SECTIONS.map((s) =>
+      document.getElementById(s.id),
+    ).filter((el): el is HTMLElement => el !== null);
+    seen.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [onSettings]);
 
   if (!onSettings) return null;
 

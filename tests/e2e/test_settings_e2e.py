@@ -20,13 +20,8 @@ LOAD = 20_000
 SLOW = 60_000
 
 
-def _open_settings(page: Page, section: str = "") -> None:
-    """Open Settings, optionally on a specific section.
-
-    Settings shows ONE section at a time, selected by `#id` — so a test that drives a control has to
-    say which section it lives in. Bare `/settings` lands on the first (Connections).
-    """
-    page.goto(f"/settings#{section}" if section else "/settings")
+def _open_settings(page: Page) -> None:
+    page.goto("/settings")
     expect(page.get_by_role("heading", name="Settings", exact=True)).to_be_visible(timeout=LOAD)
 
 
@@ -94,7 +89,7 @@ class TestDefaults:
         assert settings["curator.openai_base_url"] == "http://llama.local:8080"
 
     def test_row_name_and_size_survive_a_reload(self, page: Page, app: ShortlistApp):
-        _open_settings(page, "defaults")
+        _open_settings(page)
 
         row_name = page.get_by_label("Row name template")
         row_name.fill("🍿 Tonight's picks for {top_seed}")
@@ -122,7 +117,7 @@ class TestDefaults:
 
     def test_pause_all_stops_runs_without_disabling_anyone(self, page: Page, app: ShortlistApp):
         """The Danger Zone switch must actually pause runs — it used to 422 as an unknown key."""
-        _open_settings(page, "danger")
+        _open_settings(page)
         page.get_by_role("button", name="Pause all").click()
 
         # It persisted...
@@ -158,7 +153,7 @@ class TestDangerZone:
         # 5 rows for 3 users: sarah and the cold-start canary each get one per library; mike watches only TV.
         assert len(before_collections) == 5
 
-        _open_settings(page, "danger")
+        _open_settings(page)
         # Uninstall is its own page now; the Danger Zone links to it.
         page.get_by_role("link", name="Uninstall Shortlist…").click()
         expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)

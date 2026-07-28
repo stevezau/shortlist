@@ -61,12 +61,3 @@ export const SETTINGS_SECTIONS: NavSection[] = [
     group: "System",
   },
 ];
-
-/** Which section a `#hash` selects. Unknown or absent → the first section, so a bare `/settings`
- *  (and a stale link to a section that no longer exists) always lands somewhere real. */
-export function activeSectionId(hash: string): string {
-  const wanted = hash.replace(/^#/, "");
-  return SETTINGS_SECTIONS.some((s) => s.id === wanted)
-    ? wanted
-    : (SETTINGS_SECTIONS[0]?.id ?? "");
-}
