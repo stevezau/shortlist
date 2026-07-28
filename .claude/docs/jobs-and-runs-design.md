@@ -335,3 +335,68 @@ each write, at the cost of one extra plex.tv call per account.
 The page lists kind / status / detail / when, with an empty state. Not built: filtering, a detail
 view (payload, per-attempt errors, timings), grouping, or a live-progress indicator for a running
 job. `Job.result` already holds structured output that nothing renders.
+
+---
+
+## 12. Mutation audit, 2026-07-28 — what still has no follow-up action
+
+A full walk of every state change reachable from the API/UI, asking: does the necessary Plex or
+plex.tv action actually happen, and when? Ranked by EXPOSURE first. Nothing here is fixed yet.
+
+### CRITICAL
+
+**C1 — removing someone from a SHARED row's audience does nothing at all.**
+`collections.py:307` gates the audience diff on `touching_audience = build == "per_person" and …`,
+so for a shared row `dropped_user_ids` is always empty. A shared row is ONE collection, so deletion
+cannot hide it — a filter write is the only mechanism — and no filter write is enqueued.
+`_reconcile_row_removal` would no-op anyway (`collection_reconcile.py:78-85` returns early for
+`build=="shared"` with `only_user_ids`). **The dropped accounts keep seeing the row** until the next
+run or a hand-pressed sync. Fix: drop the per-person guard and enqueue a new `filters.apply` job
+taking `{account_ids: [...]}` so it writes only those shares.
+
+### HIGH
+
+| # | Mutation | Gap |
+| --- | --- | --- |
+| H1 | Any per-person reconcile (row delete, audience shrink, rename, poster reset) | `_delivered_titles_by_user` (`collection_reconcile.py:42-52`) reads only the LATEST completed run's breakdown. Rows have their own crons, so the latest run is routinely scoped to one row — delete row B the morning after row A ran and **nothing is removed**, audited as "removed 0". For a deleted row there is no second chance. **Root cause of H2/H3/H10.** Fix: enumerate from Plex by label across `plex.sections()`, as `reconcile_row_rename_iter` already does |
+| H2 | `DELETE /api/runs` (clear history) | Deletes every `RunUser`, which silently disarms every reconcile via H1. Its docstring says "Changes nothing on Plex" |
+| H3 | Row `enabled: true→false` | No reconcile fires. Next run removes it only for users processed that run — paused/disabled/restricted users keep it for ever. §6's "Row disabled → E `row.reconcile`" is **false**: that kind exists (`jobs.py:351-382`) with **zero callers** |
+| H4 | `privacy.hide_shared_from_disabled` false→true | Settings PATCH is inert; disabled accounts keep seeing shared rows until the next run |
+| H5/H6 | Disable a user (single or bulk) | Collections are removed (`user.cleanup` ✅) but **their own filter is never written**, so an opted-out account keeps seeing public shared rows |
+| H7 | `row.name_template` changed in **Settings** | The Rows-page rename reconciles; the Settings door does not. A multi-row user gets a duplicate — new collection under the new title, old one left labelled and promoted for ever |
+| H8 | Row `media` narrowed (`both→movie`) | Stranded collections in excluded libraries are never removed, AND are re-promoted every run via the no-spec fallback (the title map's `replace(spec, library_keys=[])` keeps the media filter) |
+| H9 | Row `library_keys` narrowed | Collection in the dropped library is never removed. Flags are right (F6 fix), content is stale for ever |
+| H10 | Row `build` per_person→shared | Inherits H1: users absent from the latest run keep an orphaned per-person collection. Converge won't delete it (known user); `retired_rows` won't see it (row is now shared) |
+| H11 | ALL collection reconciles | Bare `run_in_executor` — no retry, no `Job` row, **no `_plex_busy()` check**. A Plex outage loses the work permanently; a row delete can write mid-delivery. Fixing H3's wiring fixes this for free |
+| H12 | `_sync_owner` demotes a stale OWNER→SHARED | That account had NO excludes while typed owner. `_hide_existing_rows_from_new_accounts` is gated on `added` only, so nothing fires. Rare, pure exposure |
+| H13 | User disappears from the plex.tv roster | Never deleted from the DB → stays in `known_slugs` → converge's orphan test never matches. Collection persists with `promotedToSharedHome` for ever, plus a per-run failure on their dead share token |
+
+### MED (correct, delayed to the next run) — full list in the audit
+
+Un-disable ✅ self-heals · **unpause has NO `user.restore` job** (§8 phase 7 claims otherwise — it is
+next-run-only, and never if the row's schedule is `""` or `paused_all` is on) · adding someone to a
+shared row's audience (blind until the next run) · placement/pin_top changes · mute/unmute · disable
+a shared row (owner keeps seeing it) · every content setting · **`POST /system/backups/restore`** —
+restoring a DB taken before an audience narrowed re-widens `shared_labels`, and the prune is the ONLY
+un-hiding path in the system, so the next run REMOVES the excludes that were hiding it.
+
+### LOW
+
+`DELETE /collections/{id}/poster/image` leaves `mode=="upload"`, so the old image stays on Plex for
+ever · shared→per_person leaves `shortlist__shared_*` excludes in every filter permanently · row
+deletion leaves the same cruft · `plex.url`/`plex.token` repoint has no reconcile at all.
+
+### The three root causes
+
+1. **Reconcile addressing is wrong.** Per-person collections are addressed by "the title the latest
+   run wrote" instead of by label on Plex. Fixing this alone closes H1, H2, H3, H10.
+2. **The job catalogue is half-wired.** `row.reconcile` has no callers; `filters.apply` and
+   `user.restore` don't exist. The only filter writer outside a run is `privacy.sync`, enqueued from
+   exactly two places.
+3. **Settings PATCH is inert** (`settings.py:155-177`).
+
+### Corrections to this document
+
+- §11.A said `notifications.py` doesn't read failed jobs — it does now (`_failed_jobs`).
+- §6's "Row disabled → E `row.reconcile`" is not true; nothing enqueues it.
+- §8 phase 7's "unpause = restore" is next-run-only; there is no restore job.
