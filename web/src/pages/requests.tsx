@@ -6,6 +6,7 @@ import {
   Send,
   Star,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
@@ -39,6 +40,7 @@ import {
 } from "@/lib/queries";
 import { sourceShortLabel } from "@/lib/sources";
 import type { RequestCandidate } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 function RequestsSkeleton() {
   return (
@@ -180,7 +182,9 @@ function WhyBreakdown({ why }: { why: RequestCandidate["why"] }) {
   );
 }
 
-/** The facts that let the owner judge a title at a glance: type, rating, and who wanted it. */
+/** The facts that let the owner judge a title at a glance: type, rating, and who wanted it. The
+ *  "wanted by …" list gets its own line — on a popular title it runs to three names plus "+18 more",
+ *  and inline it pushed the rating and tags off the end of a scannable row. */
 function TitleMeta({
   item,
   globalTag,
@@ -192,24 +196,37 @@ function TitleMeta({
   // show the full set of tags this title will actually get (deduped against the per-user/row tags).
   const tags = [...new Set([...(globalTag ? [globalTag] : []), ...item.tags])];
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-      <TypeBadge mediaType={item.media_type} />
-      {item.year ? <span>{item.year}</span> : null}
-      <span className="inline-flex items-center gap-1">
-        <Star
-          className="h-3.5 w-3.5 fill-current text-amber-500"
-          aria-hidden="true"
-        />
-        {item.rating.toFixed(1)}
-      </span>
-      <span title={(item.wanters ?? []).join(", ") || undefined}>
+    <div className="space-y-1 text-sm text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <TypeBadge mediaType={item.media_type} />
+        {item.year ? <span>{item.year}</span> : null}
+        <span className="inline-flex items-center gap-1">
+          <Star
+            className="h-3.5 w-3.5 fill-current text-amber-500"
+            aria-hidden="true"
+          />
+          <span className="font-medium text-foreground">
+            {item.rating.toFixed(1)}
+          </span>
+          {item.vote_count > 0 && (
+            <span className="text-xs">
+              ({item.vote_count.toLocaleString()} votes)
+            </span>
+          )}
+        </span>
+        {tags.map((tag) => (
+          <Badge key={tag} variant="secondary" className="font-normal">
+            {tag}
+          </Badge>
+        ))}
+      </div>
+      <p
+        className="flex items-start gap-1.5 text-xs"
+        title={(item.wanters ?? []).join(", ") || undefined}
+      >
+        <Users className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
         {wantedByLabel(item)}
-      </span>
-      {tags.map((tag) => (
-        <Badge key={tag} variant="secondary" className="font-normal">
-          {tag}
-        </Badge>
-      ))}
+      </p>
     </div>
   );
 }
@@ -271,17 +288,26 @@ function PendingRow({
 }) {
   const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50">
+    <label
+      className={cn(
+        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+        // Selection is what the whole toolbar acts on, so a picked card says so on the card itself —
+        // a 4px checkbox was the only difference between "will be sent" and "won't".
+        checked
+          ? "border-primary/60 bg-primary/5"
+          : "hover:border-border hover:bg-muted/50",
+      )}
+    >
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
         onChange={() => onToggle(item.id)}
-        className="mt-1 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-1.5 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <div className="min-w-0 space-y-1.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="font-medium">{item.title}</p>
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <p className="text-base font-semibold leading-tight">{item.title}</p>
           <ArrStatusBadge status={arrStatus} />
         </div>
         <TitleMeta item={item} globalTag={globalTag} />

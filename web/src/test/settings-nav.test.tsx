@@ -22,8 +22,7 @@ describe("SettingsSubNav", () => {
     }
   });
 
-  it("marks the first section active when nothing is scrolled into view yet", () => {
-    // jsdom has no IntersectionObserver, so the scroll-spy degrades to "first section active".
+  it("marks the first section active on a bare /settings", () => {
     renderAt("/settings");
     expect(
       screen
@@ -35,6 +34,29 @@ describe("SettingsSubNav", () => {
         .getByRole("link", { name: "Advanced" })
         .getAttribute("aria-current"),
     ).toBeNull();
+  });
+
+  it("marks the section named by the hash active, so deep links land on their own pane", () => {
+    renderAt("/settings#recommendations");
+    expect(
+      screen
+        .getByRole("link", { name: "Finding titles" })
+        .getAttribute("aria-current"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByRole("link", { name: "Connections" })
+        .getAttribute("aria-current"),
+    ).toBeNull();
+  });
+
+  it("falls back to the first section for a hash naming no section", () => {
+    renderAt("/settings#schedules");
+    expect(
+      screen
+        .getByRole("link", { name: "Connections" })
+        .getAttribute("aria-current"),
+    ).toBe("true");
   });
 
   it("renders nothing when NOT on the settings page (it lives in the shared sidebar)", () => {

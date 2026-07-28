@@ -1208,6 +1208,65 @@ class TestRunsApi:
         # Row B holds both people's copies; only Y's was watched while the title lived there.
         assert by_slug["rowB"]["delivered"] == 2 and by_slug["rowB"]["watched"] == 1
 
+    def test_recent_feed_shows_one_line_per_watch_not_per_delivery(self, client: TestClient):
+        """A title re-recommended nightly has one pick row PER RUN, and the watch-sync stamps the same
+        watched_at on every one of them. The feed must still show that watch ONCE — the dashboard was
+        listing "Jarrah watched Beckham · 40m ago" five times, once per delivery."""
+
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).filter_by(slug="sarah").first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            session.add_all(
+                [
+                    # Three nightly deliveries of Beckham, all crediting the one watch...
+                    *(
+                        PickRow(
+                            run_id=run.id,
+                            user_id=uid,
+                            tmdb_id=1,
+                            media_type="show",
+                            rating_key=1,
+                            rank=1,
+                            collection_slug="picked",
+                            section_key="20",
+                            library="TV",
+                            title="Beckham",
+                            created_at=now - timedelta(days=n),
+                            watched_at=now - timedelta(minutes=40),
+                        )
+                        for n in (3, 2, 1)
+                    ),
+                    # ...and a second, genuinely different title, which must still get its own line.
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=2,
+                        media_type="movie",
+                        rating_key=2,
+                        rank=1,
+                        collection_slug="picked",
+                        section_key="10",
+                        library="Movies",
+                        title="Day & Night",
+                        watched_at=now - timedelta(days=1),
+                    ),
+                ]
+            )
+            session.commit()
+
+        recent = client.get("/api/report").json()["recent"]
+        assert [(w["title"], w["row"]) for w in recent] == [
+            ("Beckham", "✨ TV Picked for You"),
+            ("Day & Night", "✨ Movies Picked for You"),
+        ]
+        # The line carries the time of the watch, not of any one delivery.
+        assert recent[0]["watched_at"].startswith((now - timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M"))
+
     def test_unknown_run_404(self, client: TestClient):
         assert client.get("/api/runs/424242").status_code == 404
 

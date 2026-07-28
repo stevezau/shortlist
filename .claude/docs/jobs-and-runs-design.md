@@ -277,3 +277,61 @@ useless); `run_pending` had three callers and no mutual exclusion; boot recovery
 **The gate earned its keep.** Every one of these was in code that passed a green suite. The review
 runs before the `dev` push, not at PR time, because a `dev` push is already live for the maintainer
 and every `:dev` user.
+
+
+---
+
+## 11. Not built — the handover list
+
+Everything above ships and runs on the maintainer's server. These do not, and are described here
+precisely enough to pick up cold.
+
+### A. Settings changes do not reconfigure anything
+
+**The gap.** Changing a setting writes it to the DB and nothing else happens until the next run.
+That is fine for most settings, but not for the ones that change what Plex should look like:
+
+| Setting | What should happen on change |
+| --- | --- |
+| `privacy.hide_shared_from_disabled` | every disabled account's filter needs rewriting → `privacy.sync` |
+| `rows.manage_shelf_order` / `rows.hub_anchor` | shelf order should be re-applied, or left alone if switched off |
+| `row.name_template` | existing collections carry a title no future run will write (the rename reconcile exists for the per-user nickname case; the global template has no equivalent) |
+| `label_prefix` (if ever exposed) | every label and every exclude in every filter changes — a migration, not a job |
+
+**The shape.** A settings PATCH compares old vs new, maps changed keys to job kinds, and enqueues
+them — the same enqueue-then-drain the disable path uses, so it still feels instant. `jobs.KINDS`
+stays an allow-list; these are enqueued server-side, never from the generic button.
+
+**The part that matters most:** a job that exhausts its retries already writes a `job.failed` Event.
+`notifications.py` does NOT yet read that table, so a failed reconfigure is silent in the UI. Add a
+`_failed_jobs` builder alongside `_recent_service_errors` and the bell surfaces it. Without that, the
+retry machinery is invisible exactly when it matters.
+
+### B. Issue #20 — managed users get no share filter
+
+`sync_user_restrictions` returns early for `remote.restricted`, so those accounts carry no
+`label!=` excludes at all. The justification (plex.tv answers 422) has never been tested, because the
+code skips before attempting.
+
+`tests/fixtures/plextv_restricted_user.json` changes the picture: a restricted account **already
+carries** `filterMovies`/`filterTelevision` (a `contentRating=` parental filter), and
+`merge_label_excludes` byte-preserves it while adding a `label!=` condition — proven by test. So
+there is somewhere to write and a safe way to write it.
+
+**Next step:** remove the early return and let it try. `FilterWriteRefused` handling already exists
+and treats a 422 on a restricted account as safe-to-skip, so the failure path is covered. Verify
+against a managed account with **no** rating profile — that is the case the issue's reporters
+describe, and the one the 2026-07-25 "sees zero collections" note did not cover.
+
+### C. F10 — filters merge against a roster snapshot read once per run
+
+`_privacy_sync_phase` reads the whole roster once, then merges each account against that snapshot.
+On a 48-account server the write loop takes minutes, so a filter edited in Plex Web meanwhile is
+clobbered. Still a merge (rule 3), just against a stale read. Fix is a re-read immediately before
+each write, at the cost of one extra plex.tv call per account.
+
+### D. Jobs page UX
+
+The page lists kind / status / detail / when, with an empty state. Not built: filtering, a detail
+view (payload, per-attempt errors, timings), grouping, or a live-progress indicator for a running
+job. `Job.result` already holds structured output that nothing renders.

@@ -95,150 +95,170 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   );
 
   return (
-    <section aria-labelledby="recs-heading" className="space-y-3">
-      <h2 id="recs-heading" className="text-lg font-semibold">
-        Finding titles
-      </h2>
-      <p className="text-sm text-muted-foreground">
-        Where Shortlist looks for titles to suggest, and how AI enhances the
-        search. This is the <strong>default every row inherits</strong> — any
-        row can override in its editor.
-      </p>
+    <section aria-labelledby="recs-heading" className="space-y-6">
+      <header className="space-y-1 border-b pb-4">
+        <h2 id="recs-heading" className="text-lg font-semibold">
+          Finding titles
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Where Shortlist looks for titles to suggest, and how AI enhances the
+          search. This is the <strong>default every row inherits</strong> — any
+          row can override in its editor.
+        </p>
+      </header>
 
-      <h3 className="pt-2 text-base font-semibold">Title sources</h3>
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <p className="text-sm text-muted-foreground">
-            Shortlist gathers from every source you enable, keeps only titles
-            already in your library, then ranks them. More sources → wider
-            reach.
-          </p>
-          {SIMPLE_SOURCES.map((source) => (
-            <div key={source.id} className="space-y-2">
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-0.5">
-                  <p className="text-sm font-medium">{source.label}</p>
-                  <p className="text-sm text-muted-foreground">{source.desc}</p>
-                </div>
-                <Switch
-                  checked={enabled.includes(source.id)}
-                  onCheckedChange={() => toggle(source.id)}
-                  aria-label={`Enable ${source.label}`}
-                />
-              </div>
-              {enabled.includes(source.id) && (
-                <InlineFix sourceId={source.id} settings={settings} />
-              )}
-            </div>
-          ))}
-          {enabled.length === 0 && (
-            // Empty isn't "no discovery" — the engine floors it to its defaults, so say so out loud
-            // (the setting must never read as fully off while a run still uses two sources). It's an
-            // advisory, not an error, so it's role="status".
-            <p role="status" className="text-sm text-warning">
-              Nothing enabled — Shortlist falls back to its defaults (TMDB
-              similar + discover). Turn on at least one source to choose your
-              own.
+      {/* Each sub-heading hugs the card it labels (tight gap inside, wide gap between), and sits a
+          clear rank below the section title — three same-weight headings under one h2 read as three
+          separate sections rather than as the parts of this one. */}
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Title sources
+        </h3>
+        <Card>
+          <CardContent className="space-y-4 pt-6">
+            <p className="text-sm text-muted-foreground">
+              Shortlist gathers from every source you enable, keeps only titles
+              already in your library, then ranks them. More sources → wider
+              reach.
             </p>
-          )}
-        </CardContent>
-      </Card>
-
-      <h3 className="pt-4 text-base font-semibold">AI enhancement</h3>
-      <div className="space-y-1.5 rounded-md border bg-muted/40 p-4 text-sm text-muted-foreground">
-        <p className="font-medium text-foreground">How AI is used</p>
-        <p>
-          The <strong>TMDB</strong> sources above use no AI — just the free TMDB
-          key — and find most titles.
-        </p>
-        <p>
-          <strong>AI web search</strong> below is optional but proven valuable:
-          it searches the web for acclaimed titles TMDB misses, using your AI
-          provider.
-        </p>
-        <p>
-          Prefer no AI at all? Leave the AI provider set to{" "}
-          <strong>None</strong> in{" "}
-          <Link to="/settings#connections" className="font-medium underline">
-            Connections
-          </Link>{" "}
-          — you still get full rows, ranked by score with plain reasons.
-        </p>
+            {SIMPLE_SOURCES.map((source) => (
+              <div key={source.id} className="space-y-2">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-medium">{source.label}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {source.desc}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={enabled.includes(source.id)}
+                    onCheckedChange={() => toggle(source.id)}
+                    aria-label={`Enable ${source.label}`}
+                  />
+                </div>
+                {enabled.includes(source.id) && (
+                  <InlineFix sourceId={source.id} settings={settings} />
+                )}
+              </div>
+            ))}
+            {enabled.length === 0 && (
+              // Empty isn't "no discovery" — the engine floors it to its defaults, so say so out loud
+              // (the setting must never read as fully off while a run still uses two sources). It's an
+              // advisory, not an error, so it's role="status".
+              <p role="status" className="text-sm text-warning">
+                Nothing enabled — Shortlist falls back to its defaults (TMDB
+                similar + discover). Turn on at least one source to choose your
+                own.
+              </p>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
-      <AiWebSearchCard
-        settings={settings}
-        enabled={enabled.includes("llm_web")}
-        onToggle={() => toggle("llm_web")}
-        backend={searchBackend}
-        onBackendChange={setSearchBackend}
-      />
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          AI enhancement
+        </h3>
+        <div className="space-y-1.5 rounded-md border bg-muted/40 p-4 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground">How AI is used</p>
+          <p>
+            The <strong>TMDB</strong> sources above use no AI — just the free
+            TMDB key — and find most titles.
+          </p>
+          <p>
+            <strong>AI web search</strong> below is optional but proven
+            valuable: it searches the web for acclaimed titles TMDB misses,
+            using your AI provider.
+          </p>
+          <p>
+            Prefer no AI at all? Leave the AI provider set to{" "}
+            <strong>None</strong> in{" "}
+            <Link to="/settings#connections" className="font-medium underline">
+              Connections
+            </Link>{" "}
+            — you still get full rows, ranked by score with plain reasons.
+          </p>
+        </div>
 
-      <h3 className="pt-4 text-base font-semibold">Row behavior</h3>
-      <Card>
-        <CardContent className="space-y-4 pt-6">
-          <div className="space-y-2">
-            <Label htmlFor="watched-pct">Already-watched titles</Label>
-            <p className="text-sm text-muted-foreground">
-              How much of a row may be things a person has already finished. The
-              default every row inherits; any row can choose its own.
-            </p>
-            <WatchedSlider
-              id="watched-pct"
-              value={watchedPct}
-              onChange={setWatchedPct}
-            />
-          </div>
-          <div className="space-y-2 border-t pt-4">
-            <Label htmlFor="freshness">Freshness</Label>
-            <p className="text-sm text-muted-foreground">
-              How often a row refreshes — not a nightly reshuffle. Most nights a
-              row stays exactly as it is (nothing rewritten to Plex); on its
-              refresh night the strongest picks stay and the weakest are swapped
-              for new ones. Lower = stickier and cheaper; higher = fresher. The
-              default every row inherits; any row can choose its own.
-            </p>
-            <FreshnessSlider
-              id="freshness"
-              value={freshness}
-              onChange={setFreshness}
-            />
-          </div>
-          <div className="space-y-2 border-t pt-4">
-            <Label htmlFor="recent-count">Recent watches to search</Label>
-            <p className="text-sm text-muted-foreground">
-              How many of a person’s most recent watches the AI web-search
-              source looks up — one search each, “what to watch if you liked X.”
-              Results are cached for two weeks and shared across people, so a
-              popular title is searched once for the whole server. Fewer =
-              tighter and cheaper. Only affects the AI web-search source; any
-              row — and any person on a row — can set their own.
-            </p>
-            <Input
-              id="recent-count"
-              type="number"
-              min={1}
-              max={25}
-              value={recentCount}
-              onChange={(e) =>
-                setRecentCount(
-                  Math.max(1, Math.min(25, Number(e.target.value) || 1)),
-                )
-              }
-              className="w-28"
-            />
-          </div>
-          <div className="pt-1">
-            <SaveStatus
-              isPending={save.isPending}
-              isError={save.isError}
-              error={save.error}
-              saved={save.saved}
-              onRetry={save.retry}
-            />
-          </div>
-        </CardContent>
-      </Card>
+        <AiWebSearchCard
+          settings={settings}
+          enabled={enabled.includes("llm_web")}
+          onToggle={() => toggle("llm_web")}
+          backend={searchBackend}
+          onBackendChange={setSearchBackend}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Row behavior
+        </h3>
+        <Card>
+          <CardContent className="space-y-4 pt-6">
+            <div className="space-y-2">
+              <Label htmlFor="watched-pct">Already-watched titles</Label>
+              <p className="text-sm text-muted-foreground">
+                How much of a row may be things a person has already finished.
+                The default every row inherits; any row can choose its own.
+              </p>
+              <WatchedSlider
+                id="watched-pct"
+                value={watchedPct}
+                onChange={setWatchedPct}
+              />
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              <Label htmlFor="freshness">Freshness</Label>
+              <p className="text-sm text-muted-foreground">
+                How often a row refreshes — not a nightly reshuffle. Most nights
+                a row stays exactly as it is (nothing rewritten to Plex); on its
+                refresh night the strongest picks stay and the weakest are
+                swapped for new ones. Lower = stickier and cheaper; higher =
+                fresher. The default every row inherits; any row can choose its
+                own.
+              </p>
+              <FreshnessSlider
+                id="freshness"
+                value={freshness}
+                onChange={setFreshness}
+              />
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              <Label htmlFor="recent-count">Recent watches to search</Label>
+              <p className="text-sm text-muted-foreground">
+                How many of a person’s most recent watches the AI web-search
+                source looks up — one search each, “what to watch if you liked
+                X.” Results are cached for two weeks and shared across people,
+                so a popular title is searched once for the whole server. Fewer
+                = tighter and cheaper. Only affects the AI web-search source;
+                any row — and any person on a row — can set their own.
+              </p>
+              <Input
+                id="recent-count"
+                type="number"
+                min={1}
+                max={25}
+                value={recentCount}
+                onChange={(e) =>
+                  setRecentCount(
+                    Math.max(1, Math.min(25, Number(e.target.value) || 1)),
+                  )
+                }
+                className="w-28"
+              />
+            </div>
+            <div className="pt-1">
+              <SaveStatus
+                isPending={save.isPending}
+                isError={save.isError}
+                error={save.error}
+                saved={save.saved}
+                onRetry={save.retry}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </section>
   );
 }

@@ -200,6 +200,22 @@ async def effectiveness(request: Request) -> dict:
             },
         )
 
+        # One line per (person, title), like every other figure here — NOT one per pick row. A title
+        # re-recommended over several runs has one pick row per run, and the watch-sync stamps the same
+        # watched_at on every one of them, so the raw feed repeated a single watch once per delivery
+        # ("Jarrah watched Beckham" five times). Credit the newest delivery (its row/library label is
+        # the current one) at the latest time that person watched it.
+        latest = (
+            session.query(
+                func.max(PickRow.id).label("pick_id"),
+                func.max(PickRow.watched_at).label("watched"),
+            )
+            .filter(PickRow.watched_at.isnot(None))
+            .group_by(PickRow.user_id, PickRow.tmdb_id, PickRow.media_type)
+            .order_by(func.max(PickRow.watched_at).desc())
+            .limit(20)
+            .subquery()
+        )
         recent = [
             {
                 "username": users[p.user_id].username if p.user_id in users else "unknown",
@@ -209,12 +225,11 @@ async def effectiveness(request: Request) -> dict:
                 "row": row_label(p.collection_slug, p.library),
                 "library": p.library,
                 "seed_title": p.seed_title or "",
-                "watched_at": iso_utc(p.watched_at),
+                "watched_at": iso_utc(watched),
             }
-            for p in session.query(PickRow)
-            .filter(PickRow.watched_at.isnot(None))
-            .order_by(PickRow.watched_at.desc())
-            .limit(20)
+            for p, watched in session.query(PickRow, latest.c.watched)
+            .join(latest, PickRow.id == latest.c.pick_id)
+            .order_by(latest.c.watched.desc())
             .all()
         ]
 
