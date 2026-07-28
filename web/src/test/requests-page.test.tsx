@@ -329,7 +329,7 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     await screen.findByText("High Rated");
-    await userEvent.click(screen.getByRole("button", { name: "Top rated" }));
+    await userEvent.selectOptions(screen.getByLabelText("Sort"), "Top rated");
     const high = screen.getByText("High Rated");
     const low = screen.getByText("Low Rated");
     // High is rendered before Low once sorted by rating.
@@ -347,7 +347,7 @@ describe("RequestsPage", () => {
     await screen.findByText("Acclaimed");
     expect(screen.getByText("Middling")).toBeTruthy();
     // Raise the floor to 8+ — the 5.2 title drops out, the 9.1 stays.
-    await userEvent.click(screen.getByRole("button", { name: "8+" }));
+    await userEvent.selectOptions(screen.getByLabelText("Rating"), "8+");
     expect(screen.getByText("Acclaimed")).toBeTruthy();
     expect(screen.queryByText("Middling")).toBeNull();
   });
@@ -366,9 +366,29 @@ describe("RequestsPage", () => {
     await screen.findByText("Well Attested");
     expect(screen.getByText("Barely Rated")).toBeTruthy();
     // A high score on 12 votes is noise — the 500+ floor drops it.
-    await userEvent.click(screen.getByRole("button", { name: "500+" }));
+    await userEvent.selectOptions(screen.getByLabelText("Votes"), "500+");
     expect(screen.getByText("Well Attested")).toBeTruthy();
     expect(screen.queryByText("Barely Rated")).toBeNull();
+  });
+
+  it("says the filters emptied the queue rather than showing a blank list", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, tmdb_id: 100, title: "Middling", rating: 5.2 }),
+      candidate({ id: 2, tmdb_id: 200, title: "Also Middling", rating: 5.4 }),
+    ]);
+    renderPage();
+    await screen.findByText("Middling");
+    await userEvent.selectOptions(screen.getByLabelText("Rating"), "9+");
+    expect(screen.queryByText("Middling")).toBeNull();
+    // Not a blank panel: it says how many are waiting and how to get them back.
+    expect(
+      screen.getByText(/No waiting title clears these filters/i),
+    ).toBeTruthy();
+    // ...and one click restores them.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear filters" }),
+    );
+    expect(screen.getByText("Middling")).toBeTruthy();
   });
 
   it("offers no library split when the queue is a single media type", async () => {

@@ -464,23 +464,58 @@ const SORT_OPTIONS: { value: RequestSort; label: string }[] = [
 ];
 
 /** A rating floor to hide weaker titles. Every queued title already cleared the request min-rating
- *  gate, so the useful thresholds sit above it — these narrow a crowded inbox to the strongest.
- *  Values are strings because the shared Segmented control keys on string values. */
+ *  gate, so the useful thresholds sit above it — these narrow a crowded inbox to the strongest. */
 const RATING_OPTIONS: { value: string; label: string }[] = [
-  { value: "0", label: "Any rating" },
+  { value: "0", label: "Any" },
   { value: "7", label: "7+" },
   { value: "8", label: "8+" },
   { value: "9", label: "9+" },
 ];
 
 /** A vote-count floor — a high rating on a handful of votes is noise; this keeps only well-attested
- *  titles. Values are strings for the shared Segmented control. */
+ *  titles. */
 const VOTES_OPTIONS: { value: string; label: string }[] = [
-  { value: "0", label: "Any votes" },
+  { value: "0", label: "Any" },
   { value: "100", label: "100+" },
   { value: "500", label: "500+" },
   { value: "1000", label: "1k+" },
 ];
+
+/**
+ * One refinement control in the filter bar. These are deliberately NOT `Segmented`: sort + rating +
+ * votes as chip groups put eleven buttons next to the Waiting/Sent tabs, four of them highlighted
+ * (their own defaults), so the tab strip — the only control that changes what you're looking at —
+ * was indistinguishable from a rating floor. A labelled dropdown is one quiet control per choice,
+ * and a default reads as neutral.
+ */
+function FilterSelect<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="rounded-md border bg-background px-2 py-1 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 /** Order a list by the chosen sort. `recent` = newest state change first, falling back to queue order
  *  (id) for items that were queued but never sent, so a sent log reads newest-first and a waiting
@@ -687,7 +722,10 @@ export function RequestsPage() {
                   <div className="space-y-6">
                     {!requestsEnabled && <RequestsOffBanner />}
 
-                    <div className="flex flex-wrap items-center justify-between gap-3">
+                    {/* Two levels, not one row of fifteen chips: the tab strip decides WHAT you are
+                        looking at and keeps the primary highlight; the refinements below it narrow
+                        that list and stay quiet. */}
+                    <div className="space-y-3">
                       <Segmented
                         value={active}
                         options={tabs}
@@ -701,50 +739,65 @@ export function RequestsPage() {
                         }}
                         ariaLabel="Which requests to show"
                       />
-                      <div className="flex flex-wrap items-center gap-2">
-                        {showMediaFilter && (
-                          <Segmented
-                            value={media}
-                            onChange={setMedia}
-                            ariaLabel="Filter by library"
-                            options={[
-                              {
-                                value: "all",
-                                label: `All (${activeFull.length})`,
-                              },
-                              {
-                                value: "movie",
-                                label: `Movies (${movieCount})`,
-                              },
-                              { value: "show", label: `Shows (${showCount})` },
-                            ]}
-                          />
-                        )}
-                        {activeFull.length > 1 && (
-                          <Segmented
-                            value={sort}
-                            onChange={setSort}
-                            ariaLabel="Sort requests"
-                            options={SORT_OPTIONS}
-                          />
-                        )}
-                        {activeFull.length > 1 && (
-                          <Segmented
-                            value={minRating}
-                            onChange={setMinRating}
-                            ariaLabel="Minimum rating"
-                            options={RATING_OPTIONS}
-                          />
-                        )}
-                        {activeFull.length > 1 && (
-                          <Segmented
-                            value={minVotes}
-                            onChange={setMinVotes}
-                            ariaLabel="Minimum vote count"
-                            options={VOTES_OPTIONS}
-                          />
-                        )}
-                      </div>
+                      {(showMediaFilter || activeFull.length > 1) && (
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b pb-3">
+                          {showMediaFilter && (
+                            <Segmented
+                              value={media}
+                              onChange={setMedia}
+                              ariaLabel="Filter by library"
+                              options={[
+                                {
+                                  value: "all",
+                                  label: `All (${activeFull.length})`,
+                                },
+                                {
+                                  value: "movie",
+                                  label: `Movies (${movieCount})`,
+                                },
+                                {
+                                  value: "show",
+                                  label: `Shows (${showCount})`,
+                                },
+                              ]}
+                            />
+                          )}
+                          {activeFull.length > 1 && (
+                            <>
+                              <FilterSelect
+                                label="Sort"
+                                value={sort}
+                                onChange={setSort}
+                                options={SORT_OPTIONS}
+                              />
+                              <FilterSelect
+                                label="Rating"
+                                value={minRating}
+                                onChange={setMinRating}
+                                options={RATING_OPTIONS}
+                              />
+                              <FilterSelect
+                                label="Votes"
+                                value={minVotes}
+                                onChange={setMinVotes}
+                                options={VOTES_OPTIONS}
+                              />
+                              {(minRating !== "0" || minVotes !== "0") && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setMinRating("0");
+                                    setMinVotes("0");
+                                  }}
+                                  className="text-xs text-primary underline-offset-4 hover:underline focus-visible:underline"
+                                >
+                                  Clear filters
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {active === "waiting" &&
@@ -847,19 +900,31 @@ export function RequestsPage() {
                             </p>
                           )}
 
-                          <div className="space-y-2">
-                            {pendingShown.map((item) => (
-                              <PendingRow
-                                key={item.id}
-                                item={item}
-                                checked={selected.has(item.id)}
-                                onToggle={toggle}
-                                globalTag={globalTag}
-                                disabled={!requestsEnabled}
-                                arrStatus={arrStatusQuery.data?.[item.id]}
-                              />
-                            ))}
-                          </div>
+                          {pendingShown.length > 0 ? (
+                            <div className="space-y-2">
+                              {pendingShown.map((item) => (
+                                <PendingRow
+                                  key={item.id}
+                                  item={item}
+                                  checked={selected.has(item.id)}
+                                  onToggle={toggle}
+                                  globalTag={globalTag}
+                                  disabled={!requestsEnabled}
+                                  arrStatus={arrStatusQuery.data?.[item.id]}
+                                />
+                              ))}
+                            </div>
+                          ) : (
+                            // Filtered down to nothing — say which filters did it, or the queue
+                            // reads as empty when {pending.length} titles are a click away.
+                            <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                              No waiting title clears these filters.{" "}
+                              {pending.length}{" "}
+                              {pending.length === 1 ? "is" : "are"} waiting in
+                              total — lower the rating or vote floor to see
+                              them.
+                            </p>
+                          )}
                         </section>
                       ) : (
                         <EmptyState

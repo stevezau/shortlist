@@ -81,7 +81,8 @@ class TestUninstall:
         assert state.users[201].filters["filterMovies"] == "label!=Shortlist_canary,Shortlist_mike"
 
         # Uninstall is its own page now (with a live per-step log), reached from the Danger Zone link.
-        page.goto("/settings")
+        # Settings shows one section at a time; the Uninstall link lives in the Danger Zone.
+        page.goto("/settings#danger")
         page.get_by_role("link", name="Uninstall Shortlist…").click()
         expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)
 
@@ -115,7 +116,8 @@ class TestUninstall:
         )
         state.collections[9999] = foreign
 
-        page.goto("/settings")
+        # Settings shows one section at a time; the Uninstall link lives in the Danger Zone.
+        page.goto("/settings#danger")
         page.get_by_role("link", name="Uninstall Shortlist…").click()
         expect(page.get_by_role("heading", name="Uninstall Shortlist")).to_be_visible(timeout=LOAD)
 

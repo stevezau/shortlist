@@ -46,11 +46,12 @@
   roster from plex.tv + Tautulli). Both show when they last synced and when the next scheduled
   run fires. Clearing run history is here too — it clears the browsable history but preserves
   your dashboard metrics (delivered/watched/hit rate survive indefinitely).
-- **Settings** — organised into a grouped sidebar sub-nav so it doesn't read as one long wall:
-  **Connect** (Connections), **Rows** (Finding titles, Row defaults, Row
-  placement), **Add-ons** (Requests), and **System** (Advanced, API access, Danger Zone). Every
-  connection is re-testable in place. (Each row's run schedule lives in that row's editor, not
-  here — see Schedules below.)
+- **Settings** — a grouped sidebar sub-nav, showing **one section at a time** so everything on
+  screen belongs to the section you picked: **Connect** (Connections), **Rows** (Finding titles,
+  Row defaults, Row placement), **Add-ons** (Requests), and **System** (Advanced, API access,
+  Danger Zone). Each section has its own address (`/settings#defaults`), so a link to one lands
+  straight on it. Every connection is re-testable in place. (Each row's run schedule lives in that
+  row's editor, not here — see Schedules below.)
 
 ## Schedules
 
