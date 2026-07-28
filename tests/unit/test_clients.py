@@ -268,6 +268,36 @@ class TestTmdbClient:
         assert TmdbClient("k").tvdb_id(95396, MediaType.SHOW) is None
 
     @respx.mock
+    def test_poster_path_reads_the_movie_detail_endpoint(self):
+        respx.get("https://api.themoviedb.org/3/movie/603").mock(
+            return_value=httpx.Response(200, json={"id": 603, "poster_path": "/matrix.jpg"})
+        )
+        assert TmdbClient("k").poster_path(603, MediaType.MOVIE) == "/matrix.jpg"
+
+    @respx.mock
+    def test_poster_path_reads_the_tv_detail_endpoint(self):
+        # The movie/tv split is the whole branch in this method — a show must not be asked for at
+        # /movie/{id}, which is a DIFFERENT title (ids are unique only within their namespace).
+        respx.get("https://api.themoviedb.org/3/tv/95396").mock(
+            return_value=httpx.Response(200, json={"id": 95396, "poster_path": "/severance.jpg"})
+        )
+        assert TmdbClient("k").poster_path(95396, MediaType.SHOW) == "/severance.jpg"
+
+    @respx.mock
+    def test_poster_path_is_empty_when_tmdb_has_no_artwork(self):
+        # TMDB returns the key present but null for a title with no poster. This MUST become "" and
+        # never None: it is written to a NOT NULL column, so a None would fail the whole persist.
+        respx.get("https://api.themoviedb.org/3/movie/603").mock(
+            return_value=httpx.Response(200, json={"id": 603, "poster_path": None})
+        )
+        assert TmdbClient("k").poster_path(603, MediaType.MOVIE) == ""
+
+    @respx.mock
+    def test_poster_path_is_empty_when_the_title_is_unknown(self):
+        respx.get("https://api.themoviedb.org/3/movie/999999").mock(return_value=httpx.Response(404, json={}))
+        assert TmdbClient("k").poster_path(999999, MediaType.MOVIE) == ""
+
+    @respx.mock
     def test_cache_prevents_second_fetch(self):
         route = respx.get("https://api.themoviedb.org/3/movie/1/recommendations").mock(
             return_value=httpx.Response(200, json={"results": []})

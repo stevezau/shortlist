@@ -94,6 +94,11 @@ class FakeTmdb:
     def imdb_id(self, tmdb_id: int, media_type) -> str | None:
         return None
 
+    def poster_path(self, tmdb_id: int, media_type) -> str:
+        # Must exist: the engine's poster backfill runs inside a bare `except Exception`, so a stub
+        # missing this method turns into a swallowed AttributeError rather than a failing test.
+        return f"/poster-{tmdb_id}.jpg"
+
 
 def _fake_requests_ctx(cfg: RequestConfig | None):
     """Stand in for RunService.build_requests_context() -> (RequestConfig | None, TmdbClient)."""
