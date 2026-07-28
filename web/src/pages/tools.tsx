@@ -52,25 +52,23 @@ function CronPicker({
   const [custom, setCustom] = useState(!matchesPreset && value !== "");
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">Frequency:</span>
-        <Segmented
-          value={custom ? "__custom__" : value}
-          onChange={(v) => {
-            if (v === "__custom__") {
-              setCustom(true);
-            } else {
-              setCustom(false);
-              onChange(v);
-            }
-          }}
-          options={[
-            ...SYNC_PRESETS.map((p) => ({ value: p.value, label: p.label })),
-            { value: "__custom__", label: "Custom" },
-          ]}
-        />
-      </div>
+    <div className="flex flex-wrap items-start gap-2">
+      <span className="pt-1.5 text-xs text-muted-foreground">Frequency:</span>
+      <Segmented
+        value={custom ? "__custom__" : value}
+        onChange={(v) => {
+          if (v === "__custom__") {
+            setCustom(true);
+          } else {
+            setCustom(false);
+            onChange(v);
+          }
+        }}
+        options={[
+          ...SYNC_PRESETS.map((p) => ({ value: p.value, label: p.label })),
+          { value: "__custom__", label: "Custom" },
+        ]}
+      />
       {custom && <CronInput value={value} onChange={onChange} />}
     </div>
   );
@@ -215,7 +213,7 @@ function SyncHistoryCard({
         )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           <Button
             variant="outline"
             onClick={() => sync.mutate()}
@@ -331,7 +329,7 @@ function SyncUsersCard({
         )}
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-start gap-3">
           <Button
             variant="outline"
             onClick={() => sync.mutate()}
@@ -434,32 +432,22 @@ function BackupsCard() {
       <CardContent className="space-y-4">
         <div className="space-y-1.5 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
           <p>
-            <span className="font-medium text-foreground">What’s in one:</span>{" "}
-            your settings and connections, your rows and who can see them, every
-            person Shortlist knows about, run history and the picks each run
-            made, the request inbox — and the snapshot of each user’s original
-            Plex share filters.
+            <span className="font-medium text-foreground">What:</span> settings,
+            rows, people, run history — and each user’s original Plex share
+            filters.
           </p>
           <p>
-            <span className="font-medium text-foreground">Why it matters:</span>{" "}
-            those share-filter snapshots are the only record of how your
-            server’s sharing looked before Shortlist touched it. Uninstall puts
-            people back using them, so losing the database means losing the way
-            back. Everything else is a rebuild-from-scratch: reconnecting Plex,
-            re-picking rows, and starting run history over.
+            <span className="font-medium text-foreground">Why:</span> those
+            share filters are the only record of how sharing looked before
+            Shortlist. Uninstall restores from them.
           </p>
           <p>
-            Backups live beside the database in{" "}
-            <span className="font-mono text-xs">/config/backups</span>, so they
-            survive removing and recreating the container — but not losing the
-            volume. Copy them off the host if that’s a risk you care about.{" "}
-            <span className="font-mono text-xs">/config/secret.key</span> is{" "}
-            <span className="font-medium text-foreground">not</span> in a
-            backup: restoring without that same file leaves your saved Plex and
-            AI keys unreadable, so keep a copy of it too.
+            Saved to <span className="font-mono text-xs">/config/backups</span>.{" "}
+            <span className="font-mono text-xs">secret.key</span> isn’t included
+            — keep a copy, or a restored backup can’t read your saved keys.
           </p>
         </div>
-        <div className="flex flex-wrap items-end gap-4">
+        <div className="flex flex-wrap items-start gap-4">
           <CronPicker
             value={backupCron}
             onChange={(cron) =>

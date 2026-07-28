@@ -12,6 +12,13 @@ describe("CronInput", () => {
     expect(screen.getByText(/plain English/i)).toBeInTheDocument();
   });
 
+  it("keeps explaining itself when a schedule is already set", () => {
+    // The box normally opens with a cron in it, so a hint shown only on an empty field is a hint
+    // nobody ever sees — which is exactly how it shipped the first time.
+    render(<CronInput value="17 */4 * * *" onChange={vi.fn()} />);
+    expect(screen.getByText(/plain English/i)).toBeInTheDocument();
+  });
+
   it("converts plain English and says what will happen", async () => {
     const onChange = vi.fn();
     const user = userEvent.setup();
