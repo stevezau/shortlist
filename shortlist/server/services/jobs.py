@@ -307,3 +307,65 @@ def _user_cleanup(state, payload: dict) -> dict:
         "dry_run": dry_run,
         "detail": f"{'Would remove' if dry_run else 'Removed'} {len(removed)} row(s) for {slug}",
     }
+
+
+@handler("user.hide")
+def _user_hide(state, payload: dict) -> dict:
+    """Take a paused user's rows off every surface, keeping the collections.
+
+    Pause is not delete: the collection and its label stay, so every other account's `label!=`
+    exclude still matches it and unpausing is a re-promote rather than a full LLM rebuild. Only ever
+    removes visibility, so it is safe to replay after a crash.
+    """
+    slug = payload["slug"]
+    ctx = state.run_service.build_context(dry_run=False)
+    hidden: list[str] = []
+    label = f"{ctx.config.label_prefix}_{slug}"
+    for section in ctx.plex.sections():
+        for collection in ctx.plex.find_owned_collections(section, label):
+            if ctx.plex.demote_all(collection):
+                hidden.append(collection.title)
+    with state.sessions() as session:
+        session.add(
+            Event(
+                scope="user.pause.hide",
+                level="info",
+                message={"user": slug, "hidden": len(hidden), "at": datetime.now(UTC).isoformat()},
+            )
+        )
+        session.commit()
+    return {"hidden": hidden, "detail": f"Hid {len(hidden)} row(s) for {slug} while paused"}
+
+
+@handler("row.reconcile")
+def _row_reconcile(state, payload: dict) -> dict:
+    """Remove a row's collections from Plex after it was deleted, disabled, or lost an audience.
+
+    Durable for the same reason `user.cleanup` is: the previous fire-and-forget call had no retry, so
+    a Plex outage at the moment of the edit left the collections on the server with nothing to ever
+    revisit them. `_reconcile_row_removal` is removal-only and re-reads the server each time, so
+    replaying it after a crash is safe.
+    """
+    from shortlist.server.services.collection_reconcile import _reconcile_row_removal
+
+    slug = payload["slug"]
+    build = payload.get("build", "per_person")
+    only_user_ids = set(payload["only_user_ids"]) if payload.get("only_user_ids") is not None else None
+    removed: list[str] = []
+    _reconcile_row_removal(state, slug=slug, build=build, dry_run=False, removed=removed, only_user_ids=only_user_ids)
+    with state.sessions() as session:
+        session.add(
+            Event(
+                scope=payload.get("scope", "row.reconcile"),
+                level="warn",
+                message={
+                    "slug": slug,
+                    "removed": removed,
+                    "dry_run": False,
+                    "error": None,
+                    "at": datetime.now(UTC).isoformat(),
+                },
+            )
+        )
+        session.commit()
+    return {"removed": removed, "detail": f"Removed {len(removed)} collection(s) for row {slug}"}

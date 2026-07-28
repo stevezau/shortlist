@@ -73,3 +73,31 @@ def test_a_finished_run_is_left_exactly_as_it_was(tmp_path: Path):
 
     assert _run(second, done).status == "ok"
     assert _run(second, failed).status == "error"
+
+
+def test_a_crash_queues_a_consistency_pass_so_it_does_not_wait_for_the_schedule(tmp_path: Path):
+    """A run that died left rows delivered but UNPROMOTED — safe, but nobody sees them and nothing
+    would put the server right until the next schedule, potentially a day away."""
+    from shortlist.server.db.models import Job
+
+    first = _boot(tmp_path)
+    _seed_run(first, "running")
+
+    second = _boot(tmp_path)
+
+    with second.app.state.sessions() as session:
+        assert [j.kind for j in session.query(Job).all()] == ["privacy.sync"]
+
+
+def test_a_clean_boot_queues_nothing(tmp_path: Path):
+    """Otherwise every restart would fire a server-wide share-filter pass for no reason — minutes of
+    throttled plex.tv writes on a container that simply restarted."""
+    from shortlist.server.db.models import Job
+
+    first = _boot(tmp_path)
+    _seed_run(first, "ok")
+
+    second = _boot(tmp_path)
+
+    with second.app.state.sessions() as session:
+        assert session.query(Job).count() == 0

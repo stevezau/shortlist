@@ -1977,12 +1977,21 @@ class TestConverge:
         hub.promotedToSharedHome = True
         return collection
 
-    def _run(self, ctx: EngineContext, collections: list, promoted: set[int], owner_slug: str = "steve"):
+    def _run(
+        self,
+        ctx: EngineContext,
+        collections: list,
+        promoted: set[int],
+        owner_slug: str = "steve",
+        paused: set[str] | None = None,
+    ):
         from shortlist.engine.models import RunReport
         from shortlist.engine.pipeline import _converge_phase
 
         ctx.owner_slug = owner_slug
+        ctx.paused_slugs = paused or set()
         ctx.plex.sections.return_value[0].collections.return_value = collections
+        ctx.plex.demote_all.side_effect = lambda c: PlexClient.demote_all(ctx.plex, c)
         # Exercise the REAL demote, so the test covers the read-then-write contract, not a stub.
         ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
         ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
@@ -2086,6 +2095,40 @@ class TestConverge:
         report = self._run(ctx, [shared], promoted=set())
 
         assert report.converged == ["Shortlist__shared_trending"]
+
+    def test_a_paused_users_row_comes_off_every_surface(self, ctx: EngineContext):
+        """Pause means "stop showing it". A paused person is absent from every run by definition, so
+        converge is the only pass that can act on them — without this their row stays up for ever."""
+        paused = self._collection(1, "Shortlist_sarah")
+        report = self._run(ctx, [paused], promoted=set(), paused={"sarah"})
+
+        paused.visibility.return_value.updateVisibility.assert_called_once_with(
+            recommended=False, home=False, shared=False
+        )
+        assert report.converged == ["Shortlist_sarah"]
+
+    def test_an_active_users_row_is_not_stripped_by_the_pause_path(self, ctx: EngineContext):
+        """Only the paused person's own label. Stripping an active user's row off every surface would
+        make their row vanish for no reason."""
+        active = self._collection(1, "Shortlist_mike")
+        self._run(ctx, [active], promoted=set(), paused={"sarah"})
+
+        # Not the all-surfaces call — at most the own-home demote, since it is not the owner's label.
+        assert active.visibility.return_value.updateVisibility.call_args.kwargs != {
+            "recommended": False,
+            "home": False,
+            "shared": False,
+        }
+
+    def test_a_paused_row_already_hidden_is_not_rewritten(self, ctx: EngineContext):
+        """Idempotence: converge runs every night over every collection."""
+        settled = self._collection(1, "Shortlist_sarah", on_owner_home=False)
+        settled.visibility.return_value.promotedToRecommended = False
+        settled.visibility.return_value.promotedToSharedHome = False
+        report = self._run(ctx, [settled], promoted=set(), paused={"sarah"})
+
+        settled.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == []
 
     def test_a_pms_failure_never_fails_the_run(self, ctx: EngineContext):
         """Converge runs after the real work and only ever removes visibility — a wobble here must

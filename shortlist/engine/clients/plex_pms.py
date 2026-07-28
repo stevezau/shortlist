@@ -435,6 +435,28 @@ class PlexClient:
         """
         return bool(getattr(collection.visibility(), "promotedToOwnHome", False))
 
+    def demote_all(self, collection: Collection) -> bool:
+        """Take a collection off EVERY surface, leaving it (and its label) in place.
+
+        This is what "pause" means: the person stops seeing their row, but the collection and its
+        label survive, so every other account's `label!=` exclude still matches it and unpausing is
+        a re-promote rather than a rebuild. Deleting would cost a full LLM re-curation to undo.
+
+        Monotonically private — it only ever removes visibility — so it needs no privacy gate.
+        Idempotent: reads first and writes nothing when the collection already claims nothing.
+        """
+        hub = collection.visibility()
+        claims = (
+            bool(getattr(hub, "promotedToRecommended", False)),
+            bool(getattr(hub, "promotedToOwnHome", False)),
+            bool(getattr(hub, "promotedToSharedHome", False)),
+        )
+        if not any(claims):
+            return False
+        hub.updateVisibility(recommended=False, home=False, shared=False)
+        logger.info("{}: taken off every surface (paused)", collection.title)
+        return True
+
     def demote_own_home(self, collection: Collection) -> bool:
         """Take a collection off the SERVER OWNER's Home shelf, leaving its other surfaces alone.
 

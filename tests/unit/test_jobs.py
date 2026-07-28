@@ -173,3 +173,54 @@ class TestPlexContention:
         idle = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(is_running=lambda: False))
 
         assert drain(idle) == 1
+
+
+class TestHandlers:
+    """The registered job kinds — what a real server actually queues.
+
+    All three are removal-only writes to Plex, which is what makes them safe to replay after a crash
+    and why they must be durable: each used to be fire-and-forget, so a Plex outage at the moment of
+    the edit lost the work with nothing left to revisit it.
+    """
+
+    def test_every_registered_kind_is_reachable(self):
+        for kind in ("sync.check", "privacy.sync", "user.cleanup", "user.hide", "row.reconcile"):
+            assert kind in jobs._HANDLERS, kind
+
+    def test_only_safe_kinds_are_triggerable_from_the_ui(self):
+        """`user.cleanup`, `user.hide` and `row.reconcile` all take a target and DELETE or hide that
+        target's rows. A generic "run a job" button must never be able to aim them."""
+        assert set(jobs.KINDS) == {"sync.check", "privacy.sync"}
+        for destructive in ("user.cleanup", "user.hide", "row.reconcile"):
+            assert destructive not in jobs.KINDS, destructive
+
+    def test_hiding_a_paused_user_takes_every_row_off_every_surface(self, sessions):
+        """Pause keeps the collection and its label — so everyone else's exclude still matches, and
+        unpausing is a re-promote rather than a full LLM rebuild."""
+        collection = SimpleNamespace(title="✨ Movies Picked for You")
+        plex = SimpleNamespace(
+            sections=lambda: ["movies"],
+            find_owned_collections=lambda section, label: [collection] if label == "shortlist_sarah" else [],
+            demote_all=lambda c: True,
+        )
+        ctx = SimpleNamespace(plex=plex, config=SimpleNamespace(label_prefix="shortlist"))
+        state = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+
+        result = jobs._HANDLERS["user.hide"](state, {"slug": "sarah"})
+
+        assert result["hidden"] == ["✨ Movies Picked for You"]
+        with sessions() as session:
+            assert session.query(Event).filter_by(scope="user.pause.hide").count() == 1
+
+    def test_hiding_is_idempotent_when_the_rows_are_already_down(self, sessions):
+        """Converge re-runs nightly over every collection; a no-op must cost reads, not writes."""
+        collection = SimpleNamespace(title="✨ Movies Picked for You")
+        plex = SimpleNamespace(
+            sections=lambda: ["movies"],
+            find_owned_collections=lambda section, label: [collection],
+            demote_all=lambda c: False,  # already claims nothing
+        )
+        ctx = SimpleNamespace(plex=plex, config=SimpleNamespace(label_prefix="shortlist"))
+        state = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+
+        assert jobs._HANDLERS["user.hide"](state, {"slug": "sarah"})["hidden"] == []

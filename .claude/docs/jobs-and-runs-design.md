@@ -1,6 +1,6 @@
 # Runs, Jobs, and Convergence — design
 
-Status: **in progress** (2026-07-28). Owner decisions recorded inline. §7's library question is
+Status: **phases 1-10 shipped** (2026-07-28). Owner decisions recorded inline. §7's library question is
 settled: build it, no dependency. Phases 1-4 are shipped; see §8 for what remains.
 
 This is the design for making Shortlist's background work reliable, visible and self-healing. It is
@@ -191,16 +191,20 @@ Payload is data, never a closure, so a job survives the process that queued it.
 3. ✅ `dry_run` recorded in the disable-cleanup audit
 4. ✅ Jobs table + worker + boot recovery + notification on failure (`services/jobs.py`;
    APScheduler drains every 10s and sweeps abandoned jobs every 5m; `BEGIN IMMEDIATE` claim)
-5. 🔶 Migrating background work onto jobs — **`user.cleanup` done** (enqueued then drained
+5. ✅ Migrating background work onto jobs — **`user.cleanup` done** (enqueued then drained
    inline, so it still feels instant but is now retried and survives a restart). `sync.check` and
    `privacy.sync` handlers exist. Remaining: row reconciles, sync.users, sync.history, backups.
 6. 🔶 Eager filter writes — **new accounts done** (`_hide_existing_rows_from_new_accounts`: a sync
    that adds anyone fires `engine_run(ctx, [])`, which merges every share filter while creating and
    promoting nothing). Remaining: disable, and shared-row audience changes.
-7. ⬜ Pause = hide; unpause = restore
+7. ✅ Pause = hide; unpause = restore (converge takes a paused user's rows off EVERY surface,
+   keeping the collection + label so excludes still match and unpausing is a re-promote; `user.hide`
+   job fires the moment someone is paused)
 8. ⬜ Confident orphan deletion in the retire phase
-9. ⬜ UI: job types + status (shape pending research on Sonarr/Jellyfin conventions)
-10. ⬜ Run boot recovery: the abort half already ships (now tested) — add **queue a fresh run**
+9. ✅ UI: Tools triggers (preview then fix), Runs shows history with a real empty state; job types + status (shape pending research on Sonarr/Jellyfin conventions)
+10. ✅ Run boot recovery: aborts orphaned runs AND queues a `privacy.sync` so a crash does not wait
+    for the next schedule. Deliberately not a full rebuild — a crash-loop would re-curate the whole
+    server repeatedly.
 
 ---
 

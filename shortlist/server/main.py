@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import logging
 import os
@@ -153,6 +154,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             if stale:
                 logger.warning("aborted {} orphaned run(s) from a previous process", len(stale))
             session.commit()
+        crashed_runs = len(stale)
 
         # Requeue jobs a previous process died inside. Handlers are idempotent (converge-to-desired,
         # never a delta), so replaying is safe — and losing the work is not: a disable cleanup lost to
@@ -160,6 +162,22 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         from shortlist.server.services.jobs import recover_stale
 
         recover_stale(sessions, boot=True)
+
+        # A run the previous process died inside leaves rows DELIVERED BUT UNPROMOTED — safe, but
+        # nobody sees them and nothing would rebuild until the next schedule, potentially a day away.
+        # Queue a share-filter pass so the half-finished state is at least made consistent; a full
+        # rebuild waits for the schedule rather than firing an expensive LLM run on every restart
+        # (a crash-loop would otherwise re-curate the whole server repeatedly).
+        if crashed_runs:
+            from shortlist.server.services.jobs import enqueue
+
+            with contextlib.suppress(Exception):
+                enqueue(sessions, "privacy.sync", {})
+                logger.warning(
+                    "{} run(s) were interrupted by a restart — queued a privacy sync to make the "
+                    "server consistent; rows rebuild on the next scheduled run",
+                    crashed_runs,
+                )
 
         scheduler = build_scheduler(app)
         scheduler.start()

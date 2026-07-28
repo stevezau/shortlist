@@ -208,6 +208,7 @@ async def set_all_users_enabled(body: BulkEnabled, request: Request) -> dict:
 async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
     state = request.app.state
     disabled_slug: str | None = None
+    paused_slug: str | None = None
     renamed_slug: str | None = None
     with state.sessions() as session:
         user = session.get(User, user_id)
@@ -229,12 +230,20 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
             user.request_tag = patch.request_tag.strip()
         if patch.prefs is not None:
             prefs = dict(user.prefs or {})
+            was_paused = bool(prefs.get("paused"))
             prefs.update({k: v for k, v in patch.prefs.model_dump().items() if v is not None})
             user.prefs = prefs
+            # Pausing means "stop showing their row", so it has to come down NOW — a paused person is
+            # absent from every run by definition, so nothing else would ever act on it. Unpausing
+            # needs no job: the next run delivers and promotes them again.
+            if bool(prefs.get("paused")) and not was_paused:
+                paused_slug = user.slug
         session.commit()
         result = _serialize(user, _watch_depths(session).get(user.id, 0), None, None)
     if disabled_slug is not None:
         await _remove_users_rows(state, disabled_slug)
+    if paused_slug is not None:
+        await _hide_paused_users_rows(state, paused_slug)
     if renamed_slug is not None:
         # A nickname changes what `{user}` renders to, so this person's existing collections carry a
         # title no future run will write. Renaming them in place is the same reconcile a row rename
@@ -564,6 +573,27 @@ async def sync_users(request: Request) -> dict:
     result = {"added": added, "updated": updated, "total": len(roster) + (1 if owner else 0)}
     emit("sync.finished", {"ok": True, **result})
     return result
+
+
+async def _hide_paused_users_rows(state, user_slug: str) -> None:
+    """Queue the take-down for a just-paused user, and drain it so it happens now.
+
+    Durable rather than fire-and-forget for the same reason disable cleanup is: a paused user is
+    absent from every subsequent run, so if this write is lost to a Plex outage nothing would ever
+    retry it and their row would stay up indefinitely.
+    """
+    from shortlist.server.services.jobs import enqueue, run_pending
+
+    enqueue(state.sessions, "user.hide", {"slug": user_slug})
+    try:
+        await run_pending(state)
+    except Exception as e:
+        logger.warning(
+            "paused {} but their rows could not be hidden right now ({}: {}) — queued for retry",
+            user_slug,
+            type(e).__name__,
+            redact(str(e)),
+        )
 
 
 async def _hide_existing_rows_from_new_accounts(state, added: int) -> None:

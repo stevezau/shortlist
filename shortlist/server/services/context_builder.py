@@ -165,6 +165,9 @@ class ContextBuilder:
             # and converge still has to know which single label is legitimately there.
             owner = session.query(User).filter_by(user_type=UserType.OWNER.value).first()
             owner_slug = owner.slug if owner else ""
+            # Paused users never appear in a run, so converge is the only pass that can take their
+            # rows down. Read from the DB rather than this run's profiles for exactly that reason.
+            paused_slugs = {u.slug for u in session.query(User).all() if (u.prefs or {}).get("paused")}
 
         def progress(slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
             # Runs in the engine's executor thread. One entry both STREAMS (SSE, live) and, via
@@ -202,6 +205,7 @@ class ContextBuilder:
             disabled_account_ids=disabled_account_ids,
             known_slugs=known_slugs,
             owner_slug=owner_slug,
+            paused_slugs=paused_slugs,
             handled_requests=self._handled_requests(session),
             progress=progress,
         )

@@ -104,6 +104,11 @@ class EngineContext:
     # cannot be derived from `known_slugs` (which carries no type) or from the plex.tv roster (which
     # never returns the owner). Empty = unknown, and converge then does nothing rather than guess.
     owner_slug: str = ""
+    # Slugs of PAUSED users. Pause means "stop showing their row", not "delete it": their collection
+    # and label stay on the server so everyone else's exclude still matches, and unpausing is a
+    # re-promote rather than a full LLM rebuild. They are absent from every run by definition, so
+    # converge is the only thing that can act on them.
+    paused_slugs: set[str] = field(default_factory=set)
     # (tmdb_id, media_type) the owner has already actioned in the Requests inbox — sent or rejected.
     # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
     # by a later auto-send. Empty for direct engine runs, which have no inbox.
@@ -758,6 +763,7 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
     allowed = {f"{ctx.config.label_prefix}_{ctx.owner_slug}".lower()}
     allowed |= {spec.label.lower() for spec in ctx.config.rows if spec.shared and spec.show_home and spec.label}
     prefix = f"{ctx.config.label_prefix}_".lower()
+    paused_labels = {f"{ctx.config.label_prefix}_{slug}".lower() for slug in ctx.paused_slugs}
     demoted: list[str] = []
     try:
         for section in ctx.plex.sections():
@@ -765,8 +771,25 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
                 if int(collection.ratingKey) in promoted:
                     continue
                 label = next((t.tag for t in collection.labels if t.tag.lower().startswith(prefix)), None)
-                if label is None or label.lower() in allowed:
-                    continue  # not ours (rule 4), or legitimately on the owner's Home
+                if label is None:
+                    continue  # not ours (rule 4)
+
+                # A PAUSED user's row comes off EVERY surface, not just the owner's Home. Pause means
+                # "stop showing it", and a paused person is by definition absent from every run, so
+                # this is the only place it can happen. The collection and its label stay, so
+                # everyone else's exclude still matches and unpausing is a re-promote, not a rebuild.
+                if label.lower() in paused_labels:
+                    if ctx.config.dry_run:
+                        logger.info("[dry-run] {}: would take off every surface (paused)", collection.title)
+                        demoted.append(label)
+                        continue
+                    with ctx.write_lock:
+                        if ctx.plex.demote_all(collection):
+                            demoted.append(label)
+                    continue
+
+                if label.lower() in allowed:
+                    continue  # legitimately on the owner's Home
                 # Read the hub even in dry-run: the preview an operator reads before running for real
                 # has to be the actual list, not every candidate we considered.
                 if not ctx.plex.reads_as_on_owner_home(collection):
