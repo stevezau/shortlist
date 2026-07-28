@@ -263,6 +263,23 @@ in code, with no AI and no per-token cost.
   source — it surfaces well-reviewed titles the TMDB lists simply don't return. It's the only place AI
   spends anything, and it's off by default.
 
+**How it actually works.** Shortlist takes each person's recent watches, turns them into real web
+searches ("what to watch if you liked X"), and hands the results to your model — which then picks
+from what was found. The model never browses; it reads.
+
+That ordering is the whole trick. Because **Shortlist** runs the search rather than the model, the
+source works with **any** provider — including a local Ollama, llama.cpp or LM Studio server with no
+internet access of its own. A local model that could never search the web still gets to recommend
+from current web results.
+
+You choose the search backend on the "AI web search" card:
+
+| Backend                        | Works with                         | Notes                                                                                        |
+| ------------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| Your provider's own web search | Claude, GPT, Gemini only           | no extra key or bill                                                                         |
+| [Exa](https://exa.ai) key      | every provider, local models too   | a search API built for feeding LLMs — returns ranked results with the text already extracted |
+| **Auto** (default)             | both, unioned when both are set up | they surface noticeably different titles                                                     |
+
 ### If you don't want to use AI
 
 Leave the AI provider on **None** (Settings → Connections — this is the default) and the AI web-search

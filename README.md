@@ -51,17 +51,10 @@ labeled collection excluded on every other account's share, so only its owner ev
   source — a live web search for what to watch next.
 - 🌐 **Finds what to watch next from everywhere** — pools candidates from TMDB, Trakt, and an optional
   **live web search** for current, well-reviewed titles.
-- 🔎 **AI web search that works with _any_ model — including local ones ([Exa](https://exa.ai))** —
-  Shortlist turns each person's recent watches into real web searches ("what to watch if you liked
-  X"), then hands the results to your model to pick from. Because _Shortlist_ runs the search rather
-  than the model, this works with **every** provider — including a local Ollama / llama.cpp / LM
-  Studio server that has no internet access of its own. Exa is a search API built for exactly this:
-  it returns ranked results with the relevant text already extracted, so the model reads findings
-  instead of raw pages. Set the backend to your provider's own web search (Claude / GPT / Gemini),
-  an Exa key, or **Auto** — which uses both when available, since they surface noticeably different
-  titles. Searches are cached 14 days and shared across users, so a popular title is searched once
-  server-wide, and Exa usage is reported per run separately from AI tokens (it bills per search, not
-  per token). Entirely optional — the source is off by default.
+- 🔎 **Web search that works with _any_ model, even offline ones** — Shortlist runs the search
+  itself, so your model never needs internet access. Works with a local Ollama box just as well as
+  with Claude — via your provider's own web search, an [Exa](https://exa.ai) key, or both at once.
+  [How it works →](docs/guides.md#the-one-ai-powered-source)
 - 💬 **Explains itself** — every pick says "Because you watched X".
 - 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, and it looks
   back through your full history so both movies and TV shape the picks.
