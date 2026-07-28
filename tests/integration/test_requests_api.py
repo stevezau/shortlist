@@ -206,3 +206,84 @@ class TestRequestsApi:
         assert body["dry_run"] is True and fake.movie_calls == [(10, True)]
         rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
         assert rows[10]["status"] == "pending"  # a preview leaves the inbox untouched
+
+
+class FakeRadarrStatus:
+    def __init__(self, statuses: dict[int, str]):
+        self._statuses = statuses
+
+    def status_by_tmdb(self) -> dict[int, str]:
+        return dict(self._statuses)
+
+
+class FakeSonarrStatus:
+    def __init__(self, by_tvdb: dict[int, str], by_tmdb: dict[int, str]):
+        self._by_tvdb, self._by_tmdb = by_tvdb, by_tmdb
+
+    def status_by_ids(self) -> tuple[dict[int, str], dict[int, str]]:
+        return dict(self._by_tvdb), dict(self._by_tmdb)
+
+
+_SONARR = ArrTarget(url="http://sonarr", api_key="k", quality_profile_id=1, root_folder="/tv")
+
+
+class TestArrStatusEndpoint:
+    """`GET /requests/status` — what Sonarr/Radarr has for each row, for the inbox's badges."""
+
+    @staticmethod
+    def _patch(monkeypatch, client: TestClient, cfg: RequestConfig, *, radarr=None, sonarr=None):
+        from shortlist.engine.clients import arr as arr_mod
+
+        monkeypatch.setattr(arr_mod, "RadarrClient", lambda *a, **k: radarr)
+        monkeypatch.setattr(arr_mod, "SonarrClient", lambda *a, **k: sonarr)
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
+
+    def test_shows_are_keyed_on_show_not_tv(self, client: TestClient, monkeypatch):
+        """Regression: the endpoint used to branch on media_type == "tv", but MediaType.SHOW stores
+        "show" — so Sonarr status silently never resolved for a single series."""
+        cfg = RequestConfig(enabled=True, sonarr=_SONARR)
+        self._patch(monkeypatch, client, cfg, sonarr=FakeSonarrStatus({}, {20: "downloading"}))
+
+        # Row id 2 is the pending SHOW (tmdb_id 20) from the fixture.
+        assert client.get("/api/requests/status").json()["2"] == "downloading"
+
+    def test_covers_waiting_rows_not_only_sent_ones(self, client: TestClient, monkeypatch):
+        """A waiting title someone added to the Arr by hand is exactly the "why is this still here?"
+        case — it must carry a status, which the sent-only version could never show."""
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded", 30: "downloading"}))
+
+        body = client.get("/api/requests/status").json()
+        assert body["1"] == "downloaded"  # pending
+        assert body["3"] == "downloading"  # sent
+
+    def test_untracked_title_is_null_not_missing(self, client: TestClient, monkeypatch):
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({}))
+
+        assert client.get("/api/requests/status").json()["1"] is None
+
+    def test_rejected_rows_are_skipped(self, client: TestClient, monkeypatch):
+        client.post("/api/requests/reject", json={"ids": [1]})
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded"}))
+
+        assert "1" not in client.get("/api/requests/status").json()
+
+    def test_one_arr_failing_does_not_lose_the_other(self, client: TestClient, monkeypatch):
+        """Sonarr being down must not blank out every movie's status too."""
+
+        class Broken:
+            def status_by_ids(self):
+                raise RuntimeError("sonarr down")
+
+        cfg = RequestConfig(enabled=True, radarr=_RADARR, sonarr=_SONARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded"}), sonarr=Broken())
+
+        body = client.get("/api/requests/status").json()
+        assert body["1"] == "downloaded"
+        assert body["2"] is None
+
+    def test_requests_not_configured_returns_empty(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(None))
+        assert client.get("/api/requests/status").json() == {}

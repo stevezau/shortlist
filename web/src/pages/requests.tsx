@@ -235,12 +235,31 @@ function RequestsOffBanner() {
   );
 }
 
+/** What Sonarr/Radarr has for a title right now, in one word. Absent when neither app tracks it —
+ *  which for a waiting title is the normal case, so nothing is drawn rather than "not found". */
+const ARR_STATUS_LABELS: Record<
+  string,
+  { label: string; variant: "success" | "default" | "secondary" | "warning" }
+> = {
+  downloaded: { label: "Downloaded", variant: "success" },
+  downloading: { label: "Downloading", variant: "default" },
+  queued: { label: "Searching", variant: "secondary" },
+  unmonitored: { label: "Not monitored", variant: "warning" },
+};
+
+function ArrStatusBadge({ status }: { status?: string | null }) {
+  const shown = status ? ARR_STATUS_LABELS[status] : undefined;
+  if (!shown) return null;
+  return <Badge variant={shown.variant}>{shown.label}</Badge>;
+}
+
 function PendingRow({
   item,
   checked,
   onToggle,
   globalTag,
   disabled,
+  arrStatus,
 }: {
   item: RequestCandidate;
   checked: boolean;
@@ -248,7 +267,9 @@ function PendingRow({
   globalTag: string;
   /** Requests are off — the row is still readable, but it cannot be selected for sending. */
   disabled: boolean;
+  arrStatus?: string | null;
 }) {
+  const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
   return (
     <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50">
       <input
@@ -259,15 +280,23 @@ function PendingRow({
         className="mt-1 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
       />
       <div className="min-w-0 space-y-1.5">
-        <p className="font-medium">{item.title}</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-medium">{item.title}</p>
+          <ArrStatusBadge status={arrStatus} />
+        </div>
         <TitleMeta item={item} globalTag={globalTag} />
         <WhyBreakdown why={item.why} />
         <ExternalLinks item={item} />
+        {arrStatus ? (
+          <p className="text-xs text-muted-foreground">
+            Already in {app} — it was added there after this landed here, so
+            it’ll drop off the list on the next run.
+          </p>
+        ) : null}
         {item.excluded ? (
           <p className="text-xs text-warning">
-            On {item.media_type === "movie" ? "Radarr" : "Sonarr"}’s exclusion
-            list (from a past delete) — remove it there first, or approving
-            won’t add it.
+            On {app}’s exclusion list (from a past delete) — remove it there
+            first, or approving won’t add it.
           </p>
         ) : null}
         {item.detail ? (
@@ -329,27 +358,7 @@ function SentRow({
             <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
             Sent to {app}
           </Badge>
-          {arrStatus && (
-            <Badge
-              variant={
-                arrStatus === "downloaded"
-                  ? "success"
-                  : arrStatus === "downloading"
-                    ? "default"
-                    : "secondary"
-              }
-            >
-              {arrStatus === "downloaded"
-                ? "Downloaded"
-                : arrStatus === "downloading"
-                  ? "Downloading"
-                  : arrStatus === "queued"
-                    ? "Queued"
-                    : arrStatus === "monitored"
-                      ? "Monitored"
-                      : "Unmonitored"}
-            </Badge>
-          )}
+          <ArrStatusBadge status={arrStatus} />
           <Button
             variant="ghost"
             size="sm"
@@ -821,6 +830,7 @@ export function RequestsPage() {
                                 onToggle={toggle}
                                 globalTag={globalTag}
                                 disabled={!requestsEnabled}
+                                arrStatus={arrStatusQuery.data?.[item.id]}
                               />
                             ))}
                           </div>

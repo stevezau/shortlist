@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.models import MediaType, MissingTitle
@@ -184,10 +185,16 @@ def clear_requests(body: RequestAction, request: Request) -> dict:
 
 @router.get("/status")
 async def get_arr_status(request: Request) -> dict[int, str | None]:
-    """Fetch Arr download status for all sent requests. Returns {request_id: 'downloaded' | 'downloading' | ...}.
+    """Arr download status for every request row. Returns {request_id: 'downloaded' | 'downloading' | ...}.
 
-    Only queries Arr for titles with status='sent' — pending/rejected are skipped. Runs in executor
-    since Arr clients are sync. A title not found in Arr appears as None in the map.
+    Covers waiting rows as well as sent ones. A waiting title is normally absent from the Arrs — the
+    nightly pass drops anything they already track — so a status there means the owner (or another
+    tool) added it by hand since, which is exactly the case where "why is this still waiting?" needs
+    an answer. Rejected rows are skipped: nothing is going to happen to them.
+
+    Whole-library maps, not per-title lookups, so the cost is a handful of calls no matter how long
+    the inbox is. Runs in an executor since the Arr clients are sync. A title neither app tracks
+    appears as None.
     """
     state = request.app.state
     svc = state.run_service
@@ -200,29 +207,40 @@ async def get_arr_status(request: Request) -> dict[int, str | None]:
         from shortlist.engine.clients.arr import RadarrClient, SonarrClient
 
         with state.sessions() as session:
-            rows = session.query(RequestCandidate).filter(RequestCandidate.status == "sent").all()
+            rows = session.query(RequestCandidate).filter(RequestCandidate.status.in_(("pending", "sent"))).all()
+
+        # One fetch per app up front. A failure here is not fatal: the inbox simply shows no status
+        # rather than erroring, which is what it did before this endpoint existed.
+        movies: dict[int, str] = {}
+        shows_by_tvdb: dict[int, str] = {}
+        shows_by_tmdb: dict[int, str] = {}
+        if cfg.radarr:
+            try:
+                movies = RadarrClient(cfg.radarr).status_by_tmdb()
+            except Exception as e:
+                logger.warning("request status: Radarr lookup failed ({})", e)
+        if cfg.sonarr:
+            try:
+                shows_by_tvdb, shows_by_tmdb = SonarrClient(cfg.sonarr).status_by_ids()
+            except Exception as e:
+                logger.warning("request status: Sonarr lookup failed ({})", e)
 
         statuses: dict[int, str | None] = {}
-        radarr = RadarrClient(cfg.radarr) if cfg.radarr else None
-        sonarr = SonarrClient(cfg.sonarr) if cfg.sonarr else None
-
         for row in rows:
-            try:
-                if row.media_type == "movie" and radarr:
-                    result = radarr.get_status(row.tmdb_id)
-                    statuses[row.id] = result["status"] if result else None
-                elif row.media_type == "tv" and sonarr:
-                    # Sonarr keys on tvdb_id; look it up via the TMDB client already built for this context.
-                    external = tmdb.external_ids(row.tmdb_id, MediaType.TV)
-                    tvdb_id = external.get("tvdb_id")
-                    if tvdb_id:
-                        result = sonarr.get_status_by_tvdb(tvdb_id)
-                        statuses[row.id] = result["status"] if result else None
-                    else:
-                        statuses[row.id] = None
-            except Exception:
-                # Arr errors shouldn't block the whole status fetch — just mark this one unknown
-                statuses[row.id] = None
+            if row.media_type == "movie":
+                statuses[row.id] = movies.get(row.tmdb_id)
+                continue
+            # Sonarr v4 carries tmdbId on every series, so the map answers directly. On v3 it doesn't,
+            # and only then is a per-title TMDB→TVDB lookup worth paying for (cached in the client).
+            status = shows_by_tmdb.get(row.tmdb_id)
+            if status is None and shows_by_tvdb and not shows_by_tmdb:
+                try:
+                    tvdb_id = tmdb.external_ids(row.tmdb_id, MediaType.TV).get("tvdb_id")
+                except Exception as e:
+                    logger.debug("request status: tvdb lookup for {!r} failed ({})", row.title, e)
+                    tvdb_id = None
+                status = shows_by_tvdb.get(tvdb_id) if tvdb_id else None
+            statuses[row.id] = status
 
         return statuses
 
