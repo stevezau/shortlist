@@ -20,10 +20,18 @@ it, and never leak environment-specific hostnames/IPs/paths into the public repo
 
 ```bash
 # Backend
-pip install -e ".[dev]"
+pip install -r requirements.lock && pip install -e ".[dev]"   # lock first: same versions the image ships
 pytest                       # unit+integration, parallel, coverage (target ≥80%)
 pytest -m e2e                # Playwright vs built image + tests/fakes/fake_plex.py
 ruff check . --fix && ruff format .
+
+# Regenerate requirements.lock — REQUIRED whenever pyproject's dependencies change.
+# Resolves for the image's interpreter/OS, not your laptop's, so it is safe to run from macOS.
+# CI's lint job fails if pyproject declares a dependency the lock doesn't carry.
+uv pip compile pyproject.toml \
+  --extra anthropic --extra openai --extra google --extra posters \
+  --python-version 3.12 --python-platform linux \
+  --output-file requirements.lock
 
 # Frontend
 pnpm -C web install

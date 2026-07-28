@@ -21,22 +21,25 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY pyproject.toml README.md LICENSE ./
 
-# DEPENDENCIES FIRST, from pyproject alone — this layer must not see application source, or every
-# commit reinstalls FastAPI, SQLAlchemy and three LLM SDKs from scratch on BOTH architectures. The
-# stub package exists only so hatchling can read `__version__` and resolve the dependency set; the
-# real source arrives in the next layer and is installed over it with --no-deps.
+# DEPENDENCIES FIRST, from the lockfile alone — this layer must not see application source, or
+# every commit reinstalls FastAPI, SQLAlchemy and three LLM SDKs from scratch on BOTH
+# architectures.
 #
-# Bundle every LLM provider SDK — the container is the whole product, so the curator must work for
-# whichever provider the owner picks in setup without them shelling in to pip install extras.
-# (local/none need no SDK.) `posters` (Pillow) powers uploaded-poster normalization; OpenAI/Google
-# also generate poster images, reusing the curator key.
-RUN mkdir -p shortlist \
-    && printf '__version__ = "0.0.0"\n' > shortlist/__init__.py \
-    && pip install --no-cache-dir ".[anthropic,openai,google,posters]" \
-    && rm -rf shortlist
+# requirements.lock pins every transitive dependency to an exact version. Installing from
+# pyproject's floor pins (`fastapi>=0.115`) instead meant two builds of the SAME commit could ship
+# different dependency versions — the image was not reproducible, and a dependency could break
+# production without a single line of our code changing. Regenerate with the command in
+# .claude/CLAUDE.md whenever pyproject's dependencies change.
+#
+# The lock bundles every LLM provider SDK — the container is the whole product, so the curator must
+# work for whichever provider the owner picks in setup without them shelling in to pip install
+# extras. (local/none need no SDK.) `posters` (Pillow) powers uploaded-poster normalization;
+# OpenAI/Google also generate poster images, reusing the curator key.
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 
+COPY pyproject.toml README.md LICENSE ./
 COPY shortlist/ ./shortlist/
 # --no-deps: everything it needs is already in the layer above, so a source-only change reinstalls
 # just this package (seconds) instead of the whole dependency tree.
