@@ -23,6 +23,18 @@ updates:
       web-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+      # Majors normally arrive one PR per package, which is right for independent deps but breaks
+      # badly for packages that only work in lockstep: Dependabot raised react@19 and react-dom@19
+      # separately, and each crashed against the other's v18 sibling, so neither could ever go
+      # green. Same for vite/@vitejs — plugin-react@6 needs vite>=7 while vite@8 needs a config
+      # change, so the two PRs blocked each other. Grouping makes each arrive as one reviewable
+      # upgrade.
+      react-major:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+        update-types: ["major"]
+      vite-major:
+        patterns: ["vite", "@vitejs/*"]
+        update-types: ["major"]
     ignore:
       # @types/node must track the Node we actually run (22 — Dockerfile's node:22-alpine and
       # ci.yml's node-version), not the newest release. A newer major types APIs that don't exist
