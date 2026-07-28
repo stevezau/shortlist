@@ -40,8 +40,13 @@ export function useSSE(handlers: SSEHandlers): { connected: boolean } {
 
   // Keep the latest handlers in a ref so callers can pass inline objects
   // without tearing down and re-opening the connection every render.
+  // Assigned in an effect, not during render: mutating a ref while rendering is unsafe under
+  // concurrent rendering, where a render can be discarded or replayed. Safe here because every
+  // read is inside an EventSource callback, which can only fire after the commit.
   const handlersRef = useRef(handlers);
-  handlersRef.current = handlers;
+  useEffect(() => {
+    handlersRef.current = handlers;
+  });
 
   useEffect(() => {
     let source: EventSource | null = null;

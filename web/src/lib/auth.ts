@@ -68,8 +68,12 @@ export function usePlexPin(
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<PinStatus | null>(null);
 
+  // Assigned in an effect rather than during render — see the note in lib/sse.ts. Safe because
+  // onLinkedRef is only read from the pin-polling interval, which runs after the commit.
   const onLinkedRef = useRef(onLinked);
-  onLinkedRef.current = onLinked;
+  useEffect(() => {
+    onLinkedRef.current = onLinked;
+  });
 
   const timersRef = useRef<{ poll: ReturnType<typeof setInterval> | null }>({
     poll: null,

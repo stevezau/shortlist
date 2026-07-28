@@ -819,11 +819,16 @@ export function RunDetailPage() {
   const [liveLog, setLiveLog] = useState<RunLogEntry[]>([]);
   // Seed from the server snapshot; mergeRunLog dedups, so re-merging the same data is a no-op and an
   // event captured by BOTH the snapshot and the live stream is never doubled.
+  // Effect is the right tool here and the rule is suppressed deliberately: this state is a merge of
+  // two external sources (the fetched snapshot and the live SSE stream), so it cannot be derived
+  // from props — there is nothing to derive it FROM until the query resolves.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (logQuery.data) {
       setLiveLog((prev) => mergeRunLog(prev, logQuery.data, runId));
     }
   }, [logQuery.data, runId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const appendStage = useCallback(
     (event: RunUserStageEvent) => {
@@ -849,14 +854,15 @@ export function RunDetailPage() {
 
   // Which user's rows are on screen. Default to the first FAILED user (what you opened the page to
   // see), else the first user; keep the current pick as long as they're still in the run.
-  const [selectedSlug, setSelectedSlug] = useState("");
-  useEffect(() => {
-    const users = runQuery.data?.users ?? [];
-    const first = users[0];
-    if (first && !users.some((u) => u.slug === selectedSlug)) {
-      setSelectedSlug((users.find((u) => u.error !== null) ?? first).slug);
-    }
-  }, [runQuery.data, selectedSlug]);
+  // Derived, not synced by an effect: hold only what the user explicitly clicked, and fall back
+  // whenever that person isn't in the run (first load, or a refetch that dropped them). The effect
+  // version had to list selectedSlug in its own deps to re-check itself, which is the shape that
+  // makes cascading renders easy to introduce.
+  const [pickedSlug, setSelectedSlug] = useState("");
+  const runUsers = runQuery.data?.users ?? [];
+  const selectedSlug = runUsers.some((u) => u.slug === pickedSlug)
+    ? pickedSlug
+    : ((runUsers.find((u) => u.error !== null) ?? runUsers[0])?.slug ?? "");
 
   return (
     <div className="space-y-6">

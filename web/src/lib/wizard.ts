@@ -132,8 +132,13 @@ export function useWizard(onComplete?: () => void): WizardApi {
 
   const stepRef = useRef(step);
   const dataRef = useRef(data);
+  // Assigned in an effect rather than during render — see the note in lib/sse.ts. Safe because
+  // onCompleteRef is only read from the finish handler, which runs after the commit.
+  // stepRef/dataRef are already only written inside callbacks, so they need no change.
   const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  });
 
   useEffect(() => {
     let cancelled = false;

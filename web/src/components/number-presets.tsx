@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,14 +40,14 @@ export function NumberPresets({
   // "Custom" is sticky: once opened it stays open even while the typed value happens to equal a
   // preset, so a half-typed number doesn't yank the input away. A value that arrives already
   // off-preset (loaded from the server) opens it too.
-  const [custom, setCustom] = useState(!matchesPreset);
+  const [customOpened, setCustom] = useState(!matchesPreset);
+  // Derived, not synced by an effect: the panel is open if the user opened it OR the value simply
+  // isn't a preset. That's the same "sticky" behaviour the effect gave, minus the extra render
+  // pass — and it can't drift out of sync with `value` the way mirrored state can.
+  const custom = customOpened || !matchesPreset;
   // Local text mirror so an empty/partial field is editable without forcing it through Number()
   // every keystroke (which would turn "" into 0 and clamp mid-typing).
   const [draft, setDraft] = useState(String(value));
-
-  useEffect(() => {
-    if (!matchesPreset) setCustom(true);
-  }, [matchesPreset]);
 
   const commitDraft = (raw: string) => {
     setDraft(raw);

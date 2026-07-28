@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,7 +31,12 @@ export function RecentCountField({
   const id = useId();
   const [text, setText] = useState(String(value));
   // Re-sync the buffer when the value changes from elsewhere (reset, another tab).
-  useEffect(() => setText(String(value)), [value]);
+  // Adjusted during render rather than in an effect — see the note in row-size-field.tsx.
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (syncedValue !== value) {
+    setSyncedValue(value);
+    setText(String(value));
+  }
 
   const commit = () => {
     const next = text.trim() === "" ? value : clampRecentCount(Number(text));

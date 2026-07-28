@@ -16,8 +16,13 @@ export const AUTOSAVE_DELAY_MS = 600;
  *   calls, since the value on screen hasn't changed and so can never re-arm the debounce itself.
  */
 export function useAutosave(value: unknown, save: () => void): () => void {
+  // Assigned in an effect rather than during render — see the note in lib/sse.ts. Safe because
+  // saveRef is only read from the debounce timer and the returned retry callback, both of which
+  // run after the commit.
   const saveRef = useRef(save);
-  saveRef.current = save;
+  useEffect(() => {
+    saveRef.current = save;
+  });
 
   // Keyed on content, not identity: callers pass a fresh object each render, which as an effect
   // dependency would re-arm the timer forever.

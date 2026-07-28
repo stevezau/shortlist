@@ -66,6 +66,10 @@ export function StepConnect({ data, update }: StepProps) {
   });
 
   // Preselect the first address that actually answered — the common case is one click.
+  // Suppressed deliberately: this seeds a user-editable field once from data that arrives async,
+  // and then must stop (note the `plexUrl ||` guard). Deriving it would fight the user's own
+  // choice on every refetch.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (plexUrl || !servers.data) return;
     for (const server of servers.data) {
@@ -76,6 +80,7 @@ export function StepConnect({ data, update }: StepProps) {
       }
     }
   }, [servers.data, plexUrl]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const probe = useMutation({
     mutationFn: () => api.setupProbe({ plex_url: plexUrl }),
