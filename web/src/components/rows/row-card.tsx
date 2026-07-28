@@ -65,13 +65,22 @@ export function RowCard({
     collection.name_template || collection.name,
   );
 
-  useEffect(() => {
+  // Adjusted during render rather than in an effect: `openRename` is a one-shot request from the
+  // parent, so this reacts to the prop *changing* to true. Tracking the previous value keeps that
+  // edge-triggered behaviour without the effect's extra commit. onRenameOpened is the parent's
+  // acknowledgement and must not fire during render, so it stays in an effect keyed on the open
+  // state it acknowledges.
+  const [prevOpenRename, setPrevOpenRename] = useState(openRename);
+  if (prevOpenRename !== openRename) {
+    setPrevOpenRename(openRename);
     if (openRename) {
       setRenameTo(collection.name_template || collection.name);
       setRenameOpen(true);
-      onRenameOpened?.();
     }
-  }, [openRename]);
+  }
+  useEffect(() => {
+    if (openRename) onRenameOpened?.();
+  }, [openRename, onRenameOpened]);
   const rename = useMutation({
     mutationFn: () => {
       const oldTemplate = collection.name_template || collection.name;

@@ -107,12 +107,16 @@ export function RowRenamePage() {
   }
 
   // Auto-start if we came from the row-card dialog (oldTemplate is set).
+  // Suppressed deliberately: this fires an async mutation on mount, not a state sync. Triggering
+  // work when a condition first holds is exactly what an effect is for.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (confirmed && collection && !running && events.length === 0) {
       startRename("", oldTemplate);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirmed, collection]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });

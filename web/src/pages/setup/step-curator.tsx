@@ -44,6 +44,10 @@ export function StepCurator({ data, update }: StepProps) {
   // defaults above when a value is actually on file; a re-sent "•••••" is a no-op on the backend.
   const settings = useSettings();
   const seeded = useRef(false);
+  // Suppressed deliberately: seeds three user-editable fields once, from settings that load async,
+  // guarded by `seeded` so it never overwrites typing. There is no render-time derivation for
+  // "initialise from a fetch, then leave alone".
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     const saved = settings.data;
     if (seeded.current || !saved) return;
@@ -55,6 +59,7 @@ export function StepCurator({ data, update }: StepProps) {
     const savedModel = settingString(saved, "curator.model");
     if (savedModel) setModel(savedModel);
   }, [settings.data]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // List the selected provider's models from the key/URL being entered right now. The whole
   // (provider, key, url) generation is debounced together, and the fetch fires only once the form

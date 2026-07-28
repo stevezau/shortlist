@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,11 +30,14 @@ export function RunRowsDialog({
   const rows = (collections.data ?? []).filter((row) => row.enabled);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
-  // Reset to "all rows" each time the dialog opens, so it never opens with a stale partial selection.
-  useEffect(() => {
-    if (open) setSelected(new Set(rows.map((row) => row.id)));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, collections.data]);
+  // Reset to "all rows" each time the dialog opens, so it never opens with a stale partial
+  // selection. Done in the open handler rather than an effect: opening is an event, so the reset
+  // belongs on the event. The effect version also had to depend on collections.data (and silence
+  // exhaustive-deps), which meant a background refetch could wipe an in-progress selection.
+  const openDialog = () => {
+    setSelected(new Set(rows.map((row) => row.id)));
+    setOpen(true);
+  };
 
   const toggle = (id: number, on: boolean) =>
     setSelected((prev) => {
@@ -46,10 +49,13 @@ export function RunRowsDialog({
 
   return (
     <>
-      <Button variant="outline" onClick={() => setOpen(true)}>
+      <Button variant="outline" onClick={openDialog}>
         Run selected rows…
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => (next ? openDialog() : setOpen(false))}
+      >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Run selected rows</DialogTitle>
