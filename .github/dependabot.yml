@@ -35,6 +35,9 @@ updates:
       vite-major:
         patterns: ["vite", "@vitejs/*"]
         update-types: ["major"]
+      eslint-major:
+        patterns: ["eslint", "@eslint/*", "typescript-eslint", "eslint-plugin-*"]
+        update-types: ["major"]
     ignore:
       # @types/node must track the Node we actually run (22 — Dockerfile's node:22-alpine and
       # ci.yml's node-version), not the newest release. A newer major types APIs that don't exist
