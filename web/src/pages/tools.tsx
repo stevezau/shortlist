@@ -608,6 +608,8 @@ function SyncCheckCard() {
   });
   const drifted =
     preview.data?.status === "done" ? (preview.data.fixed ?? []) : [];
+  const orphans =
+    preview.data?.status === "done" ? (preview.data.orphans ?? []) : [];
 
   return (
     <Card>
@@ -639,9 +641,10 @@ function SyncCheckCard() {
             <ShieldCheck aria-hidden="true" />
             Check for drift
           </Button>
-          {drifted.length > 0 && (
+          {drifted.length + orphans.length > 0 && (
             <Button onClick={() => fix.mutate()} loading={fix.isPending}>
-              Fix {drifted.length} row{drifted.length === 1 ? "" : "s"}
+              Fix {drifted.length + orphans.length} row
+              {drifted.length + orphans.length === 1 ? "" : "s"}
             </Button>
           )}
         </div>
@@ -656,6 +659,20 @@ function SyncCheckCard() {
             error={fix.error}
             fallback="Couldn’t fix those rows. Try again."
           />
+        )}
+        {/* Deletions get their own callout, above the summary line. Folding them into the "N rows"
+            count would hide the one irreversible action behind a number, in the very preview an
+            operator reads to decide whether to run for real. */}
+        {orphans.length > 0 && (
+          <p className="rounded-md border border-dashed border-destructive/50 bg-destructive/5 p-3 text-sm text-muted-foreground">
+            <strong className="text-foreground">
+              This will delete {orphans.length} collection
+              {orphans.length === 1 ? "" : "s"}
+            </strong>{" "}
+            &mdash; {orphans.join(", ")}. Shortlist no longer knows who they
+            belong to, so hiding them would leave them in your Collections tab
+            for ever. This cannot be undone.
+          </p>
         )}
         {/* `status` matters: the queue skips a drain while a run is writing to Plex, which is
             exactly when someone presses this. That leaves the job `queued` with no result and no
@@ -672,7 +689,7 @@ function SyncCheckCard() {
           !preview.data.error &&
           preview.data.status === "done" && (
             <p className="text-sm text-muted-foreground">
-              {drifted.length === 0
+              {drifted.length === 0 && orphans.length === 0
                 ? "Everything is in sync — nothing to fix."
                 : `${drifted.length} row${drifted.length === 1 ? "" : "s"} drifted onto your Home screen: ${drifted.join(", ")}`}
             </p>

@@ -244,7 +244,18 @@ def _sync_check(state, payload: dict) -> dict:
     report = RunReport(started_at=datetime.now(UTC))
     ctx = state.run_service.build_context(dry_run=bool(payload.get("dry_run")))
     _converge_phase(ctx, set(), report)
-    return {"fixed": report.converged, "detail": f"Checked every row; corrected {len(report.converged)}"}
+    # Deletions are reported SEPARATELY and named first. Folding them into `fixed` would hide the one
+    # irreversible thing this does behind a number, in the very preview an operator reads to decide
+    # whether to run it for real.
+    removed = report.orphans_removed
+    detail = f"Checked every row; corrected {len(report.converged)}"
+    if removed:
+        detail += (
+            f"; {len(removed)} orphaned collection(s) to remove"
+            if ctx.config.dry_run
+            else (f"; removed {len(removed)} orphaned collection(s)")
+        )
+    return {"fixed": report.converged, "orphans": removed, "detail": detail}
 
 
 @handler("privacy.sync")

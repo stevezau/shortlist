@@ -264,6 +264,34 @@ describe("ToolsPage — sync check", () => {
     expect(screen.queryByText(/everything is in sync/i)).toBeNull();
   });
 
+  it("warns loudly and separately when a preview would DELETE something", async () => {
+    // Deleting is the one irreversible thing the check does. Folding it into the "N rows" count
+    // would hide it in the very preview an operator reads to decide whether to run for real.
+    runJob.mockResolvedValue({
+      id: 1,
+      kind: "sync.check",
+      status: "done",
+      detail: "",
+      error: null,
+      fixed: [],
+      orphans: ["Shortlist_ghost"],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /check for drift/i }),
+    );
+
+    // The count and the noun sit in separate JSX expressions, so match a contiguous fragment.
+    expect(await screen.findByText(/this will delete/i)).toBeInTheDocument();
+    expect(screen.getByText(/Shortlist_ghost/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
+    // Still offered, but the count includes it so the button never understates the damage.
+    expect(
+      await screen.findByRole("button", { name: /fix 1 row/i }),
+    ).toBeInTheDocument();
+  });
+
   it("offers no fix button when nothing drifted", async () => {
     runJob.mockResolvedValue({
       id: 1,
@@ -272,6 +300,7 @@ describe("ToolsPage — sync check", () => {
       detail: "",
       error: null,
       fixed: [],
+      orphans: [],
     });
     renderPage();
 

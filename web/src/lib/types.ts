@@ -945,4 +945,7 @@ export interface JobResult {
   error: string | null;
   /** sync.check only: the row labels it corrected (or, in a dry run, would correct). */
   fixed?: string[];
+  /** sync.check only: collections DELETED (or, in a dry run, that would be) because their user is
+   *  gone. Kept apart from `fixed` — this is the one action that cannot be undone. */
+  orphans?: string[];
 }

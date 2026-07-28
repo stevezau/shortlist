@@ -534,6 +534,8 @@ async def run_job(body: RunJobRequest, request: Request) -> dict:
             "detail": job.detail,
             "error": job.error,
             # What it actually changed (or, on a dry run, would change) — the preview an operator
-            # reads before authorising the live pass.
+            # reads before authorising the live pass. `orphans` is kept apart from `fixed` because
+            # deleting a collection is the one thing here that cannot be undone.
             "fixed": (job.result or {}).get("fixed", []),
+            "orphans": (job.result or {}).get("orphans", []),
         }
