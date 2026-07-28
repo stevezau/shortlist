@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { SaveStatus } from "@/components/save-status";
 import { AiWebSearchCard } from "@/components/settings/ai-web-search-card";

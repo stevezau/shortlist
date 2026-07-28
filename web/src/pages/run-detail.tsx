@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { PickList } from "@/components/pick-list";

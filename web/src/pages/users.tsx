@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { OwnerNote } from "@/components/owner-note";

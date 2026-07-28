@@ -20,7 +20,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";

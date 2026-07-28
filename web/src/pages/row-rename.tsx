@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, Pen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { Badge } from "@/components/ui/badge";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
 import { cn } from "@/lib/utils";

@@ -17,7 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router";
 
 import { Wordmark } from "@/components/brand";
 import { ActivityPill } from "@/components/layout/activity-pill";

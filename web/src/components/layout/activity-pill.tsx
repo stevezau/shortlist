@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useRef, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router";
 
 import { STAGE_LABELS } from "@/lib/run-stages";
 import { useSSE } from "@/lib/sse";

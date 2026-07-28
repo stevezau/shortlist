@@ -1,6 +1,15 @@
 allowBuilds:
   esbuild: true
 
+# The 24h minimumReleaseAge guard (pnpm 11's default) stays on for everything else — it is what
+# catches a freshly-published compromised release before it reaches the image. jsdom is an
+# explicit, owner-approved exception: it is a test-only DOM implementation for vitest, never
+# installed into the runtime image (the Dockerfile ships web/dist, not node_modules), so a bad
+# release could at worst break CI rather than reach a user. Remove this once jsdom 30 is not the
+# newest release and the exception stops mattering.
+minimumReleaseAgeExclude:
+  - jsdom
+
 overrides:
   # GHSA-52cp-r559-cp3m: js-yaml < 4.3.0 burns quadratic CPU on YAML merge-key chains.
   # Reached only via openapi-typescript -> @redocly/openapi-core, which pins js-yaml to an
