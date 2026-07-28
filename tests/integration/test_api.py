@@ -2761,3 +2761,61 @@ class TestJobsApi:
         body = r.json()
         assert body["status"] in {"queued", "failed"}  # queued = will be retried by the worker
         assert "Plex is down" in (body["error"] or "")
+
+
+class TestFailedJobNotifications:
+    """A job that exhausts its retries must reach the notification bell.
+
+    Without it the retry machinery is invisible exactly when it matters: these are the destructive
+    and privacy-relevant jobs — removing a disabled user's rows, hiding a paused user's, writing
+    share filters — so a silent failure leaves Plex in a state the operator believes was corrected.
+    """
+
+    def _fail_a_job(self, client: TestClient, kind: str = "user.cleanup") -> int:
+        from shortlist.server.db.models import Job
+
+        with client.app.state.sessions() as session:
+            job = Job(kind=kind, status="failed", attempts=3, max_attempts=3, error="Plex unreachable")
+            session.add(job)
+            session.commit()
+            return job.id
+
+    def test_a_failed_job_raises_a_notification(self, client: TestClient):
+        self._fail_a_job(client)
+
+        notes = client.get("/api/notifications").json()["notifications"]
+
+        job_note = next((n for n in notes if n["id"].startswith("failed-jobs-")), None)
+        assert job_note is not None
+        assert job_note["severity"] == "error"
+        assert "user.cleanup" in job_note["body"]
+        assert job_note["action_url"] == "/tools"
+
+    def test_a_job_still_retrying_raises_nothing(self, client: TestClient):
+        """`queued` after a failed attempt means the queue is still working on it — telling the
+        operator it failed would be wrong, and would cry wolf on every transient blip."""
+        from shortlist.server.db.models import Job
+
+        with client.app.state.sessions() as session:
+            session.add(Job(kind="user.cleanup", status="queued", attempts=1, max_attempts=3, error="timeout"))
+            session.commit()
+
+        notes = client.get("/api/notifications").json()["notifications"]
+
+        assert not [n for n in notes if n["id"].startswith("failed-jobs-")]
+
+    def test_a_newer_failure_resurfaces_after_a_dismissal(self, client: TestClient):
+        """The id encodes the newest failed job, so dismissing one failure cannot hide the next."""
+        first = self._fail_a_job(client)
+        notes = client.get("/api/notifications").json()["notifications"]
+        note_id = next(n["id"] for n in notes if n["id"].startswith("failed-jobs-"))
+        assert note_id == f"failed-jobs-{first}"
+
+        client.post("/api/notifications/dismiss", json={"id": note_id})
+        assert not [
+            n for n in client.get("/api/notifications").json()["notifications"] if n["id"].startswith("failed-jobs-")
+        ]
+
+        second = self._fail_a_job(client, kind="privacy.sync")
+        after = client.get("/api/notifications").json()["notifications"]
+        assert next(n["id"] for n in after if n["id"].startswith("failed-jobs-")) == f"failed-jobs-{second}"

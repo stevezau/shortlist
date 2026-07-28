@@ -496,6 +496,12 @@ async def list_jobs(request: Request, limit: int = 25) -> list[dict]:
                 "max_attempts": job.max_attempts,
                 "detail": job.detail,
                 "error": job.error,
+                # What it was asked to do and what came back — the two things an operator needs to
+                # judge a failure without going to the container log. `payload` is data by design
+                # (a slug, a row), never a secret: job kinds that touch tokens read them from the
+                # settings store at run time.
+                "payload": job.payload or {},
+                "result": job.result or {},
                 "created_at": iso_utc(job.created_at),
                 "started_at": iso_utc(job.started_at),
                 "finished_at": iso_utc(job.finished_at),

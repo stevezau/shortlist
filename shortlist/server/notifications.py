@@ -127,6 +127,37 @@ def _mdblist_quota(session: Session) -> dict | None:
     }
 
 
+def _failed_jobs(session: Session) -> dict | None:
+    """Background jobs that ran out of retries.
+
+    Without this the retry machinery is invisible exactly when it matters. A job only reaches
+    `failed` after exhausting every attempt, and these are the destructive/privacy-relevant ones —
+    removing a disabled user's rows, hiding a paused user's, writing share filters. A silent failure
+    there means Plex is left in a state the operator believes was corrected.
+
+    The id encodes the newest failed job id, so a NEW failure re-surfaces after a dismissal rather
+    than staying hidden behind the old one.
+    """
+    from shortlist.server.db.models import Job
+
+    failed = session.query(Job).filter(Job.status == "failed").order_by(Job.id.desc()).all()
+    if not failed:
+        return None
+    kinds = sorted({job.kind for job in failed})
+    return {
+        "id": f"failed-jobs-{failed[0].id}",
+        "severity": "error",
+        "title": f"{len(failed)} background job{'s' if len(failed) != 1 else ''} failed",
+        "body": (
+            f"Shortlist gave up on {', '.join(kinds)} after retrying. Plex may not reflect what you "
+            "asked for — open Jobs to see the error and run it again."
+        ),
+        "action_url": "/tools",
+        "action_label": "See jobs",
+        "dismissable": True,
+    }
+
+
 def build_notifications(session: Session, store: SettingsStore, current_version: str) -> list[dict]:
     """Every currently-firing notification the owner hasn't dismissed, most severe first. Dismissal is
     by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
@@ -135,6 +166,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _update_available(store, current_version),
         _runs_paused(store),
         _last_run_problem(session),
+        _failed_jobs(session),
         _mdblist_quota(session),
         _recent_service_errors(session),
     ]

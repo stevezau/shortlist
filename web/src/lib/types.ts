@@ -931,6 +931,11 @@ export interface Job {
   /** Human-readable outcome, e.g. "Checked every row; corrected 3". */
   detail: string;
   error: string | null;
+  /** What the job was asked to do (a slug, a row). Data by design, never a secret — kinds that
+   *  touch tokens read them from the settings store at run time. */
+  payload?: Record<string, unknown>;
+  /** Structured outcome, e.g. `{fixed: [...], orphans: [...]}`. */
+  result?: Record<string, unknown>;
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;

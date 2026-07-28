@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -83,7 +84,12 @@ describe("JobsTable", () => {
     expect(
       await screen.findByText(/retrying \(attempt 2\)/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/ConnectError/)).toBeInTheDocument();
+
+    // The error lives in the row's detail, which is collapsed until asked for — the summary line
+    // stays scannable and the diagnosis is one click away rather than in the container log.
+    await userEvent.click(screen.getByRole("button", { expanded: false }));
+    expect(await screen.findByText(/ConnectError/)).toBeInTheDocument();
+    expect(screen.getByText(/2 of 3/)).toBeInTheDocument();
   });
 
   it("distinguishes work that never started from a retry", async () => {
@@ -117,5 +123,65 @@ describe("JobsTable", () => {
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
     expect(screen.queryByText(/nothing yet/i)).toBeNull();
+  });
+});
+
+describe("JobsTable — filtering and live state", () => {
+  beforeEach(() => {
+    getJobs.mockReset();
+  });
+
+  it("filters to just the failures", async () => {
+    getJobs.mockResolvedValue([
+      job({ id: 1, kind: "sync.check", status: "done" }),
+      job({
+        id: 2,
+        kind: "user.cleanup",
+        status: "failed",
+        attempts: 3,
+        error: "Plex unreachable",
+      }),
+    ]);
+    renderTable();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /failed 1/i }),
+    );
+
+    expect(
+      screen.getByText(/remove a disabled user's rows/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^Sync check$/)).toBeNull();
+  });
+
+  it("says so plainly when a filter has no matches", async () => {
+    getJobs.mockResolvedValue([job({ id: 1, status: "done" })]);
+    renderTable();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /failed 0/i }),
+    );
+
+    expect(screen.getByText(/nothing has given up/i)).toBeInTheDocument();
+  });
+
+  it("badges work that is still in flight", async () => {
+    // A `queued` job WITH attempts is a retry in flight — counting it as active is the point.
+    getJobs.mockResolvedValue([
+      job({ id: 1, status: "running", detail: "" }),
+      job({ id: 2, status: "queued", attempts: 1, detail: "" }),
+      job({ id: 3, status: "done" }),
+    ]);
+    renderTable();
+
+    expect(await screen.findByText(/2 running/i)).toBeInTheDocument();
+  });
+
+  it("shows no filter control until there is something to filter", async () => {
+    getJobs.mockResolvedValue([]);
+    renderTable();
+
+    expect(await screen.findByText(/nothing yet/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^all /i })).toBeNull();
   });
 });
