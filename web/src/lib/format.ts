@@ -220,3 +220,19 @@ export function renderRowName(
     ? rendered.replace(/\s+/g, " ").trim()
     : rendered;
 }
+
+/**
+ * How a background job's state reads to a person.
+ *
+ * A job back in `queued` AFTER an attempt is the queue retrying it, not work that has yet to start
+ * — rendering that as "Queued" would say "nothing has happened yet", the opposite of the truth.
+ */
+export function jobStatusLabel(job: {
+  status: string;
+  attempts: number;
+}): string {
+  if (job.status === "done") return "Done";
+  if (job.status === "failed") return `Failed after ${job.attempts} attempts`;
+  if (job.status === "running") return "Running…";
+  return job.attempts > 0 ? `Retrying (attempt ${job.attempts})` : "Queued";
+}

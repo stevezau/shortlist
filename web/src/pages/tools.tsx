@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { api } from "@/lib/api";
-import { timeAgo, timeUntil } from "@/lib/format";
+import { jobStatusLabel, timeAgo, timeUntil } from "@/lib/format";
 import {
   queryKeys,
   useSettings,
@@ -34,7 +34,7 @@ import {
   useSyncs,
 } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
-import type { Job, SyncFinishedEvent, SyncProgressEvent } from "@/lib/types";
+import type { SyncFinishedEvent, SyncProgressEvent } from "@/lib/types";
 
 const SYNC_PRESETS = [
   { value: "", label: "Daily" },
@@ -578,15 +578,6 @@ function BackupsCard() {
       </CardContent>
     </Card>
   );
-}
-
-/** Job status -> how it reads. `queued` after an attempt means it failed and will be retried, which
- *  is the whole point of the queue — so it must not look like "nothing happened yet". */
-function jobStatusLabel(job: Job): string {
-  if (job.status === "done") return "Done";
-  if (job.status === "failed") return `Failed after ${job.attempts} attempts`;
-  if (job.status === "running") return "Running…";
-  return job.attempts > 0 ? `Retrying (attempt ${job.attempts})` : "Queued";
 }
 
 /**
