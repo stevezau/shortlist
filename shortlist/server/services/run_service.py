@@ -271,6 +271,24 @@ class RunService:
                 {"run_id": run_id, "status": status, "error": None if report.ok else report.error},
             )
 
+    def is_running(self) -> bool:
+        """Is an engine run executing in THIS process right now?
+
+        Read by the job queue: runs and jobs are separate systems but share one Plex and one
+        throttled plex.tv, and interleaving their writes risks a job merging a share filter from a
+        roster snapshot a run is halfway through changing. `_cancels` holds exactly the runs this
+        process is executing — entries are added when a run starts and removed when it finishes —
+        so it is the authoritative in-flight set, unlike the DB status (which a crashed process
+        leaves stale until the boot reap).
+
+        A CANCELLED run still counts. Cancellation is cooperative: the engine stops taking new users
+        but then falls through to the privacy merge and promote for everyone already delivered.
+        Treating "cancel requested" as "finished" would open the job queue precisely inside the
+        merge→promote window that rule 1 exists to protect, letting a second share-filter writer
+        clobber an exclude the run had just added.
+        """
+        return bool(self._cancels)
+
     def cancel_run(self, run_id: int) -> bool:
         """Ask the in-flight run to stop. Returns True if a running run was signalled, False if that
         run isn't currently executing here (already finished, never ran, or a stale id).

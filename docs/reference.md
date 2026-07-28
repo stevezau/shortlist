@@ -81,6 +81,8 @@ POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/co
 GET  /api/system/image-provider -> {capable, provider, reason} (can the AI provider generate poster images — drives the row editor's Generate gate)
 GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files, redacted, as a zip)
 GET  /api/system/libraries -> [{key, title, type}] (the server's Plex libraries, for the row editor)
+GET  /api/system/jobs -> [{id, kind, status, attempts, detail, error, created_at, started_at, finished_at}] (background maintenance history; runs have their own page)
+POST /api/system/jobs {kind} -> the job after an inline drain (kinds: sync.check, privacy.sync). Queued work is retried with backoff and survives a restart
 GET  /api/system/libraries/{key}/collections -> [{title}] (a library's managed collections — anchor choices for row placement, excludes Shortlist's own)
 GET  /api/system/owned-collections -> {collections:[{library,title,label,rating_key,kind,slug,orphan}], total, orphans} (cleanup audit: every shortlist-labelled collection ON PLEX, drift-flagged, DB-independent)
 GET  /api/runs · GET /api/runs/summary · GET /api/runs/{id} (each user carries `status`, `error`, `reason` — why a `skipped` user built nothing — and `has_trace`) · GET /api/runs/{id}/users/{user_id}/trace -> {username, display_name, status, error, reason, trace, breakdown} (the full per-user pipeline trace — history (with true distinct-title watched totals per library, split by media type) / seeds with each seed's weight ingredients, each source's queries+returns tagged with their fate (kept / already_watched / not_in_your_libraries / excluded_genre / lost_ranking_cutoff), the web-search/RAG prompts, resolved vs. hallucinated titles (the AI's resolved proposals carry the same fate so the UI marks each kept vs. dropped), plus `error`/`reason` for a failed or skipped person and `breakdown` (the delivered picks per library); a cold-start user carries a trace too (their thin history + a synthetic `cold_start` source), so `has_trace` is set and the "How we picked" page renders for them; fetched on demand, `trace: {}` on runs predating the feature) · GET /api/runs/{id}/log (activity feed) · POST /api/runs {user_ids?, collection_ids?, dry_run?} · POST /api/runs/{id}/cancel · DELETE /api/runs (clear all run history)
@@ -134,9 +136,25 @@ library (e.g. only "4K Movies") on a server with several libraries of one type. 
 library**: each targeted library seeds from its own watched history and fills to `row.size` on its
 own, so a movies-and-TV watcher gets a full movie row AND a full TV row.
 
-Placement is per row (`collections.placement`: `both` \| `home` \| `library`, default `both`), which
-sets which Plex surfaces the row appears on once promoted (Home, the library's Recommended tab, or
-both). WHERE in that shelf it sits is the **Position** control (`collections.hub_anchor`, per library:
+Placement is per row and held **once per audience**: `collections.placement` for the owner's own
+collection and `collections.placement_friends` for each friend's (both `both` \| `home` \| `library`
+\| `off`, default `both`). Each decodes to two of Plex's three promotion flags — `home` is
+`promotedToOwnHome` on the owner's side and `promotedToSharedHome` on the friends' side, `library`
+is `promotedToRecommended`, and `off` claims neither surface (the collection still exists and is
+still browse-hidden, so it stays reachable from the library's Collections tab). Exception: when a
+run cannot map an existing collection back to its row, that collection keeps its audience's Home
+flag for that run — never the Recommended shelf, which is the one surface the owner cannot filter.
+
+The two sides are independent because **every person gets their own Plex collection**, so
+`promotedToRecommended` is set per collection rather than once for the row. That is what lets an
+owner keep their own row on the Recommended shelf without every friend's row landing there too.
+The one thing it cannot do is the reverse: a friend's row on the Recommended shelf is also visible
+to the **owner**, because the owner has no share filter to hang a `label!=` exclude on. Shortlist
+says so at the control rather than pretending otherwise. A **shared** row is one public collection
+rather than one per person, so it has nothing to split on — it takes both Home flags and the union
+of the two `library` settings.
+
+WHERE in that shelf it sits is the **Position** control (`collections.hub_anchor`, per library:
 `{"top": true}` or `{"anchor": "<collection>", "before": bool}`); it
 replaces the old `pin_top` toggle (still honoured for rows not yet re-saved). This order is Plex's
 Managed Recommendations, which are **server-wide** — Plex exposes no per-viewing-user hub order.

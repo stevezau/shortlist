@@ -705,7 +705,11 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             {"key": "/hubs/home/continueWatching", "title": "Continue Watching", "type": "mixed", "promoted": True}
         ]
         for collection in state.collections.values():
-            promoted = collection.promoted_own_home if user is None or user.home else collection.promoted_shared_home
+            # Plex splits Home by OWNER vs everyone-else, NOT by Plex-Home membership:
+            # `promotedToOwnHome` "applies to the server owner", `promotedToSharedHome` "applies to
+            # all shared users, including managed users" —
+            # https://support.plex.tv/articles/manage-recommendations/. `user is None` is the owner.
+            promoted = collection.promoted_own_home if user is None else collection.promoted_shared_home
             if not promoted:
                 continue
             excluded = bool({label.lower() for label in collection.labels} & excludes)

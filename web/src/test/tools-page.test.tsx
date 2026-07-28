@@ -7,9 +7,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ApiModule from "@/lib/api";
 import { ToolsPage } from "@/pages/tools";
 
-const { syncWatched, syncUsers } = vi.hoisted(() => ({
+const { syncWatched, syncUsers, getJobs, runJob } = vi.hoisted(() => ({
   syncWatched: vi.fn(),
   syncUsers: vi.fn(),
+  getJobs: vi.fn(),
+  runJob: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -19,6 +21,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       syncWatched,
       syncUsers,
+      getJobs,
+      runJob,
     },
   };
 });
@@ -68,6 +72,9 @@ describe("ToolsPage — sync users and watch history", () => {
   beforeEach(() => {
     syncWatched.mockReset();
     syncUsers.mockReset();
+    getJobs.mockReset();
+    getJobs.mockResolvedValue([]);
+    runJob.mockReset();
     FakeEventSource.latest = null;
     vi.stubGlobal("EventSource", FakeEventSource);
   });
@@ -137,8 +144,12 @@ describe("ToolsPage — sync users and watch history", () => {
       error: "ConnectError",
     });
 
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/couldn't finish/i);
+    // Scoped: the page renders an alert region per card, so find the one that actually reported it.
+    const alerts = await screen.findAllByRole("alert");
+    const alert = alerts.find((el) =>
+      /couldn't finish/i.test(el.textContent ?? ""),
+    );
+    expect(alert).toBeDefined();
     expect(alert).toHaveTextContent(/ConnectError/);
   });
 
@@ -183,6 +194,172 @@ describe("ToolsPage — sync users and watch history", () => {
     });
     expect(
       await screen.findByText(/synced 6 users — 1 added, 5 updated/i),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("ToolsPage — sync check", () => {
+  beforeEach(() => {
+    getJobs.mockReset();
+    getJobs.mockResolvedValue([]);
+    runJob.mockReset();
+    syncWatched.mockReset();
+    syncUsers.mockReset();
+    FakeEventSource.latest = null;
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  it("explains why rows drift out of sync, not just that they can", async () => {
+    renderPage();
+    expect(
+      await screen.findByText(/container restarts mid-write/i),
+    ).toBeInTheDocument();
+  });
+
+  it("previews before it changes anything", async () => {
+    // Converge only ever removes visibility, so a live pass is never unsafe — but "press a button,
+    // we silently rewrite every library" is the wrong default.
+    runJob.mockResolvedValue({
+      id: 1,
+      kind: "sync.check",
+      status: "done",
+      detail: "",
+      error: null,
+      fixed: ["Shortlist_gemnath", "Shortlist_j_fm"],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /check for drift/i }),
+    );
+
+    expect(runJob).toHaveBeenCalledWith("sync.check", { dry_run: true });
+    expect(await screen.findByText(/Shortlist_gemnath/)).toBeInTheDocument();
+    // Only now is the destructive action offered, and it names the count.
+    expect(
+      await screen.findByRole("button", { name: /fix 2 rows/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not claim everything is in sync when the check never ran", async () => {
+    // The queue skips a drain while a run is writing to Plex — exactly when someone presses this.
+    // The job comes back `queued` with no result: saying "in sync" would be a lie.
+    runJob.mockResolvedValue({
+      id: 1,
+      kind: "sync.check",
+      status: "queued",
+      detail: "",
+      error: null,
+      fixed: [],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /check for drift/i }),
+    );
+
+    expect(
+      await screen.findByText(/waiting for the current run to finish/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/everything is in sync/i)).toBeNull();
+  });
+
+  it("offers no fix button when nothing drifted", async () => {
+    runJob.mockResolvedValue({
+      id: 1,
+      kind: "sync.check",
+      status: "done",
+      detail: "",
+      error: null,
+      fixed: [],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /check for drift/i }),
+    );
+
+    expect(
+      await screen.findByText(/everything is in sync/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^fix /i })).toBeNull();
+  });
+
+  it("runs the live pass only when the fix button is pressed", async () => {
+    runJob
+      .mockResolvedValueOnce({
+        id: 1,
+        kind: "sync.check",
+        status: "done",
+        detail: "",
+        error: null,
+        fixed: ["Shortlist_gemnath"],
+      })
+      .mockResolvedValueOnce({
+        id: 2,
+        kind: "sync.check",
+        status: "done",
+        detail: "Checked every row; corrected 1",
+        error: null,
+        fixed: ["Shortlist_gemnath"],
+      });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /check for drift/i }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /fix 1 row/i }),
+    );
+
+    expect(runJob).toHaveBeenLastCalledWith("sync.check");
+    expect(await screen.findByText(/corrected 1/i)).toBeInTheDocument();
+  });
+
+  it("shows a retrying job as retrying, not as merely queued", async () => {
+    // A job back in `queued` AFTER an attempt failed is the queue doing its job. Rendering that as
+    // "Queued" would read as "nothing has happened yet" — the opposite of the truth.
+    getJobs.mockResolvedValue([
+      {
+        id: 4,
+        kind: "user.cleanup",
+        status: "queued",
+        attempts: 2,
+        max_attempts: 3,
+        detail: "",
+        error: "ConnectError",
+        created_at: "2026-07-28T10:00:00Z",
+        started_at: null,
+        finished_at: null,
+      },
+    ]);
+    renderPage();
+
+    expect(
+      await screen.findByText(/retrying \(attempt 2\)/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/ConnectError/)).toBeInTheDocument();
+  });
+
+  it("names how many attempts a failed job used", async () => {
+    getJobs.mockResolvedValue([
+      {
+        id: 5,
+        kind: "user.cleanup",
+        status: "failed",
+        attempts: 3,
+        max_attempts: 3,
+        detail: "",
+        error: "Plex unreachable",
+        created_at: "2026-07-28T10:00:00Z",
+        started_at: null,
+        finished_at: "2026-07-28T10:05:00Z",
+      },
+    ]);
+    renderPage();
+
+    expect(
+      await screen.findByText(/failed after 3 attempts/i),
     ).toBeInTheDocument();
   });
 });

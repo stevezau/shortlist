@@ -191,6 +191,89 @@ describe("RowEditor — placement", () => {
     expect(body.placement).toBe("library");
     expect(body.placement_friends).toBe("both");
   });
+
+  // Regression (issue #6): encode() had no "neither" case and fell through to "library", so turning
+  // the second switch of a pair off silently turned the first back on. A surface must stay off.
+  it("keeps both switches off when the last one in a pair is turned off", async () => {
+    renderEditor(row({ placement: "home", placement_friends: "both" }));
+
+    await userEvent.click(screen.getByRole("switch", { name: /Owner Home/i }));
+
+    expect(
+      screen.getByRole("switch", { name: /Owner Home/i }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: /Owner Library Recommended/i }),
+    ).not.toBeChecked();
+  });
+
+  it("saves 'off' for an audience with every surface turned off", async () => {
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
+
+    for (const name of [
+      /Owner Library Recommended/i,
+      /Owner Home/i,
+      /Friends Library Recommended/i,
+      /Friends' Home/i,
+    ]) {
+      await userEvent.click(screen.getByRole("switch", { name }));
+    }
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
+    expect(body.placement).toBe("off");
+    expect(body.placement_friends).toBe("off");
+  });
+
+  it("sets each audience's Recommended flag independently", async () => {
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
+
+    // The owner keeps their own row on the shelf; friends' rows come off it.
+    await userEvent.click(
+      screen.getByRole("switch", { name: /Friends Library Recommended/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
+    expect(body.placement).toBe("both");
+    expect(body.placement_friends).toBe("home");
+  });
+
+  it("warns only while friends' rows sit on the Recommended shelf", async () => {
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
+    expect(
+      screen.getByText(/no share filter to hide them behind/i),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("switch", { name: /Friends Library Recommended/i }),
+    );
+    expect(
+      screen.queryByText(/no share filter to hide them behind/i),
+    ).toBeNull();
+  });
+
+  it("explains where an all-off row can still be found", async () => {
+    renderEditor(row({ placement: "off", placement_friends: "off" }));
+    expect(
+      screen.getByText(/won.t appear on any Home screen or Recommended shelf/i),
+    ).toBeInTheDocument();
+  });
+
+  it("offers an explanation of who sees what", async () => {
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
+    expect(screen.getByText(/How does this work/i)).toBeInTheDocument();
+    // The bit people actually come here for: why they still see everyone's rows.
+    expect(
+      screen.getByText(/you don.t have a share with yourself/i),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("RowEditor — freshness", () => {

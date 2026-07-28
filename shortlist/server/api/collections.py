@@ -33,7 +33,9 @@ RESERVED_SLUGS = {"probe", "shared"}
 BUILDS = {"per_person", "shared"}
 AUDIENCES = {"everyone", "subset"}
 MEDIA = {"movie", "show", "both"}
-PLACEMENTS = {"both", "home", "library"}
+# "off" = neither surface. promote() browse-hides unconditionally, so an "off" row still exists and
+# stays reachable from the library's Collections tab — it just claims no Home or Recommended slot.
+PLACEMENTS = {"both", "home", "library", "off"}
 # "" (Plex default), "upload", "text" (built-in Pillow), "ai" (image model). "generate" is the
 # pre-text-engine name for "ai", accepted for backward compatibility.
 POSTER_MODES = {"", "upload", "text", "ai", "generate"}
@@ -80,8 +82,8 @@ class CollectionIn(BaseModel):
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
-    placement: str = "both"  # both | home | library — owner/home users' visibility
-    placement_friends: str = "both"  # both | home | library — friends' (shared users') visibility
+    placement: str = "both"  # both | home | library | off — the OWNER's own collection
+    placement_friends: str = "both"  # both | home | library | off — each FRIEND's own collection
     pin_top: bool = False  # pin to top of the library's Recommended shelf
     # Per-library Recommended-shelf override for this row, keyed by section key. {} -> inherit the
     # global default (settings `rows.hub_anchor`).

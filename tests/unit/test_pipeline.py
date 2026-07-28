@@ -3,13 +3,16 @@ and the leak-safe ordering (deliver unpromoted → sync filters → promote last
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
 import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
+from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.tmdb import NullCache
+from shortlist.engine.delivery import render_row_name, resolve_row_template, row_marker
 from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec, UserType
 from shortlist.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
@@ -1232,14 +1235,170 @@ class TestPlacement:
             "pin_top": True,
         }
 
-    def test_unmatched_collection_falls_back_to_everywhere(self, ctx: EngineContext):
-        """A collection whose title we can't map to a row must still be hidden from browse and shown —
-        never left half-promoted (browse-visible). The legacy everywhere-visible call is the safe default."""
+    def test_recommended_is_chosen_per_collection_not_ored_across_audiences(self, ctx: EngineContext):
+        """The Recommended flag comes from WHOSE row the collection is (issue #6).
+
+        Everyone gets their OWN collection, so Plex's single `promotedToRecommended` is set per
+        collection and the owner/friends split is real. The old code OR'd both placements into one
+        flag, so "friends: Recommended on" silently dragged the owner's row onto the shelf too —
+        and left the owner with no way to un-clutter their own shelf.
+        """
+        from shortlist.engine.models import RowSpec, UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, placement="home", placement_friends="both")
+
+        _promote_one(ctx, MagicMock(), spec, UserType.OWNER)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": True,
+            "recommended": False,
+            "pin_top": False,
+        }
+
+        _promote_one(ctx, MagicMock(), spec, UserType.SHARED)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": True,
+            "home": False,
+            "recommended": True,
+            "pin_top": False,
+        }
+
+    def test_owner_keeps_the_shelf_while_friends_rows_stay_off_it(self, ctx: EngineContext):
+        """The inverse split: the owner's row on their Recommended shelf, friends' rows only on
+        Friends' Home. This is the config that keeps the owner's shelf to just their own row."""
+        from shortlist.engine.models import RowSpec, UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, placement="both", placement_friends="home")
+
+        _promote_one(ctx, MagicMock(), spec, UserType.OWNER)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": True,
+            "recommended": True,
+            "pin_top": False,
+        }
+
+        _promote_one(ctx, MagicMock(), spec, UserType.SHARED)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": True,
+            "home": False,
+            "recommended": False,
+            "pin_top": False,
+        }
+
+    def test_a_managed_user_collection_uses_the_friends_side(self, ctx: EngineContext):
+        """A managed user takes the FRIENDS-side flags, never the owner's.
+
+        Plex's docs are explicit: Home (``promotedToOwnHome``) "applies to the server owner", while
+        Shared Users' Home (``promotedToSharedHome``) "applies to all shared users, including
+        managed users" — https://support.plex.tv/articles/manage-recommendations/. Routing a managed
+        user through the owner flag hides their row from them and puts it on the OWNER's Home.
+
+        The owner side is deliberately "off" here, so reading the wrong side is unmissable.
+        """
+        from shortlist.engine.models import RowSpec, UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, placement="off", placement_friends="both")
+
+        _promote_one(ctx, MagicMock(), spec, UserType.MANAGED)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": True,
+            "home": False,
+            "recommended": True,
+            "pin_top": False,
+        }
+
+        # The owner, on the same spec, gets nothing — proving the two sides really are independent.
+        _promote_one(ctx, MagicMock(), spec, UserType.OWNER)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": False,
+            "recommended": False,
+            "pin_top": False,
+        }
+
+    def test_an_unmapped_managed_collection_never_lands_on_the_owners_home(self, ctx: EngineContext):
+        """The no-spec fallback must respect the same split — it used to hand MANAGED `home=True`,
+        which is the owner's shelf."""
+        from shortlist.engine.models import UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        collection = MagicMock()
+        _promote_one(ctx, collection, None, UserType.MANAGED)
+        ctx.plex.promote.assert_called_with(collection, shared=True, home=False, recommended=False)
+
+    def test_the_no_spec_fallback_never_forces_a_row_onto_the_recommended_shelf(self, ctx: EngineContext):
+        """A row whose title can't be mapped back to its spec takes the fallback, which used to
+        default `recommended=True`.
+
+        That is the one surface where the OWNER sees every row — no share filter can hide it from
+        them — so defaulting it on put rows the operator had switched fully off onto the owner's
+        shelf. The Home flags stay on by design: this branch is common, not rare, and turning them
+        off there made every row in the full-stack suite disappear.
+        """
+        from shortlist.engine.models import UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        collection = MagicMock()
+        for user_type in (UserType.OWNER, UserType.MANAGED, UserType.SHARED, None):
+            _promote_one(ctx, collection, None, user_type)
+            assert ctx.plex.promote.call_args.kwargs.get("recommended") is False, user_type
+
+        # And it still never puts someone else's row on the owner's Home.
+        for user_type in (UserType.MANAGED, UserType.SHARED):
+            _promote_one(ctx, collection, None, user_type)
+            assert ctx.plex.promote.call_args.kwargs.get("home") is False, user_type
+
+    def test_off_placement_claims_no_surface(self, ctx: EngineContext):
+        """ "off" turns every surface off for that audience. The collection still exists and is still
+        browse-hidden by promote()'s unconditional modeUpdate, so it lives in the Collections tab."""
+        from shortlist.engine.models import RowSpec, UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, placement="off", placement_friends="off")
+
+        for user_type in (UserType.OWNER, UserType.MANAGED, UserType.SHARED):
+            _promote_one(ctx, MagicMock(), spec, user_type)
+            assert ctx.plex.promote.call_args.kwargs == {
+                "shared": False,
+                "home": False,
+                "recommended": False,
+                "pin_top": False,
+            }, user_type
+
+    def test_a_shared_row_unions_both_audiences(self, ctx: EngineContext):
+        """A SHARED row is ONE public collection rather than one per person, so there is no "whose
+        row is this" to split on — it takes both Home flags and either side's Recommended."""
+        from shortlist.engine.models import RowSpec
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, shared=True, placement="home", placement_friends="library")
+
+        _promote_one(ctx, MagicMock(), spec)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": True,
+            "recommended": True,
+            "pin_top": False,
+        }
+
+    def test_an_unmatched_collection_is_hidden_from_browse_and_claims_nothing_else(self, ctx: EngineContext):
+        """A collection whose title we can't map to a row must still be browse-hidden — never left
+        half-promoted and visible to everyone.
+
+        It claims NO other surface: the fallback used to default `recommended=True`, which forced a
+        row onto the Recommended shelf regardless of its placement, so a row the operator had
+        switched fully off reappeared there. Under-showing a row for one run is recoverable;
+        silently overriding "off" is not.
+        """
         from shortlist.engine.pipeline import _promote_one
 
         collection = MagicMock()
         _promote_one(ctx, collection, None)
-        ctx.plex.promote.assert_called_once_with(collection, shared=True)
+        ctx.plex.promote.assert_called_once_with(collection, shared=True, recommended=False)
 
     def test_undelivered_static_library_only_row_keeps_its_placement(self, ctx: EngineContext):
         """INT-3: a STATIC-titled 'Library only' row that exists but got no picks this run keeps its
@@ -1300,9 +1459,15 @@ class TestPlacement:
             # placement="library" -> hidden from Home, shown only in the library's Recommended shelf.
             assert call.kwargs == {"shared": False, "home": False, "recommended": True, "pin_top": False}
 
-    def test_undelivered_dynamic_titled_row_keeps_the_safe_everywhere_fallback(self, ctx: EngineContext):
-        """A {top_seed} row's title can't be predicted without picks, so an un-delivered one keeps the
-        hide-everywhere fallback (privacy-safe) rather than risk mis-mapping to the wrong placement."""
+    def test_an_undelivered_dynamic_titled_row_keeps_the_safe_fallback(self, ctx: EngineContext):
+        """A {top_seed} row's title can't be predicted without picks, so an un-delivered one has no
+        entry in the title map and takes the no-spec fallback.
+
+        That is the right outcome, not a gap: the fallback browse-hides, gives each audience its own
+        Home flag, and — crucially — does NOT claim the Recommended shelf, the one surface the owner
+        cannot filter. Resolving it by label instead would mis-map a DISABLED row's leftover
+        collection onto whichever row the user still has enabled.
+        """
         from datetime import UTC, datetime
 
         from shortlist.engine.models import RowSpec, RunReport, UserProfile, UserRunReport, UserType
@@ -1321,9 +1486,37 @@ class TestPlacement:
 
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
-        ctx.plex.promote.assert_called_once_with(
-            coll, shared=True, home=False
-        )  # unmapped dynamic → safe fallback; friend → no home
+        ctx.plex.promote.assert_called_once_with(coll, shared=True, home=False, recommended=False)
+
+    def test_an_unmanaged_rows_config_still_resolves_its_default_row(self, ctx: EngineContext):
+        """With no rows configured the engine synthesizes a legacy default spec, and every other
+        phase builds from it. Promotion used to read the RAW `config.rows` instead, so the title map
+        was empty, every lookup missed, and placement was silently ignored for the whole server."""
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import RunReport, UserProfile, UserRunReport, UserType
+        from shortlist.engine.pipeline import _promote_phase
+
+        user = UserProfile(username="sarah", plex_account_id=100, user_type=UserType.SHARED, slug="sarah")
+        ctx.config.rows = []
+        ctx.config.rows_defined = False  # unmanaged -> default_row_spec() is synthesized
+        ctx.config.dry_run = False
+        section = MagicMock()
+        section.title = "Movies"
+        ctx.delivery_sections = [section]
+        default_spec = ctx.config.per_person_rows()[0]
+        title = render_row_name(
+            resolve_row_template(default_spec, user, ctx.config), user, [], library_name="Movies"
+        ) + row_marker(user.plex_account_id)
+        coll = MagicMock(title=title)
+        ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
+        report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
+
+        _promote_phase(ctx, [user], [], filters_ok=True, report=report)
+
+        # Resolved to the real spec (default placement "both") — NOT the no-spec fallback, which
+        # would have withheld the Recommended shelf.
+        assert ctx.plex.promote.call_args.kwargs["recommended"] is True
 
     def test_fallback_skips_a_row_this_user_is_not_in_the_audience_for(self, ctx: EngineContext):
         """Audience is honoured by the no-picks fallback: a per-person row this user is excluded from
@@ -1349,7 +1542,7 @@ class TestPlacement:
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
         ctx.plex.promote.assert_called_once_with(
-            coll, shared=True, home=False
+            coll, shared=True, home=False, recommended=False
         )  # excluded → NOT mapped; friend → no home
 
     def test_fallback_leaves_shared_rows_to_the_shared_promote_loop(self, ctx: EngineContext):
@@ -1377,7 +1570,7 @@ class TestPlacement:
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
         ctx.plex.promote.assert_called_once_with(
-            coll, shared=True, home=False
+            coll, shared=True, home=False, recommended=False
         )  # shared spec skipped → NOT mapped; friend → no home
 
     def test_a_top_seed_row_records_a_placement_title_per_library(self, ctx: EngineContext, mock_plextv):
@@ -1763,3 +1956,142 @@ class TestCollectionOrderPhase:
 
         ctx.plex.order_owned_hubs.assert_not_called()
         assert report.hub_orderings == []
+
+
+class TestConverge:
+    """The converge phase: rows the promote phase never reaches must still come off the owner's Home.
+
+    Promotion is write-only and only visits users in tonight's run, so anyone paused, disabled,
+    deselected, errored or promoted by an older build keeps stale flags for ever. This is the pass
+    that catches them — and `promotedToOwnHome` is the one surface no share filter can hide.
+    """
+
+    def _collection(self, rating_key: int, label: str, *, on_owner_home: bool = True):
+        collection = MagicMock()
+        collection.ratingKey = rating_key
+        collection.title = f"row-{rating_key}"
+        collection.labels = [MagicMock(tag=label)]
+        hub = collection.visibility.return_value
+        hub.promotedToOwnHome = on_owner_home
+        hub.promotedToRecommended = True
+        hub.promotedToSharedHome = True
+        return collection
+
+    def _run(self, ctx: EngineContext, collections: list, promoted: set[int], owner_slug: str = "steve"):
+        from shortlist.engine.models import RunReport
+        from shortlist.engine.pipeline import _converge_phase
+
+        ctx.owner_slug = owner_slug
+        ctx.plex.sections.return_value[0].collections.return_value = collections
+        # Exercise the REAL demote, so the test covers the read-then-write contract, not a stub.
+        ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
+        ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
+        report = RunReport(started_at=datetime.now(UTC))
+        _converge_phase(ctx, promoted, report)
+        return report
+
+    def test_a_stranded_row_is_taken_off_the_owners_home(self, ctx: EngineContext):
+        """The SFLIX case: a shared user's row left on the owner's Home by an older build, whose
+        owner is not in tonight's run so promote never revisits it."""
+        stranded = self._collection(1, "Shortlist_gemnath")
+        report = self._run(ctx, [stranded], promoted=set())
+
+        stranded.visibility.return_value.updateVisibility.assert_called_once_with(
+            recommended=True, home=False, shared=True
+        )
+        assert report.converged == ["Shortlist_gemnath"]
+
+    def test_the_owners_own_row_is_left_alone(self, ctx: EngineContext):
+        """The owner's row belongs on the owner's Home — converge must not strip it."""
+        owned = self._collection(1, "Shortlist_steve")
+        report = self._run(ctx, [owned], promoted=set())
+
+        owned.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == []
+
+    def test_a_row_promoted_this_run_is_skipped(self, ctx: EngineContext):
+        """Promote already set this one correctly; re-reading it would be pure churn."""
+        fresh = self._collection(7, "Shortlist_sarah")
+        report = self._run(ctx, [fresh], promoted={7})
+
+        fresh.visibility.assert_not_called()
+        assert report.converged == []
+
+    def test_a_foreign_collection_is_never_touched(self, ctx: EngineContext):
+        """Kometa and friends share these libraries — rule 4."""
+        foreign = self._collection(1, "Kometa_Marvel")
+        self._run(ctx, [foreign], promoted=set())
+
+        foreign.visibility.return_value.updateVisibility.assert_not_called()
+
+    def test_an_already_correct_row_is_not_rewritten(self, ctx: EngineContext):
+        """Idempotence: a nightly converge over hundreds of rows must cost reads, not writes."""
+        settled = self._collection(1, "Shortlist_sarah", on_owner_home=False)
+        report = self._run(ctx, [settled], promoted=set())
+
+        settled.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == []
+
+    def test_nothing_happens_when_the_owner_is_unknown(self, ctx: EngineContext):
+        """Without an owner slug every label looks foreign, including the owner's own row. Guessing
+        would strip the owner's row off their own Home, so converge must decline instead."""
+        anything = self._collection(1, "Shortlist_sarah")
+        report = self._run(ctx, [anything], promoted=set(), owner_slug="")
+
+        anything.visibility.assert_not_called()
+        assert report.converged == []
+
+    def test_dry_run_writes_nothing_but_still_reports_the_real_list(self, ctx: EngineContext):
+        """The preview an operator reads before authorising the live pass must be the ACTUAL list.
+
+        Reporting nothing (or every candidate considered) makes the preview useless: a dry-run
+        sync check would answer "corrected 0" forever, whatever the server actually holds.
+        """
+        ctx.config.dry_run = True
+        stranded = self._collection(1, "Shortlist_gemnath")
+        settled = self._collection(2, "Shortlist_sarah", on_owner_home=False)
+
+        report = self._run(ctx, [stranded, settled], promoted=set())
+
+        stranded.visibility.return_value.updateVisibility.assert_not_called()
+        settled.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == ["Shortlist_gemnath"]  # only the one actually stranded
+
+    def test_a_shared_row_is_left_on_the_owners_home(self, ctx: EngineContext):
+        """A SHARED row is ONE public collection labelled `shortlist__shared_<row>`, and it belongs on
+        the owner's Home whenever its placement asks for it. Matching only the owner's own label
+        demoted every shared row on every pass that did not rebuild it — a no-user run, a scoped cron
+        run, a cancelled run, a sync check. That is most passes.
+        """
+        from shortlist.engine.models import RowSpec
+
+        ctx.config.rows = [RowSpec(slug="trending", name_template="Trending", size=10, shared=True, placement="both")]
+        shared = self._collection(1, "Shortlist__shared_trending")
+
+        report = self._run(ctx, [shared], promoted=set())
+
+        shared.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == []
+
+    def test_a_shared_row_that_does_not_want_home_is_still_converged(self, ctx: EngineContext):
+        """The allowance is per-row, not "any shared label" — a shared row set to Library-only has no
+        business on the owner's Home either."""
+        from shortlist.engine.models import RowSpec
+
+        ctx.config.rows = [
+            RowSpec(slug="trending", name_template="Trending", size=10, shared=True, placement="library")
+        ]
+        shared = self._collection(1, "Shortlist__shared_trending")
+
+        report = self._run(ctx, [shared], promoted=set())
+
+        assert report.converged == ["Shortlist__shared_trending"]
+
+    def test_a_pms_failure_never_fails_the_run(self, ctx: EngineContext):
+        """Converge runs after the real work and only ever removes visibility — a wobble here must
+        not sink a run that already delivered everyone's rows. Next run retries."""
+        exploding = self._collection(1, "Shortlist_gemnath")
+        exploding.visibility.side_effect = RuntimeError("PMS timeout")
+
+        report = self._run(ctx, [exploding], promoted=set())  # must not raise
+        assert report.converged == []

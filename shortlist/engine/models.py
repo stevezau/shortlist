@@ -266,11 +266,13 @@ class RowSpec:
     # broader reach. Only affects the llm_web source; TMDB/Trakt still use the full seed set. None ->
     # inherit EngineConfig.recent_count.
     recent_count: int | None = None
-    # Where the row's collection appears for the owner / home users: "both" (Home + Library
-    # Recommended, the default), "home" (Home only), or "library" (Library Recommended only).
+    # Which surfaces the OWNER's own collection appears on: "both" (Home + Library Recommended, the
+    # default), "home", "library", or "off" (neither — the Collections tab only, since promote()
+    # always browse-hides). "off" is a STRING, not None: `placement_friends=None` already means
+    # "inherit", so a None sentinel here would be two different things at once.
     placement: str = "both"
-    # Where the row's collection appears for friends (shared users). None = inherit from `placement`
-    # (backward compat); set explicitly to diverge from the owner's placement.
+    # The same, for each FRIEND's (shared user's) own collection — "home" means Friends' Home there.
+    # None = inherit from `placement` (backward compat); set explicitly to diverge.
     placement_friends: str | None = None
     # Pin the row to the TOP of its library's Recommended shelf (ManagedHub.move). This is a
     # server-wide managed-recommendations order, NOT per-viewing-user — Plex exposes no per-user order.
@@ -289,19 +291,36 @@ class RowSpec:
 
     @property
     def show_home(self) -> bool:
-        """Owner / home users see this on their Home screen."""
+        """The owner sees their OWN row on their Home screen (Plex `promotedToOwnHome`)."""
         return self.placement in ("both", "home")
 
     @property
-    def show_library(self) -> bool:
-        """Show in the Library's Recommended shelf."""
-        fp = self._effective_friends_placement
-        return self.placement in ("both", "library") or fp in ("both", "library")
+    def show_friends_home(self) -> bool:
+        """Each friend sees their OWN row on their Home screen (Plex `promotedToSharedHome`)."""
+        return self._effective_friends_placement in ("both", "home")
 
     @property
-    def show_friends_home(self) -> bool:
-        """Friends (shared users) see this on their Home screen."""
-        return self._effective_friends_placement in ("both", "home")
+    def show_owner_library(self) -> bool:
+        """The OWNER's own collection sits on its library's Recommended shelf."""
+        return self.placement in ("both", "library")
+
+    @property
+    def show_friends_library(self) -> bool:
+        """Each FRIEND's own collection sits on its library's Recommended shelf.
+
+        Separate from `show_owner_library` because every person gets their OWN collection, so Plex's
+        single `promotedToRecommended` flag is set per collection — the owner/friends split is real,
+        not cosmetic. Friends only ever see their own row on that shelf (their share filter excludes
+        everyone else's), but the OWNER has no share filter to hang an exclude on, so turning this on
+        also puts every friend's row on the owner's shelf. Plex limitation, surfaced in the UI.
+        """
+        return self._effective_friends_placement in ("both", "library")
+
+    @property
+    def show_library(self) -> bool:
+        """Recommended-shelf flag for a SHARED row — one public collection rather than one per
+        person, so there is nothing to split: it shows if either audience asked for it."""
+        return self.show_owner_library or self.show_friends_library
 
     @property
     def label(self) -> str | None:
@@ -678,6 +697,11 @@ class RunReport:
     # run level because the sweep covers the whole SERVER: a leaking row belonging to a paused or
     # disabled user is still a leaking row, and nobody would ever see it in a per-user report.
     swept_rows: dict[str, list[str]] = field(default_factory=dict)
+    # Labels of rows the converge phase pulled off the OWNER's Home because this run's promote could
+    # not reach them (their user is paused, disabled, deselected, errored — or the row was promoted
+    # by an older build). Run level for the same reason as the sweep: these people are by definition
+    # absent from the user list, so a per-user report would never show it (plex-safety rule 10).
+    converged: list[str] = field(default_factory=list)
     # Share filters we changed, keyed by plex account id. Editing someone's Plex share permissions
     # is the most sensitive write Shortlist makes, and most of the accounts we write to are not in
     # any run's user list — so without this, "what changed on whose share at 03:31" would have no

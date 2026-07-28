@@ -99,6 +99,11 @@ class EngineContext:
     # people rename themselves, and two display names can slugify to the same string — either
     # would silently hand one account another's row.
     known_slugs: dict[int, str] = field(default_factory=dict)
+    # The server OWNER's slug — the ONE person whose rows may sit on the owner's Home. The converge
+    # phase needs it to tell "this row belongs on Home" from "this row is stranded there", and it
+    # cannot be derived from `known_slugs` (which carries no type) or from the plex.tv roster (which
+    # never returns the owner). Empty = unknown, and converge then does nothing rather than guess.
+    owner_slug: str = ""
     # (tmdb_id, media_type) the owner has already actioned in the Requests inbox — sent or rejected.
     # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
     # by a later auto-send. Empty for direct engine runs, which have no inbox.
@@ -210,7 +215,13 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         return report
 
     # Only now, with the exclusions in place, promote rows onto shared Home.
-    _promote_phase(ctx, to_promote, shared_to_promote, filters_ok, report)
+    promoted = _promote_phase(ctx, to_promote, shared_to_promote, filters_ok, report)
+
+    # Converge everything the promote phase could NOT reach. Promotion only ever writes flags for
+    # users in tonight's run, so a row belonging to anyone paused, disabled, deselected, errored,
+    # cancelled, or simply promoted by an older build keeps its flags forever. This walks the rest
+    # and takes them off the owner's Home — the one surface nothing can hide.
+    _converge_phase(ctx, promoted, report)
 
     # Order each row's items (the expensive one-move-per-item step) as a best-effort pass AFTER
     # promotion — rows are already delivered, hidden and live, so a slow PMS here degrades only the
@@ -624,13 +635,18 @@ def _promote_phase(
     shared_to_promote: list[tuple[RowSpec, UserProfile]],
     filters_ok: bool,
     report: RunReport,
-) -> None:
+) -> set[int]:
     """Promote delivered rows onto shared Home — never before the excludes that hide them exist.
 
     Promotion runs across EVERY delivery library, not just one per type: promote() is the only call
     that hides a collection from that library's normal browse view (modeUpdate), and a row can now be
     delivered into any library (library_keys). A row promoted in only the lowest-key library would sit
-    unhidden — and browse-visible to everyone — in whatever other library it actually landed in."""
+    unhidden — and browse-visible to everyone — in whatever other library it actually landed in.
+
+    Returns the ratingKeys actually promoted, so the converge phase can tell "this row was set
+    correctly tonight" from "nothing has touched this row in weeks" and only walk the remainder.
+    A collection skipped by an exception mid-loop is correctly absent, so converge picks it up."""
+    promoted: set[int] = set()
     for user in to_promote:
         user_report = next(r for r in report.users if r.slug == user.slug)
         if ctx.config.dry_run:
@@ -650,7 +666,12 @@ def _promote_phase(
         # Which row produced each of this user's collections, so promotion honours that row's
         # placement (Home / Library) and pin-to-top. Keyed by the exact title delivery wrote and
         # recorded per library during this user's run (a {top_seed} title differs per library).
-        spec_by_slug = {spec.slug: spec for spec in ctx.config.rows}
+        # `per_person_rows()`, NOT `config.rows`: with no rows configured it synthesizes the legacy
+        # default spec, which is what every other phase builds from (_build_indexes, delivery). Reading
+        # the raw list here meant an unmanaged-rows config had an EMPTY map, so every title lookup
+        # missed and every collection fell to the no-spec fallback — placement silently ignored.
+        effective_rows = ctx.config.per_person_rows()
+        spec_by_slug = {spec.slug: spec for spec in effective_rows}
         placements = {
             title: spec_by_slug[slug] for title, slug in user_report.placement_titles.items() if slug in spec_by_slug
         }
@@ -661,8 +682,8 @@ def _promote_phase(
         # picks, so those keep the safe hide-everywhere fallback. resolve_row_template is the shared
         # source of truth for the template precedence delivery also uses — they must not drift.
         marker = row_marker(user.plex_account_id)
-        for spec in ctx.config.rows:
-            if spec.shared or (spec.audience is not None and user.plex_account_id not in spec.audience):
+        for spec in effective_rows:
+            if spec.audience is not None and user.plex_account_id not in spec.audience:
                 continue
             title_template = resolve_row_template(spec, user, ctx.config)
             if "{top_seed}" not in title_template:
@@ -671,6 +692,7 @@ def _promote_phase(
                 for section in target_sections(ctx.delivery_sections, spec):
                     name = render_row_name(title_template, user, [], library_name=getattr(section, "title", "") or "")
                     placements.setdefault(name + marker, spec)
+
         try:
             # Every row the user has, in every library — they can have several rows (all sharing
             # their label), and promoting only one would leave the others invisible to the one
@@ -678,6 +700,7 @@ def _promote_phase(
             for section in ctx.delivery_sections:
                 for collection in ctx.plex.find_owned_collections(section, user.label):
                     _promote_one(ctx, collection, placements.get(collection.title), user.user_type)
+                    promoted.add(int(collection.ratingKey))
         except Exception as e:
             user_report.status = "error"
             user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
@@ -690,46 +713,139 @@ def _promote_phase(
             for section in ctx.delivery_sections:
                 for collection in ctx.plex.find_owned_collections(section, spec.label):
                     _promote_one(ctx, collection, spec)
+                    promoted.add(int(collection.ratingKey))
         except Exception as e:
             if shared_report is not None:
                 shared_report.status = "error"
                 shared_report.error = (shared_report.error or "") + f" | promote: {type(e).__name__}: {e}"
             logger.exception("shared row '{}': promote failed", spec.slug)
 
+    return promoted
+
+
+def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -> None:
+    """Take every Shortlist row this run did NOT promote off the owner's Home.
+
+    Promotion is write-only and reaches a collection ONLY when its owner is in tonight's run. So a
+    row belonging to anyone paused, disabled, deselected in a scoped run, errored, cancelled — or
+    simply promoted by an older build with different rules — keeps whatever flags it last got, for
+    ever. That is how 5 other people's rows ended up parked on the maintainer's Home screen (SFLIX,
+    2026-07-28): the user-type-aware promote landed on 2026-07-27, but nothing went back for the
+    collections it no longer visits.
+
+    Scope is deliberately narrow — ONLY `promotedToOwnHome`, and only ever clearing it:
+
+    * It is the single surface with no defence. The owner is never restricted (rule 5), so no
+      `label!=` exclude can hide a row that lands there; every other surface is filtered per account.
+    * Clearing it is monotonically private, so it needs no `filters_ok` gate and cannot leak even
+      when run against a partially-understood server.
+
+    Anything wider — deleting orphans, converging Recommended, restoring a paused row — can make the
+    server LESS private if the picture is wrong, so it stays out until the desired state is derived
+    rather than inferred. Walks `plex.sections()` (every library), not `delivery_sections`, because a
+    row stranded in a library no enabled row still targets is exactly the case promotion cannot see.
+    """
+    if not ctx.owner_slug:
+        # No owner known (direct engine runs, some tests): every label would look foreign and we would
+        # demote the owner's own legitimate row. Do nothing rather than guess.
+        logger.debug("converge: owner slug unknown — skipping")
+        return
+    # Labels ALLOWED on the owner's Home. Not just the owner's own row: a SHARED row is one public
+    # collection labelled `shortlist__shared_<rowslug>`, and it legitimately sits on the owner's Home
+    # whenever its placement asks for it (_promote_one gives user_type=None `home=spec.show_home`).
+    # Matching only the owner's label demoted every shared row on every pass that did not rebuild it
+    # — which is most of them: a no-user run, a scoped cron run, a cancelled run, a sync check.
+    allowed = {f"{ctx.config.label_prefix}_{ctx.owner_slug}".lower()}
+    allowed |= {spec.label.lower() for spec in ctx.config.rows if spec.shared and spec.show_home and spec.label}
+    prefix = f"{ctx.config.label_prefix}_".lower()
+    demoted: list[str] = []
+    try:
+        for section in ctx.plex.sections():
+            for collection in section.collections():
+                if int(collection.ratingKey) in promoted:
+                    continue
+                label = next((t.tag for t in collection.labels if t.tag.lower().startswith(prefix)), None)
+                if label is None or label.lower() in allowed:
+                    continue  # not ours (rule 4), or legitimately on the owner's Home
+                # Read the hub even in dry-run: the preview an operator reads before running for real
+                # has to be the actual list, not every candidate we considered.
+                if not ctx.plex.reads_as_on_owner_home(collection):
+                    continue
+                if ctx.config.dry_run:
+                    logger.info("[dry-run] {}: would demote off the owner's Home (converge)", collection.title)
+                    demoted.append(label)
+                    continue
+                with ctx.write_lock:
+                    if ctx.plex.demote_own_home(collection):
+                        demoted.append(label)
+    except Exception:
+        # Best-effort: the run's real work is already done and this only ever removes visibility, so a
+        # PMS wobble here must not fail the run. Next run converges again.
+        logger.exception("converge: could not finish demoting stranded rows — next run retries")
+    if demoted:
+        report.converged = sorted(demoted)
+        logger.warning(
+            "converge: took {} stranded row(s) off the owner's Home ({})",
+            len(demoted),
+            ", ".join(sorted(set(demoted))),
+        )
+
 
 def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type: UserType | None = None) -> None:
     """Promote one collection with its row's placement, respecting the user type.
 
-    Friends (shared users) use the Friends' Home flag; home users and the owner use the Home flag.
-    Each user's per-person collection gets only the flag relevant to their type, so a friend's row
-    doesn't clutter the owner's Home and vice versa.
+    Every person gets their OWN collection, so all three Plex flags are chosen per collection from
+    whose row it is: the owner's uses Home, everyone else's uses Friends' Home, and the
+    Recommended-shelf flag comes from that same side of the row's placement. That is what keeps
+    someone else's row off the owner's Home — and lets the owner keep their own row on the
+    Recommended shelf without dragging everyone else's onto it.
+
+    MANAGED users go with SHARED, not with the owner. Plex's own docs are explicit: Home
+    (``promotedToOwnHome``) "applies to the server owner", while Shared Users' Home
+    (``promotedToSharedHome``) "applies to all shared users, INCLUDING managed users"
+    (https://support.plex.tv/articles/manage-recommendations/). Routing a managed user through the
+    owner flag would hide their row from them and put it on the owner's Home instead.
     """
     if spec is None:
-        if user_type == UserType.SHARED:
-            ctx.plex.promote(collection, shared=True, home=False)
+        # No spec could be matched to this title. This is NOT a rare path — the title->spec map
+        # misses routinely (the full-stack suite reaches it for every collection), so whatever this
+        # branch does is what most rows get. It therefore keeps each audience's own Home flag: making
+        # it claim nothing hid every row in the integration suite, which on a real server means
+        # people's rows silently disappearing. Under-showing here is NOT the safe direction.
+        #
+        # `recommended=False` is still deliberate. That flag is the one surface where the OWNER sees
+        # every row (no share filter can hide it from them), so defaulting it on — as this used to —
+        # forced rows onto the owner's shelf regardless of placement, including rows switched fully
+        # off. Home flags stay per-audience: each only ever shows the row to its own owner.
+        if user_type is UserType.OWNER:
+            ctx.plex.promote(collection, shared=False, home=True, recommended=False)
         elif user_type is not None:
-            ctx.plex.promote(collection, shared=False, home=True)
+            # SHARED or MANAGED — both are covered by Shared Users' Home, never the owner's.
+            ctx.plex.promote(collection, shared=True, home=False, recommended=False)
         else:
-            ctx.plex.promote(collection, shared=True)
+            ctx.plex.promote(collection, shared=True, recommended=False)
         return
-    # A friend's collection shows on Friends' Home; a home user's shows on Home.
-    # Shared rows (user_type=None) set both flags from the spec.
-    if user_type == UserType.SHARED:
+    if user_type in (UserType.SHARED, UserType.MANAGED):
         home = False
         shared = spec.show_friends_home
+        recommended = spec.show_friends_library
     elif user_type is None:
-        # Shared row or legacy call — both flags from spec
+        # A SHARED row: ONE public collection for everyone rather than one per person, so it carries
+        # both Home flags and the union of the two Recommended settings — there is no "whose row is
+        # this" to split on.
         home = spec.show_home
         shared = spec.show_friends_home
+        recommended = spec.show_library
     else:
-        # Owner or managed/home user — only Home flag
+        # The owner's (or a managed user's) own collection — only the owner side of the placement.
         home = spec.show_home
         shared = False
+        recommended = spec.show_owner_library
     ctx.plex.promote(
         collection,
         shared=shared,
         home=home,
-        recommended=spec.show_library,
+        recommended=recommended,
         pin_top=spec.pin_top,
     )
 

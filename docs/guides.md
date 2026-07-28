@@ -96,6 +96,38 @@ back to a clean default ("✨ Picked for You") rather than a half-finished sente
 any row at any time in the **Row editor** — the collection on Plex is renamed in place, so its
 place in the shelf and its privacy are preserved.
 
+## Where a row shows
+
+The **Row editor** → **Where it shows** grid picks which Plex screens a row appears on. Two
+surfaces, two audiences, and every one of the four switches is independent:
+
+|                         | You | Everyone else |
+| ----------------------- | --- | ------------- |
+| **Library Recommended** | ☑   | ☑             |
+| **Home screen**         | ☑   | ☑             |
+
+The columns are real, not cosmetic: every person gets their **own** Plex collection, so each switch
+is set on a different collection. **You** is your own row — Plex's Home shelf applies to the server
+owner alone. **Everyone else** covers the people you've shared with plus Plex Home members, whom
+Plex groups together under Shared Users' Home. Each of them only ever sees their own row; everyone
+else's is excluded from their share filter.
+
+Turn all four off and the row still gets built and kept private; it claims no Recommended slot, and
+you'll find it under the library's **Collections** tab. One caveat: on a run where Shortlist can't
+match an existing collection back to its row — a `{top_seed}` row that produced no picks, say — that
+row keeps its own Home flag for that run. It stays off the Recommended shelf, and it is only ever
+visible to the person it belongs to.
+
+**The one thing this can't do:** hide friends' rows from _your_ Recommended shelf while leaving them
+on theirs. Share filters are what hide a row from someone, and you own the server — there is no
+share with yourself to attach one to. So with **Everyone else → Library Recommended** on, every friend's
+row is on your shelf too. Turn it off (leaving **Everyone else → Home screen** on) and each friend still
+gets their row on their own Home, while your shelf stays yours. Shortlist shows this warning at the
+switch itself.
+
+A common setup: **You** both on, **Everyone else** Home only — you get your row on your Home and your
+shelf, everyone else gets theirs on their Home, and nobody's row clutters anybody else's view.
+
 ## Row placement (Recommended shelf)
 
 By default Plex adds new collections at the **end** of a library's _Recommended_ shelf, so if another

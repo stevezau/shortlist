@@ -410,12 +410,15 @@ class TestPlexClient:
         assert vis.updateVisibility.call_args.kwargs == {"recommended": False, "home": False, "shared": False}
         owned.delete.assert_called_once()
 
-    def test_promote_hides_from_library_and_promotes_shared(self, mock_plex: PlexClient):
+    def test_promote_hides_from_library_and_never_defaults_onto_the_owners_home(self, mock_plex: PlexClient):
+        """`home` defaults OFF. It is promotedToOwnHome — the SERVER OWNER's Home shelf — and the
+        owner has no share filter, so anything that lands there is visible to them with nothing able
+        to hide it. Defaulting it on is how every user's row ended up on the owner's Home."""
         collection = MagicMock()
         mock_plex.promote(collection)
         collection.modeUpdate.assert_called_once_with(mode="hide")
         vis = collection.visibility.return_value
-        assert vis.updateVisibility.call_args.kwargs == {"recommended": True, "home": True, "shared": True}
+        assert vis.updateVisibility.call_args.kwargs == {"recommended": True, "home": False, "shared": True}
         vis.reload.return_value.move.assert_not_called()  # not pinned by default
 
     def test_promote_passes_placement_flags_through(self, mock_plex: PlexClient):

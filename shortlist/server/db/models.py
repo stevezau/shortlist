@@ -343,3 +343,37 @@ class RequestCandidate(Base):
     first_seen_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # which run first surfaced it
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Job(Base):
+    """One unit of background maintenance — a cleanup, a filter write, a sync check.
+
+    Runs are NOT jobs: a run is a long, rich, user-facing operation with its own page, live progress,
+    per-user results and a cancel button. A job is a short mechanical fix-up. They stay separate on
+    purpose; what they share is that neither may write to Plex while the other is.
+
+    The table exists so background work survives a restart. Before this, every maintenance action was
+    a fire-and-forget executor call: if the container died — or Plex was simply down — the work was
+    lost with no record and nothing ever retried it. A user disabled during a Plex outage kept their
+    rows on Plex for ever, because no later run revisits a disabled user.
+    """
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(48), index=True)
+    # What the job needs to do its work — a user slug, a row slug, a set of account ids. Kept as
+    # data, never as a closure, so a job is still runnable after the process that queued it is gone.
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    # queued -> running -> done | failed. `running` at boot means the process died mid-job; startup
+    # recovery requeues those (every job kind is written to be idempotent, so a partial replay is safe).
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    # Human-readable one-liner for the Tools list ("Removed 2 rows for sarah"), set on completion.
+    detail: Mapped[str] = mapped_column(String(512), default="")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)  # redacted (rule 9)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

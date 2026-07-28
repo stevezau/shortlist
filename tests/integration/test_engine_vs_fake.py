@@ -152,7 +152,20 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     ctx = EngineContext(
         # row_size is wide enough that a both-types watcher gets picks of both types — a narrow
         # row can fill up with movies alone and never exercise cross-library delivery.
-        config=EngineConfig(row_size=12, min_history=5, candidates_pre_rank=40, max_seeds=12),
+        #
+        # `rows=` is explicit ON PURPOSE. Left empty, `_promote_phase`'s title->spec map is empty and
+        # every collection falls to the no-spec fallback — so this test's Home-flag matrix, the
+        # load-bearing privacy assertion in the file, would validate the fallback instead of the
+        # spec-carrying branch a real server always takes, and a placement-decoding regression would
+        # be invisible here.
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=12)],
+            rows_defined=True,
+        ),
         plex=plex,
         plextv=plextv,
         tmdb=TmdbClient("test-key"),
@@ -217,13 +230,17 @@ def test_engine_run_end_to_end(fakes, tmp_path):
             collection = state.collections[rating_key]
             assert collection.item_keys, slug
             assert collection.mode == 0  # hidden from library browsing
-            if user_by_slug[slug].user_type == UserType.SHARED:
-                assert collection.promoted_shared_home and not collection.promoted_own_home, (
-                    f"{slug}: friends get shared home only"
+            # Plex splits Home by OWNER vs everyone-else, not by Home-membership: `promotedToOwnHome`
+            # "applies to the server owner", `promotedToSharedHome` "applies to all shared users,
+            # including managed users" — https://support.plex.tv/articles/manage-recommendations/.
+            # So only the owner gets own-home; shared AND managed both get shared-home.
+            if user_by_slug[slug].user_type == UserType.OWNER:
+                assert collection.promoted_own_home and not collection.promoted_shared_home, (
+                    f"{slug}: the owner gets own home only"
                 )
             else:
-                assert collection.promoted_own_home and not collection.promoted_shared_home, (
-                    f"{slug}: home users get own home only"
+                assert collection.promoted_shared_home and not collection.promoted_own_home, (
+                    f"{slug}: shared and managed users get shared home only"
                 )
             # Every item matches the library the collection lives in, so a `label!=` exclude can
             # actually match it. A mixed-type collection is unfilterable and leaks to everyone.
@@ -246,17 +263,23 @@ def test_engine_run_end_to_end(fakes, tmp_path):
         assert snapshot is not None
         assert snapshot.filters["filterMovies"] == ""
 
-    # Owner /hubs shows home users' rows (promoted_own_home=True) but NOT friends' rows.
-    friend_ids = {
-        key for slug, row in owned.items() if user_by_slug[slug].user_type == UserType.SHARED for key in row.rating_keys
+    # Owner /hubs shows the OWNER's own rows and nobody else's. `promotedToOwnHome` "applies to the
+    # server owner"; shared AND managed users are both covered by `promotedToSharedHome`
+    # (https://support.plex.tv/articles/manage-recommendations/), so a managed user's row belongs on
+    # THEIR Home, not the owner's. Anything else here is a leak of someone's row onto the owner's Home.
+    owner_ids = {
+        key for slug, row in owned.items() if user_by_slug[slug].user_type is UserType.OWNER for key in row.rating_keys
     }
-    home_ids = {
-        key for slug, row in owned.items() if user_by_slug[slug].user_type != UserType.SHARED for key in row.rating_keys
+    other_ids = {
+        key
+        for slug, row in owned.items()
+        if user_by_slug[slug].user_type is not UserType.OWNER
+        for key in row.rating_keys
     }
     r = httpx.get(f"{pms_url}/hubs", headers={"X-Plex-Token": state.owner_token, "Accept": "application/json"})
     owner_hub_ids = {collection_id_from_hub(h) for h in r.json()["MediaContainer"]["Hub"]}
-    assert not (friend_ids & owner_hub_ids), "friends' rows should not appear on the owner's Home"
-    assert home_ids <= owner_hub_ids, "home users' rows should appear on the owner's Home"
+    assert not (other_ids & owner_hub_ids), "nobody else's row may appear on the owner's Home"
+    assert owner_ids <= owner_hub_ids, "the owner's own rows should appear on their Home"
 
     # Canary /hubs (switch -> resources -> server token) shows its own row and NONE of the others'
     # — including sarah's TV row, which lives in a different library than her movie row.
@@ -272,7 +295,7 @@ def test_engine_run_end_to_end(fakes, tmp_path):
     report2 = engine_run(ctx, users)
     assert report2.ok
     assert all(not u.privacy_synced for u in report2.users)
-    assert len(state.collections) == len(friend_ids) + len(home_ids)  # no duplicate rows created on a re-run
+    assert len(state.collections) == len(owner_ids) + len(other_ids)  # no duplicate rows created on a re-run
     for account_id, merged in expected.items():
         assert state.users[account_id].filters["filterMovies"] == merged
 

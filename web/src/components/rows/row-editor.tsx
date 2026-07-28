@@ -27,10 +27,85 @@ import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
 import { useSaveCollection } from "@/lib/queries";
-import type { Collection, CollectionInput, User } from "@/lib/types";
+import type { Collection, CollectionInput, Placement, User } from "@/lib/types";
 
-type Placement = "both" | "home" | "library";
+/** Decode/encode one audience's placement as its two independent surface flags. All four
+ *  combinations are representable — "off" is a real state, not a fallback to Library. */
+function hasLibrary(p: Placement): boolean {
+  return p === "both" || p === "library";
+}
 
+function hasHome(p: Placement): boolean {
+  return p === "both" || p === "home";
+}
+
+function encode(library: boolean, home: boolean): Placement {
+  if (library && home) return "both";
+  if (home) return "home";
+  if (library) return "library";
+  return "off";
+}
+
+/** Collapsed by default — the grid should read on its own, and this is here for the "wait, who sees
+ *  what?" moment. Native <details> so it is keyboard- and screen-reader-accessible with no library. */
+function PlacementHelp() {
+  return (
+    <details className="group border-t pt-3">
+      <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        How does this work?
+      </summary>
+      <div className="mt-3 space-y-3 text-xs text-muted-foreground">
+        <p>
+          Everyone gets their <strong>own</strong> row. Plex keeps them apart by
+          labelling each one and hiding everyone else&rsquo;s label from each
+          person&rsquo;s share &mdash; so a friend only ever sees theirs.
+        </p>
+        <div className="space-y-2">
+          <p>
+            <strong className="text-foreground">You</strong> &mdash; the server
+            owner. Plex&rsquo;s Home shelf is owner-only, so this column only
+            ever affects your own row.
+          </p>
+          <p>
+            <strong className="text-foreground">Everyone else</strong> &mdash;
+            people you&rsquo;ve shared with, plus Plex Home members. Plex treats
+            them all the same here, and each sees only their own row.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <p>
+            <strong className="text-foreground">Library Recommended</strong>{" "}
+            puts a row on that library&rsquo;s Recommended shelf.
+          </p>
+          <p>
+            <strong className="text-foreground">Home screen</strong> puts it on
+            a Home screen &mdash; yours in the first column, theirs in the
+            second.
+          </p>
+        </div>
+        <p>
+          Turn <strong>all four off</strong> and the row is still built and
+          still private. It just doesn&rsquo;t claim a shelf &mdash;
+          you&rsquo;ll find it in the library&rsquo;s Collections tab.
+        </p>
+        <p>
+          The one thing Plex can&rsquo;t do: hide other people&rsquo;s rows from{" "}
+          <strong className="text-foreground">your</strong> Recommended shelf.
+          Hiding works through each person&rsquo;s share, and you don&rsquo;t
+          have a share with yourself.
+        </p>
+      </div>
+    </details>
+  );
+}
+
+/**
+ * "Where it shows" as a surface x audience grid. The two columns are real, not cosmetic: every
+ * person gets their OWN Plex collection, so each of Plex's three flags is set per collection —
+ * `promotedToRecommended` on the owner's vs on everyone else's, plus the two Home flags Plex
+ * already splits by audience (`promotedToOwnHome` is owner-only; `promotedToSharedHome` covers
+ * shared AND managed users — https://support.plex.tv/articles/manage-recommendations/).
+ */
 function PlacementToggles({
   placement,
   placementFriends,
@@ -40,76 +115,67 @@ function PlacementToggles({
   placementFriends: Placement;
   onChange: (placement: Placement, placementFriends: Placement) => void;
 }) {
-  const ownerLibrary = placement === "both" || placement === "library";
-  const ownerHome = placement === "both" || placement === "home";
-  const friendsLibrary =
-    placementFriends === "both" || placementFriends === "library";
-  const friendsHome =
-    placementFriends === "both" || placementFriends === "home";
+  const ownerLibrary = hasLibrary(placement);
+  const ownerHome = hasHome(placement);
+  const friendsLibrary = hasLibrary(placementFriends);
+  const friendsHome = hasHome(placementFriends);
 
-  function encode(lib: boolean, hom: boolean): Placement {
-    if (lib && hom) return "both";
-    if (hom) return "home";
-    return "library";
-  }
+  const cell = (
+    checked: boolean,
+    label: string,
+    onToggle: (v: boolean) => void,
+  ) => (
+    <div className="flex justify-center">
+      <Switch aria-label={label} checked={checked} onCheckedChange={onToggle} />
+    </div>
+  );
 
   return (
     <div className="space-y-3 rounded-md border p-4">
-      <div className="space-y-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Owner &amp; home users
+      <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-6 gap-y-3">
+        <span />
+        <p className="text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          You
         </p>
-        <p className="text-xs text-muted-foreground">
-          Plex Home members who share your Home screen.
+        <p className="text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Everyone else
         </p>
-        <div className="flex items-center justify-between">
-          <p className="text-sm">Library Recommended</p>
-          <Switch
-            aria-label="Owner Library Recommended"
-            checked={ownerLibrary}
-            onCheckedChange={(v) =>
-              onChange(encode(v, ownerHome), placementFriends)
-            }
-          />
-        </div>
-        <div className="flex items-center justify-between">
-          <p className="text-sm">Home</p>
-          <Switch
-            aria-label="Owner Home"
-            checked={ownerHome}
-            onCheckedChange={(v) =>
-              onChange(encode(ownerLibrary, v), placementFriends)
-            }
-          />
-        </div>
+
+        <p className="text-sm">Library Recommended</p>
+        {cell(ownerLibrary, "Owner Library Recommended", (v) =>
+          onChange(encode(v, ownerHome), placementFriends),
+        )}
+        {cell(friendsLibrary, "Friends Library Recommended", (v) =>
+          onChange(placement, encode(v, friendsHome)),
+        )}
+
+        <p className="text-sm">Home screen</p>
+        {cell(ownerHome, "Owner Home", (v) =>
+          onChange(encode(ownerLibrary, v), placementFriends),
+        )}
+        {cell(friendsHome, "Friends' Home", (v) =>
+          onChange(placement, encode(friendsLibrary, v)),
+        )}
       </div>
-      <div className="space-y-3 border-t pt-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Friends (shared users)
+
+      <PlacementHelp />
+
+      {friendsLibrary && (
+        <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+          Friends&rsquo; rows on the Recommended shelf are visible to{" "}
+          <strong className="text-foreground">you</strong> as well. You own the
+          server, so there&rsquo;s no share filter to hide them behind &mdash;
+          turn this off to keep your own shelf to just your row.
         </p>
-        <p className="text-xs text-muted-foreground">
-          People you&rsquo;ve shared the server with &mdash; they have their own
-          Home screen.
+      )}
+
+      {placement === "off" && placementFriends === "off" && (
+        <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+          This row won&rsquo;t appear on any Home screen or Recommended shelf.
+          It&rsquo;s still built and kept private &mdash; you&rsquo;ll find it
+          under the library&rsquo;s Collections tab.
         </p>
-        <div className="flex items-center justify-between">
-          <p className="text-sm">Library Recommended</p>
-          <Switch
-            aria-label="Friends Library Recommended"
-            checked={friendsLibrary}
-            onCheckedChange={(v) => onChange(placement, encode(v, friendsHome))}
-          />
-        </div>
-        <div className="flex items-center justify-between">
-          <p className="text-sm">Friends&rsquo; Home</p>
-          <Switch
-            aria-label="Friends' Home"
-            checked={friendsHome}
-            onCheckedChange={(v) =>
-              onChange(placement, encode(friendsLibrary, v))
-            }
-          />
-        </div>
-      </div>
+      )}
     </div>
   );
 }

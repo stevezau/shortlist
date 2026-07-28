@@ -176,6 +176,34 @@ def _register_backup(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=BACKUP_JOB_ID, replace_existing=True)
 
 
+def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:
+    """Drain the durable job queue on a short interval, and sweep abandoned jobs on a long one.
+
+    APScheduler is the TRIGGER only — durability lives in the `jobs` table, exactly as it already
+    does for `runs`. That is why no second process or broker is needed: the worker is a coroutine on
+    this loop, and anything it was mid-way through when the process died is requeued by the sweep.
+
+    `max_instances=1` matters: without it a slow drain would overlap itself and two workers would
+    race for the same job.
+    """
+    from shortlist.server.services import jobs
+
+    async def drain():
+        try:
+            await jobs.run_pending(app.state)
+        except Exception:
+            logger.exception("job worker tick failed")  # never let a bad tick kill the scheduler
+
+    async def sweep():
+        try:
+            jobs.recover_stale(app.state.sessions)
+        except Exception:
+            logger.exception("job sweep failed")
+
+    scheduler.add_job(drain, "interval", seconds=10, id="jobs.drain", max_instances=1, replace_existing=True)
+    scheduler.add_job(sweep, "interval", minutes=5, id="jobs.sweep", max_instances=1, replace_existing=True)
+
+
 def build_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler()
     groups = schedule_groups(app)
@@ -183,7 +211,8 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register_watch_sync(scheduler, app)
     _register_user_sync(scheduler, app)
     _register_backup(scheduler, app)
-    logger.info("scheduled {} row cron group(s) + watch-sync + user-sync + backup", len(groups))
+    _register_jobs_worker(scheduler, app)
+    logger.info("scheduled {} row cron group(s) + watch-sync + user-sync + backup + job worker", len(groups))
     return scheduler
 
 

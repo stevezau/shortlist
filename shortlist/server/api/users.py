@@ -14,13 +14,11 @@ from sqlalchemy.orm import Session
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.tautulli import TautulliClient
-from shortlist.engine.delivery import remove_row_collections
 from shortlist.engine.models import UserType
 from shortlist.server.auth import require_owner
 from shortlist.server.db.adapters import unique_slug
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
-    Event,
     PickRow,
     Run,
     RunUser,
@@ -28,7 +26,6 @@ from shortlist.server.db.models import (
     User,
     iso_utc,
 )
-from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services.setup_probe import plextv_account
 from shortlist.server.settings_store import SettingsStore
 
@@ -170,43 +167,21 @@ async def list_users(request: Request) -> list[dict]:
 
 
 async def _remove_users_rows(state, user_slug: str) -> None:
-    """Remove ALL of a just-disabled user's Shortlist collections (their whole label). Best-effort +
-    audited; removal only, so gate-exempt (it only makes the server more private). Runs in an executor
-    because it does Plex I/O; a Plex outage/unconfigured server is logged, not fatal."""
-    removed: list[str] = []
+    """Remove ALL of a just-disabled user's Shortlist collections (their whole label).
 
-    def work() -> None:
-        dry_run = force_dry_run()  # honour SHORTLIST_DRY_RUN safe-mode (this path is otherwise always live)
-        ctx = state.run_service.build_context(dry_run=dry_run)
-        removed.extend(
-            remove_row_collections(
-                ctx.plex, ctx.config, label=f"{ctx.config.label_prefix}_{user_slug}", displays=None, dry_run=dry_run
-            )
-        )
+    Queued as a durable job rather than done inline. This path used to be fire-and-forget: if Plex
+    was down at the moment of disabling, the removal was lost and NOTHING ever retried it, because
+    no run revisits a disabled user — so their rows stayed on Plex indefinitely. As a job it is
+    retried with backoff, survives a container restart, and raises a notification if it finally
+    gives up. Removal only, so still gate-exempt (it can only make the server more private).
+    """
+    from shortlist.server.services.jobs import enqueue, run_pending
 
-    error: str | None = None
-    try:
-        await asyncio.get_running_loop().run_in_executor(None, work)
-    except Exception as e:
-        error = redact(f"{type(e).__name__}: {e}")  # a PMS error can carry a tokened URL (rule 9)
-        # Also narrate it: the failure IS audited to events, but this is a destructive Plex write, so
-        # it should show in the live run/console log the operator is watching, not only the DB.
-        logger.warning("disable cleanup for {} hit an error ({})", user_slug, type(e).__name__)
-    with state.sessions() as session:
-        session.add(
-            Event(
-                scope="user.disable.cleanup",
-                level="warn",
-                message={"user": user_slug, "removed": removed, "error": error, "at": datetime.now(UTC).isoformat()},
-            )
-        )
-        session.commit()
-    logger.warning(
-        "disabled user '{}': removed {} collection(s){}",
-        user_slug,
-        len(removed),
-        f" then FAILED: {error}" if error else "",
-    )
+    enqueue(state.sessions, "user.cleanup", {"slug": user_slug})
+    # Drain straight away so the operator sees it happen now — the queue is the SAFETY NET, not a
+    # delay. If this attempt fails (Plex down, container killed mid-write) the job is still there and
+    # the worker retries it; before, that work was simply lost.
+    await run_pending(state)
 
 
 @router.post("/set-enabled")
@@ -584,6 +559,41 @@ async def sync_users(request: Request) -> dict:
     with state.sessions() as session:
         SettingsStore(session, state.secrets).set("report.users_synced_at", datetime.now(UTC).isoformat())
         session.commit()
+    if added:
+        await _hide_existing_rows_from_new_accounts(state, added)
     result = {"added": added, "updated": updated, "total": len(roster) + (1 if owner else 0)}
     emit("sync.finished", {"ok": True, **result})
     return result
+
+
+async def _hide_existing_rows_from_new_accounts(state, added: int) -> None:
+    """Write share filters immediately when accounts we have never seen appear on the roster.
+
+    A brand-new account has NO ``label!=`` excludes, and every existing row is already promoted to
+    Shared Home — so until something writes their filter they can see EVERY user's private row on
+    their own Home screen. Waiting for the nightly run leaves that open for up to a day, which is
+    precisely the leak the label system exists to prevent.
+
+    Queued as a ``privacy.sync`` JOB rather than run inline. The work is a full engine pass (sweep +
+    merge every share filter), and ``RunService`` holds a lock precisely so a nightly and a manual
+    run can never overlap — firing it straight from this handler would bypass that lock and let two
+    passes merge the same accounts' filters from independent roster snapshots, where a lost update
+    silently drops an exclude. Going through the queue picks up the run-in-progress check, retries
+    and durability across a restart, and keeps a multi-minute pass off the request path.
+    """
+    from shortlist.server.services.jobs import enqueue, run_pending
+
+    enqueue(state.sessions, "privacy.sync", {})
+    try:
+        # Drain now when nothing else is writing to Plex; if something is, the worker picks it up.
+        await run_pending(state)
+        logger.info("{} new account(s) synced — share-filter pass queued so they cannot see other rows", added)
+    except Exception as e:
+        # Named loudly: until this succeeds the new accounts CAN see everyone's rows. The job stays
+        # queued regardless, so the worker retries it with backoff.
+        logger.warning(
+            "{} new account(s) synced but the share-filter pass could not run now ({}: {}) — queued for retry",
+            added,
+            type(e).__name__,
+            redact(str(e)),
+        )

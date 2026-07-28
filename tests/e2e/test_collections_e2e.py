@@ -108,3 +108,51 @@ def test_the_default_row_cannot_be_deleted(page: Page, app: ShortlistApp):
     picked = next(c for c in app.api("GET", "/api/collections").json() if c["slug"] == "picked")
     # The API refuses; the UI never offers a delete button on the default row.
     assert app.api("DELETE", f"/api/collections/{picked['id']}").status_code == 422
+
+
+PLACEMENT_SWITCHES = (
+    "Owner Library Recommended",
+    "Owner Home",
+    "Friends Library Recommended",
+    "Friends' Home",
+)
+
+
+def test_every_surface_can_be_turned_off_and_reaches_the_api(page: Page, app: ShortlistApp):
+    """Issue #6: all four "Where it shows" switches must be able to be off at once.
+
+    The old encoder had no "neither" state and fell through to Library Recommended, so turning the
+    second switch of a pair off silently turned the first back on — reported by two beta users as
+    "the toggles are mutually exclusive".
+    """
+    _open_rows(page)
+    page.get_by_role("button", name="Add a row").click()
+    page.get_by_label("Name", exact=True).fill("Quiet Row")
+
+    for name in PLACEMENT_SWITCHES:
+        page.get_by_role("switch", name=name).click()
+    for name in PLACEMENT_SWITCHES:
+        expect(page.get_by_role("switch", name=name)).not_to_be_checked()
+
+    page.get_by_role("button", name="Add row").click()
+    expect(page.get_by_text("Quiet Row").first).to_be_visible(timeout=LOAD)
+
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == "Quiet Row")
+    assert created["placement"] == "off"
+    assert created["placement_friends"] == "off"
+
+
+def test_the_two_placement_columns_are_saved_independently(page: Page, app: ShortlistApp):
+    """The owner keeps their own row on the Recommended shelf while friends' rows come off it —
+    the split that is only possible because every person gets their own Plex collection."""
+    _open_rows(page)
+    page.get_by_role("button", name="Add a row").click()
+    page.get_by_label("Name", exact=True).fill("Split Row")
+
+    page.get_by_role("switch", name="Friends Library Recommended").click()
+    page.get_by_role("button", name="Add row").click()
+    expect(page.get_by_text("Split Row").first).to_be_visible(timeout=LOAD)
+
+    created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == "Split Row")
+    assert created["placement"] == "both"
+    assert created["placement_friends"] == "home"

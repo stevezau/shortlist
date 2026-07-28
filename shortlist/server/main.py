@@ -154,6 +154,13 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
                 logger.warning("aborted {} orphaned run(s) from a previous process", len(stale))
             session.commit()
 
+        # Requeue jobs a previous process died inside. Handlers are idempotent (converge-to-desired,
+        # never a delta), so replaying is safe — and losing the work is not: a disable cleanup lost to
+        # a restart is never retried by anything, because no run revisits a disabled user.
+        from shortlist.server.services.jobs import recover_stale
+
+        recover_stale(sessions, boot=True)
+
         scheduler = build_scheduler(app)
         scheduler.start()
         app.state.scheduler = scheduler

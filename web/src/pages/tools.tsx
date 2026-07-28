@@ -5,6 +5,8 @@ import {
   Database,
   Download,
   RefreshCw,
+  ShieldCheck,
+  TriangleAlert,
   Users as UsersIcon,
   Wrench,
 } from "lucide-react";
@@ -32,7 +34,7 @@ import {
   useSyncs,
 } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
-import type { SyncFinishedEvent, SyncProgressEvent } from "@/lib/types";
+import type { Job, SyncFinishedEvent, SyncProgressEvent } from "@/lib/types";
 
 const SYNC_PRESETS = [
   { value: "", label: "Daily" },
@@ -161,6 +163,7 @@ export function ToolsPage() {
             )
           }
         />
+        <SyncCheckCard />
         <BackupsCard />
       </div>
     </div>
@@ -571,6 +574,142 @@ function BackupsCard() {
           <p className="text-sm text-muted-foreground">
             No backups yet. One will be created automatically tonight at 3 AM.
           </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Job status -> how it reads. `queued` after an attempt means it failed and will be retried, which
+ *  is the whole point of the queue — so it must not look like "nothing happened yet". */
+function jobStatusLabel(job: Job): string {
+  if (job.status === "done") return "Done";
+  if (job.status === "failed") return `Failed after ${job.attempts} attempts`;
+  if (job.status === "running") return "Running…";
+  return job.attempts > 0 ? `Retrying (attempt ${job.attempts})` : "Queued";
+}
+
+/**
+ * Sync check — the convergence pass, on demand.
+ *
+ * Things drift out of sync because a run only ever writes promotion flags for the people IN that
+ * run: anyone paused, disabled, or caught by a run that died keeps whatever flags they last got.
+ * The nightly run fixes it, but that can be a day away.
+ */
+function SyncCheckCard() {
+  const queryClient = useQueryClient();
+  const jobs = useQuery({ queryKey: ["jobs"], queryFn: api.getJobs });
+  // Preview first, then act. Converge only ever REMOVES visibility so a live pass is never unsafe,
+  // but "press a button, we silently rewrite every library" is the wrong default — the operator
+  // should see what would change before authorising it.
+  const preview = useMutation({
+    mutationFn: () => api.runJob("sync.check", { dry_run: true }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+  const fix = useMutation({
+    mutationFn: () => api.runJob("sync.check"),
+    onSuccess: () => preview.reset(),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+  const drifted =
+    preview.data?.status === "done" ? (preview.data.fixed ?? []) : [];
+  const recent = (jobs.data ?? []).slice(0, 5);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ShieldCheck
+            aria-hidden="true"
+            className="size-5 text-muted-foreground"
+          />
+          Sync check
+        </CardTitle>
+        <CardDescription>
+          Checks every row on Plex against what Shortlist intends, and fixes
+          anything that drifted. Rows can fall out of step when a run
+          doesn&rsquo;t finish, when the container restarts mid-write, or when
+          someone was paused or disabled while their row was already live
+          &mdash; a run only updates the people in that run, so everyone else
+          keeps whatever they last had. This runs the same check without waiting
+          for tonight.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-wrap gap-3">
+          <Button
+            variant="outline"
+            onClick={() => preview.mutate()}
+            loading={preview.isPending}
+          >
+            <ShieldCheck aria-hidden="true" />
+            Check for drift
+          </Button>
+          {drifted.length > 0 && (
+            <Button onClick={() => fix.mutate()} loading={fix.isPending}>
+              Fix {drifted.length} row{drifted.length === 1 ? "" : "s"}
+            </Button>
+          )}
+        </div>
+        <MutationAlert mutation={preview} />
+        <MutationAlert mutation={fix} />
+        {/* `status` matters: the queue skips a drain while a run is writing to Plex, which is
+            exactly when someone presses this. That leaves the job `queued` with no result and no
+            error — reporting "everything is in sync" for a check that never ran would be a lie. */}
+        {preview.data &&
+          !preview.data.error &&
+          preview.data.status !== "done" && (
+            <p className="text-sm text-muted-foreground">
+              Waiting for the current run to finish — the check will run
+              straight after, and appear below.
+            </p>
+          )}
+        {preview.data &&
+          !preview.data.error &&
+          preview.data.status === "done" && (
+            <p className="text-sm text-muted-foreground">
+              {drifted.length === 0
+                ? "Everything is in sync — nothing to fix."
+                : `${drifted.length} row${drifted.length === 1 ? "" : "s"} drifted onto your Home screen: ${drifted.join(", ")}`}
+            </p>
+          )}
+        {fix.data && !fix.data.error && (
+          <p className="text-sm text-muted-foreground">{fix.data.detail}</p>
+        )}
+
+        {recent.length > 0 && (
+          <div className="border-t pt-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Recent background jobs
+            </p>
+            <ul className="space-y-1.5">
+              {recent.map((job) => (
+                <li
+                  key={job.id}
+                  className="flex flex-wrap items-baseline gap-x-2 text-sm"
+                >
+                  {job.status === "failed" && (
+                    <TriangleAlert
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 self-center text-destructive"
+                    />
+                  )}
+                  <span className="font-medium">{job.kind}</span>
+                  <span className="text-muted-foreground">
+                    {jobStatusLabel(job)}
+                  </span>
+                  {job.detail && (
+                    <span className="text-muted-foreground">
+                      &mdash; {job.detail}
+                    </span>
+                  )}
+                  {job.error && (
+                    <span className="text-destructive">{job.error}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </CardContent>
     </Card>

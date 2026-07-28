@@ -390,7 +390,10 @@ class PlexClient:
         collection: Collection,
         *,
         shared: bool = True,
-        home: bool = True,
+        # Defaults to OFF: `home` is promotedToOwnHome, the SERVER OWNER's Home shelf, and the owner
+        # has no share filter — anything landing there is visible to them with nothing able to hide
+        # it. A privacy tool must never put a row on that surface by omission; callers say so.
+        home: bool = False,
         recommended: bool = True,
         pin_top: bool = False,
     ) -> None:
@@ -422,6 +425,38 @@ class PlexClient:
             pin_top,
             time.monotonic() - start,
         )
+
+    def reads_as_on_owner_home(self, collection: Collection) -> bool:
+        """Is this collection currently on the owner's Home shelf? A read, never a write.
+
+        Split out so a DRY RUN can report the real list. Previewing by title alone would name every
+        collection considered rather than the ones actually stranded, and the preview is what an
+        operator reads before authorising the live pass.
+        """
+        return bool(getattr(collection.visibility(), "promotedToOwnHome", False))
+
+    def demote_own_home(self, collection: Collection) -> bool:
+        """Take a collection off the SERVER OWNER's Home shelf, leaving its other surfaces alone.
+
+        The one convergence write that is always safe: ``promotedToOwnHome`` is the owner's Home, the
+        owner has no share filter, and so nothing can hide a row that lands there. Clearing it only
+        ever makes the server MORE private, which is why this needs no privacy gate and can run for
+        collections the promote phase never reached.
+
+        Idempotent by design — reads the hub first and writes nothing when the flag is already off,
+        so a nightly converge over hundreds of collections costs reads, not writes. Returns True only
+        when a write actually happened.
+        """
+        hub = collection.visibility()
+        if not getattr(hub, "promotedToOwnHome", False):
+            return False
+        hub.updateVisibility(
+            recommended=bool(getattr(hub, "promotedToRecommended", False)),
+            home=False,
+            shared=bool(getattr(hub, "promotedToSharedHome", False)),
+        )
+        logger.info("{}: demoted off the owner's Home (converge)", collection.title)
+        return True
 
     def order_owned_hubs(
         self,

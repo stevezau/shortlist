@@ -1,4 +1,6 @@
-from shortlist.engine.models import UserProfile, UserType, slugify
+import pytest
+
+from shortlist.engine.models import RowSpec, UserProfile, UserType, slugify
 
 
 class TestSlugify:
@@ -46,3 +48,70 @@ class TestDisplayName:
         renamed = UserProfile(username="mrjohnpoz", plex_account_id=1, user_type=UserType.SHARED, nickname="John")
         assert renamed.label == plain.label == "shortlist_mrjohnpoz"
         assert renamed.slug == plain.slug
+
+
+class TestRowSpecPlacement:
+    """Placement decodes to Plex's three flags, split by whose collection it is.
+
+    Full matrix per audience: both / home / library / off, plus the inherit path
+    (`placement_friends=None`) that keeps pre-0042 rows behaving as they did.
+    """
+
+    def _spec(self, placement: str = "both", placement_friends: str | None = None) -> RowSpec:
+        return RowSpec(
+            slug="x",
+            name_template="",
+            size=10,
+            placement=placement,
+            placement_friends=placement_friends,
+        )
+
+    @pytest.mark.parametrize(
+        ("placement", "home", "library"),
+        [
+            ("both", True, True),
+            ("home", True, False),
+            ("library", False, True),
+            ("off", False, False),
+        ],
+    )
+    def test_the_owner_side_decodes_to_its_two_flags(self, placement: str, home: bool, library: bool):
+        spec = self._spec(placement, placement_friends="off")
+        assert spec.show_home is home
+        assert spec.show_owner_library is library
+
+    @pytest.mark.parametrize(
+        ("placement_friends", "home", "library"),
+        [
+            ("both", True, True),
+            ("home", True, False),
+            ("library", False, True),
+            ("off", False, False),
+        ],
+    )
+    def test_the_friends_side_decodes_to_its_two_flags(self, placement_friends: str, home: bool, library: bool):
+        spec = self._spec("off", placement_friends)
+        assert spec.show_friends_home is home
+        assert spec.show_friends_library is library
+
+    def test_the_two_sides_are_independent(self):
+        """The whole point of issue #6: the owner can keep their own row on the Recommended shelf
+        while friends' rows stay off it, and vice versa."""
+        owner_only = self._spec("library", "home")
+        assert owner_only.show_owner_library and not owner_only.show_friends_library
+
+        friends_only = self._spec("home", "library")
+        assert friends_only.show_friends_library and not friends_only.show_owner_library
+
+    def test_a_null_friends_placement_inherits_the_owner_side(self):
+        """Pre-0042 rows carry no friends placement; they must keep behaving exactly as before."""
+        spec = self._spec("library", placement_friends=None)
+        assert spec.show_friends_library is True
+        assert spec.show_friends_home is False
+
+    def test_show_library_unions_both_sides_for_a_shared_row(self):
+        """A shared row is ONE public collection, so there is no per-person split to make — either
+        side asking for the shelf puts it there."""
+        assert self._spec("library", "off").show_library is True
+        assert self._spec("off", "library").show_library is True
+        assert self._spec("off", "off").show_library is False

@@ -474,3 +474,66 @@ async def restore_backup_endpoint(body: RestoreRequest, request: Request):
     if not ok:
         raise HTTPException(404, "backup not found")
     return {"restored": body.name, "message": "Restored. Restart the container to pick up the restored database."}
+
+
+@router.get("/jobs", dependencies=[Depends(require_owner)])
+async def list_jobs(request: Request, limit: int = 25) -> list[dict]:
+    """Recent background jobs, newest first — the "did that actually happen?" answer.
+
+    Maintenance work used to be fire-and-forget: it landed in the logs and the events table and
+    nowhere an operator would look. Runs keep their own page; this is everything else.
+    """
+    from shortlist.server.db.models import Job
+
+    with request.app.state.sessions() as session:
+        rows = session.query(Job).order_by(Job.created_at.desc(), Job.id.desc()).limit(min(limit, 100)).all()
+        return [
+            {
+                "id": job.id,
+                "kind": job.kind,
+                "status": job.status,
+                "attempts": job.attempts,
+                "max_attempts": job.max_attempts,
+                "detail": job.detail,
+                "error": job.error,
+                "created_at": iso_utc(job.created_at),
+                "started_at": iso_utc(job.started_at),
+                "finished_at": iso_utc(job.finished_at),
+            }
+            for job in rows
+        ]
+
+
+class RunJobRequest(BaseModel):
+    kind: str
+    payload: dict = {}
+
+
+@router.post("/jobs", dependencies=[Depends(require_owner)])
+async def run_job(body: RunJobRequest, request: Request) -> dict:
+    """Queue a maintenance job and drain immediately, so pressing a button still feels instant.
+
+    The queue is the SAFETY NET, not a delay: if this attempt fails the job stays queued and the
+    worker retries it with backoff, which is exactly what fire-and-forget could never do.
+    """
+    from shortlist.server.services.jobs import KINDS, enqueue, run_pending
+
+    if body.kind not in KINDS:
+        raise HTTPException(422, f"unknown job kind; valid: {sorted(KINDS)}")
+    state = request.app.state
+    job_id = enqueue(state.sessions, body.kind, body.payload)
+    await run_pending(state)
+    from shortlist.server.db.models import Job
+
+    with state.sessions() as session:
+        job = session.get(Job, job_id)
+        return {
+            "id": job.id,
+            "kind": job.kind,
+            "status": job.status,
+            "detail": job.detail,
+            "error": job.error,
+            # What it actually changed (or, on a dry run, would change) — the preview an operator
+            # reads before authorising the live pass.
+            "fixed": (job.result or {}).get("fixed", []),
+        }

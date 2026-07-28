@@ -160,6 +160,11 @@ class ContextBuilder:
             # Every user Shortlist knows, enabled or not: the engine answers "whose row is this?"
             # by account id, because a name can change and two names can slugify alike.
             known_slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
+            # Whose rows are allowed on the owner's Home. Read from the DB rather than this run's
+            # profiles, because the owner may be paused, disabled, or simply not in a scoped run —
+            # and converge still has to know which single label is legitimately there.
+            owner = session.query(User).filter_by(user_type=UserType.OWNER.value).first()
+            owner_slug = owner.slug if owner else ""
 
         def progress(slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
             # Runs in the engine's executor thread. One entry both STREAMS (SSE, live) and, via
@@ -196,6 +201,7 @@ class ContextBuilder:
             previous_picks=previous,
             disabled_account_ids=disabled_account_ids,
             known_slugs=known_slugs,
+            owner_slug=owner_slug,
             handled_requests=self._handled_requests(session),
             progress=progress,
         )

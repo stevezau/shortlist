@@ -1,4 +1,6 @@
 import type {
+  Job,
+  JobResult,
   ApiTokenCreated,
   ApiTokenStatus,
   AppNotification,
@@ -197,6 +199,15 @@ export const api = {
    *  sync added vs. updated, and the total roster size, so the UI can report a real result. */
   syncUsers: (): Promise<{ added: number; updated: number; total: number }> =>
     request("/api/users/sync", { method: "POST" }),
+
+  // --- Background jobs ---
+  getJobs: (): Promise<Job[]> => request("/api/system/jobs"),
+
+  runJob: (kind: string, payload: Record<string, unknown> = {}): Promise<JobResult> =>
+    request("/api/system/jobs", {
+      method: "POST",
+      body: JSON.stringify({ kind, payload }),
+    }),
 
   blockSeed: (
     userId: number,

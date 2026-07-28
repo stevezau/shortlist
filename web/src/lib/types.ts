@@ -32,6 +32,13 @@ export interface User {
   prefs?: UserPrefs;
 }
 
+/**
+ * Which of Plex's two surfaces one side of a row claims: the Home screen, the library's Recommended
+ * shelf, both, or neither. Held once per audience (`placement` / `placement_friends`) because every
+ * person gets their own Plex collection, so each flag is set per collection.
+ */
+export type Placement = "both" | "home" | "library" | "off";
+
 /** A curated-row definition (GET/POST/PATCH /api/collections). */
 export interface Collection {
   id: number;
@@ -62,10 +69,10 @@ export interface Collection {
   freshness: number | null;
   /** Recent watches the web-search source searches (1..25); null inherits the global recent_count. */
   recent_count: number | null;
-  /** Where the row shows for the owner / home users: both (Home + Library), home only, or library only. */
-  placement: "both" | "home" | "library";
-  /** Where the row shows for friends (shared users): both (Friends Home + Library), home only, or library only. */
-  placement_friends: "both" | "home" | "library";
+  /** Surfaces the OWNER's own collection appears on; "off" = neither (Collections tab only). */
+  placement: Placement;
+  /** Surfaces each FRIEND's own collection appears on; "home" means Friends' Home here. */
+  placement_friends: Placement;
   /** Pin the row to the top of its library's Recommended shelf (server-wide, not per viewer). */
   pin_top: boolean;
   /** Per-library Recommended-shelf override for THIS row; {} inherits the global default. */
@@ -157,8 +164,8 @@ export interface CollectionInput {
   watched_pct: number | null;
   freshness: number | null;
   recent_count: number | null;
-  placement: "both" | "home" | "library";
-  placement_friends: "both" | "home" | "library";
+  placement: Placement;
+  placement_friends: Placement;
   pin_top: boolean;
   hub_anchor: HubAnchorMap;
   poster: PosterInput;
@@ -911,4 +918,31 @@ export interface VersionInfo {
   latest_version: string | null;
   update_available: boolean;
   install_type: string;
+}
+
+/** One background maintenance job (GET /api/system/jobs). Runs are NOT jobs — they have their own page. */
+export interface Job {
+  id: number;
+  kind: string;
+  /** queued -> running -> done | failed. `queued` after a failure means it will be retried. */
+  status: "queued" | "running" | "done" | "failed";
+  attempts: number;
+  max_attempts: number;
+  /** Human-readable outcome, e.g. "Checked every row; corrected 3". */
+  detail: string;
+  error: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** POST /api/system/jobs — the job as it stood after the inline drain. */
+export interface JobResult {
+  id: number;
+  kind: string;
+  status: Job["status"];
+  detail: string;
+  error: string | null;
+  /** sync.check only: the row labels it corrected (or, in a dry run, would correct). */
+  fixed?: string[];
 }

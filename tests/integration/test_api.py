@@ -450,6 +450,48 @@ class TestUserSync:
 
         assert calls == []
 
+    def test_a_sync_that_finds_new_accounts_queues_the_share_filter_pass(self, client: TestClient, plextv):
+        """A brand-new account has NO excludes while every existing row is already on Shared Home,
+        so until its filter is written it sees EVERY user's private row. Waiting for the nightly run
+        leaves that open for up to a day.
+
+        Asserted at the JOB boundary, not by spying on the helper: the whole mechanism lives inside
+        that helper, so mocking it would let the enqueue be deleted with the test still green — and
+        the leak would be back.
+        """
+        client.post("/api/users/sync")  # first sync -> the whole roster is new
+
+        assert [j["kind"] for j in client.get("/api/system/jobs").json()] == ["privacy.sync"]
+
+    def test_a_sync_that_adds_nobody_writes_no_filters(self, client: TestClient, plextv, monkeypatch):
+        """Filter writes are throttled plex.tv traffic across every account — a routine no-change
+        sync must not trigger a server-wide pass."""
+        from shortlist.server.api import users as users_api
+
+        calls: list = []
+
+        async def spy(state, added):
+            calls.append(added)
+
+        monkeypatch.setattr(users_api, "_hide_existing_rows_from_new_accounts", spy)
+
+        client.post("/api/users/sync")
+        calls.clear()
+        client.post("/api/users/sync")  # everyone already known
+
+        assert calls == []
+
+    def test_a_failure_to_write_the_new_filters_never_fails_the_sync(self, client: TestClient, plextv, monkeypatch):
+        """The accounts are already saved and the nightly run is still the backstop, so a Plex
+        outage here must not fail the sync the operator asked for."""
+
+        def explode(state, dry_run):
+            raise RuntimeError("Plex is down")
+
+        monkeypatch.setattr(client.app.state.run_service, "build_context", explode)
+
+        assert client.post("/api/users/sync").status_code == 200
+
     def test_sync_adds_the_owner_disabled_and_badged(self, client: TestClient, plextv):
         r = client.post("/api/users/sync")
         assert r.status_code == 200
@@ -1641,6 +1683,48 @@ class TestCollectionsSeed:
         assert spec.placement == "library" and spec.pin_top is True
         assert spec.show_library and not spec.show_home  # library-only
 
+    def test_an_all_surfaces_off_placement_round_trips(self, client: TestClient):
+        """ "off" must survive the API — the UI's all-switches-off state has nowhere else to go, and
+        collapsing it back to a default is exactly the bug in issue #6."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+        from shortlist.server.settings_store import SettingsStore
+
+        created = client.post(
+            "/api/collections",
+            json={"name": "Quiet Row", "placement": "off", "placement_friends": "off"},
+        )
+        assert created.status_code == 201
+        assert created.json()["placement"] == "off"
+        assert created.json()["placement_friends"] == "off"
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        spec = next(s for s in specs if s.slug == "quiet_row")
+        assert not spec.show_home and not spec.show_friends_home
+        assert not spec.show_owner_library and not spec.show_friends_library
+
+    def test_the_two_placement_sides_reach_the_spec_independently(self, client: TestClient):
+        """Owner keeps the Recommended shelf; friends' rows only reach Friends' Home."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+        from shortlist.server.settings_store import SettingsStore
+
+        created = client.post(
+            "/api/collections",
+            json={"name": "Split Row", "placement": "both", "placement_friends": "home"},
+        )
+        assert created.status_code == 201
+        assert client.post("/api/collections", json={"name": "Y", "placement_friends": "bogus"}).status_code == 422
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        spec = next(s for s in specs if s.slug == "split_row")
+        assert spec.show_owner_library and not spec.show_friends_library
+        assert spec.show_home and spec.show_friends_home
+
     def test_per_row_hub_anchor_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.engine.models import HubAnchor
         from shortlist.server.services.context_builder import ContextBuilder
@@ -2564,3 +2648,57 @@ class TestNotifications:
         assert "Shortlist debug bundle" in text and "db migration head:" in text
         assert "plex=True" in text  # connection reported as configured...
         assert "SUPERSECRETTOKEN" not in text  # ...but the token itself is never in the bundle
+
+
+class TestJobsApi:
+    """`/system/jobs` — the "did that actually happen?" surface for background maintenance.
+
+    Runs keep their own page; this covers everything else, which until now landed only in the logs
+    and the events table.
+    """
+
+    def test_the_list_is_empty_before_anything_runs(self, client: TestClient):
+        r = client.get("/api/system/jobs")
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_a_triggered_job_runs_and_then_appears_in_the_list(self, client: TestClient):
+        r = client.post("/api/system/jobs", json={"kind": "sync.check"})
+        assert r.status_code == 200
+        assert r.json()["kind"] == "sync.check"
+        # Drained inline, so the button feels instant rather than leaving a queued row behind.
+        assert r.json()["status"] in {"done", "failed", "queued"}
+
+        listed = client.get("/api/system/jobs").json()
+        assert [j["kind"] for j in listed] == ["sync.check"]
+        assert listed[0]["created_at"]
+
+    def test_an_unknown_kind_is_rejected(self, client: TestClient):
+        assert client.post("/api/system/jobs", json={"kind": "nope"}).status_code == 422
+
+    def test_a_destructive_kind_cannot_be_triggered_from_the_ui(self, client: TestClient):
+        """`user.cleanup` DELETES a person's rows and takes a slug. It is a real handler, but it must
+        never be reachable from a generic 'run a job' button — hence an allow-list, not the handler
+        registry."""
+        from shortlist.server.services import jobs
+
+        assert "user.cleanup" in jobs._HANDLERS  # it exists...
+        assert "user.cleanup" not in jobs.KINDS  # ...but is not triggerable
+        assert (
+            client.post("/api/system/jobs", json={"kind": "user.cleanup", "payload": {"slug": "sarah"}}).status_code
+            == 422
+        )
+
+    def test_a_failing_job_is_reported_rather_than_500ing(self, client: TestClient, monkeypatch):
+        """A Plex outage during a manual job must surface as a failed job, not an API error."""
+
+        def explode(*a, **k):
+            raise RuntimeError("Plex is down")
+
+        monkeypatch.setattr(client.app.state.run_service, "build_context", explode)
+
+        r = client.post("/api/system/jobs", json={"kind": "sync.check"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] in {"queued", "failed"}  # queued = will be retried by the worker
+        assert "Plex is down" in (body["error"] or "")
