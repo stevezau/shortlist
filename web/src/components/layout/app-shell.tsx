@@ -19,7 +19,7 @@ import {
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 
-import { Wordmark } from "@/components/brand";
+import { HomeWordmark } from "@/components/brand";
 import { ActivityPill } from "@/components/layout/activity-pill";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { SettingsSubNav } from "@/components/settings/settings-nav";
@@ -224,7 +224,7 @@ export function AppShell() {
     <div className="flex min-h-screen flex-col md:flex-row">
       {/* Mobile top bar: wordmark + hamburger. Hidden once the sidebar appears at md. */}
       <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-card/80 px-4 py-3 backdrop-blur md:hidden">
-        <Wordmark />
+        <HomeWordmark />
         <div className="flex items-center gap-1">
           <NotificationBell align="right" />
           <Button
@@ -263,7 +263,7 @@ export function AppShell() {
             }}
           >
             <div className="flex items-center justify-between border-b px-4 py-3">
-              <Wordmark />
+              <HomeWordmark />
               <Button
                 variant="ghost"
                 size="icon"
@@ -285,7 +285,7 @@ export function AppShell() {
           OVER that overflow (the "text shows behind the panel" bug). Elevating the whole rail fixes it. */}
       <aside className="sticky top-0 z-30 hidden h-screen w-60 shrink-0 flex-col border-r bg-card/40 backdrop-blur md:flex">
         <div className="flex items-center justify-between px-5 py-5">
-          <Wordmark />
+          <HomeWordmark />
           <NotificationBell align="left" />
         </div>
         <NavBody />
