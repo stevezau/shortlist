@@ -163,3 +163,12 @@ class TmdbClient:
         """The IMDb id (``tt…``) for a title, or None — used for the inbox's IMDb deep-link."""
         raw = self.external_ids(tmdb_id, media_type).get("imdb_id")
         return raw or None
+
+    def poster_path(self, tmdb_id: int, media_type: MediaType) -> str:
+        """A title's poster path (``/abc.jpg``), or ``""`` when TMDB has no artwork for it.
+
+        Only needed for a title a NON-TMDB source surfaced: every TMDB list response already carries
+        ``poster_path``, so the candidate normally arrives with one and this is never called.
+        """
+        kind = "movie" if media_type is MediaType.MOVIE else "tv"
+        return (self._get(f"/{kind}/{tmdb_id}") or {}).get("poster_path") or ""

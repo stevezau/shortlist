@@ -833,6 +833,8 @@ export interface RequestCandidate {
   year: number | null;
   /** "tt…" when known — the inbox deep-links to IMDb; "" falls back to an IMDb search. */
   imdb_id: string;
+  /** TMDB poster path ("/abc.jpg"); "" when TMDB has no artwork. The UI picks the size bucket. */
+  poster_path: string;
   /** Rating on the chosen source (TMDB, or IMDb when that source is selected). */
   rating: number;
   vote_count: number;

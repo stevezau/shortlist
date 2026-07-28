@@ -77,6 +77,7 @@ def accumulate(
                 year=c.year,
                 rating=c.rating,
                 vote_count=c.vote_count,
+                poster_path=c.poster_path,
                 demand=1,
                 tags=set(tags),
                 wanters=set(who),
@@ -84,6 +85,9 @@ def accumulate(
             )
         else:
             existing.demand += 1
+            # A title several people wanted may have arrived from a poster-less source for one of
+            # them and a TMDB list for another — keep whichever copy actually has the artwork.
+            existing.poster_path = existing.poster_path or c.poster_path
             existing.tags |= tags
             existing.wanters |= who
             for reason in reasons:
@@ -150,14 +154,21 @@ def request_missing(
     report.considered = len(qualifying)
 
     # Attach each surviving title's IMDb id (one TMDB call, cached) so the inbox can deep-link to the
-    # title page instead of an IMDb search. Only the gated shortlist is looked up, and best-effort — a
-    # miss just leaves the search fallback.
+    # title page instead of an IMDb search, and backfill any missing poster so the inbox can show
+    # artwork. Only the gated shortlist is looked up, and both are best-effort — a miss just leaves
+    # the search fallback / a placeholder tile. The poster call only fires for a title a NON-TMDB
+    # source surfaced (Trakt, the web search): anything from a TMDB list already carries its path.
     for m in qualifying:
         if not m.imdb_id:
             try:
                 m.imdb_id = tmdb.imdb_id(m.tmdb_id, m.media_type) or ""
             except Exception as e:  # never fail the run for a link nicety
                 logger.debug("imdb id lookup for {!r} failed: {}", m.title, e)
+        if not m.poster_path:
+            try:
+                m.poster_path = tmdb.poster_path(m.tmdb_id, m.media_type)
+            except Exception as e:  # never fail the run for a picture
+                logger.debug("poster lookup for {!r} failed: {}", m.title, e)
 
     # Build the Arr clients once (reused for the state check below and the send), then reconcile the
     # pool against what the Arrs already know: drop titles they already track (not really "missing" —

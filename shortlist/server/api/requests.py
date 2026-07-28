@@ -38,6 +38,8 @@ class RequestCandidateOut(BaseModel):
     title: str
     year: int | None
     imdb_id: str = ""  # "tt…" for a direct IMDb link; "" -> the UI falls back to an IMDb search
+    # TMDB poster path ("/abc.jpg"). The UI builds the image URL and its size; "" -> placeholder tile.
+    poster_path: str = ""
     rating: float
     vote_count: int
     demand: int
@@ -77,6 +79,7 @@ def list_requests(request: Request) -> list[RequestCandidateOut]:
             title=r.title,
             year=r.year,
             imdb_id=r.imdb_id or "",
+            poster_path=r.poster_path or "",
             rating=r.rating,
             vote_count=r.vote_count,
             demand=r.demand,

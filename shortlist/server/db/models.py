@@ -319,6 +319,10 @@ class RequestCandidate(Base):
     title: Mapped[str] = mapped_column(String(512))
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     imdb_id: Mapped[str] = mapped_column(String(16), default="")  # "tt…" -> inbox deep-links to IMDb
+    # TMDB's poster path ("/abc.jpg"), NOT a URL: the image host and size buckets are TMDB's to
+    # change, so the UI builds the URL. Empty on pre-0044 rows and for titles TMDB has no art for —
+    # the inbox draws a placeholder tile rather than a broken image.
+    poster_path: Mapped[str] = mapped_column(String(255), default="", server_default="")
     rating: Mapped[float] = mapped_column(Float, default=0.0)  # on the chosen source (TMDB, or IMDb)
     vote_count: Mapped[int] = mapped_column(Integer, default=0)  # vote count on that same source
     demand: Mapped[int] = mapped_column(Integer, default=1)  # distinct users whose picks wanted it

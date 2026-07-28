@@ -52,6 +52,43 @@ function RequestsSkeleton() {
   );
 }
 
+/**
+ * The title's artwork — the whole point of the inbox being visual rather than a wall of names.
+ *
+ * TMDB's image CDN, built from the stored path: `w154` is the smallest bucket that still looks sharp
+ * at this size on a 2x display, so a 40-title inbox costs a few hundred KB rather than megabytes.
+ * `loading="lazy"` keeps the off-screen ones off the wire entirely. A title with no artwork (TMDB
+ * has none, or the row predates 0044) gets a placeholder tile of the same size, so rows never jump.
+ */
+function Poster({ item }: { item: RequestCandidate }) {
+  // TMDB's CDN is a third-party host this app never checks: a server behind a restrictive network,
+  // an ad-blocker, or a title whose artwork was pulled all fail at load time, long after the path
+  // looked fine. Falling back on error keeps that as a tidy placeholder instead of a broken-image
+  // icon in every row.
+  const [failed, setFailed] = useState(false);
+
+  if (!item.poster_path || failed) {
+    return (
+      <div
+        className="flex h-[87px] w-[58px] shrink-0 items-center justify-center rounded border bg-muted"
+        aria-hidden="true"
+      >
+        <Clapperboard className="h-5 w-5 text-muted-foreground/60" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={`https://image.tmdb.org/t/p/w154${item.poster_path}`}
+      // Decorative: the title is right beside it as real text, so announcing it twice is noise.
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-[87px] w-[58px] shrink-0 rounded border object-cover"
+    />
+  );
+}
+
 function TypeBadge({
   mediaType,
 }: {
@@ -305,6 +342,7 @@ function PendingRow({
         onChange={() => onToggle(item.id)}
         className="mt-1.5 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
       />
+      <Poster item={item} />
       <div className="min-w-0 flex-1 space-y-2">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
           <p className="text-base font-semibold leading-tight">{item.title}</p>
@@ -376,38 +414,41 @@ function SentRow({
       ]
     : [];
   return (
-    <div className="space-y-1.5 rounded-lg border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-medium">{item.title}</p>
-        <div className="flex items-center gap-2">
-          <Badge variant="success" className="gap-1">
-            <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
-            Sent to {app}
-          </Badge>
-          <ArrStatusBadge status={arrStatus} />
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={clearing}
-            onClick={() => onClear(item.id)}
-            title={`Remove from the send log. ${item.title} stays in ${app} — this only clears the entry here, and it won't be re-requested.`}
-          >
-            <X aria-hidden="true" />
-            Clear
-          </Button>
+    <div className="flex items-start gap-3 rounded-lg border p-3">
+      <Poster item={item} />
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="font-medium">{item.title}</p>
+          <div className="flex items-center gap-2">
+            <Badge variant="success" className="gap-1">
+              <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
+              Sent to {app}
+            </Badge>
+            <ArrStatusBadge status={arrStatus} />
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={clearing}
+              onClick={() => onClear(item.id)}
+              title={`Remove from the send log. ${item.title} stays in ${app} — this only clears the entry here, and it won't be re-requested.`}
+            >
+              <X aria-hidden="true" />
+              Clear
+            </Button>
+          </div>
         </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <TypeBadge mediaType={item.media_type} />
+          {item.year ? <span>{item.year}</span> : null}
+          {item.updated_at ? (
+            <span>Sent {formatDate(item.updated_at)}</span>
+          ) : null}
+          {item.detail ? <span>· {item.detail}</span> : null}
+        </div>
+        <WhyBreakdown why={item.why} />
+        {/* The "Open in Sonarr/Radarr" link now sits with the TMDB/IMDb/Trakt look-ups, not up top. */}
+        <ExternalLinks item={item} lead={lead} />
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <TypeBadge mediaType={item.media_type} />
-        {item.year ? <span>{item.year}</span> : null}
-        {item.updated_at ? (
-          <span>Sent {formatDate(item.updated_at)}</span>
-        ) : null}
-        {item.detail ? <span>· {item.detail}</span> : null}
-      </div>
-      <WhyBreakdown why={item.why} />
-      {/* The "Open in Sonarr/Radarr" link now sits with the TMDB/IMDb/Trakt look-ups, not up top. */}
-      <ExternalLinks item={item} lead={lead} />
     </div>
   );
 }

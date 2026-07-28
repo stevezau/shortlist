@@ -17,8 +17,15 @@ RADARR = ArrTarget(url="http://radarr.test", api_key="rk", quality_profile_id=1,
 SONARR = ArrTarget(url="http://sonarr.test", api_key="sk", quality_profile_id=1, root_folder="/tv")
 
 
-def _cand(tmdb_id: int, media: MediaType, *, rating: float = 8.0, votes: int = 500) -> Candidate:
-    return Candidate(tmdb_id=tmdb_id, title=f"t{tmdb_id}", media_type=media, rating=rating, vote_count=votes)
+def _cand(tmdb_id: int, media: MediaType, *, rating: float = 8.0, votes: int = 500, poster: str = "") -> Candidate:
+    return Candidate(
+        tmdb_id=tmdb_id,
+        title=f"t{tmdb_id}",
+        media_type=media,
+        rating=rating,
+        vote_count=votes,
+        poster_path=poster,
+    )
 
 
 def _cfg(**kw) -> RequestConfig:
@@ -166,6 +173,20 @@ class TestAccumulate:
         requests_mod.accumulate(demand, [_cand(3, MediaType.SHOW)])
         assert demand[(2, MediaType.MOVIE)].demand == 2
         assert demand[(3, MediaType.SHOW)].demand == 1
+
+    def test_keeps_the_poster_from_whichever_copy_actually_has_one(self):
+        # The same title can reach two people from different sources: TMDB's list carries poster_path,
+        # Trakt's "related" does not. Folding must not let the poster-less copy blank out the artwork.
+        demand: requests_mod.DemandMap = {}
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE, poster="")])  # Trakt first
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE, poster="/art.jpg")])  # then TMDB
+        assert demand[(2, MediaType.MOVIE)].poster_path == "/art.jpg"
+
+        # ...and in the other order, the first one's artwork survives the second, poster-less fold.
+        reverse: requests_mod.DemandMap = {}
+        requests_mod.accumulate(reverse, [_cand(3, MediaType.MOVIE, poster="/art.jpg")])
+        requests_mod.accumulate(reverse, [_cand(3, MediaType.MOVIE, poster="")])
+        assert reverse[(3, MediaType.MOVIE)].poster_path == "/art.jpg"
 
     def test_tags_union_across_users_and_dedupe_blanks(self):
         demand: requests_mod.DemandMap = {}

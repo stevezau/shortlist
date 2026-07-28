@@ -105,6 +105,9 @@ class Candidate:
     genres: list[str] = field(default_factory=list)
     rating: float = 0.0  # TMDB vote_average, 0..10
     vote_count: int = 0  # TMDB vote_count — a 9.0 from 12 votes is noise; the request gate needs both
+    # TMDB's own poster path ("/abc.jpg"), free in every list response. Only carried through to the
+    # request inbox, which shows the artwork — a delivered pick uses Plex's copy of the title.
+    poster_path: str = ""
     seeds: list[Seed] = field(default_factory=list)  # every seed that suggested it
     rating_key: int | None = None  # set once matched to the library
     # Which candidate source(s) produced it. Ranking needs this: seedless sources (tmdb_discover,
@@ -404,6 +407,9 @@ class MissingTitle:
     vote_count: int  # vote count on that same source
     demand: int = 1  # distinct users whose candidate pool contained it (multi-person demand ranks higher)
     imdb_id: str = ""  # "tt…" when TMDB has one — lets the inbox deep-link to IMDb instead of a search
+    # TMDB poster path ("/abc.jpg") so the inbox can show the artwork. Free from the candidate's own
+    # TMDB list response; filled in for the gated shortlist when a non-TMDB source surfaced the title.
+    poster_path: str = ""
     # Per-user + per-row tags to apply on request, layered on top of the target's global tag. Unioned
     # across every user who wanted the title and every row it surfaced in (deduplication merges them).
     tags: set[str] = field(default_factory=set)

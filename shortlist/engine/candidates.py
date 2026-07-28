@@ -300,6 +300,7 @@ def gather_candidates(
                 genres=[gmap[g] for g in item.get("genre_ids", []) if g in gmap],
                 rating=float(item.get("vote_average") or 0.0),
                 vote_count=int(item.get("vote_count") or 0),
+                poster_path=item.get("poster_path") or "",
             )
         # A title two sources both found belongs to both — it competes in each one's share, and
         # keeps the STRONGEST claim any of them made for it. A source with nothing to claim

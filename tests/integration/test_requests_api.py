@@ -47,6 +47,7 @@ def client(tmp_path: Path):
                     demand=2,
                     tags=["kids", "sarah"],  # per-user + per-row tags recorded when it was queued
                     wanters=["Sarah", "Mike"],  # the two people whose picks wanted it
+                    poster_path="/wanted-film.jpg",  # the inbox shows the artwork
                 )
             )
             session.add(
@@ -112,6 +113,16 @@ class TestRequestsApi:
         # Pending before sent; within pending, higher demand first.
         assert [r["tmdb_id"] for r in rows] == [20, 10, 30]
         assert rows[-1]["status"] == "sent"
+
+    def test_poster_path_is_served_as_a_path_never_a_url(self, client: TestClient):
+        """The inbox builds the image URL, so the API must hand over TMDB's raw path.
+
+        Storing a full URL would bake today's image host and size bucket into every row; a title with
+        no artwork gets "" (never null), which is what lets the UI draw a placeholder tile.
+        """
+        rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
+        assert rows[10]["poster_path"] == "/wanted-film.jpg"
+        assert rows[20]["poster_path"] == ""  # seeded without one — absent, not null
 
     def test_reject_marks_rejected_and_drops_from_pending(self, client: TestClient):
         assert client.post("/api/requests/reject", json={"ids": [1]}).json()["rejected"] == 1

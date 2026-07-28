@@ -14,6 +14,7 @@ import { RowPlacementSection } from "@/components/settings/row-placement-section
 import { SETTINGS_SECTIONS } from "@/components/settings/sections";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSettings } from "@/lib/queries";
+import { useHashScroll } from "@/lib/use-hash-scroll";
 import type { Settings } from "@/lib/types";
 
 /** Each section's content, keyed by the id in SETTINGS_SECTIONS (the sidebar sub-nav lists them). */
@@ -32,6 +33,9 @@ function sectionContent(settings: Settings): Record<string, ReactNode> {
 
 export function SettingsPage() {
   const settingsQuery = useSettings();
+  // The sections only exist once the query resolves, so the browser's own anchor jump has already
+  // missed them on a cold load.
+  useHashScroll(settingsQuery.isSuccess);
 
   return (
     <div>

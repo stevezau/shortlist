@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +57,7 @@ function candidate(
     title: "Dune: Part Two",
     year: 2024,
     imdb_id: "",
+    poster_path: "",
     rating: 8.3,
     vote_count: 5000,
     demand: 4,
@@ -369,6 +370,45 @@ describe("RequestsPage", () => {
     await userEvent.selectOptions(screen.getByLabelText("Votes"), "500+");
     expect(screen.getByText("Well Attested")).toBeTruthy();
     expect(screen.queryByText("Barely Rated")).toBeNull();
+  });
+
+  it("shows the poster from TMDB's image CDN, and a placeholder when there is none", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Has Art", poster_path: "/abc.jpg" }),
+      candidate({ id: 2, tmdb_id: 200, title: "No Art", poster_path: "" }),
+    ]);
+    renderPage();
+    await screen.findByText("Has Art");
+
+    // Built from the stored PATH — the host and size bucket are the UI's call, not the database's.
+    const posters = Array.from(document.querySelectorAll("img"));
+    expect(posters).toHaveLength(1); // only the title that has artwork
+    const [poster] = posters;
+    expect(poster?.getAttribute("src")).toBe(
+      "https://image.tmdb.org/t/p/w154/abc.jpg",
+    );
+    // Off-screen posters must not be fetched on load — a 40-title inbox would be megabytes.
+    expect(poster?.getAttribute("loading")).toBe("lazy");
+    // Decorative: the title sits beside it as real text, so it must not be announced twice.
+    expect(poster?.getAttribute("alt")).toBe("");
+    // The art-less title still renders (a placeholder tile), rather than vanishing or breaking.
+    expect(screen.getByText("No Art")).toBeTruthy();
+  });
+
+  it("falls back to the placeholder when the poster fails to load", async () => {
+    // TMDB's CDN is a third-party host: a restrictive network or an ad-blocker fails the request
+    // long after the path looked valid. That must not leave a broken-image icon in every row.
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Has Art", poster_path: "/abc.jpg" }),
+    ]);
+    renderPage();
+    await screen.findByText("Has Art");
+
+    const poster = document.querySelector("img");
+    expect(poster).toBeTruthy();
+    fireEvent.error(poster as HTMLImageElement);
+    await waitFor(() => expect(document.querySelector("img")).toBeNull());
+    expect(screen.getByText("Has Art")).toBeTruthy(); // the row itself survives
   });
 
   it("says the filters emptied the queue rather than showing a blank list", async () => {
