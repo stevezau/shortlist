@@ -23,6 +23,13 @@ updates:
       web-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    ignore:
+      # @types/node must track the Node we actually run (22 — Dockerfile's node:22-alpine and
+      # ci.yml's node-version), not the newest release. A newer major types APIs that don't exist
+      # in our runtime, so tsc would accept code that throws in the container. Bump this
+      # deliberately, in the same change that moves the Dockerfile and CI to a new Node major.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: pip
     directory: /
