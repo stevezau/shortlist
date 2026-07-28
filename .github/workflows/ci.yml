@@ -34,6 +34,41 @@ jobs:
       - run: pip install ruff
       - run: ruff check .
       - run: ruff format --check .
+      # Catches "added a dependency to pyproject.toml but forgot to regenerate the lock" — which
+      # would otherwise only surface as an ImportError inside the built image. Deliberately checks
+      # COVERAGE, not equality with a fresh resolution: re-resolving would report drift every time
+      # any upstream package publishes, which would be noise rather than signal.
+      - name: requirements.lock covers pyproject dependencies
+        run: |
+          python - <<'PY'
+          import re, sys, tomllib
+
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          # The extras the Dockerfile bundles into the image; `dev` is intentionally not locked.
+          shipped = ("anthropic", "openai", "google", "posters")
+          declared = list(project["dependencies"])
+          for extra in shipped:
+              declared += project.get("optional-dependencies", {}).get(extra, [])
+
+          def norm(name: str) -> str:
+              return re.split(r"[<>=!~\[; ]", name, maxsplit=1)[0].strip().lower().replace("_", "-")
+
+          want = {norm(d) for d in declared}
+          have = {
+              norm(line)
+              for line in open("requirements.lock")
+              if "==" in line and not line.lstrip().startswith("#")
+          }
+
+          missing = sorted(want - have)
+          if missing:
+              sys.exit(
+                  "requirements.lock is stale — missing: "
+                  + ", ".join(missing)
+                  + "\nRegenerate it with the command in .claude/CLAUDE.md"
+              )
+          print(f"lock covers all {len(want)} declared runtime dependencies")
+          PY
 
   test-python:
     runs-on: ubuntu-latest
@@ -46,7 +81,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: requirements.lock
+      # Runtime deps from the lock FIRST, so tests run against the exact versions the image ships;
+      # dev tooling goes on top. Installing straight from pyproject's floors would let CI pass on
+      # different dependency versions than production actually runs.
+      - run: pip install -r requirements.lock
       - run: pip install -e ".[dev]"
       # --cov-report=xml adds an XML report on top of the term-missing one in
       # pyproject addopts, so Codecov has a file to ingest (badge stays "unknown"
@@ -94,11 +133,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: requirements.lock
       - uses: actions/download-artifact@v8
         with:
           name: web-dist
           path: web/dist
+      # Same ordering as test-python: pinned runtime deps first, dev tooling on top.
+      - run: pip install -r requirements.lock
       - run: pip install -e ".[dev]"
       # Cache the downloaded browser. Keyed on the resolved playwright version rather than
       # on pyproject, because the pin is a floor (">=1.45") — keying on the manifest would
