@@ -172,8 +172,12 @@ def desired_excludes(
     """
     shared_labels = shared_labels or {}
     excludes: set[str] = set()
+    own_lower = (own_label or "").lower()
     for label in stored_labels.values():
-        if label == own_label:
+        # Case-insensitive to match the self-exclusion prune below. Both read the same PMS-cased
+        # dict today, but if that ever drifted a case-sensitive compare here would ADD the label
+        # while the prune REMOVED it — a flip-flop written to plex.tv every night.
+        if own_label and label.lower() == own_lower:
             continue
         audience = shared_labels.get(label.lower(), _UNSHARED)
         if audience is not _UNSHARED and not hide_all_shared:  # a CONFIGURED shared row, account opted in
@@ -248,7 +252,15 @@ def sync_user_restrictions(
     prunable_shared: set[str] = set()
     for fieldname in RESTRICTED_FILTER_FIELDS:
         for lbl in shortlist_labels_in(remote.filters[fieldname], label_prefix):
-            if lbl.lower() in shared_lower and lbl.lower() not in wanted_lower:
+            stale_shared = lbl.lower() in shared_lower and lbl.lower() not in wanted_lower
+            # An account's OWN label must never sit in its own filter — that hides a person from
+            # their own row permanently, because private-row excludes are otherwise union-only.
+            # Reachable: delete a user's DB row while their collection still exists on Plex, so
+            # `own_label` is None and `desired_excludes` adds their own label to their own filter;
+            # re-adding them later never undid it. Un-hiding someone's OWN row cannot leak to anyone
+            # else — the same reasoning that makes the shared case safe to prune.
+            excluded_from_self = bool(own_label) and lbl.lower() == (own_label or "").lower()
+            if stale_shared or excluded_from_self:
                 prunable_shared.add(lbl)
 
     desired_fields = {}

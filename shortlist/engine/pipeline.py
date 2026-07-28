@@ -13,7 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from loguru import logger
@@ -37,6 +37,7 @@ from shortlist.engine.delivery import (
 )
 from shortlist.engine.history import HistorySource
 from shortlist.engine.models import (
+    SHARED_LABEL_PREFIX,
     CollectionDiff,
     EngineConfig,
     HubAnchor,
@@ -692,9 +693,14 @@ def _promote_phase(
                 continue
             title_template = resolve_row_template(spec, user, ctx.config)
             if "{top_seed}" not in title_template:
-                # A {library_name} title differs per library, so map one per library the row targets;
-                # setdefault leaves the recorded per-library titles (placement_titles) winning.
-                for section in target_sections(ctx.delivery_sections, spec):
+                # A {library_name} title differs per library, so map one per library — across EVERY
+                # library of the row's media type, not just where it delivers now. `library_keys`
+                # says where the row goes today; its collections may still sit in a library it was
+                # narrowed away from, and since promotion now reaches those, an unmatched one would
+                # take the no-spec fallback EVERY run rather than never being touched. A synthesized
+                # title matching no collection is inert, and setdefault leaves the recorded
+                # per-library titles (placement_titles) winning.
+                for section in target_sections(ctx.plex.sections(), replace(spec, library_keys=[])):
                     name = render_row_name(title_template, user, [], library_name=getattr(section, "title", "") or "")
                     placements.setdefault(name + marker, spec)
 
@@ -702,7 +708,12 @@ def _promote_phase(
             # Every row the user has, in every library — they can have several rows (all sharing
             # their label), and promoting only one would leave the others invisible to the one
             # person meant to see them.
-            for section in ctx.delivery_sections:
+            # EVERY library, not just the ones a row currently targets. `delivery_sections` is
+            # narrowed to targeted libraries, so a row whose `library_keys` was narrowed left its old
+            # collection stranded in the dropped library: never re-promoted (out of scope) and never
+            # demoted either, keeping whatever surfaces it last claimed indefinitely. The sweep and
+            # the removal paths already walk `plex.sections()` for exactly this reason.
+            for section in ctx.plex.sections():
                 for collection in ctx.plex.find_owned_collections(section, user.label):
                     _promote_one(ctx, collection, placements.get(collection.title), user.user_type)
                     promoted.add(int(collection.ratingKey))
@@ -715,7 +726,9 @@ def _promote_phase(
     for spec, agg in shared_to_promote if not ctx.config.dry_run and filters_ok else []:
         shared_report = next((r for r in report.users if r.slug == agg.slug), None)
         try:
-            for section in ctx.delivery_sections:
+            # Every library, same reason as the per-user loop above: a shared row whose library_keys
+            # narrowed leaves its collection in the dropped library, otherwise never revisited.
+            for section in ctx.plex.sections():
                 for collection in ctx.plex.find_owned_collections(section, spec.label):
                     _promote_one(ctx, collection, spec)
                     promoted.add(int(collection.ratingKey))
@@ -764,6 +777,8 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
     allowed |= {spec.label.lower() for spec in ctx.config.rows if spec.shared and spec.show_home and spec.label}
     prefix = f"{ctx.config.label_prefix}_".lower()
     paused_labels = {f"{ctx.config.label_prefix}_{slug}".lower() for slug in ctx.paused_slugs}
+    shared_prefix = SHARED_LABEL_PREFIX.lower()
+    live_shared = {spec.label.lower() for spec in ctx.config.shared_rows() if spec.label}
     demoted: list[str] = []
     try:
         for section in ctx.plex.sections():
@@ -774,17 +789,25 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
                 if label is None:
                     continue  # not ours (rule 4)
 
+                # A DISABLED shared row's collection is retired the same way. `retired_rows` only
+                # covers PER-PERSON rows (rows.py filters `not s.shared`), so switching a shared row
+                # off left its collection claiming Friends' Home and the Recommended shelf for ever.
+                # Non-owners stop seeing it (their filter excludes any label the config no longer
+                # declares shared) but the OWNER has no filter, so it sat on their server unchanged.
+                retired_shared = label.lower().startswith(shared_prefix) and label.lower() not in live_shared
+
                 # A PAUSED user's row comes off EVERY surface, not just the owner's Home. Pause means
                 # "stop showing it", and a paused person is by definition absent from every run, so
                 # this is the only place it can happen. The collection and its label stay, so
                 # everyone else's exclude still matches and unpausing is a re-promote, not a rebuild.
-                if label.lower() in paused_labels:
+                if label.lower() in paused_labels or retired_shared:
+                    reason = "row switched off" if retired_shared else "paused"
                     if ctx.config.dry_run:
-                        logger.info("[dry-run] {}: would take off every surface (paused)", collection.title)
+                        logger.info("[dry-run] {}: would take off every surface", collection.title)
                         demoted.append(label)
                         continue
                     with ctx.write_lock:
-                        if ctx.plex.demote_all(collection):
+                        if ctx.plex.demote_all(collection, reason=reason):
                             demoted.append(label)
                     continue
 
@@ -808,7 +831,7 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
     if demoted:
         report.converged = sorted(demoted)
         logger.warning(
-            "converge: took {} stranded row(s) off the owner's Home ({})",
+            "converge: corrected {} stranded row(s) ({})",
             len(demoted),
             ", ".join(sorted(set(demoted))),
         )

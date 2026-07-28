@@ -435,7 +435,7 @@ class PlexClient:
         """
         return bool(getattr(collection.visibility(), "promotedToOwnHome", False))
 
-    def demote_all(self, collection: Collection) -> bool:
+    def demote_all(self, collection: Collection, *, reason: str = "") -> bool:
         """Take a collection off EVERY surface, leaving it (and its label) in place.
 
         This is what "pause" means: the person stops seeing their row, but the collection and its
@@ -454,7 +454,7 @@ class PlexClient:
         if not any(claims):
             return False
         hub.updateVisibility(recommended=False, home=False, shared=False)
-        logger.info("{}: taken off every surface (paused)", collection.title)
+        logger.info("{}: taken off every surface{}", collection.title, f" ({reason})" if reason else "")
         return True
 
     def demote_own_home(self, collection: Collection) -> bool:

@@ -1330,6 +1330,74 @@ class TestPlacement:
         _promote_one(ctx, collection, None, UserType.MANAGED)
         ctx.plex.promote.assert_called_with(collection, shared=True, home=False, recommended=False)
 
+    def test_promotion_reaches_a_library_this_run_no_longer_targets(self, ctx: EngineContext):
+        """`delivery_sections` is narrowed to libraries some row currently targets, so a row whose
+        `library_keys` was narrowed left its old collection stranded in the dropped library — never
+        re-promoted (out of scope) and never demoted either, keeping its surfaces indefinitely."""
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import RowSpec, RunReport, UserProfile, UserRunReport, UserType
+        from shortlist.engine.pipeline import _promote_phase
+
+        user = UserProfile(username="sarah", plex_account_id=100, user_type=UserType.SHARED, slug="sarah")
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        dropped = MagicMock(type="movie", key="2", title="4K Movies")  # no row targets this any more
+        ctx.plex.sections.return_value = [movies, dropped]
+        ctx.delivery_sections = [movies]
+        ctx.config.rows = [RowSpec(slug="gems", name_template="Hidden Gems", size=5, library_keys=["1"])]
+        ctx.config.dry_run = False
+        stranded = MagicMock(title="Hidden Gems (left behind)")
+        ctx.plex.find_owned_collections.side_effect = lambda s, label: [stranded] if s is dropped else []
+        report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
+
+        _promote_phase(ctx, [user], [], filters_ok=True, report=report)
+
+        ctx.plex.promote.assert_called_once()  # reached despite living outside delivery_sections
+
+    def test_a_stranded_collection_resolves_to_its_row_rather_than_the_fallback(self, ctx: EngineContext):
+        """Regression: widening promotion to every library made this WORSE before it made it better.
+
+        The fallback title map used to be rendered only for the libraries a row targets NOW, so a
+        collection left in a de-targeted library could be reached but never identified — and took the
+        no-spec fallback on EVERY run, turning Friends' Home on for a row switched fully off. The map
+        is now rendered across every library of the row's media type.
+        """
+        from datetime import UTC, datetime
+
+        from shortlist.engine.delivery import row_marker
+        from shortlist.engine.models import RowSpec, RunReport, UserProfile, UserRunReport, UserType
+        from shortlist.engine.pipeline import _promote_phase
+
+        user = UserProfile(username="sarah", plex_account_id=100, user_type=UserType.SHARED, slug="sarah")
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        dropped = MagicMock(type="movie", key="2", title="4K Movies")  # row no longer targets this
+        ctx.plex.sections.return_value = [movies, dropped]
+        ctx.delivery_sections = [movies]
+        ctx.config.rows = [
+            RowSpec(
+                slug="gems",
+                name_template="{library_name} Gems",
+                size=5,
+                library_keys=["1"],
+                placement="off",
+                placement_friends="off",
+            )
+        ]
+        ctx.config.dry_run = False
+        stranded = MagicMock(title="4K Movies Gems" + row_marker(100))
+        ctx.plex.find_owned_collections.side_effect = lambda s, label: [stranded] if s is dropped else []
+        report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
+
+        _promote_phase(ctx, [user], [], filters_ok=True, report=report)
+
+        # Its real spec is off/off, so it claims nothing — NOT the fallback's shared=True.
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": False,
+            "recommended": False,
+            "pin_top": False,
+        }
+
     def test_the_no_spec_fallback_never_forces_a_row_onto_the_recommended_shelf(self, ctx: EngineContext):
         """A row whose title can't be mapped back to its spec takes the fallback, which used to
         default `recommended=True`.
@@ -1415,6 +1483,7 @@ class TestPlacement:
         ctx.config.dry_run = False
         section = MagicMock(type="movie", key="1", title="Movies")
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         coll = MagicMock(title=render_row_name("Hidden Gems", user, []) + row_marker(100))  # exists, no picks
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
         report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
@@ -1445,6 +1514,7 @@ class TestPlacement:
         movies = MagicMock(type="movie", key="1", title="Movies")
         shows = MagicMock(type="show", key="2", title="TV Shows")
         ctx.delivery_sections = [movies, shows]
+        ctx.plex.sections.return_value = [movies, shows]
         colls = {
             movies: MagicMock(title=render_row_name(tpl, user, [], library_name="Movies") + row_marker(100)),
             shows: MagicMock(title=render_row_name(tpl, user, [], library_name="TV Shows") + row_marker(100)),
@@ -1480,6 +1550,7 @@ class TestPlacement:
         ctx.config.dry_run = False
         section = MagicMock()
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         coll = MagicMock(title="Because you watched Dune (from a prior run)")
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
         report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
@@ -1504,6 +1575,7 @@ class TestPlacement:
         section = MagicMock()
         section.title = "Movies"
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         default_spec = ctx.config.per_person_rows()[0]
         title = render_row_name(
             resolve_row_template(default_spec, user, ctx.config), user, [], library_name="Movies"
@@ -1535,6 +1607,7 @@ class TestPlacement:
         ctx.config.dry_run = False
         section = MagicMock()
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         coll = MagicMock(title=render_row_name("Hidden Gems", user, []) + row_marker(100))
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
         report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
@@ -1563,6 +1636,7 @@ class TestPlacement:
         ctx.config.dry_run = False
         section = MagicMock()
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         coll = MagicMock(title=render_row_name("Everyone's Picks", user, []) + row_marker(100))
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
         report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
@@ -1676,8 +1750,10 @@ class TestLibraryScoping:
 
         movies = MagicMock(type="movie", key="1", title="Movies")
         old_lib = MagicMock(type="movie", key="2", title="4K Movies")  # row no longer targets this
+        # sections() deliberately WIDER than delivery_sections: the point is that cleanup reaches a
+        # library this run no longer targets.
         ctx.plex.sections.return_value = [movies, old_lib]
-        ctx.delivery_sections = [movies]  # this run only scoped in Movies
+        ctx.delivery_sections = [movies]
         ctx.config.rows = [RowSpec(slug="gems", name_template="Hidden Gems", size=5, media="movie", library_keys=["1"])]
         ctx.config.rows_defined = True
         ctx.config.dry_run = False
@@ -1991,7 +2067,7 @@ class TestConverge:
         ctx.owner_slug = owner_slug
         ctx.paused_slugs = paused or set()
         ctx.plex.sections.return_value[0].collections.return_value = collections
-        ctx.plex.demote_all.side_effect = lambda c: PlexClient.demote_all(ctx.plex, c)
+        ctx.plex.demote_all.side_effect = lambda c, **kw: PlexClient.demote_all(ctx.plex, c, **kw)
         # Exercise the REAL demote, so the test covers the read-then-write contract, not a stub.
         ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
         ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
@@ -2129,6 +2205,23 @@ class TestConverge:
 
         settled.visibility.return_value.updateVisibility.assert_not_called()
         assert report.converged == []
+
+    def test_a_switched_off_shared_row_is_retired(self, ctx: EngineContext):
+        """`retired_rows` only covers PER-PERSON rows (rows.py filters `not s.shared`), so switching a
+        shared row off left its collection claiming Friends' Home and the Recommended shelf for ever.
+        Non-owners stop seeing it — their filter excludes any label the config no longer declares
+        shared — but the OWNER has no filter, so it sat on their server unchanged."""
+        from shortlist.engine.models import RowSpec
+
+        ctx.config.rows = [RowSpec(slug="live", name_template="Live", size=10, shared=True, placement="both")]
+        gone = self._collection(1, "Shortlist__shared_retired")
+
+        report = self._run(ctx, [gone], promoted=set())
+
+        gone.visibility.return_value.updateVisibility.assert_called_once_with(
+            recommended=False, home=False, shared=False
+        )
+        assert report.converged == ["Shortlist__shared_retired"]
 
     def test_a_pms_failure_never_fails_the_run(self, ctx: EngineContext):
         """Converge runs after the real work and only ever removes visibility — a wobble here must

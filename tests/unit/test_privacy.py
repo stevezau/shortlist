@@ -518,3 +518,57 @@ class TestFilterDiffSummary:
         )
 
         assert summary == "filterMovies rewritten"
+
+
+class TestSelfExclusionIsHealed:
+    """An account's OWN label must never sit in its own filter — that hides a person from their own
+    row, permanently, because private-row excludes are otherwise union-only (removing one is the
+    leak direction, so nothing prunes them).
+
+    Reachable: delete a user's DB row while their collection still exists on Plex. `own_label`
+    resolves to None, so `desired_excludes` adds their own label to their own filter — and re-adding
+    the user later never undid it.
+    """
+
+    def _user(self):
+        from shortlist.engine.models import UserProfile, UserType
+
+        return UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED, slug="sarah")
+
+    def test_an_account_that_excluded_itself_gets_it_removed(self, mock_plextv):
+        from shortlist.engine.privacy import sync_user_restrictions
+        from tests.conftest import MemorySnapshotStore, plextv_user
+
+        remote = plextv_user(201, "sarah", filters={"filterMovies": "label!=Shortlist_sarah,Shortlist_mike"})
+        written = sync_user_restrictions(
+            mock_plextv,
+            self._user(),
+            remote,
+            {"sarah": "Shortlist_sarah", "mike": "Shortlist_mike"},
+            MemorySnapshotStore(),
+            own_label="Shortlist_sarah",
+        )
+
+        assert written is not None
+        after = written["filterMovies"][1]
+        assert "Shortlist_sarah" not in after  # they can see their own row again
+        assert "Shortlist_mike" in after  # everyone else's stays hidden
+
+    def test_another_persons_label_is_never_pruned(self, mock_plextv):
+        """Only the account's OWN label. Removing anyone else's is the leak direction."""
+        from shortlist.engine.privacy import sync_user_restrictions
+        from tests.conftest import MemorySnapshotStore, plextv_user
+
+        remote = plextv_user(201, "sarah", filters={"filterMovies": "label!=Shortlist_mike,Shortlist_canary"})
+        written = sync_user_restrictions(
+            mock_plextv,
+            self._user(),
+            remote,
+            {"mike": "Shortlist_mike"},  # canary's collection is gone from the server
+            MemorySnapshotStore(),
+            own_label="Shortlist_sarah",
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_mike,Shortlist_canary"))[1]
+        assert "Shortlist_mike" in after
+        assert "Shortlist_canary" in after  # stale, but pruning it is the leak direction
