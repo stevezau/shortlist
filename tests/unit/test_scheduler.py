@@ -118,7 +118,12 @@ class TestScheduledWorkIsDurable:
 
     @pytest.mark.parametrize(
         ("job_id", "kind"),
-        [("user-sync", "sync.users"), ("watch-sync", "sync.history"), ("db-backup", "backup.take")],
+        [
+            ("user-sync", "sync.users"),
+            ("watch-sync", "sync.history"),
+            ("db-backup", "backup.take"),
+            ("privacy-sync", "privacy.sync"),
+        ],
     )
     def test_each_scheduled_task_lands_on_the_queue(self, app, job_id, kind, monkeypatch):
         from shortlist.server.services import jobs
@@ -209,3 +214,52 @@ class TestSyncUsersOnAnUnlinkedServer:
         assert status == "done", f"a not-connected server must not fail the job ({error})"
         assert "not connected" in detail.lower()
         assert raised == 0, "and must not ring the bell"
+
+
+class TestPrivacySyncSchedule:
+    """The nightly share-filter re-merge.
+
+    It exists because the automatic Privacy Check + write gate was removed on 2026-07-16 at the
+    owner's request: nothing verifies hiding after the fact any more, so leak-safe write ORDERING is
+    the only remaining guarantee. This pass is the cheapest safety net against drift, and it only
+    ever makes the server more private.
+    """
+
+    def test_it_is_registered_with_a_trigger_by_default(self, app):
+        """Asserted against the LIVE scheduler, not the catalogue: `build_scheduler` naming the
+        function is not the same claim as APScheduler holding a trigger for it."""
+        from shortlist.server.scheduler import PRIVACY_SYNC_JOB_ID, build_scheduler
+
+        job = build_scheduler(app).get_job(PRIVACY_SYNC_JOB_ID)
+
+        # `next_run_time` only exists once the scheduler is STARTED, so registration + a trigger is
+        # the whole claim available here — matching how the other schedule tests assert.
+        assert job is not None, "the nightly privacy sync is not scheduled"
+        assert job.trigger is not None
+
+    def test_the_drift_check_stays_off_until_a_cron_is_set(self, app):
+        """Unlike the privacy sync it WRITES corrections to Plex, so running it unattended is a
+        choice to make rather than a default to inherit."""
+        from shortlist.server.scheduler import SYNC_CHECK_JOB_ID, build_scheduler
+
+        assert build_scheduler(app).get_job(SYNC_CHECK_JOB_ID) is None
+
+    def test_setting_a_cron_turns_the_drift_check_on(self, app):
+        from shortlist.server.scheduler import SYNC_CHECK_JOB_ID, build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            SettingsStore(session).set("sync.check_cron", "0 6 * * *")
+
+        assert build_scheduler(app).get_job(SYNC_CHECK_JOB_ID) is not None
+
+    def test_a_bad_cron_falls_back_instead_of_crash_looping_the_container(self, app):
+        """A typo in a settings box must never stop the app booting."""
+        from shortlist.server.scheduler import PRIVACY_SYNC_JOB_ID, build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            SettingsStore(session).set("privacy.sync_cron", "not a cron")
+
+        job = build_scheduler(app).get_job(PRIVACY_SYNC_JOB_ID)
+        assert job is not None and job.trigger is not None

@@ -260,7 +260,11 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register_privacy_sync(scheduler, app)
     _register_sync_check(scheduler, app)
     _register_jobs_worker(scheduler, app)
-    logger.info("scheduled {} row cron group(s) + watch-sync + user-sync + backup + job worker", len(groups))
+    logger.info(
+        "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync{} + job worker",
+        len(groups),
+        " + sync-check" if scheduler.get_job(SYNC_CHECK_JOB_ID) else "",
+    )
     return scheduler
 
 
@@ -279,4 +283,8 @@ def rebuild_schedule(app) -> None:
     _register_backup(scheduler, app)
     _register_privacy_sync(scheduler, app)
     _register_sync_check(scheduler, app)
-    logger.info("rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup", len(groups))
+    logger.info(
+        "rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync{}",
+        len(groups),
+        " + sync-check" if scheduler.get_job(SYNC_CHECK_JOB_ID) else "",
+    )
