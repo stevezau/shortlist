@@ -95,6 +95,10 @@ def _serialize(
         "avatar_url": user.avatar_url,
         "user_type": user.user_type,
         "restricted": user.restricted,
+        # "" when no parental preset is set. A managed account WITHOUT one is an ordinary user that
+        # gets rows and privacy filters; one WITH a preset sees no collections at all and Plex refuses
+        # to filter it. The UI needs the difference to say anything true (#20).
+        "restriction_profile": user.restriction_profile or "",
         "enabled": user.enabled,
         "cold_start": user.cold_start,
         "request_tag": user.request_tag or "",
@@ -599,6 +603,7 @@ async def sync_users_from_state(state) -> dict:
                         avatar_url=r.avatar_url,
                         user_type=r.user_type.value,
                         restricted=r.restricted,
+                        restriction_profile=r.restriction_profile,
                         friendly_name=friendly_names.get(r.id, ""),
                     )
                 )
@@ -608,6 +613,7 @@ async def sync_users_from_state(state) -> dict:
                 user.avatar_url = r.avatar_url
                 user.user_type = r.user_type.value
                 user.restricted = r.restricted
+                user.restriction_profile = r.restriction_profile
                 # Refreshed every sync so a rename in Tautulli follows through — but `nickname`
                 # (the owner's own choice) is never touched, so an override always survives.
                 user.friendly_name = friendly_names.get(r.id, user.friendly_name)

@@ -627,16 +627,36 @@ def _privacy_sync_phase(
             if user_report is not None:
                 user_report.privacy_synced = bool(written)
         except FilterWriteRefused as e:
-            # plex.tv permanently refused the write (422). Only safe to skip for restricted accounts
-            # (live-verified: they see 0 collections). An unexpected 422 on a non-restricted account
-            # must block promotion — it's an unknown failure, not a known-safe skip.
+            # plex.tv permanently refused the write (422). Safe to skip ONLY for an account with a
+            # parental PROFILE: Plex declines label restrictions while one is set, and such an account
+            # sees zero collections anyway, so there is nothing an exclude would have hidden.
+            #
+            # Keyed on the profile, NOT on `restricted` — plex.tv reports that for every Plex Home
+            # account, profile or not. Since privacy.py now attempts the write for profile-less managed
+            # accounts, they reach this handler for the first time; treating their 422 as a known-safe
+            # skip would let the run promote every private row while that account holds no excludes at
+            # all. That is #20's leak, re-opened, with the check that should catch it turned off.
+            # `not home_profiles_known` is the "we could not find out" case, kept separate from "no
+            # profile". Both look like an empty string otherwise — so a permanent `/api/home/users`
+            # outage would make every profiled account an unknown failure and block promotion for the
+            # entire server, nightly, until someone disabled those users by hand (#14's shape again).
+            # When the profiles are unknown, fall back to the pre-#20 behaviour and trust `restricted`.
             remote_user = roster.get(user.plex_account_id)
-            if remote_user and remote_user.restricted:
-                logger.warning("{}: plex.tv refused filter write (restricted account), skipping", user.username)
+            profiles_known = ctx.plextv.home_profiles_known
+            if remote_user and (remote_user.restriction_profile or (not profiles_known and remote_user.restricted)):
+                logger.warning(
+                    "{}: plex.tv refused the filter write for a '{}' account — expected, skipping",
+                    user.username,
+                    remote_user.restriction_profile or "restricted, profile unknown",
+                )
             else:
                 sync_failed = True
                 report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
-                logger.error("{}: plex.tv 422 on a NON-restricted account — blocking promotion", user.username)
+                logger.error(
+                    "{}: plex.tv 422 on an account with NO parental profile — blocking promotion, "
+                    "because nothing else would stop their rows going public",
+                    user.username,
+                )
         except Exception as e:
             # One user's filter not being written means the rows are not private. Nothing gets
             # promoted this run — including for users whose own sync succeeded.

@@ -36,7 +36,7 @@ function UserDetailBody({ user }: { user: User }) {
       <UserDetailHeader user={user} />
 
       {user.user_type === "owner" && <OwnerNote />}
-      {user.restricted && <RestrictedNote />}
+      <RestrictedNote user={user} />
 
       <Segmented
         options={[

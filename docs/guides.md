@@ -20,9 +20,13 @@
   and **unpause** puts them straight back — neither waits for a run. If **Sync from Plex** finds
   somebody who no longer has access to the server, Shortlist turns them off and cleans up their rows;
   their history is kept, so you can switch them back on if they return. All of this runs as
-  background jobs, visible on the **Jobs** page. Accounts with Plex **parental controls** (age restrictions) are badged
-  "Restricted" — Plex hides all collections from them regardless, so no row is built; remove the
-  restriction in Plex if you want them to get recommendations. Opening a person shows
+  background jobs, visible on the **Jobs** page. Accounts with a Plex **restriction profile** (Younger Kid / Older Kid / Teen) are
+  badged with that profile's name. Plex hides every collection from them, so no row is built — and
+  Plex also refuses the privacy filters Shortlist writes, so those accounts are left out of them.
+  Both go away by setting **Restriction Profile → None** in Plex → Settings → Users & Sharing; you can
+  still limit them by rating or label there, which Plex only permits once the profile is None.
+  A Plex Home account with **no** profile is an ordinary user: it gets a row and privacy filters like
+  anybody else. Opening a person shows
   their recent watch history (distinct titles, with season/episode numbers for TV), their picks
   grouped by row (long lists collapse behind a "show more"), and a **Run now** button to rebuild
   just that person.

@@ -39,18 +39,33 @@ export function UserTypeBadge({ user }: { user: User }) {
   );
 }
 
+/** The human name of a Plex restriction preset, for copy that names what the owner actually set. */
+const PROFILE_NAMES: Record<string, string> = {
+  little_kid: "Younger Kid",
+  older_kid: "Older Kid",
+  teen: "Teen",
+};
+
+export function profileName(user: User): string {
+  const key = user.restriction_profile ?? "";
+  return PROFILE_NAMES[key] ?? key;
+}
+
 /**
- * A restricted (parental-controlled) account — Plex hides all content outside their age rating,
- * including all collections. No row is built because they literally cannot see it.
+ * Only for an account Plex genuinely hides everything from — one with a parental PRESET.
+ *
+ * `restricted` alone is true for every Plex Home managed account, preset or not, so badging on it
+ * told people with an ordinary Home user that Plex was hiding content from them when it wasn't, and
+ * greyed out their enable toggle for no reason (#20).
  */
 export function RestrictedBadge({ user }: { user: User }) {
-  if (!user.restricted) return null;
+  if (!user.restriction_profile) return null;
   return (
     <Badge
       variant="destructive"
-      title="This account has Plex parental controls. Plex hides all collections from them, so no row is built. Remove the age restriction in Plex to enable recommendations."
+      title={`Plex's ${profileName(user)} restriction profile is set on this account. Plex hides every collection from it, so no row is built — and Plex refuses privacy filters for profiled accounts. Set the Restriction Profile to None in Plex to give this person recommendations.`}
     >
-      Restricted
+      {profileName(user)}
     </Badge>
   );
 }

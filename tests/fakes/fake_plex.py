@@ -100,6 +100,9 @@ class FakeUser:
     username: str
     home: bool = False
     restricted: bool = False
+    # The Plex parental preset ("little_kid"|"older_kid"|"teen", "" for none). Only /api/home/users
+    # reports it, and it is what decides whether Plex accepts a label restriction at all (#20).
+    restriction_profile: str = ""
     protected: bool = False
     uuid: str = ""
     filters: dict[str, str] = field(default_factory=lambda: dict.fromkeys(FILTER_FIELDS, ""))
@@ -840,6 +843,27 @@ def make_fake_plextv(state: FakePlexState) -> FastAPI:
             if fieldname in request.query_params:
                 user.filters[fieldname] = request.query_params[fieldname]
         return Response(status_code=200, content="<Response code='200'/>", media_type="text/xml")
+
+    @app.get("/api/home/users")
+    def home_users_v1() -> Response:
+        """The v1 XML surface, which is the ONLY one carrying `restrictionProfile`.
+
+        Served because `PlexTvClient.list_users()` reads it to tell a parental-controlled managed
+        account from a plain one — the distinction issue #20 turns on. Without it here, every
+        full-stack test took the fail-open branch and the enrichment was never exercised at all.
+        """
+        rows = "".join(
+            f'<User id="{u.id}" title="{u.username}" restricted="{int(u.restricted)}"'
+            + (f' restrictionProfile="{u.restriction_profile}"' if u.restriction_profile else "")
+            + ' protected="0"/>'
+            for u in state.users.values()
+            if u.home
+        )
+        return Response(
+            status_code=200,
+            content=f'<?xml version="1.0" encoding="UTF-8"?><MediaContainer>{rows}</MediaContainer>',
+            media_type="text/xml",
+        )
 
     @app.get("/api/v2/home/users")
     def home_users() -> JSONResponse:

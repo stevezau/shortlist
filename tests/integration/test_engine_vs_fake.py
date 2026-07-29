@@ -1751,3 +1751,52 @@ def test_a_ledger_key_naming_another_row_cannot_hijack_it_mid_run(fakes, tmp_pat
     for key in poisoned.values():
         assert key in now, "picked's collection was destroyed"
         assert now[key].startswith("✨"), f"gems hijacked picked's collection: now titled {now[key]!r}"
+
+
+def test_a_managed_user_with_a_parental_profile_is_left_out_of_the_filters(fakes, tmp_path):
+    """The full-stack cell for issue #20: the profile has to survive `/api/home/users` → `list_users()`
+    → `sync_user_restrictions` and actually change the outcome.
+
+    Every other test here has a home user with NO profile, so the join runs but the skip branch never
+    does — the feature could have been a no-op through the whole integration layer.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+
+    kid = next(u for u in state.users.values() if u.home)
+    kid.restricted = True
+    kid.restriction_profile = "little_kid"
+    before = dict(next(u for u in plextv.list_users() if u.id == kid.id).filters)
+
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=8,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=8)],
+            rows_defined=True,
+        ),
+        plex=plex,
+        plextv=PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0),
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+    report = engine_run(ctx, users)
+
+    fresh = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    after = {u.id: u for u in fresh.list_users()}
+    assert after[kid.id].restriction_profile == "little_kid", "the profile did not survive the join"
+    assert after[kid.id].filters == before, "a profiled account must be left out of the filter writes"
+    # And everyone else still got theirs — one profiled account cannot stop the server (#14).
+    others = [u for u in after.values() if u.id != kid.id and not u.restricted]
+    assert any("label!=" in u.filters.get("filterMovies", "") for u in others)
+    assert not report.promotion_blockers

@@ -248,3 +248,61 @@ describe("UsersPage — the Type column", () => {
     expect(badge.closest("td")).toHaveTextContent(/0 titles/);
   });
 });
+
+describe("UsersPage — Plex Home accounts", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+    patchUser.mockReset();
+  });
+
+  /** plex.tv reports `restricted: true` for EVERY Plex Home managed account — with a parental preset
+   *  or without. Only `restriction_profile` says which, and the two must not look the same. */
+  const managed = (restriction_profile: string): User => ({
+    ...SARAH,
+    id: 9,
+    username: "kid",
+    slug: "kid",
+    user_type: "managed",
+    restricted: true,
+    restriction_profile,
+    enabled: false,
+  });
+
+  it("names the actual restriction profile rather than a bare 'Restricted'", async () => {
+    // "Younger Kid" tells the owner what they set and therefore what to change; "Restricted" does not.
+    getUsers.mockResolvedValue([managed("little_kid")]);
+    renderPage();
+
+    expect(await screen.findByText("Younger Kid")).toBeInTheDocument();
+  });
+
+  it("disables the toggle only for an account Plex really hides everything from", async () => {
+    getUsers.mockResolvedValue([managed("little_kid")]);
+    renderPage();
+
+    await screen.findByText("Younger Kid");
+    expect(screen.getByRole("switch")).toBeDisabled();
+  });
+
+  it("treats a managed account with NO profile as an ordinary user", async () => {
+    // Issue #20: keying on `restricted` badged these as parental-controlled and greyed out their
+    // toggle, when Plex hides nothing from them and they need a row (and privacy filters) like anyone.
+    getUsers.mockResolvedValue([managed("")]);
+    renderPage();
+
+    await screen.findByText("kid");
+    expect(screen.getByRole("switch")).toBeEnabled();
+    expect(screen.queryByText(/Younger Kid|Older Kid|Teen/)).toBeNull();
+  });
+
+  it("can be enabled, which the old gate made impossible", async () => {
+    getUsers.mockResolvedValue([managed("")]);
+    patchUser.mockResolvedValue({});
+    renderPage();
+
+    await screen.findByText("kid");
+    await userEvent.click(screen.getByRole("switch"));
+
+    expect(patchUser).toHaveBeenCalledWith(9, { enabled: true });
+  });
+});

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  GET https://plex.tv/api/home/users — recorded from a real Plex Home, 2026-07-29 (plex-safety rule 11).
+
+  This is the ONLY endpoint that reports `restrictionProfile`. `/api/users` returns `restricted="1"`
+  for every managed account and nothing to distinguish them, which is the whole of issue #20: Shortlist
+  skipped share-filter writes for all of them, so a managed user with NO age restriction never got the
+  `label!=` excludes that hide other people's rows.
+
+  Plex will not accept label restrictions while a preset is applied — "For Managed users, the
+  restriction profile must be set to None if you wish to edit Rating and Label restrictions on the
+  library types" (support.plex.tv/articles/204232573-restricting-the-shares/). Live-confirmed against a
+  real server: a `little_kid` account returns HTTP 422 on the write, and sees 0 collections of any kind.
+
+  IDs deliberately MATCH plextv_users.xml.txt. The enrichment in `list_users()` joins the two endpoints
+  on account id, and with disjoint id spaces every test would pass while the join silently matched
+  nothing — a feature that is a no-op in production behind a green suite.
+
+    555000200  "kid"  -> little_kid   (also `restricted="1"` in plextv_users.xml.txt)
+    555000300  "teen" -> NO profile   (the #20 case: managed, unrestricted, needs its excludes)
+
+  `teen`'s `restrictionProfile` attribute is ABSENT rather than empty, which is how plex.tv actually
+  represents "none" — the parser must treat a missing attribute as "" and not as a profile.
+-->
+<MediaContainer size="3" friendlyName="Example Home" identifier="com.plexapp.plugins.myplex">
+  <User id="555000001" uuid="aaaaaaaaaaaaaaaa" admin="1" guest="0" restricted="0" protected="1" title="Owner" username="owner"/>
+  <User id="555000200" uuid="bbbbbbbbbbbbbbbb" admin="0" guest="0" restricted="1" restrictionProfile="little_kid" protected="0" title="kid" username=""/>
+  <User id="555000300" uuid="cccccccccccccccc" admin="0" guest="0" restricted="1" protected="0" title="teen" username=""/>
+</MediaContainer>

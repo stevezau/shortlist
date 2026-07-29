@@ -147,6 +147,49 @@ class TestBuildContext:
             "api_key": "sk-or-abc",
         }
 
+    def test_a_managed_user_with_no_parental_profile_is_built_for(self, service, sessions, configured):
+        """Issue #20's other half. `enabled_profiles` dropped every account with `restricted` set —
+        which plex.tv reports for EVERY Plex Home user. So a managed user with no age restriction got
+        no row, silently, while the Users page offered an enable toggle and the docs promised one.
+
+        Plex hides nothing from these accounts; they are ordinary users."""
+        with sessions() as session:
+            session.add(
+                User(
+                    plex_account_id=1,
+                    username="kid",
+                    slug="kid",
+                    enabled=True,
+                    user_type="managed",
+                    restricted=True,
+                    restriction_profile="",
+                )
+            )
+            session.commit()
+            profiles = service.enabled_profiles(session)
+
+        assert [p.slug for p in profiles] == ["kid"]
+
+    def test_a_managed_user_WITH_a_profile_is_still_skipped(self, service, sessions, configured):
+        """Plex hides every collection from a profiled account, so a row would be invisible — and Plex
+        refuses the share filters that would make it private anyway."""
+        with sessions() as session:
+            session.add(
+                User(
+                    plex_account_id=2,
+                    username="littleone",
+                    slug="littleone",
+                    enabled=True,
+                    user_type="managed",
+                    restricted=True,
+                    restriction_profile="little_kid",
+                )
+            )
+            session.commit()
+            profiles = service.enabled_profiles(session)
+
+        assert profiles == []
+
     def test_delivered_keys_reach_the_engine_under_the_key_delivery_looks_up(self, service, sessions, configured):
         """The DB→engine wiring for the delivery ledger, asserted as the literal tuple.
 

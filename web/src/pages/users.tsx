@@ -11,6 +11,7 @@ import { UserAvatar } from "@/components/user-avatar";
 import {
   ColdStartBadge,
   RestrictedBadge,
+  profileName,
   UserTypeBadge,
 } from "@/components/user-badges";
 import { Button } from "@/components/ui/button";
@@ -260,12 +261,15 @@ export function UsersPage() {
                         {formatHitRate(user.hit_rate)}
                       </TableCell>
                       <TableCell className="text-right">
+                        {/* Gated on the PRESET, not on `restricted` — plex.tv sets that for every Plex
+                            Home user, so keying on it greyed out ordinary managed accounts that can
+                            perfectly well have a row (#20). */}
                         <Switch
-                          checked={user.enabled && !user.restricted}
-                          disabled={user.restricted}
+                          checked={user.enabled && !user.restriction_profile}
+                          disabled={Boolean(user.restriction_profile)}
                           title={
-                            user.restricted
-                              ? "Plex parental controls hide all collections from this account — remove the age restriction to enable"
+                            user.restriction_profile
+                              ? `Plex's ${profileName(user)} restriction profile hides every collection from this account — set the profile to None in Plex to enable`
                               : undefined
                           }
                           onCheckedChange={(enabled) =>

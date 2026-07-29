@@ -74,6 +74,83 @@ class TestPlexTvClient:
         assert [u.id for u in users] == [555000100, 555000200]
 
     @respx.mock
+    def test_home_restriction_profiles_separates_managed_users_plex_cannot(self):
+        """`/api/users` says `restricted="1"` for EVERY managed account. Only `/api/home/users` says
+        which of them actually has a parental preset — the distinction issue #20 turns on, and the one
+        that decides whether Plex will even accept a label restriction."""
+        home_xml = (FIXTURES / "plextv_home_users.xml.txt").read_text()
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(200, text=home_xml))
+
+        profiles = self._client().home_restriction_profiles()
+
+        assert profiles[555000200] == "little_kid"  # has a preset -> Plex refuses label filters
+        assert profiles[555000300] == ""  # ATTRIBUTE ABSENT entirely -> no preset, filters are accepted
+        assert profiles[555000001] == ""  # the owner
+
+    @respx.mock
+    def test_the_profile_lands_on_the_right_user_through_list_users(self):
+        """The JOIN is the load-bearing step, and it is invisible if the two endpoints disagree about
+        the id space. With disjoint ids every other test still passes while the enrichment matches
+        NOTHING — a feature that is a silent no-op in production behind a green suite."""
+        respx.get("https://plex.tv/api/users").mock(
+            return_value=httpx.Response(200, text=(FIXTURES / "plextv_users.xml.txt").read_text())
+        )
+        respx.get("https://plex.tv/api/home/users").mock(
+            return_value=httpx.Response(200, text=(FIXTURES / "plextv_home_users.xml.txt").read_text())
+        )
+
+        by_id = {u.id: u for u in self._client().list_users()}
+
+        assert by_id[555000200].restriction_profile == "little_kid", "the join matched nothing"
+        assert by_id[555000100].restriction_profile == ""  # an ordinary shared user
+
+    @respx.mock
+    def test_a_malformed_home_user_id_does_not_sink_the_whole_roster(self):
+        """This parse used to sit outside the try. One junk id raised out of `list_users()`, which the
+        pipeline reads as "could not read the plex.tv user list" — no filters written for ANYONE and
+        nothing promoted, server-wide, over a bad character on a secondary endpoint."""
+        junk = '<MediaContainer><User id="not-a-number" restrictionProfile="teen"/>'
+        junk += '<User id="555000200" restrictionProfile="little_kid"/></MediaContainer>'
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(200, text=junk))
+
+        profiles = self._client().home_restriction_profiles()
+
+        assert profiles == {555000200: "little_kid"}, "the good row must survive the bad one"
+
+    @respx.mock
+    def test_the_profile_lookup_is_fetched_once_per_client(self):
+        """`list_users()` is called several times per run — privacy sync, the read-back verification,
+        uninstall's per-user restore. Without caching, each paid a second plex.tv GET for a value most
+        of them never read (rule 6: plex.tv is shared infrastructure)."""
+        respx.get("https://plex.tv/api/users").mock(
+            return_value=httpx.Response(200, text=(FIXTURES / "plextv_users.xml.txt").read_text())
+        )
+        route = respx.get("https://plex.tv/api/home/users").mock(
+            return_value=httpx.Response(200, text=(FIXTURES / "plextv_home_users.xml.txt").read_text())
+        )
+        client = self._client()
+
+        client.list_users()
+        client.list_users()
+        client.list_users()
+
+        assert route.call_count == 1
+
+    @respx.mock
+    def test_a_home_users_failure_leaves_profiles_blank_rather_than_failing_the_roster(self):
+        """Blank reads as "no preset", so the caller ATTEMPTS the write and plex.tv gets the final say
+        (a 422 is already handled). Failing the whole roster read over an enrichment would strand every
+        user's excludes over a hiccup on a secondary endpoint."""
+        users_xml = (FIXTURES / "plextv_users.xml.txt").read_text()
+        respx.get("https://plex.tv/api/users").mock(return_value=httpx.Response(200, text=users_xml))
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(500))
+
+        users = self._client().list_users()
+
+        assert users, "the roster must still be returned"
+        assert all(u.restriction_profile == "" for u in users)
+
+    @respx.mock
     def test_update_filters_sends_only_given_fields_with_token_header(self):
         route = respx.put("https://plex.tv/api/users/100").mock(return_value=httpx.Response(200))
         self._client().update_user_filters(100, {"filterMovies": "label!=Shortlist_a"})

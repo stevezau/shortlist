@@ -425,7 +425,15 @@ class ContextBuilder:
         overrides = self._row_overrides(session)
         profiles = []
         for user in query.all():
-            if user.restricted:
+            # A parental PROFILE, not the `restricted` flag: plex.tv sets that for every Plex Home
+            # account. Keying on it dropped ordinary managed users from every run — while the Users
+            # page now lets you enable them and the docs promise they get a row. An account with a
+            # profile still gets none: Plex hides every collection from it, so a row is invisible.
+            #
+            # `restriction_profile` is "" until the next user sync backfills it, so immediately after
+            # an upgrade a profiled account is briefly eligible. Harmless — it sees no collections
+            # either way, and the next sync settles it.
+            if user.restriction_profile:
                 continue
             prefs = user.prefs or {}
             if prefs.get("paused"):

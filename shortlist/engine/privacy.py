@@ -230,13 +230,29 @@ def sync_user_restrictions(
         # stale user row stop every other user's rows from being promoted, every night.
         logger.info("{}: no longer shares this server — nothing to restrict", user.username)
         return None
-    if remote.restricted:
-        # A restricted (managed/parental) account: plex.tv refuses share-filter writes (HTTP 422)
-        # because the restriction PROFILE already governs what this account can see. Live-verified
-        # (2026-07-25): a restricted account sees ZERO collections, ZERO library hubs, and ZERO
-        # Home hubs — Plex hides everything the profile doesn't allow. The label-exclude filter is
-        # completely redundant; skipping is safe and avoids blocking promotion for the server (#14).
-        logger.debug("{}: restricted account — skipping share-filter (parental profile hides all)", user.username)
+    if remote.restricted and remote.restriction_profile:
+        # A managed account with a PARENTAL PRESET ("little_kid" / "older_kid" / "teen"). Plex refuses
+        # label restrictions outright while one is applied — its own docs: "For Managed users, the
+        # restriction profile must be set to None if you wish to edit Rating and Label restrictions on
+        # the library types" (support.plex.tv/articles/204232573-restricting-the-shares/). Live-confirmed
+        # 2026-07-29: the write comes back 422, and the account sees ZERO collections of any kind
+        # anyway, so there is nothing for an exclude to hide. Skipping is both necessary and harmless,
+        # and it is what keeps one such account from blocking promotion for the whole server (#14).
+        #
+        # Gated on the PROFILE, not on `restricted` alone. `/api/users` sets `restricted="1"` for every
+        # managed account, preset or not — so keying on it also skipped managed users with NO age
+        # restriction, who see everything and genuinely need their excludes (#20).
+        #
+        # BOTH are required so the new skip is a strict SUBSET of the old one: no account that used to
+        # receive excludes can lose them here. The two flags come from different endpoints and nothing
+        # enforces a relationship, so a `restricted="0"` account that somehow reports a profile keeps
+        # its excludes rather than silently losing them.
+        logger.debug(
+            "{}: managed account with a '{}' profile — Plex refuses label filters for these, and it "
+            "sees no collections regardless",
+            user.username,
+            remote.restriction_profile,
+        )
         return None
 
     wanted = desired_excludes(

@@ -18,6 +18,9 @@ export interface User {
   display_name?: string;
   user_type: UserType;
   restricted: boolean;
+  /** Plex parental preset on a managed account: "little_kid" | "older_kid" | "teen", "" for none.
+   *  `restricted` is true for BOTH — only this says whether Plex actually hides anything. */
+  restriction_profile?: string;
   enabled: boolean;
   cold_start: boolean;
   history_depth: number;

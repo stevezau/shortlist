@@ -249,29 +249,70 @@ class TestSyncUserRestrictions:
         assert wrote is None
         mock_plextv.update_user_filters.assert_not_called()
 
-    def test_restricted_account_is_skipped_without_calling_plextv(self, mock_plextv, snapshot_store):
-        # A restricted (parental-controlled) account: plex.tv refuses filter writes (422) and
-        # live-verified (2026-07-25) they see 0 collections. Skipping is safe and must not error.
-        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
-        remote = plextv_user(500, "kid")
-        remote = PlexTvUser(
+    def _managed(self, profile: str, filters: str = "") -> PlexTvUser:
+        """A Plex Home account. `restricted` is True either way — that is the whole point of #20:
+        `/api/users` cannot tell a parental-controlled account from a plain managed one."""
+        return PlexTvUser(
             id=500,
             username="kid",
             user_type=UserType.MANAGED,
             home=True,
             restricted=True,
             protected=False,
+            restriction_profile=profile,
             filters={
                 "filterAll": "",
-                "filterMovies": "contentRating=G",
+                "filterMovies": filters,
                 "filterTelevision": "",
                 "filterMusic": "",
                 "filterPhotos": "",
             },
         )
-        wrote = sync_user_restrictions(mock_plextv, kid, remote, {"sarah": "Shortlist_sarah"}, snapshot_store)
+
+    def test_a_parental_profile_is_skipped_without_calling_plextv(self, mock_plextv, snapshot_store):
+        """Plex refuses label restrictions outright while a preset is applied — its own docs say the
+        profile "must be set to None if you wish to edit Rating and Label restrictions". Live-confirmed
+        2026-07-29: a `little_kid` account 422s the write and sees 0 collections of any kind, so there
+        is nothing an exclude could hide. Skipping keeps one such account from blocking promotion for
+        the whole server (#14)."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        wrote = sync_user_restrictions(
+            mock_plextv,
+            kid,
+            self._managed("little_kid", "contentRating=G"),
+            {"sarah": "Shortlist_sarah"},
+            snapshot_store,
+        )
+
         assert wrote is None
         mock_plextv.update_user_filters.assert_not_called()
+
+    def test_a_managed_account_with_NO_profile_gets_its_excludes(self, mock_plextv, snapshot_store):
+        """Issue #20. `/api/users` reports `restricted="1"` for every managed account, so keying the
+        skip on it also skipped managed users with no age restriction — who see everything and are
+        exactly who the excludes exist for. Plex accepts label restrictions for these."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        wrote = sync_user_restrictions(
+            mock_plextv, kid, self._managed(""), {"sarah": "Shortlist_sarah"}, snapshot_store
+        )
+
+        assert wrote is not None, "a managed user with no parental profile must be given their excludes"
+        assert "Shortlist_sarah" in wrote["filterMovies"][1]
+        mock_plextv.update_user_filters.assert_called_once()
+
+    def test_a_profile_less_account_keeps_any_filters_it_already_had(self, mock_plextv, snapshot_store):
+        """Rule 3 — merge, never rebuild. Writing excludes for a managed user must not disturb whatever
+        the owner set by hand."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=500)
+
+        wrote = sync_user_restrictions(
+            mock_plextv, kid, self._managed("", "contentRating=PG"), {"sarah": "Shortlist_sarah"}, snapshot_store
+        )
+
+        assert wrote["filterMovies"][1].startswith("contentRating=PG")
+        assert "Shortlist_sarah" in wrote["filterMovies"][1]
 
     def test_first_sync_snapshots_then_merges_with_stored_labels(self, mock_plextv, snapshot_store):
         sarah = self._users()[0]

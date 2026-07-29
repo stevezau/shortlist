@@ -216,35 +216,130 @@ class TestRun:
         assert not report.ok
         ctx.plex.promote.assert_not_called()
 
-    def test_filter_write_refused_on_restricted_account_does_not_block_promotion(self, ctx: EngineContext, mock_plextv):
-        """A restricted account gets a 422 from plex.tv — this must NOT block promotion for everyone
-        else. The restricted account is simply skipped (live-verified: they see 0 collections)."""
+    def _managed_remote(self, profile: str):
+        """A Plex Home account. `restricted` is True either way — only the PROFILE says whether Plex
+        will accept a label filter, or hides anything at all (#20)."""
         from shortlist.engine.clients.plextv import PlexTvUser
 
-        sarah = make_profile("sarah", account_id=100)
-        kid = make_profile("kid", account_id=500)
-        sarah_remote = plextv_user(100, "sarah")
-        kid_remote = PlexTvUser(
+        return PlexTvUser(
             id=500,
             username="kid",
             user_type=UserType.MANAGED,
             home=True,
             restricted=True,
             protected=False,
-            filters={
-                "filterAll": "",
-                "filterMovies": "",
-                "filterTelevision": "",
-                "filterMusic": "",
-                "filterPhotos": "",
-            },
+            restriction_profile=profile,
+            filters=dict.fromkeys(("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos"), ""),
         )
-        mock_plextv.users = [sarah_remote, kid_remote]
+
+    def test_a_parental_profile_account_never_reaches_the_write_and_promotion_proceeds(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """`little_kid` is skipped in privacy.py before the write fires, so one such account cannot
+        block promotion for the whole server (#14). Without the profile set this test passed for the
+        WRONG reason — no refusal happened at all, because the write simply succeeded."""
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("little_kid")]
 
         report = pipeline_mod.run(ctx, [sarah, kid])
 
-        # Promotion proceeds (the restricted kid is skipped in privacy.py before the write even fires).
         assert report.ok
+        assert not report.promotion_blockers
+        # The kid is never written to; sarah is.
+        assert [c.args[0] for c in mock_plextv.update_user_filters.call_args_list] == [100]
+
+    def test_a_422_on_a_managed_account_with_NO_profile_BLOCKS_promotion(self, ctx: EngineContext, mock_plextv):
+        """The branch the #20 fix opens. Profile-less managed accounts now get write attempts, so they
+        reach the 422 handler for the first time. Treating that as a known-safe skip would promote every
+        private row while this account holds no excludes at all — #20's leak, with the check that should
+        catch it switched off."""
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+
+        assert report.promotion_blockers, "a 422 with no parental profile is an UNKNOWN failure"
+        assert any("500" in b for b in report.promotion_blockers)
+        # `promotion_blockers` IS the consequence here: `_promote_phase` skips every user when it is
+        # non-empty. Asserting `promote` was not called would prove nothing in this fixture — these
+        # users deliver no collections, so it is never called either way.
+
+    def test_when_profiles_cannot_be_read_a_restricted_422_does_not_block_the_server(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The permanent-outage case. `restrictionProfile` comes from the v1 `/api/home/users` surface;
+        if that ever goes away, every profiled account reads as "no profile", 422s on the write, and
+        would be treated as an unknown failure — blocking promotion for the WHOLE server, every night,
+        until somebody disabled those users by hand. That is #14's shape, one endpoint removal away.
+
+        So "we could not find out" is kept distinct from "no profile", and falls back to trusting
+        `restricted` exactly as the code did before #20."""
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
+        mock_plextv.home_profiles_known = False  # the endpoint could not be read
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+
+        assert not report.promotion_blockers, "one restricted account must not stop the whole server"
+        # sarah's filters were still written — the run carried on rather than aborting on the kid.
+        assert 100 in [c.args[0] for c in mock_plextv.update_user_filters.call_args_list]
+
+    def test_a_profile_on_a_NON_restricted_account_keeps_its_excludes_and_never_blocks(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The cell both guards exist for, and the only one that reaches the handler's skip branch.
+
+        `restricted` and `restrictionProfile` come from different endpoints and nothing enforces a
+        relationship between them. An account plex.tv calls unrestricted while reporting a profile is
+        typed SHARED and used to receive excludes — so the skip must not swallow it (privacy.py
+        requires BOTH flags), and if plex.tv then refuses the write that refusal is a known-safe one.
+        """
+        from shortlist.engine.clients.plextv import FilterWriteRefused, PlexTvUser
+
+        sarah = make_profile("sarah", account_id=100)
+        odd = make_profile("odd", account_id=700)
+        odd_remote = PlexTvUser(
+            id=700,
+            username="odd",
+            user_type=UserType.SHARED,
+            home=False,
+            restricted=False,  # plex.tv says unrestricted...
+            protected=False,
+            restriction_profile="teen",  # ...while reporting a profile
+            filters=dict.fromkeys(("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos"), ""),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah"), odd_remote]
+
+        def refuse_the_odd_one(account_id, fields):
+            if account_id == 700:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 700: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_odd_one
+
+        report = pipeline_mod.run(ctx, [sarah, odd])
+
+        # The write was ATTEMPTED — the subset guard means this account never silently loses excludes.
+        assert 700 in [c.args[0] for c in mock_plextv.update_user_filters.call_args_list]
+        # And the 422 is treated as expected, so one odd account cannot stop the server (#14).
         assert not report.promotion_blockers
 
     def test_filter_write_refused_on_non_restricted_account_blocks_promotion(self, ctx: EngineContext, mock_plextv):
