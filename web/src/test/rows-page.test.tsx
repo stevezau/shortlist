@@ -47,6 +47,7 @@ const SUBSET_ROW: Collection = {
   watched_pct: null,
   freshness: null,
   recent_count: null,
+  max_seeds: null,
   placement: "both",
   placement_friends: "both",
   pin_top: false,
