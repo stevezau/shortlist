@@ -72,6 +72,56 @@ class TestOwnedMachineIds:
         with pytest.raises(httpx.HTTPError):
             asyncio.run(owned_machine_ids("client-1", "tok"))
 
+    @pytest.mark.parametrize(
+        "body,content_type",
+        [
+            ("<html>captive portal</html>", "text/html"),  # a portal or proxy, not plex.tv
+            ('{"error": "nope"}', "application/json"),  # 200, valid JSON, wrong shape
+            ('["a", "b"]', "application/json"),  # a list, but not of resource objects
+        ],
+    )
+    @respx.mock
+    def test_a_malformed_200_raises_the_error_callers_actually_catch(self, body, content_type):
+        """Both call sites catch `httpx.HTTPError` and only that. A 200 carrying HTML, or JSON of the
+        wrong shape, used to escape as JSONDecodeError/AttributeError — an unhandled 500 with nothing
+        logged, right in the middle of the owner's first sign-in."""
+        respx.get(url__startswith=RESOURCES).mock(
+            return_value=httpx.Response(200, text=body, headers={"content-type": content_type})
+        )
+        with pytest.raises(httpx.HTTPError):
+            asyncio.run(owned_machine_ids("client-1", "tok"))
+
+    @pytest.mark.parametrize("flag", ["0", "false", "", "no", 0, None])
+    @respx.mock
+    def test_a_non_boolean_owned_flag_is_never_read_as_owned(self, flag):
+        """`owned: "0"` and `owned: "false"` are TRUTHY strings in Python. Testing the flag for
+        truthiness would hand back a server the account does not own — failing OPEN on the one check
+        that decides who may write to a stranger's PMS."""
+        respx.get(url__startswith=RESOURCES).mock(return_value=httpx.Response(200, json=[{**OWNED, "owned": flag}]))
+        assert asyncio.run(owned_machine_ids("client-1", "tok")) == set()
+
+    @respx.mock
+    def test_provides_must_list_server_as_its_own_capability(self):
+        """`provides` is comma-separated. A substring match would accept "media-server-client"."""
+        respx.get(url__startswith=RESOURCES).mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {**OWNED, "clientIdentifier": "real", "provides": "server,player"},
+                    {**OWNED, "clientIdentifier": "bogus", "provides": "media-server-client"},
+                ],
+            )
+        )
+        assert asyncio.run(owned_machine_ids("client-1", "tok")) == {"real"}
+
+    @respx.mock
+    def test_a_malformed_entry_is_skipped_without_taking_the_whole_answer_down(self):
+        """One junk entry must not cost the owner their real server."""
+        respx.get(url__startswith=RESOURCES).mock(
+            return_value=httpx.Response(200, json=["junk", None, {**OWNED}, {"owned": True}])
+        )
+        assert asyncio.run(owned_machine_ids("client-1", "tok")) == {"machine-owned"}
+
 
 def _pin_routes(*, account_id: int = 42) -> None:
     respx.get(url__startswith=f"{PLEXTV}/api/v2/pins/").mock(

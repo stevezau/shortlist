@@ -108,8 +108,10 @@ async def owned_machine_ids(client_id: str, token: str) -> set[str]:
     own from one merely shared with you — both appear in the listing, and Shortlist writes
     collections, labels and share filters, which is owner-level work on someone else's server.
 
-    Raises on any plex.tv failure. Callers must fail closed: "couldn't ask plex.tv" is never
-    "yes, they own it".
+    Raises ``httpx.HTTPError`` on ANY failure to get a usable answer — transport, status, or a body
+    that is not the list of resources we expect. Callers fail closed on that one exception type, so
+    a malformed 200 must not escape as something else: a captive portal or proxy answering
+    ``200 text/html`` used to surface as an unhandled 500 with nothing in the log.
     """
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.get(
@@ -117,11 +119,38 @@ async def owned_machine_ids(client_id: str, token: str) -> set[str]:
             headers={**_client_headers(client_id), "X-Plex-Token": token},
         )
     response.raise_for_status()
-    return {
-        r["clientIdentifier"]
-        for r in response.json()
-        if r.get("owned") and r.get("clientIdentifier") and "server" in (r.get("provides") or "")
-    }
+    try:
+        resources = response.json()
+    except ValueError as e:  # HTML/XML from a portal or proxy, not JSON
+        raise httpx.HTTPError(f"plex.tv returned a non-JSON resources body: {type(e).__name__}") from e
+    if not isinstance(resources, list):
+        raise httpx.HTTPError(f"plex.tv returned {type(resources).__name__}, expected a list of resources")
+    # An EMPTY list is a legitimate answer (this account has no resources). A non-empty list with no
+    # objects in it is not a resources payload at all, and must not be reported as "owns nothing" —
+    # that tells the owner they don't own a Plex server when plex.tv actually returned garbage.
+    if resources and not any(isinstance(entry, dict) for entry in resources):
+        raise httpx.HTTPError("plex.tv returned a list with no resource objects")
+
+    owned: set[str] = set()
+    for entry in resources:
+        if not isinstance(entry, dict):
+            continue
+        machine_id = entry.get("clientIdentifier")
+        provides = entry.get("provides")
+        # `owned` is compared to True, NOT tested for truthiness: the string "0" and the string
+        # "false" are both truthy in Python, so a plex.tv response that ever serialised the flag as
+        # a string would hand back someone else's server as OWNED — failing OPEN on the one check
+        # that decides who may write to a stranger's PMS. `1` is accepted because JSON booleans and
+        # Plex's older 0/1 integers are both legitimate; a string never is.
+        if entry.get("owned") not in (True, 1):
+            continue
+        # "server" as its own capability, not a substring: `provides` is a comma-separated list, so
+        # matching loosely would accept a hypothetical "media-server-client".
+        if not (isinstance(provides, str) and "server" in provides.split(",")):
+            continue
+        if isinstance(machine_id, str) and machine_id:
+            owned.add(machine_id)
+    return owned
 
 
 def session_serializer(secret: str) -> URLSafeTimedSerializer:
