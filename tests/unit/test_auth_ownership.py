@@ -16,6 +16,7 @@ httpx transport globally, so it holds across the loop.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from types import SimpleNamespace
 
 import httpx
@@ -123,6 +124,46 @@ class TestOwnedMachineIds:
         assert asyncio.run(owned_machine_ids("client-1", "tok")) == {"machine-owned"}
 
 
+class TestAgainstTheRecordedPlexTvShape:
+    """plex-safety rule 11: the ownership parse is pinned to a REAL recorded response, not to the
+    hand-built dicts above. This is the check that decides who may write to a Plex server, so the
+    assumption behind it gets a fixture rather than a guess."""
+
+    @staticmethod
+    def _fixture() -> list[dict]:
+        import json
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "fixtures" / "plextv_resources.json"
+        return json.loads(path.read_text())["entries"]
+
+    @respx.mock
+    def test_the_recorded_response_yields_only_the_owned_server(self):
+        entries = self._fixture()
+        respx.get(url__startswith=RESOURCES).mock(return_value=httpx.Response(200, json=entries))
+        owned = asyncio.run(owned_machine_ids("client-1", "tok"))
+        # Exactly the one entry that is both owned AND provides a server.
+        expected = {
+            e["clientIdentifier"] for e in entries if e["owned"] is True and "server" in e["provides"].split(",")
+        }
+        assert owned == expected
+        assert len(owned) == 1
+
+    def test_the_recorded_owned_flag_is_a_real_boolean(self):
+        """If plex.tv ever serialised this as a string, the `(True, 1)` comparison would start
+        rejecting the owner's own server — a loud failure, not a silent one. Pin the shape so that
+        change is caught here rather than in production."""
+        for entry in self._fixture():
+            assert isinstance(entry["owned"], bool), entry["clientIdentifier"]
+
+    def test_a_player_is_owned_but_is_not_a_linkable_server(self):
+        """`owned: true` alone is not enough — an Apple TV is owned and is not a Plex server."""
+        players = [e for e in self._fixture() if "player" in e["provides"].split(",")]
+        assert players, "fixture should carry a player entry"
+        for p in players:
+            assert p["owned"] is True and "server" not in p["provides"].split(",")
+
+
 def _pin_routes(*, account_id: int = 42) -> None:
     respx.get(url__startswith=f"{PLEXTV}/api/v2/pins/").mock(
         return_value=httpx.Response(200, json={"authToken": "user-token"})
@@ -132,14 +173,40 @@ def _pin_routes(*, account_id: int = 42) -> None:
     )
 
 
-def _request(owner: int | None):
+def _request(owner: int | None, *, seeded_token: str = ""):
+    """`seeded_token` is the env-seeded `plex.token` an unclaimed instance may be holding — the thing
+    that names whose instance this is before any server is linked."""
+
+    class _Store:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def get(self, key):
+            return seeded_token if key == "plex.token" else ""
+
+    import shortlist.server.settings_store as settings_store
+
+    settings_store.SettingsStore = _Store  # patched per-request; restored by the fixture below
+
     state = SimpleNamespace(
         client_id="client-1",
         session_secret="s",
         pending_plex_tokens={},
         owner_account_id=lambda: owner,
+        secrets=SimpleNamespace(decrypt=lambda v: v),
+        sessions=contextlib.nullcontext,
     )
     return SimpleNamespace(app=SimpleNamespace(state=state), url=SimpleNamespace(scheme="http"))
+
+
+@pytest.fixture(autouse=True)
+def _restore_settings_store():
+    """`_request` monkeypatches SettingsStore in place; put the real one back after every test."""
+    import shortlist.server.settings_store as settings_store
+
+    real = settings_store.SettingsStore
+    yield
+    settings_store.SettingsStore = real
 
 
 class TestLoginRejectsNonOwners:
@@ -186,6 +253,79 @@ class TestLoginRejectsNonOwners:
             asyncio.run(poll_pin(1, _request(owner=7), Response()))
         assert caught.value.status_code == 403
         assert not resources.called
+
+
+class TestASeededTokenNamesWhoMayClaimTheInstance:
+    """The gap the review named: on an UNCLAIMED instance the bar used to be "owns *a* Plex server",
+    so anyone running their own PMS could take a session, link their own machine id, and end up
+    owning an instance holding somebody else's live `PLEX_TOKEN`. When a working token IS seeded it
+    names exactly one account, so that becomes the bar instead."""
+
+    USER = f"{PLEXTV}/api/v2/user"
+
+    @respx.mock
+    def test_a_stranger_who_owns_their_own_server_is_still_refused(self):
+        _pin_routes(account_id=999)  # the attacker, who genuinely owns a PMS
+        respx.get(self.USER).mock(
+            side_effect=[
+                httpx.Response(200, json={"id": 999, "username": "attacker"}),  # who is signing in
+                httpx.Response(200, json={"id": 42, "username": "steve"}),  # who the seed belongs to
+            ]
+        )
+        _resources(OWNED)  # they DO own a server — the old bar would have let them through
+        response = Response()
+        with pytest.raises(HTTPException) as caught:
+            asyncio.run(poll_pin(1, _request(owner=None, seeded_token="seed-tok"), response))
+        assert caught.value.status_code == 403
+        assert "another account" in caught.value.detail
+        assert not response.headers.get("set-cookie")
+
+    @respx.mock
+    def test_the_account_the_seeded_token_belongs_to_gets_in(self):
+        _pin_routes(account_id=42)
+        respx.get(self.USER).mock(
+            side_effect=[
+                httpx.Response(200, json={"id": 42, "username": "steve"}),
+                httpx.Response(200, json={"id": 42, "username": "steve"}),
+            ]
+        )
+        response = Response()
+        body = asyncio.run(poll_pin(1, _request(owner=None, seeded_token="seed-tok"), response))
+        assert body["linked"] is True and body["account_id"] == 42
+        assert response.headers.get("set-cookie")
+
+    @respx.mock
+    def test_a_dead_seeded_token_falls_back_rather_than_bricking_first_run(self):
+        """A revoked token grants nobody anything, so it is not worth locking the wizard over —
+        failing closed here would strand anyone whose seeded token had since been rotated."""
+        _pin_routes(account_id=7)
+        respx.get(self.USER).mock(
+            side_effect=[
+                httpx.Response(200, json={"id": 7, "username": "steve"}),
+                httpx.Response(401),  # the seed is dead
+            ]
+        )
+        _resources(OWNED)  # so the weaker owns-a-server bar applies, and they pass it
+        response = Response()
+        body = asyncio.run(poll_pin(1, _request(owner=None, seeded_token="stale"), response))
+        assert body["linked"] is True
+        assert response.headers.get("set-cookie")
+
+    @respx.mock
+    def test_an_unreachable_plextv_never_downgrades_to_the_weaker_bar(self):
+        """ "Couldn't ask" is not "no owner". Treating it as one reopens the whole hole."""
+        _pin_routes(account_id=999)
+        respx.get(self.USER).mock(
+            side_effect=[
+                httpx.Response(200, json={"id": 999, "username": "attacker"}),
+                httpx.ConnectError("boom"),
+            ]
+        )
+        response = Response()
+        with pytest.raises(HTTPException) as caught:
+            asyncio.run(poll_pin(1, _request(owner=None, seeded_token="seed-tok"), response))
+        assert caught.value.status_code == 503
+        assert not response.headers.get("set-cookie")
 
 
 def _link_request(account_id: int):

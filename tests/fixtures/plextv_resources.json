@@ -1,0 +1,120 @@
+{
+  "_source": "Live capture from plex.tv GET /api/v2/resources?includeHttps=1 with the SFLIX owner's token, 2026-07-29. Structure and field names verbatim; every identifying value (tokens, machine ids, names, addresses, hostnames) sanitized.",
+  "_why": [
+    "plex-safety rule 11: any assumption about a plex.tv response shape gets a recorded fixture.",
+    "The assumption this pins is `auth.owned_machine_ids()`, which decides who may sign in to an",
+    "unclaimed instance and which server they may link \u2014 i.e. who may write collections and share",
+    "filters to a Plex server. Getting it wrong fails OPEN onto a stranger's PMS.",
+    "What the real capture proves:",
+    "  1. `owned` is a genuine JSON boolean, not the string '1'/'true'. The parse compares against",
+    "     (True, 1) rather than testing truthiness, because '0' and 'false' are TRUTHY in Python.",
+    "  2. `provides` is a bare 'server' here, but is comma-separated in general (see the player",
+    "     entry), so it is matched as a list member, never as a substring.",
+    "  3. A player/client resource is `owned: true` and must NOT be treated as a linkable server.",
+    "HONEST LIMIT: entries[1] (owned:false) and entries[2] (a player) are SYNTHESISED from the",
+    "captured shape \u2014 this account owns its server and has none shared TO it, so the real listing",
+    "has exactly one entry. Re-record if an account with an inbound share is ever available."
+  ],
+  "entries": [
+    {
+      "accessToken": "REDACTED",
+      "clientIdentifier": "00000000000000000000000000000001",
+      "connections": [
+        {
+          "IPv6": false,
+          "address": "10.0.0.10",
+          "local": true,
+          "port": 32400,
+          "protocol": "https",
+          "relay": false,
+          "uri": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2.plex.direct:32400"
+        },
+        {
+          "IPv6": false,
+          "address": "203.0.113.10",
+          "local": false,
+          "port": 32400,
+          "protocol": "https",
+          "relay": false,
+          "uri": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3.plex.direct:32400"
+        }
+      ],
+      "createdAt": "2017-07-19T03:29:26Z",
+      "device": "Docker Container (LinuxServer.io)",
+      "dnsRebindingProtection": true,
+      "home": false,
+      "httpsRequired": false,
+      "lastSeenAt": "2026-07-28T19:47:43Z",
+      "name": "Media Server",
+      "natLoopbackSupported": true,
+      "owned": true,
+      "ownerId": null,
+      "platform": "Linux",
+      "platformVersion": "6.17.12-061712-generic",
+      "presence": true,
+      "product": "Plex Media Server",
+      "productVersion": "1.43.3.10828-00f62d37d",
+      "provides": "server",
+      "publicAddress": null,
+      "publicAddressMatches": true,
+      "relay": false,
+      "searchEnabled": true,
+      "sourceTitle": null,
+      "synced": false
+    },
+    {
+      "accessToken": "REDACTED",
+      "clientIdentifier": "0000000000000000000000000000000a",
+      "connections": [
+        {
+          "IPv6": false,
+          "address": "10.0.0.10",
+          "local": true,
+          "port": 32400,
+          "protocol": "https",
+          "relay": false,
+          "uri": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2.plex.direct:32400"
+        },
+        {
+          "IPv6": false,
+          "address": "203.0.113.10",
+          "local": false,
+          "port": 32400,
+          "protocol": "https",
+          "relay": false,
+          "uri": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa3.plex.direct:32400"
+        }
+      ],
+      "createdAt": "2017-07-19T03:29:26Z",
+      "device": "Docker Container (LinuxServer.io)",
+      "dnsRebindingProtection": true,
+      "home": false,
+      "httpsRequired": false,
+      "lastSeenAt": "2026-07-28T19:47:43Z",
+      "name": "A Friend's Server",
+      "natLoopbackSupported": true,
+      "owned": false,
+      "ownerId": null,
+      "platform": "Linux",
+      "platformVersion": "6.17.12-061712-generic",
+      "presence": true,
+      "product": "Plex Media Server",
+      "productVersion": "1.43.3.10828-00f62d37d",
+      "provides": "server",
+      "publicAddress": null,
+      "publicAddressMatches": true,
+      "relay": false,
+      "searchEnabled": true,
+      "sourceTitle": "afriend",
+      "synced": false
+    },
+    {
+      "clientIdentifier": "0000000000000000000000000000000b",
+      "name": "Living Room TV",
+      "owned": true,
+      "product": "Plex for Apple TV",
+      "provides": "client,player,pubsub-player",
+      "connections": []
+    }
+  ]
+}

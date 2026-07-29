@@ -153,6 +153,57 @@ async def owned_machine_ids(client_id: str, token: str) -> set[str]:
     return owned
 
 
+async def _seeded_token_account_id(state) -> int | None:
+    """The Plex account id that this instance's env-seeded ``PLEX_TOKEN`` belongs to, or None.
+
+    Only meaningful BEFORE a server is linked. `docker-compose` can seed a real, working Plex token
+    with no server row — and that token is the thing worth stealing here, so it is also the thing
+    that says whose instance this is.
+
+    Returns None in the two cases where nothing is identified, and those are deliberately different
+    from an error:
+
+    * **No token seeded** — nothing names an owner; the caller falls back to a weaker bar.
+    * **The token is dead** (plex.tv answers 401/403) — a revoked token grants nobody anything, so it
+      is not a secret worth locking the wizard over. Failing closed here would BRICK first-run login
+      for anyone whose seeded token had since been rotated, and protect nothing by doing it.
+
+    Raises ``HTTPException(503)`` if plex.tv cannot be reached at all: "couldn't ask" is not "no
+    owner", and treating it as one would reopen the very hole this closes.
+    """
+    from shortlist.server.settings_store import SettingsStore
+
+    with state.sessions() as session:
+        seeded = SettingsStore(session, state.secrets).get("plex.token")
+    if not seeded:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                f"{PLEXTV}/api/v2/user",
+                headers={**_client_headers(state.client_id), "X-Plex-Token": seeded},
+            )
+    except httpx.HTTPError as e:
+        logger.warning("login deferred: could not identify the seeded Plex token ({})", type(e).__name__)
+        raise HTTPException(
+            status_code=503, detail="could not reach plex.tv to confirm this instance — try again in a moment"
+        ) from e
+
+    if response.status_code in (401, 403):
+        logger.info("seeded Plex token is no longer valid — falling back to the owns-a-server check")
+        return None
+    try:
+        response.raise_for_status()
+        return int(response.json()["id"])
+    except (httpx.HTTPError, ValueError, TypeError, KeyError) as e:
+        # A body we can't read is not an answer. Fail closed rather than silently downgrading.
+        logger.warning("login deferred: plex.tv gave an unreadable account for the seeded token")
+        raise HTTPException(
+            status_code=503, detail="could not reach plex.tv to confirm this instance — try again in a moment"
+        ) from e
+
+
 def session_serializer(secret: str) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret, salt="shortlist-session")
 
@@ -300,25 +351,45 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
             logger.warning("login rejected: Plex account {} is not the owner of the linked server", account_id)
             raise HTTPException(status_code=403, detail="only the server owner can sign in to Shortlist")
     else:
-        # Unclaimed instance: nobody to compare against yet, so ownership is checked against plex.tv
-        # directly. Someone who owns NO Plex server can never legitimately finish setup — Shortlist
-        # only ever writes to a server you own — so reject the sign-in outright instead of handing
-        # out a session that can browse the wizard. A friend who merely has a share on the owner's
-        # server lands here, and this is the line that turns them away.
-        try:
-            owned = await owned_machine_ids(state.client_id, token)
-        except httpx.HTTPError as e:
-            # Fail CLOSED. An unreachable plex.tv must never read as "sure, they own a server".
-            logger.warning("login deferred: could not confirm server ownership with plex.tv ({})", type(e).__name__)
-            raise HTTPException(
-                status_code=503, detail="could not reach plex.tv to confirm your server — try again in a moment"
-            ) from e
-        if not owned:
-            logger.warning("login rejected: Plex account {} does not own a Plex server", account_id)
-            raise HTTPException(
-                status_code=403,
-                detail="Shortlist has to be set up by the owner of a Plex server, and this account does not own one.",
-            )
+        # Unclaimed instance: there is no stored owner to compare against, so who may claim it is
+        # decided here. Two bars, strongest first.
+        seeded_owner = await _seeded_token_account_id(state)
+        if seeded_owner is not None:
+            # The environment seeded a WORKING `PLEX_TOKEN`. That token names exactly one Plex
+            # account, and it is the secret an attacker would come here to steal — so the bar is
+            # "you ARE that account", not merely "you own some Plex server somewhere". Without this,
+            # anyone running their own PMS cleared the ownership check, took a session, linked their
+            # own machine id, and owned an instance holding someone else's live Plex token.
+            if account_id != seeded_owner:
+                logger.warning(
+                    "login rejected: Plex account {} is not the account this instance's seeded token belongs to",
+                    account_id,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="This Shortlist was set up with another account's Plex token. Sign in as that account.",
+                )
+        else:
+            # Nothing here identifies an owner (no seeded token, or the seeded one is dead and so
+            # worth nothing to a thief). Fall back to the weaker bar: someone who owns NO Plex server
+            # can never legitimately finish setup, since Shortlist only ever writes to a server you
+            # own. A friend who merely has a share on someone's server lands here and is turned away.
+            try:
+                owned = await owned_machine_ids(state.client_id, token)
+            except httpx.HTTPError as e:
+                # Fail CLOSED. An unreachable plex.tv must never read as "sure, they own a server".
+                logger.warning("login deferred: could not confirm server ownership with plex.tv ({})", type(e).__name__)
+                raise HTTPException(
+                    status_code=503, detail="could not reach plex.tv to confirm your server — try again in a moment"
+                ) from e
+            if not owned:
+                logger.warning("login rejected: Plex account {} does not own a Plex server", account_id)
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Shortlist has to be set up by the owner of a Plex server, and this account does not own one."
+                    ),
+                )
 
     payload = {"account_id": account_id, "username": info.get("username") or info.get("title") or ""}
     cookie = session_serializer(state.session_secret).dumps(payload)
