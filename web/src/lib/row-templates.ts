@@ -56,15 +56,20 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     },
   },
   {
-    id: "comfort-rewatch",
+    id: "seen-it-already",
     emoji: "☕",
-    title: "Comfort rewatch",
+    title: "Happy to see again",
+    // NOT "Comfort rewatch". `watched_pct` is a CEILING, not a preference: `_apply_watched_cap` shows
+    // unwatched titles FIRST and merely PERMITS up to `pct` already-finished ones. At 1.0 a library
+    // with plenty of unwatched candidates still yields a mostly-unwatched row, so a name promising a
+    // rewatch shelf would be wrong most nights. A genuine "prefer rewatches" row needs an engine mode
+    // that does not exist yet.
     blurb:
-      "Things they've already finished and would happily put on again. The one row where already-watched is the point.",
-    highlights: ["100% already-watched", "Changes slowly"],
+      "The one row that doesn't skip things they've finished — rewatches are allowed to fill it rather than being filtered out.",
+    highlights: ["Rewatches allowed", "Changes slowly"],
     values: {
-      name: "Comfort rewatch",
-      name_template: "☕ Comfort rewatch",
+      name: "Happy to see again",
+      name_template: "☕ {library_name} you've already seen",
       build: "per_person",
       watched_pct: 1,
       freshness: 0.25,
@@ -80,7 +85,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     highlights: ["Rebuilds nightly", "Nothing already watched"],
     values: {
       name: "Fresh finds",
-      name_template: "🌱 Fresh finds",
+      name_template: "🌱 New {library_name} to try",
       build: "per_person",
       freshness: 1,
       watched_pct: 0,
@@ -96,7 +101,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     highlights: ["Never rebuilds on its own", "Pin it and forget it"],
     values: {
       name: "From the vault",
-      name_template: "🕰️ From the vault",
+      name_template: "🕰️ {library_name} from the vault",
       build: "per_person",
       freshness: 0,
       size: 20,
@@ -111,7 +116,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     highlights: ["Shared with everyone", "Needs 3 watchers"],
     values: {
       name: "Popular on this server",
-      name_template: "👥 Popular on this server",
+      name_template: "👥 Popular {library_name} on this server",
       build: "shared",
       min_watchers: 3,
       size: 20,
@@ -126,7 +131,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     highlights: ["Movies only", "10 picks"],
     values: {
       name: "Movie night",
-      name_template: "🍿 Movie night",
+      name_template: "🍿 Tonight's {library_name}",
       build: "per_person",
       media: "movie",
       size: 10,
@@ -145,7 +150,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     highlights: ["TV only", "Nothing already finished"],
     values: {
       name: "More TV to watch",
-      name_template: "📺 More TV to watch",
+      name_template: "📺 More {library_name} to watch",
       build: "per_person",
       media: "show",
       watched_pct: 0,

@@ -373,6 +373,21 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.getByText("1 of 2 lines")).toBeInTheDocument();
   });
 
+  it("explains an empty log rather than implying the feature is broken", async () => {
+    // A run from before activity logs were stored has an empty tab through no fault of its own.
+    getRun.mockResolvedValue(run([]));
+    getRunLog.mockResolvedValue([]);
+
+    renderDetail("?tab=log");
+
+    expect(
+      await screen.findByText(/No activity recorded for this run/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Runs from before this was added have no stored log/i),
+    ).toBeInTheDocument();
+  });
+
   it("names the phase a still-running run is actually in", async () => {
     // The complaint this whole tab exists for: every person shows "done" and the run still says
     // running, with nothing anywhere saying what it is doing.

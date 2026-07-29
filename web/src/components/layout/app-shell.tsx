@@ -1,6 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarClock,
+  CircleAlert,
+  CircleCheck,
+  Loader2,
   Bug,
   Check,
   ClipboardCopy,
@@ -228,8 +231,39 @@ export function AppShell() {
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       {/* One Toaster for the whole app — background work announces itself from the header's
-          ActivityIndicator, which is the single observer of the job queue. */}
-      <Toaster position="bottom-right" closeButton richColors />
+          ActivityIndicator, which is the single observer of the job queue.
+
+          Themed to the app's own tokens rather than left on sonner's defaults, which render a WHITE
+          card on a dark-only app. `richColors` is deliberately off: it paints success/error in
+          sonner's palette, which does not match ours. */}
+      <Toaster
+        position="bottom-right"
+        closeButton
+        theme="dark"
+        gap={8}
+        toastOptions={{
+          classNames: {
+            toast:
+              "!bg-elevated !border-border !text-foreground !rounded-lg !shadow-xl !gap-3 !px-4 !py-3 !text-sm",
+            title: "!text-sm !font-medium !leading-tight",
+            description: "!text-xs !text-muted-foreground !leading-snug",
+            icon: "!m-0 !self-start !mt-0.5",
+            closeButton:
+              "!bg-elevated !border-border !text-muted-foreground hover:!text-foreground",
+          },
+        }}
+        icons={{
+          // The app's own spinner, so a running toast matches every other "in flight" indicator
+          // instead of introducing a second visual language for the same idea.
+          loading: (
+            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden />
+          ),
+          success: <CircleCheck className="h-4 w-4 text-success" aria-hidden />,
+          error: (
+            <CircleAlert className="h-4 w-4 text-destructive" aria-hidden />
+          ),
+        }}
+      />
       {/* Mobile top bar: wordmark + hamburger. Hidden once the sidebar appears at md. */}
       <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-card/80 px-4 py-3 backdrop-blur md:hidden">
         <HomeWordmark />

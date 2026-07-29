@@ -187,11 +187,22 @@ export function RunLogPanel({
       >
         {visible.length === 0 ? (
           <p className="text-muted-foreground">
-            {entries.length === 0
-              ? running
-                ? "Starting…"
-                : "No activity recorded for this run."
-              : "Nothing matches those filters."}
+            {entries.length > 0 ? (
+              "Nothing matches those filters."
+            ) : running ? (
+              "Starting…"
+            ) : (
+              <>
+                No activity recorded for this run.
+                {/* Say WHY. A run from before activity logs were stored has an empty tab through no
+                    fault of its own, and "no activity" on a run that plainly did work reads as a
+                    broken feature rather than as missing history. */}
+                <span className="block text-muted-foreground/70">
+                  Runs from before this was added have no stored log — the next
+                  run will.
+                </span>
+              </>
+            )}
           </p>
         ) : (
           visible.map((entry) => (

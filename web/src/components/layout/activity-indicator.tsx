@@ -15,6 +15,17 @@ import {
 import type { Job } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+/** Who or what a job is acting on, when its payload says. Undefined rather than a filler string:
+ *  sonner omits the second line entirely, which reads better than a line that says nothing. */
+function jobTarget(job: Job): string | undefined {
+  const payload = job.payload ?? {};
+  const slug = payload.slug;
+  if (typeof slug === "string" && slug) return slug;
+  const reason = payload.reason;
+  if (typeof reason === "string" && reason) return reason;
+  return undefined;
+}
+
 function JobLine({ job, label }: { job: Job; label: string }) {
   return (
     <li className="flex items-center justify-between gap-3 py-1 text-sm">
@@ -78,21 +89,24 @@ export function ActivityIndicator() {
     if (previous === null) return; // first poll: seed only
     const { started, finished, failed } = jobTransitions(previous, query.data);
     for (const job of started) {
+      // No "Running in the background" — the spinner already says that, and repeating it on every
+      // toast stacked identical second lines that carried no information. The TARGET does: a
+      // cleanup for one person reads very differently from one for forty.
       toast.loading(`${labelFor(job.kind)}…`, {
         id: `job-${job.id}`,
-        description: "Running in the background",
+        description: jobTarget(job),
       });
     }
     for (const job of finished) {
       toast.success(labelFor(job.kind), {
         id: `job-${job.id}`,
-        description: job.detail || "Done",
+        description: job.detail || undefined,
       });
     }
     for (const job of failed) {
       toast.error(labelFor(job.kind), {
         id: `job-${job.id}`,
-        description: job.error || "It failed. Open Jobs for the details.",
+        description: job.error || "Open Jobs for the details.",
       });
     }
   }, [query.data, labelFor]);

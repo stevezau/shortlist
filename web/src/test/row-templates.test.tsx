@@ -89,6 +89,24 @@ describe("ROW_TEMPLATES", () => {
     }
   });
 
+  it("puts a real variable in every title, and only ones the engine renders", () => {
+    // `render_row_name` (engine/delivery.py) substitutes EXACTLY these three. Anything else survives
+    // verbatim onto a Plex shelf — "🌱 New {genre} to try" would ship with the braces showing.
+    const SUPPORTED = ["{user}", "{library_name}", "{top_seed}"];
+
+    for (const template of ROW_TEMPLATES) {
+      const title = template.values.name_template ?? "";
+      const used = [...title.matchAll(/\{[^}]+\}/g)].map((m) => m[0]);
+
+      // A row builds one collection PER LIBRARY, so a title with no variable gives a `show` row two
+      // identically-named collections (Sports and TV Shows) with nothing to tell them apart.
+      expect(used.length, `${template.id} has no variable in its title`).toBeGreaterThan(0);
+      for (const placeholder of used) {
+        expect(SUPPORTED, `${template.id} uses "${placeholder}"`).toContain(placeholder);
+      }
+    }
+  });
+
   it("keeps a {top_seed} row down to the one watch it names", () => {
     // The whole point of the template: at the default budget the row names one watch and fills
     // itself from the other 29, so the title claims something the contents don't honour.
@@ -118,11 +136,11 @@ describe("RowTemplateGallery", () => {
     const onPick = renderGallery();
 
     await userEvent.click(
-      screen.getByRole("button", { name: /Comfort rewatch/i }),
+      screen.getByRole("button", { name: /Happy to see again/i }),
     );
 
     expect(onPick).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "comfort-rewatch" }),
+      expect.objectContaining({ id: "seen-it-already" }),
     );
   });
 });
@@ -147,9 +165,9 @@ describe("RowEditor seeded from a template", () => {
   }
 
   it("prefills the fields the template sets", () => {
-    renderEditor("comfort-rewatch");
+    renderEditor("seen-it-already");
 
-    expect(screen.getByLabelText(/^Name$/i)).toHaveValue("Comfort rewatch");
+    expect(screen.getByLabelText(/^Name$/i)).toHaveValue("Happy to see again");
     // watched_pct 1 → the slider is shown (not inheriting) and reads 100%.
     expect(
       screen.getByRole("slider", {
