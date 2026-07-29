@@ -370,6 +370,78 @@ class TestRestoreAfterUnpause:
             {"shared": False, "home": False, "recommended": True, "pin_top": True}
         ]
 
+    def test_a_top_seed_row_is_placed_from_the_ledger_with_no_run_history_at_all(self, sessions):
+        """The last gap the ledger closes. A `{top_seed}` title is different every run, so nothing can
+        re-render it — and the run breakdown that used to answer "which row is this?" is scoped to one
+        run and erased by `DELETE /api/runs`. The ratingKey is the only handle left, and without it the
+        row takes `_promote_one`'s no-spec branch: onto its audience's Home, regardless of a placement
+        that may say `off`.
+
+        NO run history is set up here, deliberately."""
+        from shortlist.server.db.models import Delivery, User
+
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions)
+        row = replace(self.ROW, name_template="Because you watched {top_seed}")
+        state = self._state(sessions, promoted=promoted, merged=merged, rows=[row])
+        ctx = state.run_service.build_context(dry_run=False)
+        ctx.plex.find_owned_collections(None, "shortlist_sarah")[0].title = "Because you watched Dune" + row_marker(
+            555000100
+        )
+        with sessions() as session:
+            user_id = session.query(User).filter_by(slug="sarah").one().id
+            assert user_id
+            session.add(
+                Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=42, title="whatever")
+            )
+            session.commit()
+
+        jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
+
+        # The ROW's placement — off for the owner, Recommended-only for friends, pinned — not the
+        # fallback's "show it on their Home".
+        assert [kwargs for _t, kwargs in promoted] == [
+            {"shared": False, "home": False, "recommended": True, "pin_top": True}
+        ]
+
+    def test_the_ledger_wins_over_a_stale_recorded_title(self, sessions):
+        """Both sources can disagree — a title recorded before a rename, against a ratingKey that
+        cannot go stale. Identity has to win, or a renamed row is placed by whatever it used to be."""
+        from shortlist.server.db.models import Delivery, Run, RunUser, User
+
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions)
+        state = self._state(sessions, promoted=promoted, merged=merged, rows=[self.ROW])
+        ctx = state.run_service.build_context(dry_run=False)
+        ctx.plex.find_owned_collections(None, "shortlist_sarah")[0].title = "Renamed Since" + row_marker(555000100)
+        with sessions() as session:
+            user = session.query(User).filter_by(slug="sarah").one()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            # The breakdown names a row that no longer exists in the config…
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user.id,
+                    status="ok",
+                    breakdown=[{"row_slug": "deleted_row", "row_title": "Renamed Since"}],
+                )
+            )
+            # …while the ledger names the real one.
+            session.add(
+                Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=42, title="x")
+            )
+            session.commit()
+
+        jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
+
+        assert [kwargs for _t, kwargs in promoted] == [
+            {"shared": False, "home": False, "recommended": True, "pin_top": True}
+        ]
+
     def test_a_top_seed_row_is_placed_from_what_the_last_run_delivered(self, sessions):
         """A `{top_seed}` title is different every run, so it cannot be re-rendered from the template.
         The last run's breakdown is the only record of which row a collection belongs to — without it

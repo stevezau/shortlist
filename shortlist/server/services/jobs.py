@@ -493,7 +493,7 @@ def _user_restore(state, payload: dict) -> dict:
     from shortlist.engine.models import UserProfile, UserType
     from shortlist.engine.pipeline import promote_user_rows
     from shortlist.engine.pipeline import run as engine_run
-    from shortlist.server.db.models import Run, RunUser, User
+    from shortlist.server.db.models import Delivery, Run, RunUser, User
 
     slug = payload["slug"]
     ctx = state.run_service.build_context(dry_run=False)
@@ -528,10 +528,17 @@ def _user_restore(state, payload: dict) -> dict:
             for entry in ((run_user.breakdown if run_user else None) or [])
             if entry.get("row_slug") and entry.get("row_title")
         }
+        # The AUTHORITATIVE map: {ratingKey -> row slug} straight from the delivery ledger. Titles
+        # above are a fallback for rows delivered before the ledger existed; a `{top_seed}` row has no
+        # renderable title at all, so without this it lands on `_promote_one`'s no-spec branch and gets
+        # its audience's Home rather than the placement the row actually asks for.
+        keys = {
+            d.rating_key: d.collection_slug for d in session.query(Delivery).filter_by(user_slug=slug) if d.rating_key
+        }
 
     # Rule 1's ordering: every account's excludes are merged BEFORE anything is promoted.
     engine_run(ctx, [])
-    restored = promote_user_rows(ctx, profile, placements)
+    restored = promote_user_rows(ctx, profile, placements, placement_keys=keys)
     with state.sessions() as session:
         session.add(
             Event(

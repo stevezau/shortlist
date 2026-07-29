@@ -725,6 +725,7 @@ def promote_user_rows(
     user: UserProfile,
     placement_titles: dict[str, str] | None = None,
     *,
+    placement_keys: dict[int, str] | None = None,
     into: set[int] | None = None,
 ) -> set[int]:
     """Put every collection under one user's label onto the surfaces its row asks for.
@@ -734,11 +735,18 @@ def promote_user_rows(
     matches), which makes restoring them a re-promote rather than a rebuild — and the flags to set are
     exactly the ones a run would have set.
 
-    ``placement_titles`` is the {delivered title -> row slug} map a run records for this user. Without
-    it — the restore path, where no run just happened — only the static-title fallback below matches,
-    and a ``{top_seed}``-titled row lands on ``_promote_one``'s no-spec branch, which shows it on its
-    own audience's Home. That is the right failure direction for a restore: the row was visible before
-    the pause and the operator has just asked for it back.
+    Which row a collection belongs to is answered from two sources, and IDENTITY WINS:
+
+    * ``placement_keys`` — {Plex ratingKey -> row slug}, from the delivery ledger. Authoritative, and
+      the only thing that works for a ``{top_seed}`` row, whose title is different every run and so
+      matches nothing computed. The restore path passes it.
+    * ``placement_titles`` — {delivered title -> row slug}, recorded live by a run. What
+      ``_promote_phase`` passes, where it is complete by construction.
+
+    With neither, a static-titled row still matches via the rendered-title fallback below, and only a
+    ``{top_seed}`` row with no ledger entry falls to ``_promote_one``'s no-spec branch — which shows it
+    on its own audience's Home. Right direction for a restore (the row was visible before the pause),
+    but not the row's configured placement, which is why the ledger is consulted first.
 
     Returns the ratingKeys touched, and writes them into ``into`` as it goes when given one — so a
     caller that catches a mid-loop PMS failure still knows which collections were already set. Raises
@@ -784,6 +792,7 @@ def promote_user_rows(
     # the dropped library — never re-promoted (out of scope) and never demoted either, keeping whatever
     # surfaces it last claimed indefinitely. The sweep and the removal paths already walk
     # `plex.sections()` for exactly this reason.
+    by_key = {key: spec_by_slug[slug] for key, slug in (placement_keys or {}).items() if slug in spec_by_slug}
     for section in ctx.plex.sections():
         for collection in ctx.plex.find_owned_collections(section, user.label):
             if ctx.config.dry_run:
@@ -793,7 +802,9 @@ def promote_user_rows(
                 # SHORTLIST_DRY_RUN an un-pause previewed the hiding and performed the showing.
                 logger.info("[dry-run] {}: would promote for {}", collection.title, user.username)
                 continue
-            _promote_one(ctx, collection, placements.get(collection.title), user.user_type)
+            # Identity first: a ratingKey cannot be wrong, a title can be stale or unrenderable.
+            spec = by_key.get(int(collection.ratingKey)) or placements.get(collection.title)
+            _promote_one(ctx, collection, spec, user.user_type)
             promoted.add(int(collection.ratingKey))
     return promoted
 
