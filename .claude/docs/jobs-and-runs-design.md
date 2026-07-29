@@ -334,11 +334,29 @@ On a 48-account server the write loop takes minutes, so a filter edited in Plex 
 clobbered. Still a merge (rule 3), just against a stale read. Fix is a re-read immediately before
 each write, at the cost of one extra plex.tv call per account.
 
-### D. Jobs page UX
+### D. Jobs page UX — **built 2026-07-29**
 
-The page lists kind / status / detail / when, with an empty state. Not built: filtering, a detail
-view (payload, per-attempt errors, timings), grouping, or a live-progress indicator for a running
-job. `Job.result` already holds structured output that nothing renders.
+Everything listed here as missing now exists, and the page was restructured around the job rather
+than the chronology. `/jobs` (was `/tools`, which redirects) has two areas:
+
+* **Jobs** — one LINE per job, grouped **Run now** (the five `manual` kinds) and **Automatic** (the
+  four queued by the mutation that knows their target). The line carries name, last outcome, next
+  scheduled run and the button; expanding it reveals the description, that job's settings, the last
+  run's detail, and its own history via `GET /jobs?kind=`. Live state — a progress bar, a drift
+  preview and its Fix button — renders on the line WITHOUT expanding, because a result you have to
+  expand a row to read is a result you won't read.
+* **Activity** — every run across every kind, newest first, filterable All / In flight / Failed,
+  each row expanding to `payload`, `result`, timings and the error. It names the job in plain
+  English, never the raw kind.
+
+Labels, descriptions and the `manual` allow-list all come from `jobs.CATALOG` via
+`GET /api/system/jobs/catalog`, so the page cannot name a kind the API refuses to run, or vice
+versa. `Job.result` is rendered in the expanded detail.
+
+*Lesson: the iteration before this gave every job a full card with its paragraph and its controls
+permanently on screen — nine of those is ~1800px of scroll, four of them jobs nobody can start. It
+also dropped the cross-job feed, which is the question "what has my server been doing?"; no number
+of per-job collapsibles answers it.*
 
 ---
 

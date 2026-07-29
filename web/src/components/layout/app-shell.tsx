@@ -36,7 +36,7 @@ const NAV_ITEMS = [
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
   { to: "/logs", label: "Logs", icon: ScrollText, end: false },
   { to: "/requests", label: "Requests", icon: Inbox, end: false },
-  { to: "/tools", label: "Jobs", icon: Wrench, end: false },
+  { to: "/jobs", label: "Jobs", icon: Wrench, end: false },
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },
 ];
 

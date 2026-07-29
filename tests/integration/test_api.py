@@ -2956,7 +2956,7 @@ class TestFailedJobNotifications:
         assert job_note is not None
         assert job_note["severity"] == "error"
         assert "user.cleanup" in job_note["body"]
-        assert job_note["action_url"] == "/tools"
+        assert job_note["action_url"] == "/jobs"
 
     def test_a_job_still_retrying_raises_nothing(self, client: TestClient):
         """`queued` after a failed attempt means the queue is still working on it — telling the

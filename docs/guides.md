@@ -47,21 +47,30 @@
   of the console level in Settings → Advanced.
 - **Requests** — the approval inbox for titles your picks wanted but the library doesn't have
   yet. Approve to send to Radarr/Sonarr, or reject so they never come back (see "Requests" below).
-- **Jobs** — on-demand maintenance plus the history of everything Shortlist did on its own:
-  **Sync watch history** (re-read everyone's watched set now, with a frequency picker: Daily / 12h /
-  6h / 4h / custom cron), **Sync users** (pull the roster from plex.tv + Tautulli), and a **Sync
-  check** that previews and then fixes rows left on the wrong shelf. Both syncs show when they last
-  ran and when the next scheduled one fires. Clearing run history is here too — it clears the
-  browsable history but preserves your dashboard metrics (delivered/watched/hit rate survive
-  indefinitely), and no longer affects Shortlist's ability to tidy up rows on Plex.
+- **Jobs** — every piece of background maintenance Shortlist does, in two areas.
 
-  Below that, **Background jobs** lists the maintenance Shortlist queued for itself — removing a
-  disabled user's rows, hiding a paused one's, writing share filters, tidying up after a row edit,
-  and the scheduled work too (the roster sync, the watch-history sync and the nightly backup all run
-  as jobs, so a failure shows up here instead of only in the log).
-  Filter by All / Active / Failed, and open any row for what it was asked to do, what came back, how
-  long it took, and the error if it failed. Anything that fails is retried with backoff and survives
-  a container restart; if it finally gives up, it reaches the notification bell.
+  **Jobs** lists them one per line: the name, how the last run went, when the next one fires, and the
+  button. **Run now** holds the five you start yourself — **Sync people from Plex** (pull the roster
+  from plex.tv + Tautulli), **Sync watch history** (re-read everyone's watched set), **Sync check**
+  (preview, then fix, rows left on the wrong shelf), **Privacy sync** (re-merge every share filter),
+  and **Back up the database**. **Automatic** holds the ones Shortlist queues for itself when
+  something changes — removing a disabled person's rows, hiding a paused one's, tidying up after a
+  row edit. Those have no button by design: each one is aimed at a specific person or row by the
+  action that queued it.
+
+  Open any job for its description, its settings (the frequency picker on the scheduled ones, the
+  backup retention and restore list), what the last run reported, and **Previous runs** — that job's
+  own history. Anything a run is doing right now (a progress bar, a drift preview and its Fix button)
+  stays visible on the line without opening it.
+
+  **Activity** is the other half: every job run across every kind, newest first, filterable by All /
+  In flight / Failed. Open a row for what it was asked to do, what came back, how long it took, and
+  the error if it failed. Anything that fails is retried with backoff and survives a container
+  restart; if it finally gives up, it reaches the notification bell.
+
+  Clearing run history lives on the Runs page — it clears the browsable history but preserves your
+  dashboard metrics (delivered/watched/hit rate survive indefinitely), and doesn't affect Shortlist's
+  ability to tidy up rows on Plex.
 
 - **Settings** — one scrolling page, organised into a grouped sidebar sub-nav that jumps to each
   section and tracks where you are: **Connect** (Connections), **Rows** (Finding titles, Row

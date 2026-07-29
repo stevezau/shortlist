@@ -152,7 +152,7 @@ def _failed_jobs(session: Session) -> dict | None:
             f"Shortlist gave up on {', '.join(kinds)} after retrying. Plex may not reflect what you "
             "asked for — open Jobs to see the error and run it again."
         ),
-        "action_url": "/tools",
+        "action_url": "/jobs",
         "action_label": "See jobs",
         "dismissable": True,
     }

@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
-import { ToolsPage } from "@/pages/tools";
+import { JobsPage } from "@/pages/jobs";
 
 const { syncWatched, syncUsers, getJobs, getJobCatalog, runJob } = vi.hoisted(
   () => ({
@@ -102,13 +102,13 @@ function renderPage() {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <ToolsPage />
+        <JobsPage />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-describe("ToolsPage — sync users and watch history", () => {
+describe("JobsPage — sync users and watch history", () => {
   beforeEach(() => {
     syncWatched.mockReset();
     syncUsers.mockReset();
@@ -126,7 +126,9 @@ describe("ToolsPage — sync users and watch history", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /sync users/i }),
+      await screen.findByRole("button", {
+        name: /^Run: Sync people from Plex$/,
+      }),
     );
 
     expect(
@@ -139,7 +141,9 @@ describe("ToolsPage — sync users and watch history", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /sync users/i }),
+      await screen.findByRole("button", {
+        name: /^Run: Sync people from Plex$/,
+      }),
     );
 
     expect(
@@ -153,7 +157,7 @@ describe("ToolsPage — sync users and watch history", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /sync history/i }),
+      await screen.findByRole("button", { name: /^Run: Sync watch history$/ }),
     );
 
     emitSse("sync.progress", { kind: "watched", done: 0, total: 4 });
@@ -177,7 +181,7 @@ describe("ToolsPage — sync users and watch history", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /sync history/i }),
+      await screen.findByRole("button", { name: /^Run: Sync watch history$/ }),
     );
     emitSse("sync.progress", { kind: "watched", done: 0, total: 3 });
     emitSse("sync.finished", {
@@ -189,7 +193,8 @@ describe("ToolsPage — sync users and watch history", () => {
     // Scoped: the page renders an alert region per card, so find the one that actually reported it.
     const alerts = await screen.findAllByRole("alert");
     const alert = alerts.find((el) =>
-      /couldn't finish/i.test(el.textContent ?? ""),
+      // Apostrophe-agnostic: the copy uses a typographic ’, and which glyph it is isn't the point.
+      /couldn.t finish/i.test(el.textContent ?? ""),
     );
     expect(alert).toBeDefined();
     expect(alert).toHaveTextContent(/ConnectError/);
@@ -210,7 +215,9 @@ describe("ToolsPage — sync users and watch history", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /sync users/i }),
+      await screen.findByRole("button", {
+        name: /^Run: Sync people from Plex$/,
+      }),
     );
 
     // fetch phase: indeterminate (no aria-valuenow) with a "contacting" line.
@@ -240,7 +247,7 @@ describe("ToolsPage — sync users and watch history", () => {
   });
 });
 
-describe("ToolsPage — sync check", () => {
+describe("JobsPage — sync check", () => {
   beforeEach(() => {
     getJobs.mockReset();
     getJobs.mockResolvedValue([]);
@@ -253,8 +260,16 @@ describe("ToolsPage — sync check", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
   });
 
-  it("explains why rows drift out of sync, not just that they can", async () => {
+  it("explains why rows drift out of sync once you open the job", async () => {
+    // The explanation is real content, but it is read once — so it lives behind the row rather than
+    // permanently on screen. Collapsed by default is the point of the layout, not a regression.
     renderPage();
+    const row = await screen.findByTestId("job-sync.check");
+    expect(screen.queryByText(/container restarts mid-write/i)).toBeNull();
+
+    await userEvent.click(
+      within(row).getByRole("button", { name: /^Sync check$/ }),
+    );
     expect(
       await screen.findByText(/container restarts mid-write/i),
     ).toBeInTheDocument();
@@ -274,7 +289,9 @@ describe("ToolsPage — sync check", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /check for drift/i }),
+      await screen.findByRole("button", {
+        name: /^Check for drift: Sync check$/,
+      }),
     );
 
     expect(runJob).toHaveBeenCalledWith("sync.check", { dry_run: true });
@@ -299,7 +316,9 @@ describe("ToolsPage — sync check", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /check for drift/i }),
+      await screen.findByRole("button", {
+        name: /^Check for drift: Sync check$/,
+      }),
     );
 
     expect(
@@ -323,7 +342,9 @@ describe("ToolsPage — sync check", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /check for drift/i }),
+      await screen.findByRole("button", {
+        name: /^Check for drift: Sync check$/,
+      }),
     );
 
     // The count and the noun sit in separate JSX expressions, so match a contiguous fragment.
@@ -332,7 +353,7 @@ describe("ToolsPage — sync check", () => {
     expect(screen.getByText(/cannot be undone/i)).toBeInTheDocument();
     // Still offered, but the count includes it so the button never understates the damage.
     expect(
-      await screen.findByRole("button", { name: /fix 1 row/i }),
+      await screen.findByRole("button", { name: /^Fix 1 row$/ }),
     ).toBeInTheDocument();
   });
 
@@ -349,13 +370,15 @@ describe("ToolsPage — sync check", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /check for drift/i }),
+      await screen.findByRole("button", {
+        name: /^Check for drift: Sync check$/,
+      }),
     );
 
     expect(
       await screen.findByText(/everything is in sync/i),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^fix /i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Fix \d+ row/i })).toBeNull();
   });
 
   it("runs the live pass only when the fix button is pressed", async () => {
@@ -379,10 +402,12 @@ describe("ToolsPage — sync check", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /check for drift/i }),
+      await screen.findByRole("button", {
+        name: /^Check for drift: Sync check$/,
+      }),
     );
     await userEvent.click(
-      await screen.findByRole("button", { name: /fix 1 row/i }),
+      await screen.findByRole("button", { name: /^Fix 1 row$/ }),
     );
 
     expect(runJob).toHaveBeenLastCalledWith("sync.check");
@@ -412,13 +437,16 @@ describe("ToolsPage — sync check", () => {
     ]);
     renderPage();
 
-    // The card exists before the catalogue answers (its controls are not gated on it), so wait for
-    // the outcome itself rather than the card.
-    await screen.findByText(/synced 7 people from plex\.tv/i);
-    const card = screen.getByTestId("job-sync.users");
-    expect(card).toHaveTextContent(/synced 7 people from plex\.tv/i);
-    expect(card).toHaveTextContent(/Done/);
-    expect(card).toHaveTextContent(/took 4\.0s/i);
+    // Health is on the LINE — you sweep the list, you don't open anything to see it went fine.
+    const row = await screen.findByTestId("job-sync.users");
+    expect(row).toHaveTextContent(/ago|just now/i);
+
+    // The narrative detail is one click away, not permanently on screen.
+    await userEvent.click(
+      within(row).getByRole("button", { name: /^Sync people from Plex$/ }),
+    );
+    expect(row).toHaveTextContent(/synced 7 people from plex\.tv/i);
+    expect(row).toHaveTextContent(/4\.0s/);
   });
 
   it("shows a failed job's error on its card and flags the count", async () => {
@@ -443,10 +471,16 @@ describe("ToolsPage — sync check", () => {
     ]);
     renderPage();
 
-    await screen.findByText(/plex\.tv unreachable/i);
-    const card = screen.getByTestId("job-sync.users");
-    expect(card).toHaveTextContent(/plex\.tv unreachable/i);
-    expect(card).toHaveTextContent(/1 failed/i);
+    // A failure is visible WITHOUT opening anything — on the row, and in the page-level chip.
+    const row = await screen.findByTestId("job-sync.users");
+    expect(row).toHaveTextContent(/Failed/);
+    expect(await screen.findByText(/1 failed/i)).toBeInTheDocument();
+
+    // The reason is one click away.
+    await userEvent.click(
+      within(row).getByRole("button", { name: /^Sync people from Plex$/ }),
+    );
+    expect(row).toHaveTextContent(/plex\.tv unreachable/i);
   });
 
   it("opens a job's own history on demand, asking only for that kind", async () => {
@@ -469,12 +503,17 @@ describe("ToolsPage — sync check", () => {
     ]);
     renderPage();
 
-    // Not fetched until it's opened — a page of cards must not fire one history request each.
-    await screen.findByTestId("job-sync.users");
+    // Not fetched until it's opened — a page of rows must not fire one history request each.
+    const row = await screen.findByTestId("job-sync.users");
     expect(getJobs).not.toHaveBeenCalled();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /previous runs/i }),
+      within(row).getByRole("button", { name: /^Sync people from Plex$/ }),
+    );
+    expect(getJobs).not.toHaveBeenCalled(); // expanding the row is still not the history
+
+    await userEvent.click(
+      within(row).getByRole("button", { name: /previous runs/i }),
     );
 
     expect(getJobs).toHaveBeenCalledWith("sync.users", 50);
@@ -493,12 +532,69 @@ describe("ToolsPage — sync check", () => {
     ]);
     renderPage();
 
-    const card = await screen.findByTestId("job-user.cleanup");
-    expect(card).toHaveTextContent(/automatic/i);
-    expect(card).toHaveTextContent(/queued when you disable someone/i);
+    // Automatic jobs get their own group, away from the ones you act on.
+    expect(await screen.findByText(/^Automatic$/)).toBeInTheDocument();
+    const row = await screen.findByTestId("job-user.cleanup");
     // A button that queued a row-deleting job at no particular target must not exist.
     expect(
-      screen.queryByRole("button", { name: /^run /i }),
+      within(row).queryByRole("button", { name: /^Run:/ }),
     ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      within(row).getByRole("button", {
+        name: /^Remove a disabled person's rows$/,
+      }),
+    );
+    expect(row).toHaveTextContent(/queued when you disable someone/i);
+  });
+
+  it("reserves no space under a row until that job has something to report", async () => {
+    // The live slot sits in a PADDED wrapper. Passing an element whose children are all conditional
+    // makes it always truthy, so every row carried a strip of dead space before anything had run.
+    syncUsers.mockResolvedValue({ added: 1, updated: 0, total: 7 });
+    renderPage();
+
+    const row = await screen.findByTestId("job-sync.users");
+    expect(within(row).queryByTestId("job-live")).not.toBeInTheDocument();
+
+    await userEvent.click(
+      within(row).getByRole("button", { name: /^Run: Sync people from Plex$/ }),
+    );
+    expect(await within(row).findByTestId("job-live")).toBeInTheDocument();
+  });
+
+  it("keeps the run list and the cross-job activity feed as separate areas", async () => {
+    // The two questions are different: "is the roster sync healthy?" is per-job, "what has my
+    // server been doing?" is chronological. The old page answered only the first.
+    getJobs.mockResolvedValue([
+      {
+        id: 9,
+        kind: "privacy.sync",
+        status: "done",
+        attempts: 1,
+        max_attempts: 3,
+        detail: "Share filters merged for every account",
+        error: null,
+        created_at: "2026-07-28T10:00:00Z",
+        started_at: null,
+        finished_at: null,
+      },
+    ]);
+    renderPage();
+
+    // The Jobs area does NOT fetch the cross-job feed.
+    await screen.findByTestId("job-sync.users");
+    expect(getJobs).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Activity$/ }));
+
+    expect(getJobs).toHaveBeenCalledWith(undefined, 100);
+    // The feed names the JOB, not the raw kind — `privacy.sync` means nothing to an operator.
+    expect(await screen.findByText("Privacy sync")).toBeInTheDocument();
+    expect(
+      screen.getByText(/share filters merged for every account/i),
+    ).toBeInTheDocument();
+    // Switching areas swaps the content rather than adding to the scroll.
+    expect(screen.queryByTestId("job-sync.users")).not.toBeInTheDocument();
   });
 });
