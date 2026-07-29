@@ -595,6 +595,73 @@ class TestPerRowOverrides:
 
         assert seen == [3]  # the person's override, beating the row's 8 and the global 10
 
+    def test_per_row_max_seeds_caps_the_seeds_the_row_is_built_from(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # max_seeds decides how many watched titles a row is derived from — what EVERY source searches
+        # from, not just the web one. A row's own value must beat the global (issue #57: a
+        # `{top_seed}` row named after one watch was still built from thirty).
+        seen: list[int] = []
+        real_derive = pipeline_mod.rows.derive_seeds
+
+        def spy_derive(*args, **kwargs):
+            seen.append(kwargs["max_seeds"])
+            return real_derive(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_mod.rows, "derive_seeds", spy_derive)
+        ctx.config.max_seeds = 10  # the global budget this row must override
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, max_seeds=2)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert seen == [2]
+
+    def test_two_rows_differing_only_in_max_seeds_do_not_share_seeds(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        # Both rows target the same media and libraries, so they hit the same memo key on every
+        # other axis. If max_seeds were left out of that key the second row would silently reuse the
+        # first row's seed set — and its own setting would do nothing at all.
+        seen: list[int] = []
+        real_derive = pipeline_mod.rows.derive_seeds
+
+        def spy_derive(*args, **kwargs):
+            seen.append(kwargs["max_seeds"])
+            return real_derive(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_mod.rows, "derive_seeds", spy_derive)
+        ctx.config.max_seeds = 10
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=5, max_seeds=1),
+            RowSpec(slug="deep", name_template="Deep", size=5, max_seeds=4),
+            RowSpec(slug="default", name_template="Default", size=5),  # inherits the global 10
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert sorted(seen) == [1, 4, 10]
+
+    def test_rows_with_different_max_seeds_gather_separately(self, ctx: EngineContext, mock_plextv):
+        # The OUTCOME test, not a spy: the two above pass even with `max_seeds` removed from
+        # `pool_key`, because the up-front `counts.seeds` loop calls seeds_for for every spec whatever
+        # the pools then do. Without that key entry the rows SHARE one pool — whichever reaches
+        # pools_for first builds it — and the second row's budget is silently inert. Which is issue
+        # #57 shipping "fixed" and not fixed.
+        ctx.history_source.fetch.return_value = [
+            make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)
+        ]
+        ctx.config.max_seeds = 10
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=5, max_seeds=4),
+            RowSpec(slug="because", name_template="Because {top_seed}", size=5, max_seeds=1),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        # One suggestions() call per seed: 4 + 1 across two pools. A shared pool would be 4.
+        assert ctx.tmdb.suggestions.call_count == 5
+
     def test_per_row_candidate_sources_gate_which_apis_run(self, ctx: EngineContext, mock_plextv):
         # A row pinned to tmdb_discover only must query discover and NOT the tmdb_similar endpoint —
         # per-row sources override the global set for that row.

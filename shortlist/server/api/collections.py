@@ -83,6 +83,7 @@ class CollectionIn(BaseModel):
     watched_pct: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global watched cap
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
+    max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
     placement: str = "both"  # both | home | library | off — the OWNER's own collection
     placement_friends: str = "both"  # both | home | library | off — each FRIEND's own collection
@@ -182,6 +183,7 @@ def _serialize(session, collection: Collection) -> dict:
         "watched_pct": collection.watched_pct,
         "freshness": collection.freshness,
         "recent_count": collection.recent_count,
+        "max_seeds": collection.max_seeds,
         "placement": collection.placement or "both",
         "placement_friends": collection.placement_friends or "both",
         "pin_top": bool(collection.pin_top),
@@ -246,6 +248,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             watched_pct=body.watched_pct,
             freshness=body.freshness,
             recent_count=body.recent_count,
+            max_seeds=body.max_seeds,
             placement=body.placement,
             placement_friends=body.placement_friends,
             pin_top=body.pin_top,
@@ -279,6 +282,7 @@ _PATCHABLE_COLUMNS = (
     "watched_pct",
     "freshness",
     "recent_count",
+    "max_seeds",
     "placement",
     "placement_friends",
     "pin_top",

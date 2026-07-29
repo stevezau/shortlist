@@ -77,7 +77,7 @@ GET  /api/users · PATCH /api/users/{id} {enabled?, request_tag?, prefs?} · POS
 POST /api/users/set-enabled {enabled} (bulk enable/disable every user at once)
 GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, recent_count?} (per-person, per-row: `recent_count` (1–25) overrides how many recent watches the `llm_web` source searches for this person on this row; null on any field clears it back to the row's own setting)
 GET  /api/users/{id}/runs · GET /api/users/{id}/history (recent watches; each item carries `title`, `media_type`, `year`, plus `season`/`episode`/`episode_title` for TV)
-GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`, `hub_anchor` — per-row shelf-placement override, and `poster` — custom row artwork {mode: ""|upload|generate, title, subtitle, style})
+GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`, `max_seeds` — how many watched titles the row is built from (1–100; null inherits the engine default of 30), `hub_anchor` — per-row shelf-placement override, and `poster` — custom row artwork {mode: ""|upload|generate, title, subtitle, style})
 POST /api/collections/{id}/cleanup {dry_run?} (remove this row's Plex collections for everyone; dry-run previews)
 POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/collections/{id}/poster/image (serve/remove uploaded artwork) · POST /api/collections/{id}/poster/preview {title,subtitle,style} -> generated sample image
 GET  /api/system/image-provider -> {capable, provider, reason} (can the AI provider generate poster images — drives the row editor's Generate gate)

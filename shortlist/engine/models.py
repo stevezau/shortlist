@@ -269,6 +269,12 @@ class RowSpec:
     # broader reach. Only affects the llm_web source; TMDB/Trakt still use the full seed set. None ->
     # inherit EngineConfig.recent_count.
     recent_count: int | None = None
+    # How many of this person's watched titles SEED this row — the titles every source searches from.
+    # Unlike recent_count (which only caps the web-search source), this caps the seed set itself, so it
+    # decides what the whole row is derived from. Small values make a row about one or two things they
+    # actually watched, which is what a `{top_seed}` ("Because you watched X") title claims; the default
+    # blends the whole recent history. None -> inherit EngineConfig.max_seeds.
+    max_seeds: int | None = None
     # Which surfaces the OWNER's own collection appears on: "both" (Home + Library Recommended, the
     # default), "home", "library", or "off" (neither — the Collections tab only, since promote()
     # always browse-hides). "off" is a STRING, not None: `placement_friends=None` already means
@@ -526,6 +532,8 @@ class EngineConfig:
     hide_shared_from_disabled: bool = True
     min_history: int = 10  # below this -> cold-start row
     min_completion: float = 0.7  # history completion threshold for "meaningful" watch
+    # How many watched titles seed a row (the most recently watched win, balanced across media types).
+    # Row-overridable via RowSpec.max_seeds.
     max_seeds: int = 30
     # Cap on already-watched titles in a row, as a fraction of the row. 0.0 (default): all fresh —
     # drop every finished title (a movie you watched, or a show you've seen >= watched_show_pct of;

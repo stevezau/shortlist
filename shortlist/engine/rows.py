@@ -64,6 +64,15 @@ def effective_row_sources(spec: RowSpec, default_sources: list[str]) -> tuple[st
     return tuple(sorted(spec.candidate_sources or default_sources))
 
 
+def effective_max_seeds(spec: RowSpec, cfg: EngineConfig) -> int:
+    """How many watched titles seed this row: its own budget, else the run's.
+
+    Module-level so the per-person and shared paths cannot resolve it differently — they used to
+    re-inline the same expression twice, which is how two "identical" fallbacks drift apart.
+    """
+    return spec.max_seeds if spec.max_seeds is not None else cfg.max_seeds
+
+
 def _sections_of(ctx: EngineContext, library_keys: list) -> dict[int, str]:
     """ratingKey -> section key, for the given libraries (all of them when none are pinned).
 
@@ -708,6 +717,14 @@ def _run_user(
             # differ — but only for rows that actually use llm_web. Key on it only then, so two non-web
             # rows differing solely in recent_count still share one pool (no wasted TMDB/curate gather).
             effective_recent_count(spec) if "llm_web" in effective_sources(spec) else 0,
+            # The SEEDS themselves, because max_seeds changes what every source searches from — not
+            # just the web one. Keyed on the resulting seed list rather than the budget so two rows
+            # whose different budgets yield the same seeds (a thin history: 12 watches, budgets of 20
+            # and 30) still share one pool instead of paying for two gathers. seeds_for is memoised,
+            # so asking for them here costs nothing. Order counts, not just membership: it feeds the
+            # web-search slice and the trace sample, so two orderings of one set split the pool —
+            # a wasted gather at worst, never a wrong share.
+            tuple((seed.tmdb_id, seed.media_type) for seed in seeds_for(spec)),
         )
 
     def pools_for(spec: RowSpec) -> Pool | None:
@@ -785,11 +802,17 @@ def _run_user(
 
         def seeds_for(spec: RowSpec) -> list:
             """This row's seeds, from the watches its own libraries hold. Memoised per (media,
-            libraries) so rows that target the same thing derive them once."""
-            key = (spec.media, tuple(sorted(str(k) for k in spec.library_keys)))
+            libraries, max_seeds) so rows that target the same thing derive them once.
+
+            max_seeds is part of the key rather than a slice of a shared list because `derive_seeds`
+            balances across media types (each present type keeps >= a third of the budget), so a
+            5-seed list is not the first 5 of a 30-seed one."""
+            key = (spec.media, tuple(sorted(str(k) for k in spec.library_keys)), effective_max_seeds(spec, cfg))
             if key not in seed_cache:
                 relevant = _history_for_row(ctx, user.history, spec)
-                seed_cache[key] = derive_seeds(relevant, resolve, max_seeds=cfg.max_seeds, blocked=user.blocked_seeds)
+                seed_cache[key] = derive_seeds(
+                    relevant, resolve, max_seeds=effective_max_seeds(spec, cfg), blocked=user.blocked_seeds
+                )
             return seed_cache[key]
 
         # Reported as the widest seed set any of this person's rows uses — the "both media, every
@@ -957,6 +980,18 @@ def _run_user(
                 # Bootstrap: this row+library has never been built (or its picks predate row/library
                 # stamping) — build a fresh full row, exactly like a first run.
                 if not sub:
+                    # Say so: this is the ONLY exit that leaves a library with no collection and no
+                    # trace entry, so without a line here "why is my Movies row empty?" cannot be
+                    # answered from the run page at all. The commonest cause is a seed budget too
+                    # small to cover both media types (a media=both row at max_seeds=1 seeds one
+                    # type, so the other's pool is empty) — the row editor steers away from that,
+                    # but a hand-set budget or an API edit can still land there.
+                    logger.info(
+                        "{}: row '{}' has no candidates for section '{}' — nothing to build there",
+                        user.username,
+                        spec.slug,
+                        getattr(section, "title", section.key),
+                    )
                     continue
                 sec_picks = picker.build_picks(sub, k)
                 if len(sec_picks) < k:
@@ -1213,7 +1248,7 @@ def _shared_row(
         logger.info("shared row '{}': no title watched by >= {} people yet", spec.slug, threshold)
         return None
 
-    seeds = derive_seeds(agg_history, resolve, max_seeds=cfg.max_seeds)
+    seeds = derive_seeds(agg_history, resolve, max_seeds=effective_max_seeds(spec, cfg))
     row_sources = spec.candidate_sources if spec.candidate_sources else None  # None -> global default
     # Same three narrowings a per-person row gets: its sources, its media, its libraries.
     (_pool, _in_library, ranked), gather_stats = _candidate_pool(

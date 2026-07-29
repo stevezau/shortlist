@@ -1856,6 +1856,31 @@ class TestCollectionsSeed:
             specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
         assert next(s for s in specs if s.slug == "fresh_row").freshness == 0.75
 
+    def test_per_row_max_seeds_round_trips_and_reaches_the_spec(self, client: TestClient):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+        from shortlist.server.settings_store import SettingsStore
+
+        created = client.post("/api/collections", json={"name": "Because Row", "max_seeds": 1})
+        assert created.status_code == 201 and created.json()["max_seeds"] == 1
+        assert client.post("/api/collections", json={"name": "X", "max_seeds": 0}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "max_seeds": 101}).status_code == 422
+
+        # PATCHable, and clearable back to "inherit the engine default". (`name` rides along because
+        # CollectionIn requires it; only the fields actually sent are written.)
+        cid = created.json()["id"]
+        patch = {"name": "Because Row"}
+        assert client.patch(f"/api/collections/{cid}", json={**patch, "max_seeds": 5}).json()["max_seeds"] == 5
+        assert client.patch(f"/api/collections/{cid}", json={**patch, "max_seeds": None}).json()["max_seeds"] is None
+        client.patch(f"/api/collections/{cid}", json={**patch, "max_seeds": 1})
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        assert next(s for s in specs if s.slug == "because_row").max_seeds == 1
+        # A row that never set one keeps None, so the engine falls back to its own budget.
+        assert next(s for s in specs if s.slug == "picked").max_seeds is None
+
     def test_per_row_placement_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder
         from shortlist.server.services.sse import EventBus

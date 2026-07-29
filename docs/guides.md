@@ -127,6 +127,22 @@ back to a clean default ("✨ Picked for You") rather than a half-finished sente
 any row at any time in the **Row editor** — the collection on Plex is renamed in place, so its
 place in the shelf and its privacy are preserved.
 
+**A `{top_seed}` row needs one more setting to be honest.** By default every row is built from a
+person's 30 most recent watches blended together, so a row titled "Because you watched The Bear" is
+really "because you watched these thirty things, one of which was The Bear". Set **Row editor →
+Watches to build from** to `1` and the row genuinely is what that one title led to. The editor
+prompts you for this as soon as a row's name uses `{top_seed}`.
+
+One catch, which the editor also tells you: seeds are shared out across the media types a row
+covers, and a single watch is either a film or a show — never both. So a row set to **Movies and
+TV** with a budget of 1 seeds only one of them, and the other library's collection never builds.
+For a row covering both, use `2` (one of each), or set the row to Movies only or TV only.
+
+**Watches to build from** (1–100, default 30) is worth knowing about on its own: it decides how many
+watched titles every discovery source searches from. Fewer means a tighter, more coherent row about
+a couple of things; more means broader coverage of someone's taste. It is separate from **Recent
+watches to search**, which only caps the AI web-search source.
+
 ## Where a row shows
 
 The **Row editor** → **Where it shows** grid picks which Plex screens a row appears on. Two

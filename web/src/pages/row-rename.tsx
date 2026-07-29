@@ -172,8 +172,18 @@ export function RowRenamePage() {
             />
             <p className="text-xs text-muted-foreground">
               Use {"{library_name}"} for the library, {"{user}"} for each
-              person's name.
+              person's name, {"{top_seed}"} for a title they recently watched.
             </p>
+            {newName.includes("{top_seed}") && (
+              <p className="rounded-md bg-muted/60 p-3 text-xs text-muted-foreground">
+                A {"{top_seed}"} name promises the row is about one title. By
+                default the row is built from their 30 most recent watches, so
+                the name says one thing and the contents come from thirty. Lower{" "}
+                <strong>Watches to build from</strong> in the row editor to make
+                the name true &mdash; it tells you the right number for this
+                row.
+              </p>
+            )}
           </div>
           <Button
             loading={saving}

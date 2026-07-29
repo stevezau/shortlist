@@ -72,6 +72,8 @@ export interface Collection {
   freshness: number | null;
   /** Recent watches the web-search source searches (1..25); null inherits the global recent_count. */
   recent_count: number | null;
+  /** Watched titles this row is built FROM (1..100); null inherits the engine default (30). */
+  max_seeds: number | null;
   /** Surfaces the OWNER's own collection appears on; "off" = neither (Collections tab only). */
   placement: Placement;
   /** Surfaces each FRIEND's own collection appears on; "home" means Friends' Home here. */
@@ -167,6 +169,7 @@ export interface CollectionInput {
   watched_pct: number | null;
   freshness: number | null;
   recent_count: number | null;
+  max_seeds: number | null;
   placement: Placement;
   placement_friends: Placement;
   pin_top: boolean;

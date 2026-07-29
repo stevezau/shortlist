@@ -51,6 +51,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     watched_pct: null,
     freshness: null,
     recent_count: null,
+    max_seeds: null,
     placement: "both",
     placement_friends: "both",
     pin_top: false,
@@ -426,6 +427,91 @@ describe("RowEditor — recent watches to search", () => {
     expect(
       (updateCollection.mock.calls.at(0)?.[1] as Collection).recent_count,
     ).toBe(10);
+  });
+});
+
+describe("RowEditor — watches to build from", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("shows the number field only when the row overrides the default", () => {
+    renderEditor(row({ max_seeds: 3 }));
+    expect(screen.getByLabelText(/^Watches to build from$/i)).toHaveValue(3);
+    expect(
+      screen.getByRole("switch", {
+        name: /default number of watches to build from/i,
+      }),
+    ).not.toBeChecked();
+  });
+
+  it("round-trips a per-row max_seeds into the PATCH body", async () => {
+    renderEditor(row({ max_seeds: null, media: "movie" }));
+
+    await userEvent.click(
+      screen.getByRole("switch", {
+        name: /default number of watches to build from/i,
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    // 1, not the 30 default: turning the switch off is what someone does to make a
+    // "Because you watched X" row honest, so the field opens where that lands.
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).max_seeds,
+    ).toBe(1);
+  });
+
+  it("opens at 2, not 1, for a row covering movies AND TV", async () => {
+    // Seeds are balanced across the media types present, so a budget of 1 yields ONE type — a
+    // "both" row at 1 gathers nothing for its other half and that library never builds.
+    renderEditor(row({ max_seeds: null, media: "both" }));
+
+    await userEvent.click(
+      screen.getByRole("switch", {
+        name: /default number of watches to build from/i,
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).max_seeds,
+    ).toBe(2);
+  });
+
+  it("warns a {top_seed} row that its name promises one title", () => {
+    renderEditor(
+      row({ name_template: "Because you watched {top_seed}", media: "movie" }),
+    );
+    expect(
+      screen.getByText(/names one watch and fills itself from the other 29/i),
+    ).toBeInTheDocument();
+    // A movies-only row has no other half to strand, so it must not get the both-media caveat.
+    expect(
+      screen.queryByText(/would leave the other half empty/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("tells a movies-and-TV {top_seed} row why 1 would strand half of it", () => {
+    renderEditor(
+      row({ name_template: "Because you watched {top_seed}", media: "both" }),
+    );
+    expect(
+      screen.getByText(/would leave the other half empty/i),
+    ).toBeInTheDocument();
+  });
+
+  it("stays quiet for a row whose name makes no such promise", () => {
+    renderEditor(row({ name_template: "{library_name} Picked for You" }));
+    expect(
+      screen.queryByText(/names one watch and fills itself/i),
+    ).not.toBeInTheDocument();
   });
 });
 

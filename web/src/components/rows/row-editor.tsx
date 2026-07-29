@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { MaxSeedsField } from "@/components/max-seeds-field";
 import { RecentCountField } from "@/components/recent-count-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
@@ -44,6 +45,15 @@ function encode(library: boolean, home: boolean): Placement {
   if (home) return "home";
   if (library) return "library";
   return "off";
+}
+
+/** The tightest seed budget a row named after ONE title can actually use.
+ *
+ *  1 for a single-media row. 2 for a movies-and-TV row, because seeds are balanced across the media
+ *  types present and a budget of 1 therefore yields one type only — a `both` row at 1 gathers no
+ *  candidates for its other half, so that library's collection never builds. */
+function namedRowSeeds(media: string): number {
+  return media === "both" ? 2 : 1;
 }
 
 /** Collapsed by default — the grid should read on its own, and this is here for the "wait, who sees
@@ -566,6 +576,54 @@ export function RowEditor({
               <RecentCountField
                 value={input.recent_count}
                 onChange={(next) => set({ recent_count: next })}
+              />
+            )}
+          </div>
+
+          <div className="space-y-3 border-t pt-4">
+            <p className="text-sm font-medium">Watches to build from</p>
+            <p className="text-sm text-muted-foreground">
+              How many of a person&rsquo;s recent watches this row is built
+              from. The default (30) blends their whole recent history, which is
+              right for a general &ldquo;Picked for you&rdquo; row. A small
+              number makes the row about one or two specific things they
+              watched.
+            </p>
+            {input.name_template.includes("{top_seed}") && (
+              <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+                This row is named{" "}
+                <span className="font-mono">
+                  &ldquo;{input.name_template}&rdquo;
+                </span>
+                , so it names one title. Set this to{" "}
+                <strong>{namedRowSeeds(input.media)}</strong> and the row really
+                is what those watches led to &mdash; otherwise it names one
+                watch and fills itself from the other 29.
+                {input.media === "both" && (
+                  <>
+                    {" "}
+                    This row covers <strong>movies and TV</strong>, and a single
+                    watch is one or the other &mdash; so 1 would leave the other
+                    half empty. Use 2 to seed both, or set this row to Movies
+                    only or TV only above.
+                  </>
+                )}
+              </p>
+            )}
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-sm">Use the default (30)</span>
+              <Switch
+                checked={input.max_seeds === null}
+                onCheckedChange={(on) =>
+                  set({ max_seeds: on ? null : namedRowSeeds(input.media) })
+                }
+                aria-label="Use the default number of watches to build from"
+              />
+            </div>
+            {input.max_seeds !== null && (
+              <MaxSeedsField
+                value={input.max_seeds}
+                onChange={(next) => set({ max_seeds: next })}
               />
             )}
           </div>

@@ -202,6 +202,20 @@ class TestDeriveSeeds:
         seeds = derive_seeds(history, lambda w: ids[w.title], max_seeds=4)
         assert len(seeds) == 4
 
+    def test_a_budget_of_one_yields_a_single_media_type(self):
+        # Not a defect — one seed cannot be both — but it is WHY the row editor steers a
+        # movies-and-TV row to 2 rather than 1 for a `{top_seed}` name. A `media="both"` row seeded
+        # by one show gathers no movie candidates at all, so its Movies collection never builds.
+        history = [make_watched("Show", days_ago=1, media_type=MediaType.SHOW)]
+        history += [make_watched("Movie", days_ago=2, media_type=MediaType.MOVIE)]
+        ids = {"Show": 1, "Movie": 2}
+
+        one = derive_seeds(history, lambda w: ids[w.title], max_seeds=1)
+        two = derive_seeds(history, lambda w: ids[w.title], max_seeds=2)
+
+        assert {s.media_type for s in one} == {MediaType.SHOW}
+        assert {s.media_type for s in two} == {MediaType.SHOW, MediaType.MOVIE}
+
     def test_reserves_seed_budget_for_the_minority_media_type(self):
         # A TV-heavy watcher: 20 recent shows + 3 older movies. The movies must still seed, or a
         # media=both row's Movies half starves (SFLIX/MooHouse: 58 of her last 60 watches were TV).

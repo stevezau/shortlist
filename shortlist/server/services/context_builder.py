@@ -539,6 +539,7 @@ class ContextBuilder:
                     watched_pct=collection.watched_pct,  # None -> inherit the global watched cap
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
+                    max_seeds=collection.max_seeds,  # None -> inherit the engine's seed budget
                     placement=collection.placement or "both",
                     placement_friends=collection.placement_friends or "both",
                     pin_top=bool(collection.pin_top),

@@ -28,6 +28,7 @@ export function blankInput(): CollectionInput {
     watched_pct: null,
     freshness: null,
     recent_count: null,
+    max_seeds: null,
     placement: "both",
     placement_friends: "both",
     pin_top: false,
@@ -56,6 +57,7 @@ export function toInput(collection: Collection): CollectionInput {
     watched_pct: collection.watched_pct ?? null,
     freshness: collection.freshness ?? null,
     recent_count: collection.recent_count ?? null,
+    max_seeds: collection.max_seeds ?? null,
     placement: collection.placement ?? "both",
     placement_friends: collection.placement_friends ?? "both",
     pin_top: collection.pin_top ?? false,
@@ -152,6 +154,13 @@ export function rowOverrides(
     collection.recent_count !== undefined
   ) {
     parts.push(`Recent watches: ${collection.recent_count}`);
+  }
+
+  // null inherits the engine's seed budget, so only badge a per-row override.
+  if (collection.max_seeds !== null && collection.max_seeds !== undefined) {
+    parts.push(
+      `Built from ${collection.max_seeds} ${collection.max_seeds === 1 ? "watch" : "watches"}`,
+    );
   }
 
   // Only badge when placement differs from the "both" default.
