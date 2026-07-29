@@ -25,6 +25,11 @@ BACKUP_JOB_ID = "db-backup"
 _WATCH_SYNC_CRON = "17 4 * * *"  # 04:17 local daily — a quiet hour, offset off the top of the hour
 _USER_SYNC_CRON = "47 4 * * *"  # 04:47 local daily — 30 min after the watch sync so they don't overlap
 _BACKUP_CRON = "0 3 * * *"  # 03:00 local daily — before any syncs or row runs
+PRIVACY_SYNC_JOB_ID = "privacy-sync"
+SYNC_CHECK_JOB_ID = "sync-check"
+# 05:15 — after the watch (04:17) and user (04:47) syncs, so it merges filters for a roster that has
+# already been refreshed. Only ever makes the server MORE private, so a daily pass costs nothing.
+_PRIVACY_SYNC_CRON = "15 5 * * *"
 
 
 def _job_id(cron: str) -> str:
@@ -89,19 +94,28 @@ async def _queue_and_drain(app, kind: str, payload: dict | None = None) -> None:
     await jobs.drain_now(app.state, f"scheduled {kind}")
 
 
-def _resolve_watch_cron(app) -> str:
-    """The watch sync cron, from the DB setting or the built-in default."""
+def _resolve_cron(app, key: str, fallback: str) -> str:
+    """A cron from settings, falling back to the built-in default.
+
+    A bad expression must never crash-loop the container, so an invalid value is logged and the
+    default used — the schedule keeps running rather than the app failing to boot.
+    """
     from shortlist.server.settings_store import SettingsStore
 
     with app.state.sessions() as session:
-        custom = SettingsStore(session).get("sync.watch_cron")
+        custom = SettingsStore(session).get(key)
     if custom and isinstance(custom, str) and custom.strip():
         try:
             CronTrigger.from_crontab(custom.strip())
             return custom.strip()
         except ValueError:
-            logger.warning("invalid sync.watch_cron {!r} — falling back to default", custom)
-    return _WATCH_SYNC_CRON
+            logger.warning("invalid {} {!r} — falling back to default", key, custom)
+    return fallback
+
+
+def _resolve_watch_cron(app) -> str:
+    """The watch sync cron, from the DB setting or the built-in default."""
+    return _resolve_cron(app, "sync.watch_cron", _WATCH_SYNC_CRON)
 
 
 def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
@@ -118,17 +132,7 @@ def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
 
 def _resolve_users_cron(app) -> str:
     """The user sync cron, from the DB setting or the built-in default."""
-    from shortlist.server.settings_store import SettingsStore
-
-    with app.state.sessions() as session:
-        custom = SettingsStore(session).get("sync.users_cron")
-    if custom and isinstance(custom, str) and custom.strip():
-        try:
-            CronTrigger.from_crontab(custom.strip())
-            return custom.strip()
-        except ValueError:
-            logger.warning("invalid sync.users_cron {!r} — falling back to default", custom)
-    return _USER_SYNC_CRON
+    return _resolve_cron(app, "sync.users_cron", _USER_SYNC_CRON)
 
 
 def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
@@ -179,6 +183,42 @@ def _register_backup(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=BACKUP_JOB_ID, replace_existing=True)
 
 
+def _register_privacy_sync(scheduler: AsyncIOScheduler, app) -> None:
+    """Nightly re-merge of every account's share filter.
+
+    The automatic Privacy Check + write gate that used to VERIFY hiding before each write was removed
+    on 2026-07-16 at the owner's request, so nothing checks it after the fact any more — leak-safe
+    write ordering is the only remaining guarantee. This pass is the cheapest safety net against
+    drift: it builds nothing, delivers nothing and promotes nothing, so it can only ever make the
+    server more private.
+    """
+    cron = _resolve_cron(app, "privacy.sync_cron", _PRIVACY_SYNC_CRON)
+
+    async def fire() -> None:
+        await _queue_and_drain(app, "privacy.sync")
+
+    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=PRIVACY_SYNC_JOB_ID, replace_existing=True)
+
+
+def _register_sync_check(scheduler: AsyncIOScheduler, app) -> None:
+    """The drift check, only when the owner has set a cron for it.
+
+    Off by default and deliberately so: unlike the privacy sync it WRITES corrections to Plex, so
+    running it unattended is a choice to make rather than a default to inherit.
+    """
+    cron = _resolve_cron(app, "sync.check_cron", "")
+    if not cron:
+        # Remove any trigger left from a previous setting, so clearing the box really turns it off.
+        if scheduler.get_job(SYNC_CHECK_JOB_ID):
+            scheduler.remove_job(SYNC_CHECK_JOB_ID)
+        return
+
+    async def fire() -> None:
+        await _queue_and_drain(app, "sync.check")
+
+    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=SYNC_CHECK_JOB_ID, replace_existing=True)
+
+
 def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:
     """Drain the durable job queue on a short interval, and sweep abandoned jobs on a long one.
 
@@ -217,6 +257,8 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register_watch_sync(scheduler, app)
     _register_user_sync(scheduler, app)
     _register_backup(scheduler, app)
+    _register_privacy_sync(scheduler, app)
+    _register_sync_check(scheduler, app)
     _register_jobs_worker(scheduler, app)
     logger.info("scheduled {} row cron group(s) + watch-sync + user-sync + backup + job worker", len(groups))
     return scheduler
@@ -235,4 +277,6 @@ def rebuild_schedule(app) -> None:
     _register_watch_sync(scheduler, app)
     _register_user_sync(scheduler, app)
     _register_backup(scheduler, app)
+    _register_privacy_sync(scheduler, app)
+    _register_sync_check(scheduler, app)
     logger.info("rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup", len(groups))

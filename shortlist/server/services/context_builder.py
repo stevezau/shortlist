@@ -51,6 +51,7 @@ from shortlist.server.db.models import (
     iso_utc,
     utcnow,
 )
+from shortlist.server.prefs import blocked_ids
 from shortlist.server.services.poster_service import load_upload, make_studio
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
@@ -156,6 +157,9 @@ class ContextBuilder:
                 # Fallback matches the seeded default and the UI's, so a never-saved setting behaves
                 # the same everywhere (gather_candidates still floors an explicit [] at tmdb_similar).
                 candidate_sources=list(store.get("candidates.sources") or ["tmdb_similar", "tmdb_discover"]),
+                blocked_shared_seeds={
+                    tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
+                },
                 web_search_provider=store.get("llm_web.search_provider") or "auto",
                 hub_anchors=self._build_hub_anchors(store),
                 manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
@@ -459,7 +463,9 @@ class ContextBuilder:
                     slug=user.slug,
                     nickname=user.nickname or user.friendly_name,
                     excluded_genres=set(prefs.get("excluded_genres") or []),
-                    blocked_seeds=set(prefs.get("blocked_seeds") or []),
+                    # Through the reader, not straight off prefs: the list holds bare ints on an
+                    # older install and records on a newer one, and the engine only wants ids.
+                    blocked_seeds=blocked_ids(prefs),
                     row_name_template=prefs.get("row_name_tpl"),
                     request_tag=request_tag,
                     row_overrides=overrides.get(user.id, {}),

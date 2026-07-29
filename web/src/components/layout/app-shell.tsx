@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  CalendarClock,
   Bug,
   Check,
   ClipboardCopy,
@@ -21,12 +22,15 @@ import { NavLink, Outlet, useNavigate } from "react-router";
 
 import { HomeWordmark } from "@/components/brand";
 import { ActivityPill } from "@/components/layout/activity-pill";
+import { ActivityIndicator } from "@/components/layout/activity-indicator";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useSession, useVersion } from "@/lib/queries";
 import { GITHUB_REPO, newBugReportUrl } from "@/lib/support";
+import { Toaster } from "sonner";
+
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -37,6 +41,7 @@ const NAV_ITEMS = [
   { to: "/logs", label: "Logs", icon: ScrollText, end: false },
   { to: "/requests", label: "Requests", icon: Inbox, end: false },
   { to: "/jobs", label: "Jobs", icon: Wrench, end: false },
+  { to: "/schedule", label: "Schedule", icon: CalendarClock, end: false },
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },
 ];
 
@@ -222,10 +227,14 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
+      {/* One Toaster for the whole app — background work announces itself from the header's
+          ActivityIndicator, which is the single observer of the job queue. */}
+      <Toaster position="bottom-right" closeButton richColors />
       {/* Mobile top bar: wordmark + hamburger. Hidden once the sidebar appears at md. */}
       <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-card/80 px-4 py-3 backdrop-blur md:hidden">
         <HomeWordmark />
         <div className="flex items-center gap-1">
+          <ActivityIndicator />
           <NotificationBell align="right" />
           <Button
             variant="ghost"
@@ -286,6 +295,7 @@ export function AppShell() {
       <aside className="sticky top-0 z-30 hidden h-screen w-60 shrink-0 flex-col border-r bg-card/40 backdrop-blur md:flex">
         <div className="flex items-center justify-between px-5 py-5">
           <HomeWordmark />
+          <ActivityIndicator />
           <NotificationBell align="left" />
         </div>
         <NavBody />

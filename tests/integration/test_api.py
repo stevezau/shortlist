@@ -737,6 +737,48 @@ class TestUserRowsApi:
         assert client.get(f"/api/users/{uid}/runs").json() == []
         assert client.get("/api/users/9999/runs").status_code == 404
 
+    def test_user_runs_carry_their_own_outcome_not_the_runs(self, client: TestClient):
+        """A run is server-wide: its status says whether the RUN succeeded, which says nothing about
+        whether this person got a row. `skipped` with a reason is healthy and must read that way."""
+        from shortlist.server.db.models import Run, RunUser
+
+        uid = self._sarah_id(client)
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=uid,
+                    status="skipped",
+                    reason="no watch history yet",
+                    duration_ms=1200,
+                )
+            )
+            session.commit()
+
+        entry = client.get(f"/api/users/{uid}/runs").json()[0]
+        assert entry["status"] == "skipped"
+        assert entry["reason"] == "no watch history yet"
+        assert entry["duration_ms"] == 1200
+        assert entry["run_status"] == "ok"  # the run itself was fine
+
+    def test_user_runs_summary_counts_the_runs_that_left_them_out(self, client: TestClient):
+        """Six entries on a person's page read as "the server ran six times" without this."""
+        from shortlist.server.db.models import Run, RunUser
+
+        uid = self._sarah_id(client)
+        with client.app.state.sessions() as session:
+            included = Run(trigger="manual", status="ok")
+            session.add_all([included, Run(trigger="manual", status="ok"), Run(trigger="manual", status="ok")])
+            session.flush()
+            session.add(RunUser(run_id=included.id, user_id=uid, status="ok"))
+            session.commit()
+
+        assert client.get(f"/api/users/{uid}/runs/summary").json() == {"included": 1, "total": 3}
+        assert client.get("/api/users/9999/runs/summary").status_code == 404
+
 
 class TestRunsApi:
     def test_empty_list_then_trigger(self, client: TestClient):
@@ -1079,6 +1121,102 @@ class TestRunsApi:
             orphaned = session.query(PickRow).filter(PickRow.run_id.is_(None)).first()
             assert orphaned is not None and orphaned.tmdb_id == 0  # stale run's pick, now detached
 
+    def test_pruning_a_run_never_touches_the_delivery_ledger(self, client: TestClient):
+        """`deliveries` says which Plex collection IS which row for which person.
+
+        It is keyed by SLUG rather than by foreign key precisely so it outlives runs and rows.
+        Pruning it would strand real collections on real users' servers with nothing left that knows
+        to clean them up — a silent, unrecoverable leak of other people's rows onto their screens.
+        """
+        from shortlist.server.db.models import Delivery, PickRow, Run, User
+        from shortlist.server.services.run_service import RunService
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).first().id
+            now = datetime.now(UTC)
+            stale = Run(trigger="manual", status="ok", started_at=now - timedelta(days=100))
+            session.add(stale)
+            session.flush()
+            session.add(
+                PickRow(run_id=stale.id, user_id=uid, tmdb_id=1, media_type="movie", rating_key=1, rank=1, title="X")
+            )
+            session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=4242))
+            session.commit()
+
+            RunService._prune_runs(session, retention_months=3)
+            session.commit()
+
+            assert session.query(Run).count() == 0, "the old run should have gone"
+            assert session.query(Delivery).count() == 1, "the delivery ledger must survive a prune"
+            assert session.query(PickRow).count() == 1, "the impact ledger must survive a prune"
+
+    def test_pruning_a_run_takes_its_activity_log_with_it(self, client: TestClient):
+        """Narration is the storage hog and is meaningless without the run it describes."""
+        from shortlist.server.db.models import Run, RunLogLine
+        from shortlist.server.services.run_service import RunService
+
+        with client.app.state.sessions() as session:
+            now = datetime.now(UTC)
+            stale = Run(trigger="manual", status="ok", started_at=now - timedelta(days=100))
+            recent = Run(trigger="manual", status="ok", started_at=now - timedelta(days=2))
+            session.add_all([stale, recent])
+            session.flush()
+            session.add_all(
+                [
+                    RunLogLine(run_id=stale.id, seq=0, stage="history", user_slug="sarah"),
+                    RunLogLine(run_id=recent.id, seq=0, stage="history", user_slug="sarah"),
+                ]
+            )
+            recent_id = recent.id
+            session.commit()
+
+            RunService._prune_runs(session, retention_months=3)
+            session.commit()
+
+            remaining = session.query(RunLogLine).all()
+            assert [line.run_id for line in remaining] == [recent_id]
+
+    def test_events_retention_is_off_by_default_and_prunes_when_set(self, client: TestClient):
+        """The audit trail answers "what changed on whose share at 03:31" (plex-safety rule 10), so
+        it is the one record kept forever unless the owner asks otherwise."""
+        from shortlist.server.db.models import Event
+        from shortlist.server.services.run_service import RunService
+
+        with client.app.state.sessions() as session:
+            now = datetime.now(UTC)
+            session.add_all(
+                [
+                    Event(scope="privacy.sync", level="info", message={}, ts=now - timedelta(days=400)),
+                    Event(scope="privacy.sync", level="info", message={}, ts=now - timedelta(days=2)),
+                ]
+            )
+            session.commit()
+
+            RunService._prune_events(session, retention_months=0)  # the default
+            session.commit()
+            assert session.query(Event).count() == 2, "0 must mean keep forever"
+
+            RunService._prune_events(session, retention_months=3)
+            session.commit()
+            assert session.query(Event).count() == 1
+
+    def test_runs_list_pages_backwards_with_a_cursor(self, client: TestClient):
+        """Cursor, not offset: runs are inserted while you read, so an offset would skip or repeat
+        rows as the list shifts under you."""
+        from shortlist.server.db.models import Run
+
+        with client.app.state.sessions() as session:
+            session.add_all([Run(trigger="manual", status="ok") for _ in range(5)])
+            session.commit()
+
+        first = client.get("/api/runs?limit=2").json()
+        assert len(first) == 2
+        second = client.get(f"/api/runs?limit=2&before_id={first[-1]['id']}").json()
+        assert len(second) == 2
+        # No overlap and strictly older — the two properties an offset loses under concurrent writes.
+        assert {r["id"] for r in first}.isdisjoint({r["id"] for r in second})
+        assert max(r["id"] for r in second) < min(r["id"] for r in first)
+
     def test_trigger_forwards_row_scope_to_the_run(self, client: TestClient, monkeypatch):
         """A manual run can target specific rows — collection_ids must reach start_run (the engine's
         build_only scope), not be silently dropped."""
@@ -1143,16 +1281,214 @@ class TestRunsApi:
             session.commit()
 
         body = client.get("/api/report").json()
+        assert body["window"] == "30"  # the default window
         assert body["overall"]["delivered"] == 3
         assert body["overall"]["watched"] == 2
-        assert body["overall"]["hit_rate"] == round(2 / 3, 3)
-        assert body["overall"]["watched_last_7d"] == 2  # both watched just now
         assert body["per_row"][0]["slug"] == "picked" and body["per_row"][0]["watched"] == 2
         assert any(u["watched"] == 2 for u in body["per_user"])
         assert len(body["recent"]) == 2 and body["recent"][0]["row"]
         assert body["coverage"]["users_with_picks"] == 1
+        assert body["coverage"]["users_watched"] == 1
         assert {t["title"] for t in body["top_titles"]} == {"A", "B"}  # the two watched titles
         assert body["runs"]["total"] >= 1
+        # Delivered seconds ago, so nothing has had its 30 days — a rate here would be a lie.
+        assert body["overall"]["landing"]["rate"] is None
+
+    def _seed_picks(self, client: TestClient, specs: list[tuple[int, int, int | None]]) -> int:
+        """Seed picks as (tmdb_id, delivered_days_ago, watched_days_ago|None). Returns the user id."""
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            session.add_all(
+                [
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        rating_key=tmdb_id,
+                        rank=1,
+                        collection_slug="picked",
+                        title=f"T{tmdb_id}",
+                        created_at=now - timedelta(days=delivered_ago),
+                        watched_at=None if watched_ago is None else now - timedelta(days=watched_ago),
+                    )
+                    for tmdb_id, delivered_ago, watched_ago in specs
+                ]
+            )
+            session.commit()
+            return uid
+
+    def test_report_window_excludes_what_falls_outside_it(self, client: TestClient):
+        """The whole point of windowing: an old pick must stop dragging on today's numbers.
+
+        Lifetime-cumulative was the bug — a pick can only ever be CREDITED within 30 days of
+        delivery, but the old denominator kept it forever, so the figure measured install age.
+        """
+        self._seed_picks(
+            client,
+            [
+                (1, 2, 1),  # delivered and watched inside every window
+                (2, 200, 199),  # ancient: only "all" should see it
+            ],
+        )
+
+        recent = client.get("/api/report?window=30").json()
+        assert recent["overall"]["watched"] == 1
+        assert recent["overall"]["delivered"] == 1
+
+        lifetime = client.get("/api/report?window=all").json()
+        assert lifetime["overall"]["watched"] == 2
+        assert lifetime["overall"]["delivered"] == 2
+        assert lifetime["window_days"] is None
+        assert lifetime["overall"]["watched_delta"] is None  # "all" has no previous period
+
+    def test_report_landing_rate_only_counts_picks_that_had_their_full_chance(self, client: TestClient):
+        """The matured cohort. A pick delivered yesterday cannot have been 'watched within 30 days'
+        yet, so counting it in the denominator drags the rate toward zero for no reason at all."""
+        self._seed_picks(
+            client,
+            [
+                (1, 40, 39),  # matured, watched  -> numerator + denominator
+                (2, 40, None),  # matured, unwatched -> denominator only
+                (3, 1, None),  # too young to judge -> neither
+                (4, 1, None),
+                (5, 1, None),
+            ],
+        )
+
+        landing = client.get("/api/report?window=90").json()["overall"]["landing"]
+        assert landing["delivered"] == 2, "the three young picks must not be in the denominator"
+        assert landing["watched"] == 1
+        assert landing["rate"] == 0.5
+        assert landing["matured_days"] == 30
+
+    def test_report_compares_against_the_previous_equal_period(self, client: TestClient):
+        self._seed_picks(
+            client,
+            [
+                (1, 3, 3),  # this window
+                (2, 4, 4),  # this window
+                (3, 40, 40),  # the previous 30 days
+            ],
+        )
+
+        overall = client.get("/api/report?window=30").json()["overall"]
+        assert overall["watched"] == 2
+        assert overall["watched_prev"] == 1
+        assert overall["watched_delta"] == 1
+
+    def test_report_breakdowns_rank_by_what_was_watched_not_by_rate(self, client: TestClient):
+        """`1/31` used to outrank `3/103` — one data point beating three times the evidence, because
+        3.2% > 2.9%. Counts, sorted by watched, is what the list is actually for."""
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with client.app.state.sessions() as session:
+            users = session.query(User).order_by(User.id).limit(2).all()
+            assert len(users) == 2, "this test needs two users on the roster"
+            small, big = users[0].id, users[1].id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+
+            def pick(uid, tmdb_id, watched):
+                return PickRow(
+                    run_id=run.id,
+                    user_id=uid,
+                    tmdb_id=tmdb_id,
+                    media_type="movie",
+                    rating_key=tmdb_id,
+                    rank=1,
+                    collection_slug="picked",
+                    title=f"T{tmdb_id}",
+                    created_at=now - timedelta(days=1),
+                    watched_at=now if watched else None,
+                )
+
+            # small: 1 of 4 watched (25%). big: 3 of 30 watched (10%) — but three real watches.
+            session.add_all([pick(small, 1, True)] + [pick(small, i, False) for i in range(2, 5)])
+            session.add_all([pick(big, 100 + i, i < 3) for i in range(30)])
+            session.commit()
+
+        per_user = client.get("/api/report?window=30").json()["per_user"]
+        assert per_user[0]["watched"] == 3, "the person who watched most comes first"
+        assert "hit_rate" not in per_user[0], "no per-person rate: at these sample sizes it is noise"
+
+    def test_report_does_not_credit_a_request_watched_before_it_was_sent(self, client: TestClient):
+        """`watched_after_sent` was a plain set intersection with no ordering check, so a title
+        watched, then deleted from the library, then re-requested, counted as a request that paid off."""
+        from shortlist.server.db.models import PickRow, RequestCandidate, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            session.add_all(
+                [
+                    # Watched ten days ago...
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=77,
+                        media_type="movie",
+                        rating_key=77,
+                        rank=1,
+                        collection_slug="picked",
+                        title="Watched First",
+                        created_at=now - timedelta(days=12),
+                        watched_at=now - timedelta(days=10),
+                    ),
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=88,
+                        media_type="movie",
+                        rating_key=88,
+                        rank=2,
+                        collection_slug="picked",
+                        title="Watched After",
+                        created_at=now - timedelta(days=12),
+                        watched_at=now - timedelta(days=1),
+                    ),
+                ]
+            )
+            # ...but only requested five days ago, i.e. AFTER the watch. Not a request that paid off.
+            session.add(
+                RequestCandidate(
+                    tmdb_id=77,
+                    media_type="movie",
+                    title="Watched First",
+                    status="sent",
+                    updated_at=now - timedelta(days=5),
+                )
+            )
+            # Requested first, watched after — this one genuinely paid off.
+            session.add(
+                RequestCandidate(
+                    tmdb_id=88,
+                    media_type="movie",
+                    title="Watched After",
+                    status="sent",
+                    updated_at=now - timedelta(days=5),
+                )
+            )
+            session.commit()
+
+        requests = client.get("/api/report?window=30").json()["requests"]
+        assert requests["sent"] == 2
+        assert requests["watched_after_sent"] == 1
+
+    def test_report_falls_back_to_the_default_window_on_a_bogus_value(self, client: TestClient):
+        body = client.get("/api/report?window=nonsense").json()
+        assert body["window"] == "30"
 
     def test_report_splits_a_multi_library_row_per_library(self, client: TestClient):
         """A row targeting >1 library is one Plex collection PER library, so the report tracks each
@@ -1435,6 +1771,31 @@ class TestRunsApi:
         # its activity feed from this and tops it up over SSE.
         r = client.get("/api/runs/424242/log")
         assert r.status_code == 200 and r.json() == []
+
+    def test_run_log_pages_from_a_seq_and_downloads_as_text(self, client: TestClient):
+        from shortlist.server.db.models import Run
+
+        service = client.app.state.run_service
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.commit()
+            run_id = run.id
+
+        sink = service._new_run_log(run_id)
+        sink({"stage": "history", "user": "sarah", "counts": {"titles": 113}})
+        sink({"stage": "finished", "user": "Shortlist", "counts": {"ok": 1}})
+
+        full = client.get(f"/api/runs/{run_id}/log").json()
+        assert [e["stage"] for e in full] == ["history", "finished"]
+
+        # Topping up: only what the client hasn't already got.
+        tail = client.get(f"/api/runs/{run_id}/log?after_seq=0").json()
+        assert [e["stage"] for e in tail] == ["finished"]
+
+        text = client.get(f"/api/runs/{run_id}/log?format=text")
+        assert text.headers["content-type"].startswith("text/plain")
+        assert "sarah" in text.text and "titles=113" in text.text
 
 
 class TestSettingsValidation:
@@ -3940,3 +4301,127 @@ class TestEveryJobKindIsExplained:
             assert kind in jobs.BY_KIND, kind
             assert not jobs.BY_KIND[kind].manual, f"{kind} must not be manually triggerable"
             assert kind not in jobs.KINDS
+
+
+class TestScheduleApi:
+    """`GET /api/schedule` — everything on a timer, in one place.
+
+    Each cron was already editable, but a job's lived inside that job's expanded settings and a
+    row's inside the row editor, so "what happens overnight, and in what order?" could only be
+    answered by opening a dozen panels.
+    """
+
+    def test_it_lists_every_scheduled_job_with_the_setting_that_edits_it(self, client: TestClient):
+        body = client.get("/api/schedule").json()
+        kinds = {entry["kind"]: entry for entry in body["jobs"]}
+
+        assert {"sync.users", "sync.history", "backup.take", "privacy.sync", "sync.check"} <= set(kinds)
+        for entry in body["jobs"]:
+            # Without the settings key the UI would need a hard-coded kind -> key map to save a change.
+            assert entry["setting"], entry["kind"]
+
+    def test_the_privacy_sync_is_scheduled_by_default(self, client: TestClient):
+        """The automatic Privacy Check was removed on 2026-07-16, so nothing verifies hiding after
+        the fact. A nightly re-merge is the cheapest remaining safety net, and it can only ever make
+        the server more private."""
+        privacy = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "privacy.sync")
+        assert privacy["cron"], "privacy sync must ship with a schedule"
+        assert privacy["writes_plex"] is True
+
+    def test_the_drift_check_is_off_until_asked_for(self, client: TestClient):
+        """Unlike the privacy sync it WRITES corrections to Plex, so running it unattended is a
+        choice to make rather than a default to inherit."""
+        check = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
+        assert check["cron"] == ""
+        assert check["optional"] is True
+
+    def test_rows_sharing_a_cron_are_one_entry_not_three(self, client: TestClient):
+        """Three rows on `30 3 * * *` are ONE trigger that builds all three — listing them as three
+        separate 03:30 entries would misrepresent what the server actually does."""
+        from shortlist.server.db.models import Collection
+
+        with client.app.state.sessions() as session:
+            session.query(Collection).update({Collection.schedule: "30 3 * * *"}, synchronize_session=False)
+            session.add(Collection(slug="late", name="Late row", schedule="0 5 * * *", enabled=True))
+            session.commit()
+
+        rows = client.get("/api/schedule").json()["rows"]
+        by_cron = {entry["cron"]: entry for entry in rows}
+        assert set(by_cron) == {"30 3 * * *", "0 5 * * *"}
+        assert len(by_cron["30 3 * * *"]["rows"]) >= 1
+        assert by_cron["0 5 * * *"]["rows"][0]["slug"] == "late"
+
+    def test_a_disabled_row_is_not_on_the_schedule(self, client: TestClient):
+        from shortlist.server.db.models import Collection
+
+        with client.app.state.sessions() as session:
+            session.query(Collection).update({Collection.enabled: False}, synchronize_session=False)
+            session.commit()
+
+        assert client.get("/api/schedule").json()["rows"] == []
+
+    def test_it_is_owner_only(self, client: TestClient):
+        client.cookies.delete(SESSION_COOKIE)
+        assert client.get("/api/schedule").status_code == 401
+
+
+class TestBlockedSeedsApi:
+    """The feature was half-built: the API existed, the frontend wrapper existed and was never
+    called, and the list rendered bare TMDB ids. The empty state even pointed at a button that
+    didn't exist."""
+
+    def _uid(self, client: TestClient) -> int:
+        from shortlist.server.db.models import User
+
+        with client.app.state.sessions() as session:
+            return session.query(User).order_by(User.id).first().id
+
+    def test_blocking_a_title_keeps_its_name(self, client: TestClient):
+        """ "tmdb 346648" is a number nobody recognises — most of why nobody used this."""
+        uid = self._uid(client)
+
+        r = client.post(
+            f"/api/users/{uid}/blocked-seeds",
+            json={"tmdb_id": 346648, "title": "Paddington 2", "media_type": "movie", "year": 2017},
+        )
+
+        assert r.status_code == 200
+        assert r.json()["blocked_seeds"] == [
+            {"tmdb_id": 346648, "title": "Paddington 2", "media_type": "movie", "year": 2017}
+        ]
+
+    def test_blocking_the_same_title_twice_does_not_duplicate_it(self, client: TestClient):
+        uid = self._uid(client)
+        client.post(f"/api/users/{uid}/blocked-seeds", json={"tmdb_id": 1, "title": "A"})
+        body = client.post(f"/api/users/{uid}/blocked-seeds", json={"tmdb_id": 1, "title": "A (better name)"}).json()
+
+        assert len(body["blocked_seeds"]) == 1
+        assert body["blocked_seeds"][0]["title"] == "A (better name)", "a re-block should refresh the name"
+
+    def test_an_existing_bare_int_list_still_works(self, client: TestClient):
+        """An install that blocked titles before the shape changed must not need a migration."""
+        from shortlist.server.db.models import User
+
+        uid = self._uid(client)
+        with client.app.state.sessions() as session:
+            user = session.get(User, uid)
+            user.prefs = {**(user.prefs or {}), "blocked_seeds": [111, 222]}
+            session.commit()
+
+        # Reading: the old ids come back as records with no name rather than being dropped.
+        listed = client.post(f"/api/users/{uid}/blocked-seeds", json={"tmdb_id": 333, "title": "New"}).json()
+        assert {e["tmdb_id"] for e in listed["blocked_seeds"]} == {111, 222, 333}
+
+        # Removing one of the OLD ids works too.
+        after = client.delete(f"/api/users/{uid}/blocked-seeds/111").json()
+        assert {e["tmdb_id"] for e in after["blocked_seeds"]} == {222, 333}
+
+    def test_unknown_user_404s_rather_than_writing_nothing_silently(self, client: TestClient):
+        assert client.post("/api/users/9999/blocked-seeds", json={"tmdb_id": 1}).status_code == 404
+        assert client.delete("/api/users/9999/blocked-seeds/1").status_code == 404
+
+    def test_title_search_rejects_a_media_type_it_cannot_search(self, client: TestClient):
+        assert client.get("/api/users/search/titles?q=dune&media_type=album").status_code == 422
+
+    def test_title_search_of_nothing_is_an_empty_list_not_an_error(self, client: TestClient):
+        assert client.get("/api/users/search/titles?q=%20").json() == []

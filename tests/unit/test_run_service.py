@@ -639,5 +639,54 @@ class TestRunLogBuffer:
         # Only the most-recent runs' logs are kept in memory; older ones are evicted.
         for run_id in range(2, 2 + service._run_log_runs + 1):
             service._new_run_log(run_id)
-        assert service.run_log(1) == [], "the oldest run's log is evicted once the cap is exceeded"
-        assert service.run_log(999_999) == [], "a run that never ran this process has an empty log"
+        assert service.run_log(999_999) == [], "a run that never ran, and has no rows, has an empty log"
+
+    def test_stamps_a_monotonic_seq_so_the_live_tail_can_be_deduped(self, sessions, tmp_path):
+        """The client merges a seeded fetch with the SSE tail. Timestamps are not unique enough to
+        dedupe on — several lines land in the same millisecond."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        sink = service._new_run_log(1)
+        for stage in ("history", "candidates", "delivering"):
+            sink({"stage": stage, "user": "sarah"})
+
+        assert [e["seq"] for e in service.run_log(1)] == [0, 1, 2]
+        assert [e["stage"] for e in service.run_log(1, after_seq=0)] == ["candidates", "delivering"]
+
+    def test_survives_the_log_being_evicted_from_memory(self, sessions, tmp_path):
+        """The whole point of persisting it: opening an older run's log used to show nothing at all."""
+        from shortlist.server.db.models import Run
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.commit()
+            run_id = run.id
+
+        sink = service._new_run_log(run_id)
+        sink({"stage": "history", "user": "sarah", "counts": {"titles": 113}})
+        sink({"stage": "finished", "user": "Shortlist", "counts": {}, "reason": "all done"})
+        service.flush_run_log(run_id)
+
+        # Evict every in-memory tail, as a restart would.
+        for other in range(run_id + 1, run_id + 2 + service._run_log_runs):
+            service._new_run_log(other)
+        assert run_id not in service._run_logs
+
+        replayed = service.run_log(run_id)
+        assert [e["stage"] for e in replayed] == ["history", "finished"]
+        assert replayed[0]["counts"] == {"titles": 113}
+        assert replayed[1]["reason"] == "all done"
+
+    def test_a_broken_log_write_never_fails_the_run(self, sessions, tmp_path, monkeypatch):
+        """The run has already written to Plex by the time the tail flushes. Losing narration is an
+        annoyance; raising here would turn it into a failed run that actually succeeded."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        sink = service._new_run_log(1)
+        sink({"stage": "history", "user": "sarah"})
+
+        def boom():
+            raise RuntimeError("disk is on fire")
+
+        monkeypatch.setattr(service, "_sessions", boom)
+        service.flush_run_log(1)  # must not raise

@@ -5,7 +5,19 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import ClassVar
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -275,8 +287,10 @@ class PickRow(Base):
     affinity: Mapped[float] = mapped_column(Float, default=1.0)
     seed_tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     seed_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)  # hit-rate
+    # Both indexed: the effectiveness report is windowed, so every aggregate on it filters by one of
+    # these two, over the one table in this schema that grows without bound.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)  # hit-rate
 
 
 class RestrictionSnapshotRow(Base):
@@ -330,6 +344,98 @@ class CacheRow(Base):
     key: Mapped[str] = mapped_column(String(512), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
     expires_at: Mapped[float] = mapped_column(Float)  # unix timestamp
+
+
+class WatchedTitle(Base):
+    """One title a person has watched, cached so it does not have to be re-read every night.
+
+    The watched set drives every recommendation and the dashboard's hit rate, and it used to be read
+    in FULL — per user, per library, 500 titles a page with full metadata and GUIDs — on the nightly
+    sync AND again inside every run. On a 40-user server that is hundreds of large XML responses a
+    night for a set that changes by a handful of items.
+
+    Caching it makes the nightly read incremental (`lastViewedAt>=` the cursor). The cache is not the
+    source of truth: `watch_sync_state.last_full_at` drives a periodic complete re-read, because an
+    incremental read cannot see an un-watch or a deletion.
+    """
+
+    __tablename__ = "watched_titles"
+    __table_args__ = (
+        UniqueConstraint("user_id", "section_key", "rating_key", name="uq_watched_title"),
+        Index("ix_watched_titles_user_viewed", "user_id", "viewed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    section_key: Mapped[str] = mapped_column(String(64))
+    # Plex's own id for the item in this library — the stable key within a section, and what an
+    # incremental upsert matches on.
+    rating_key: Mapped[int] = mapped_column(Integer)
+    tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    media_type: Mapped[str] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(512), default="")
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    watch_count: Mapped[int] = mapped_column(Integer, default=1)
+    # A show's finished fraction, straight from Plex (viewedLeafCount / leafCount) rather than
+    # reconstructed from play counts — so a bulk-marked season counts correctly. NULL for movies and
+    # for anything that reports no episode totals: 0 would read as "none of it watched", which is a
+    # different claim from "there are no episodes to count".
+    viewed_leaf_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    leaf_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class WatchSyncState(Base):
+    """How far the watched-title cache has been read for one (person, library).
+
+    `cursor_viewed_at` is advanced ONLY after a complete successful page walk, and deliberately set
+    slightly behind the newest thing seen — see `WatchCache` for why. `last_full_at` is what makes
+    the incremental read safe: an incremental read cannot see an un-watch or a deletion, so a
+    complete re-read has to happen on a schedule regardless.
+    """
+
+    __tablename__ = "watch_sync_state"
+    __table_args__ = (UniqueConstraint("user_id", "section_key", name="uq_watch_sync_state"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    section_key: Mapped[str] = mapped_column(String(64))
+    # None means "never read" — which always forces a full read, never a guess at where to resume.
+    cursor_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_full_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_incremental_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class RunLogLine(Base):
+    """One line of a run's activity feed, kept.
+
+    Deliberately NOT the `events` table. `events` is the audit trail — "what changed on whose share
+    at 03:31" (rule 10) — with its own retention and a scope-indexed query shape. This is narration:
+    high-volume, per-stage, only ever read as one run's chronological feed. Merging them makes both
+    queries worse and the retention rules contradictory.
+
+    This used to live only in a bounded in-memory deque for the last 10 runs, wiped on restart, so
+    opening any older run's log showed nothing at all.
+    """
+
+    __tablename__ = "run_log_lines"
+    __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_run_log_line_seq"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    # Monotonic within a run. The client merges a seeded fetch with the live SSE tail, and a
+    # timestamp is not unique enough to dedupe on — several lines land in the same millisecond.
+    seq: Mapped[int] = mapped_column(Integer)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # The user slug, or "Shortlist" for the server-wide phases. Blank never happens; the engine
+    # always names a subject.
+    user_slug: Mapped[str] = mapped_column(String(255), default="")
+    stage: Mapped[str] = mapped_column(String(64), default="")
+    counts: Mapped[dict] = mapped_column(JSON, default=dict)
+    reason: Mapped[str] = mapped_column(String(1024), default="")
+    level: Mapped[str] = mapped_column(String(8), default="info")
 
 
 class Event(Base):

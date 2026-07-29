@@ -79,13 +79,40 @@ class ShareTokenWatchSource:
             )
             return None
 
+    def fetch_section(
+        self,
+        user: UserProfile,
+        section,
+        media_type: MediaType,
+        *,
+        since: datetime | None = None,
+    ) -> list[WatchedItem]:
+        """One library's watched titles for this user — the unit the server's cache syncs.
+
+        Separate from `fetch` because the cache tracks a cursor PER (person, library): a single
+        section can legitimately be mid-way through a full re-read while its neighbour is already
+        incremental, and one cursor spanning both would have to take the older of the two for ever.
+
+        Raises rather than swallowing: the caller decides whether one unreadable library is fatal,
+        and for the cache it must be — advancing a cursor past a read that failed would silently
+        skip whatever it missed.
+        """
+        token = self._token_for(user)
+        if token is None:
+            return []
+        return self._plex.watched_titles(section.key, media_type, token, since=since)
+
     def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
-        """Every watched title across every movie/show library, as this user.
+        """Watched titles across every movie/show library, as this user.
 
         ``min_completion`` needs no reconstruction here: ``unwatched=0`` already excludes a
-        partially-watched movie (Plex counts a title watched only at ``viewCount>0``). ``since`` is
-        ignored — this is always a COMPLETE read, so a failed run simply re-reads next run and there is
-        no incremental state to lose.
+        partially-watched movie (Plex counts a title watched only at ``viewCount>0``).
+
+        ``since`` makes this an INCREMENTAL read — only titles viewed at or after that moment. It is
+        a partial answer by construction: it cannot see a title that was un-watched, deleted, or whose
+        ``lastViewedAt`` never moved, so a caller that keeps a cache MUST still do a periodic full
+        read to reconcile. ``None`` (the default) is the complete read, and is what a direct engine
+        run always does — the engine holds no state between runs to be incremental against.
         """
         token = self._token_for(user)
         if token is None:
@@ -94,14 +121,19 @@ class ShareTokenWatchSource:
         for section in self._plex.sections():
             media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
             try:
-                items.extend(self._plex.watched_titles(section.key, media_type, token))
+                items.extend(self._plex.watched_titles(section.key, media_type, token, since=since))
             except Exception as e:
                 # One unreadable library degrades to "nothing watched there" (it may re-surface a title
                 # they've seen), never a failed run — the same fail-soft stance the old sources took.
                 logger.warning(
                     "{}: watched read failed for section {} ({})", user.username, section.key, type(e).__name__
                 )
-        logger.debug("{}: {} watched titles via share token", user.username, len(items))
+        logger.debug(
+            "{}: {} watched titles via share token{}",
+            user.username,
+            len(items),
+            f" since {since.isoformat()}" if since else "",
+        )
         return items
 
 

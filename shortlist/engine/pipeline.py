@@ -236,6 +236,12 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         ctx, users, seed_index, library_index, stored_labels, report, demand if requests_on else None, order_work
     )
 
+    # The hinge of the whole run: after this line every per-user card is terminal, and everything
+    # that follows is server-wide. Without it the activity feed's last line is whichever person
+    # happened to finish last, and the minutes of real work after them look like a hang.
+    done = sum(1 for u in report.users if u.status in ("ok", "cold_start"))
+    _emit(ctx, "Shortlist", "users_done", {"done": done, "total": len(users)})
+
     # Merge the excludes into every share filter BEFORE anything is promoted.
     _emit(ctx, "Shortlist", "filters", {})
     filters_ok = _privacy_sync_phase(ctx, users, stored_labels, report)
@@ -252,22 +258,32 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # users in tonight's run, so a row belonging to anyone paused, disabled, deselected, errored,
     # cancelled, or simply promoted by an older build keeps its flags forever. This walks the rest
     # and takes them off the owner's Home — the one surface nothing can hide.
+    _emit(ctx, "Shortlist", "converging", {})
     _converge_phase(ctx, promoted, report)
+    _emit(
+        ctx,
+        "Shortlist",
+        "converged",
+        {"demoted": len(report.converged or []), "removed": len(report.orphans_removed or [])},
+    )
 
     # Order each row's items (the expensive one-move-per-item step) as a best-effort pass AFTER
     # promotion — rows are already delivered, hidden and live, so a slow PMS here degrades only the
     # ordering, never the run. Privacy-neutral (never touches a label, filter, or promotion).
     # The long one: one PMS round-trip per moved item, minutes on a big server. Silence here is
     # what made a healthy run look wedged.
-    _emit(ctx, "Shortlist", "ordering", {})
+    _emit(ctx, "Shortlist", "ordering", {"collections": len(order_work)})
     _collection_order_phase(ctx, order_work)
 
     # Position the just-promoted rows in each library's Recommended shelf (must run after promotion —
     # a hub has to be promoted to be movable). Best-effort and privacy-neutral.
     if filters_ok:
+        _emit(ctx, "Shortlist", "shelves", {})
         _order_phase(ctx, report)
 
     # Sonarr/Radarr requests, dead LAST — after every Plex write is done.
+    if requests_on:
+        _emit(ctx, "Shortlist", "requesting", {"wanted": len(demand)})
     _request_phase(ctx, requests_on, demand, report)
 
     report.finished_at = datetime.now(UTC)
@@ -283,6 +299,13 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         failed,
         len(report.users) - ok - failed,
         ctx.config.dry_run,
+    )
+    # The last line of the feed, so "is it still going?" is answerable without reading the header.
+    _emit(
+        ctx,
+        "Shortlist",
+        "finished",
+        {"ok": ok, "failed": failed, "seconds": round(elapsed)},
     )
     return report
 
@@ -600,7 +623,11 @@ def _privacy_sync_phase(
     # account_id -> {field: expected} for every write this run, verified in ONE roster read after the
     # loop (below) instead of a full GET /api/users per write (which was O(A²) on a change night).
     to_verify: dict[int, dict[str, str]] = {}
-    for user in audience:
+    # One plex.tv write per account, throttled and backing off on a 429 (rule 6) — minutes on a
+    # 40-account server. Counted out loud so the feed shows it moving rather than sitting on
+    # "filters" for the duration.
+    for position, user in enumerate(audience, start=1):
+        _emit(ctx, "Shortlist", "filters", {"done": position, "total": len(audience)})
         user_report = reports.get(user.slug)
         try:
             own_slug = own_slugs.get(user.plex_account_id)
@@ -733,7 +760,8 @@ def _promote_phase(
     correctly tonight" from "nothing has touched this row in weeks" and only walk the remainder.
     A collection skipped by an exception mid-loop is correctly absent, so converge picks it up."""
     promoted: set[int] = set()
-    for user in to_promote:
+    for position, user in enumerate(to_promote, start=1):
+        _emit(ctx, "Shortlist", "promoting", {"done": position, "total": len(to_promote)})
         user_report = next(r for r in report.users if r.slug == user.slug)
         if ctx.config.dry_run:
             logger.info("[dry-run] {}: would promote row to shared Home", user.username)

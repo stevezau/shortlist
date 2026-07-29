@@ -874,6 +874,46 @@ class TestWatchedTitles:
         assert request.url.params["type"] == "1"  # movie
 
     @respx.mock
+    def test_an_incremental_read_asks_plex_for_only_what_changed(self, mock_plex: PlexClient):
+        """`since` becomes Plex's own section filter, so the PMS does the narrowing rather than us
+        pulling every watched title and discarding most of it.
+
+        The operator is part of the FIELD NAME (`lastViewedAt>=`), not the value — Plex's section
+        filter syntax — and the value is epoch seconds, matching the `lastViewedAt` the items carry.
+        """
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        xml = (
+            '<MediaContainer size="1" totalSize="1">'
+            '<Video ratingKey="42" title="Heat" year="1995" viewCount="1" lastViewedAt="1752000000">'
+            '<Guid id="tmdb://949"/>'
+            "</Video>"
+            "</MediaContainer>"
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
+        since = datetime(2026, 7, 1, tzinfo=UTC)
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since)
+
+        assert [i.title for i in items] == ["Heat"]
+        params = respx.calls.last.request.url.params
+        assert params["lastViewedAt>="] == str(int(since.timestamp()))
+        # The other filters still apply — incremental narrows the read, it does not replace it.
+        assert params["unwatched"] == "0" and params["includeGuids"] == "1"
+
+    @respx.mock
+    def test_a_complete_read_sends_no_time_filter_at_all(self, mock_plex: PlexClient):
+        """A full read must ask for everything — a stray filter here would silently cap the set that
+        the already-watched filter and the weekly reconcile both depend on being complete."""
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text='<MediaContainer size="0" totalSize="0"/>'))
+
+        mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+
+        assert "lastViewedAt>=" not in respx.calls.last.request.url.params
+
+    @respx.mock
     def test_a_marked_movie_with_no_playback_still_counts_once(self, mock_plex: PlexClient):
         # A mark-as-watched: unwatched=0 returns it (the whole point — the history API never would),
         # but it carries no viewCount. watch_count floors at 1 so it still weighs as one watch.

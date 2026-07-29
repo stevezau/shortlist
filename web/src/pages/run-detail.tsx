@@ -15,13 +15,15 @@ import {
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { PickList } from "@/components/pick-list";
 import { provenanceLabel } from "@/lib/pick-provenance";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
+import { RunLogPanel } from "@/components/runs/run-log-panel";
+import { RunPhaseTimeline } from "@/components/runs/run-phase-timeline";
 import { Segmented } from "@/components/segmented";
 import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +44,7 @@ import {
 import { githubIssueSnippet } from "@/lib/github";
 import { queryKeys, useCancelRun, useRun, useUsers } from "@/lib/queries";
 import { mergeRunLog } from "@/lib/run-log";
-import { countLabel, STAGE_LABELS } from "@/lib/run-stages";
+import { isServerStage, progressLabel, STAGE_LABELS } from "@/lib/run-stages";
 import { useSSE } from "@/lib/sse";
 import type {
   Pick,
@@ -52,79 +54,6 @@ import type {
   RunUserResult,
   RunUserStageEvent,
 } from "@/lib/types";
-
-/** A run's live activity log: seeded from the server buffer, topped up by the SSE stage stream. */
-function ActivityLog({
-  entries,
-  running,
-}: {
-  entries: RunLogEntry[];
-  running: boolean;
-}) {
-  const logRef = useRef<HTMLDivElement>(null);
-  // Follow the tail as new lines arrive by scrolling the log box ITSELF — never scrollIntoView,
-  // which walks up and scrolls the whole page too, yanking it to the bottom every time a user
-  // completes. Only auto-follow when the operator is already near the bottom, so scrolling up to
-  // read an earlier line isn't fought on the next update.
-  useEffect(() => {
-    const box = logRef.current;
-    if (!box) return;
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-    if (nearBottom) box.scrollTop = box.scrollHeight;
-  }, [entries.length]);
-
-  return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
-        <CardTitle className="text-base">Activity</CardTitle>
-        {running && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            live
-          </span>
-        )}
-      </CardHeader>
-      <CardContent>
-        <div
-          ref={logRef}
-          className="max-h-72 space-y-1 overflow-y-auto rounded-md bg-muted/40 p-3 font-mono text-xs"
-          role="log"
-          aria-live="polite"
-          aria-label="Run activity log"
-        >
-          {entries.length === 0 ? (
-            <p className="text-muted-foreground">
-              {running ? "Starting…" : "No activity recorded for this run."}
-            </p>
-          ) : (
-            entries.map((entry, i) => <LogLine key={i} entry={entry} />)
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function LogLine({ entry }: { entry: RunLogEntry }) {
-  const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
-  const label = STAGE_LABELS[entry.stage] ?? entry.stage;
-  const detail = Object.entries(entry.counts ?? {})
-    .map(([k, v]) => countLabel(k, v))
-    .join(" · ");
-  return (
-    <div className="flex gap-2">
-      {time && <span className="shrink-0 text-muted-foreground">{time}</span>}
-      <span className="shrink-0 font-medium">{entry.user}</span>
-      <span className="text-muted-foreground">
-        {label}
-        {detail ? ` · ${detail}` : ""}
-        {/* A skip carries its reason here — this feed is the only place a SHARED row's outcome
-            appears at all, since a shared row has no per-user panel. */}
-        {entry.reason ? ` — ${entry.reason}` : ""}
-      </span>
-    </div>
-  );
-}
 
 function CopyForGitHubButton({
   run,
@@ -795,6 +724,24 @@ function GroupLabel({ children }: { children: ReactNode }) {
   );
 }
 
+type RunTab = "overview" | "users" | "log";
+
+/** The stage the run is in RIGHT NOW, phrased for the header.
+ *
+ *  Everything after the last person finishes is server-wide, and used to be silent — so a run in its
+ *  tail looked identical to a wedged one. Naming the phase is the whole fix. */
+function currentPhase(entries: RunLogEntry[]): string | null {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (!entry || !isServerStage(entry.user)) continue;
+    if (entry.stage === "finished") return null;
+    const label = STAGE_LABELS[entry.stage] ?? entry.stage;
+    const progress = progressLabel(entry.counts ?? {});
+    return progress ? `${label} ${progress}` : label;
+  }
+  return null;
+}
+
 export function RunDetailPage() {
   const { id } = useParams();
   const runId = Number(id);
@@ -802,6 +749,17 @@ export function RunDetailPage() {
   const usersQuery = useUsers();
   const queryClient = useQueryClient();
   const cancel = useCancelRun();
+  // Tab and the deep-linked person both live in the URL, so a refresh, a bookmark, and the link
+  // from a person's Runs tab all land exactly where they said they would.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = (searchParams.get("tab") as RunTab | null) ?? "overview";
+  const linkedUser = searchParams.get("user") ?? "";
+  const setTab = (next: RunTab) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === "overview") params.delete("tab");
+    else params.set("tab", next);
+    setSearchParams(params, { replace: true });
+  };
 
   // Run results carry slug/username but no user id, so map slug → id to deep-link each result to
   // its user page. Users removed from Plex since the run won't be in the map — those stay plain text.
@@ -860,8 +818,11 @@ export function RunDetailPage() {
   // makes cascading renders easy to introduce.
   const [pickedSlug, setSelectedSlug] = useState("");
   const runUsers = runQuery.data?.users ?? [];
-  const selectedSlug = runUsers.some((u) => u.slug === pickedSlug)
-    ? pickedSlug
+  // `?user=` wins on first load — it is how a person's own Runs tab links here — but only until
+  // something else is clicked, which is what `pickedSlug` records.
+  const requested = pickedSlug || linkedUser;
+  const selectedSlug = runUsers.some((u) => u.slug === requested)
+    ? requested
     : ((runUsers.find((u) => u.error !== null) ?? runUsers[0])?.slug ?? "");
 
   return (
@@ -920,14 +881,89 @@ export function RunDetailPage() {
                     ? ` · finished ${formatDate(run.finished_at)}`
                     : " · still running"}
                 </p>
+                {/* The direct fix for "all users finished but it still says running": say WHAT it
+                    is doing. Everything after the last person is server-wide and used to be silent. */}
+                {!run.finished_at && currentPhase(liveLog) && (
+                  <p className="flex items-center gap-1.5 text-sm">
+                    <Loader2
+                      className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="text-muted-foreground">
+                      Finishing up ·{" "}
+                    </span>
+                    <span className="font-medium">{currentPhase(liveLog)}</span>
+                  </p>
+                )}
               </header>
 
-              <RunFailureBanner run={run} />
+              <Segmented
+                value={tab}
+                onChange={setTab}
+                ariaLabel="Run detail sections"
+                options={[
+                  { value: "overview", label: "Overview" },
+                  { value: "users", label: `People (${run.users.length})` },
+                  {
+                    value: "log",
+                    label: liveLog.length ? `Log (${liveLog.length})` : "Log",
+                  },
+                ]}
+              />
+
+              {tab === "overview" && <RunFailureBanner run={run} />}
 
               {/* Stats are only finalized once a run ends; while it's live we show the why-slow note instead. */}
-              {run.finished_at && <RunStatTiles run={run} />}
+              {tab === "overview" && run.finished_at && (
+                <>
+                  <RunStatTiles run={run} />
+                  <RunPhaseTimeline entries={liveLog} />
+                </>
+              )}
 
-              {!run.finished_at && (
+              {/* While a run is live, Overview's job is "what is it doing right now" — the tail of
+                  the feed, not a static explainer. The full log is one tab away. */}
+              {tab === "overview" && !run.finished_at && liveLog.length > 0 && (
+                <Card>
+                  <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+                    <CardTitle className="text-base">Latest activity</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setTab("log")}
+                    >
+                      View full log
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-1 rounded-md bg-muted/40 p-3 font-mono text-xs">
+                      {liveLog.slice(-8).map((entry) => (
+                        <div
+                          key={entry.seq ?? `${entry.ts}-${entry.stage}`}
+                          className="flex gap-2"
+                        >
+                          <span className="shrink-0 text-muted-foreground">
+                            {entry.ts
+                              ? new Date(entry.ts).toLocaleTimeString()
+                              : ""}
+                          </span>
+                          <span className="shrink-0 font-medium">
+                            {isServerStage(entry.user) ? "——" : entry.user}
+                          </span>
+                          <span className="text-muted-foreground">
+                            {STAGE_LABELS[entry.stage] ?? entry.stage}
+                            {progressLabel(entry.counts ?? {})
+                              ? ` · ${progressLabel(entry.counts ?? {})}`
+                              : ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {tab === "overview" && !run.finished_at && (
                 <div className="flex gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
                   <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="space-y-1">
@@ -945,147 +981,158 @@ export function RunDetailPage() {
                 </div>
               )}
 
-              {run.users.length === 0 ? (
-                <EmptyState
-                  title={
-                    run.finished_at
-                      ? "No per-user results"
-                      : "Working — results appear as each user finishes"
-                  }
-                  hint={
-                    run.finished_at
-                      ? "This run didn't process any users."
-                      : "Each user's picks land here when they finish; the activity log below shows live progress."
-                  }
-                />
-              ) : (
-                (() => {
-                  // Failures first in the nav, so a partly-failed run opens on the error you came for.
-                  const ordered = [...run.users].sort(
-                    (a, b) =>
-                      Number(b.error !== null) - Number(a.error !== null),
-                  );
-                  const selected =
-                    run.users.find((u) => u.slug === selectedSlug) ??
-                    ordered[0];
-                  if (!selected) return null;
-                  const failed = selected.error !== null;
-                  const userId = idBySlug.get(selected.slug) ?? null;
-                  // When many people failed the same way (e.g. one Plex outage), say it ONCE up top so
-                  // you don't click through 47 identical errors.
-                  const buckets = new Map<string, number>();
-                  for (const u of run.users)
-                    if (u.error)
-                      buckets.set(
-                        errorBucket(u.error),
-                        (buckets.get(errorBucket(u.error)) ?? 0) + 1,
-                      );
-                  const topError = [...buckets.entries()].sort(
-                    (a, b) => b[1] - a[1],
-                  )[0];
-                  const commonError =
-                    topError && topError[1] >= 2
-                      ? { msg: topError[0], count: topError[1] }
-                      : null;
-                  return (
-                    <div className="space-y-4">
-                      {commonError && (
-                        <div
-                          role="alert"
-                          className="flex gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
-                        >
-                          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                          <p>
-                            <span className="font-medium">
-                              {commonError.count} people failed with the same
-                              problem.
-                            </span>{" "}
-                            {commonError.msg} Open any person below for the raw
-                            details.
-                          </p>
-                        </div>
-                      )}
-                      <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
-                        <div className="lg:sticky lg:top-4">
-                          <UserTabs
-                            results={ordered}
-                            selected={selected.slug}
-                            onSelect={setSelectedSlug}
-                          />
-                        </div>
-                        <Card
-                          className={cn(
-                            "min-w-0",
-                            failed && "border-destructive/50",
-                          )}
-                        >
-                          <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
-                            <CardTitle className="flex items-center gap-2.5">
-                              <UserAvatar name={selected.username} size="sm" />
-                              {userId !== null ? (
-                                <Link
-                                  to={`/users/${userId}`}
-                                  className="rounded-sm hover:text-primary hover:underline"
-                                >
-                                  {selected.display_name || selected.username}
-                                </Link>
-                              ) : (
-                                selected.display_name || selected.username
-                              )}
-                              <Badge
-                                variant={
-                                  failed
-                                    ? "destructive"
-                                    : runStatusVariant(selected.status)
-                                }
-                              >
-                                {runStatusLabel(selected.status)}
-                              </Badge>
-                            </CardTitle>
-                            <div className="flex items-center gap-3">
-                              <p className="text-sm text-muted-foreground">
-                                {formatDuration(selected.duration_ms)}
-                                {selected.llm_tokens > 0
-                                  ? ` · ${selected.llm_tokens.toLocaleString()} AI tokens${tokenStepSummary(
-                                      selected.llm_tokens_by_step,
-                                    )}`
-                                  : ""}
-                                {exaSummary(selected.exa_searches)}
-                              </p>
-                              {selected.has_trace && userId !== null && (
-                                <Button
-                                  asChild
-                                  variant="secondary"
-                                  size="sm"
-                                  className="gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
-                                >
-                                  <Link to={`/runs/${run.id}/trace/${userId}`}>
-                                    <Telescope
-                                      className="h-3.5 w-3.5"
-                                      aria-hidden="true"
-                                    />
-                                    How we picked
-                                  </Link>
-                                </Button>
-                              )}
-                            </div>
-                          </CardHeader>
-                          <CardContent>
-                            <UserPanel
-                              run={run}
-                              result={selected}
-                              liveLog={liveLog}
+              {tab === "users" &&
+                (run.users.length === 0 ? (
+                  <EmptyState
+                    title={
+                      run.finished_at
+                        ? "No per-user results"
+                        : "Working — results appear as each user finishes"
+                    }
+                    hint={
+                      run.finished_at
+                        ? "This run didn't process any users."
+                        : "Each person's picks land here when they finish; the Log tab shows live progress."
+                    }
+                  />
+                ) : (
+                  (() => {
+                    // Failures first in the nav, so a partly-failed run opens on the error you came for.
+                    const ordered = [...run.users].sort(
+                      (a, b) =>
+                        Number(b.error !== null) - Number(a.error !== null),
+                    );
+                    const selected =
+                      run.users.find((u) => u.slug === selectedSlug) ??
+                      ordered[0];
+                    if (!selected) return null;
+                    const failed = selected.error !== null;
+                    const userId = idBySlug.get(selected.slug) ?? null;
+                    // When many people failed the same way (e.g. one Plex outage), say it ONCE up top so
+                    // you don't click through 47 identical errors.
+                    const buckets = new Map<string, number>();
+                    for (const u of run.users)
+                      if (u.error)
+                        buckets.set(
+                          errorBucket(u.error),
+                          (buckets.get(errorBucket(u.error)) ?? 0) + 1,
+                        );
+                    const topError = [...buckets.entries()].sort(
+                      (a, b) => b[1] - a[1],
+                    )[0];
+                    const commonError =
+                      topError && topError[1] >= 2
+                        ? { msg: topError[0], count: topError[1] }
+                        : null;
+                    return (
+                      <div className="space-y-4">
+                        {commonError && (
+                          <div
+                            role="alert"
+                            className="flex gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
+                          >
+                            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                            <p>
+                              <span className="font-medium">
+                                {commonError.count} people failed with the same
+                                problem.
+                              </span>{" "}
+                              {commonError.msg} Open any person below for the
+                              raw details.
+                            </p>
+                          </div>
+                        )}
+                        <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
+                          <div className="lg:sticky lg:top-4">
+                            <UserTabs
+                              results={ordered}
+                              selected={selected.slug}
+                              onSelect={setSelectedSlug}
                             />
-                          </CardContent>
-                        </Card>
+                          </div>
+                          <Card
+                            className={cn(
+                              "min-w-0",
+                              failed && "border-destructive/50",
+                            )}
+                          >
+                            <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+                              <CardTitle className="flex items-center gap-2.5">
+                                <UserAvatar
+                                  name={selected.username}
+                                  size="sm"
+                                />
+                                {userId !== null ? (
+                                  <Link
+                                    to={`/users/${userId}`}
+                                    className="rounded-sm hover:text-primary hover:underline"
+                                  >
+                                    {selected.display_name || selected.username}
+                                  </Link>
+                                ) : (
+                                  selected.display_name || selected.username
+                                )}
+                                <Badge
+                                  variant={
+                                    failed
+                                      ? "destructive"
+                                      : runStatusVariant(selected.status)
+                                  }
+                                >
+                                  {runStatusLabel(selected.status)}
+                                </Badge>
+                              </CardTitle>
+                              <div className="flex items-center gap-3">
+                                <p className="text-sm text-muted-foreground">
+                                  {formatDuration(selected.duration_ms)}
+                                  {selected.llm_tokens > 0
+                                    ? ` · ${selected.llm_tokens.toLocaleString()} AI tokens${tokenStepSummary(
+                                        selected.llm_tokens_by_step,
+                                      )}`
+                                    : ""}
+                                  {exaSummary(selected.exa_searches)}
+                                </p>
+                                {selected.has_trace && userId !== null && (
+                                  <Button
+                                    asChild
+                                    variant="secondary"
+                                    size="sm"
+                                    className="gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                                  >
+                                    <Link
+                                      to={`/runs/${run.id}/trace/${userId}`}
+                                    >
+                                      <Telescope
+                                        className="h-3.5 w-3.5"
+                                        aria-hidden="true"
+                                      />
+                                      How we picked
+                                    </Link>
+                                  </Button>
+                                )}
+                              </div>
+                            </CardHeader>
+                            <CardContent>
+                              <UserPanel
+                                run={run}
+                                result={selected}
+                                liveLog={liveLog}
+                              />
+                            </CardContent>
+                          </Card>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })()
-              )}
+                    );
+                  })()
+                ))}
 
-              {(liveLog.length > 0 || !run.finished_at) && (
-                <ActivityLog entries={liveLog} running={!run.finished_at} />
+              {tab === "log" && (
+                <RunLogPanel
+                  runId={run.id}
+                  entries={liveLog}
+                  running={!run.finished_at}
+                  people={[...new Set(run.users.map((u) => u.slug))].sort()}
+                />
               )}
             </div>
           )}

@@ -8,10 +8,12 @@ import { RowEditor } from "@/components/rows/row-editor";
 import type * as ApiModule from "@/lib/api";
 import type { Collection, User } from "@/lib/types";
 
-const { updateCollection } = vi.hoisted(() => ({
+const { updateCollection, settingsData } = vi.hoisted(() => ({
   updateCollection: vi.fn((id: number, body: unknown) =>
     Promise.resolve({ ...(body as object), id }),
   ),
+  // Mutable so a test can serve a real server's globals; empty = "settings haven't loaded".
+  settingsData: { current: {} as Record<string, unknown> },
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -21,7 +23,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       updateCollection: (id: number, body: unknown) =>
         updateCollection(id, body),
-      getSettings: () => Promise.resolve({}),
+      getSettings: () => Promise.resolve(settingsData.current),
       getLibraries: () => Promise.resolve([]),
       getImageProvider: () =>
         Promise.resolve({ capable: false, provider: "", reason: "" }),
@@ -91,9 +93,58 @@ function renderEditor(collection: Collection, users: User[] = []) {
   );
 }
 
+describe("RowEditor — inherited globals", () => {
+  beforeEach(() => {
+    settingsData.current = {};
+  });
+
+  it("names the global each inheriting field is actually following", async () => {
+    settingsData.current = {
+      "recommendations.watched_pct": 0.4,
+      "recommendations.freshness": 0.5,
+      "recommendations.recent_count": 8,
+      "recommendations.max_seeds": 30,
+    };
+    renderEditor(
+      row({
+        watched_pct: null,
+        freshness: null,
+        recent_count: null,
+        max_seeds: null,
+      }),
+    );
+
+    // The whole point: "use the global default" now says WHAT the global is.
+    expect(
+      await screen.findByText(/40% — up to 40% already-watched/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/50% — refreshes about every 8 days/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("8 recent watches")).toBeInTheDocument();
+    expect(screen.getByText("30 watches")).toBeInTheDocument();
+  });
+
+  it("claims no global value while settings are still loading", () => {
+    renderEditor(row({ watched_pct: null }));
+
+    expect(screen.queryByText(/^Currently/)).toBeNull();
+  });
+
+  it("says nothing about the global on a field that overrides it", async () => {
+    settingsData.current = { "recommendations.watched_pct": 0.4 };
+    renderEditor(row({ watched_pct: 0.25 }));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/40% — up to 40% already-watched/)).toBeNull(),
+    );
+  });
+});
+
 describe("RowEditor — already-watched titles", () => {
   beforeEach(() => {
     updateCollection.mockClear();
+    settingsData.current = {};
   });
 
   it("shows the watched slider when a row overrides the global cap", () => {
@@ -267,6 +318,26 @@ describe("RowEditor — placement", () => {
     ).toBeInTheDocument();
   });
 
+  it("names the owner account behind 'Just me', and counts everyone else", () => {
+    renderEditor(row({ placement: "both", placement_friends: "both" }), [
+      user({ id: 1, user_type: "owner", display_name: "stevezau" }),
+      user({ id: 2, slug: "sarah" }),
+      user({ id: 3, slug: "mike" }),
+    ]);
+
+    expect(screen.getAllByText("Just me").length).toBeGreaterThan(0);
+    // The whole point of the rename: "me" is a specific Plex account, so name it.
+    expect(screen.getByText("stevezau")).toBeInTheDocument();
+    expect(screen.getByText("2 other people")).toBeInTheDocument();
+  });
+
+  it("says 'Just me' with no name rather than a wrong one while the roster loads", () => {
+    renderEditor(row({ placement: "both", placement_friends: "both" }), []);
+
+    expect(screen.getAllByText("Just me").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^\d+ other (person|people)$/)).toBeNull();
+  });
+
   it("offers an explanation of who sees what", async () => {
     renderEditor(row({ placement: "both", placement_friends: "both" }));
     expect(screen.getByText(/How does this work/i)).toBeInTheDocument();
@@ -383,7 +454,9 @@ describe("RowEditor — freshness", () => {
     ).not.toBeChecked();
   });
 
-  it("round-trips a per-row freshness into the PATCH body", async () => {
+  it("stops inheriting at the global's own value, not at zero", async () => {
+    // Turning "use the global" OFF should stop TRACKING the global, not change what the row does.
+    // It used to snap to 0 — i.e. silently froze the row — which reads as a broken switch.
     renderEditor(row({ freshness: null }));
 
     await userEvent.click(
@@ -396,7 +469,7 @@ describe("RowEditor — freshness", () => {
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
     expect(
       (updateCollection.mock.calls.at(0)?.[1] as Collection).freshness,
-    ).toBe(0);
+    ).toBe(0.5);
   });
 });
 

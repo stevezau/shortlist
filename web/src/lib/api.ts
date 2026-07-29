@@ -7,6 +7,7 @@ import type {
   AppNotification,
   ArrOptions,
   Backup,
+  BlockedSeed,
   EffectivenessReport,
   OwnedCollectionsAudit,
   PlexLibrary,
@@ -30,7 +31,9 @@ import type {
   RunLogEntry,
   LogPage,
   RunRequest,
+  ReportWindow,
   RunsSummary,
+  ScheduleResponse,
   RunUserTraceResponse,
   RowOverridePatch,
   Session,
@@ -43,6 +46,7 @@ import type {
   VersionInfo,
   UserPatch,
   UserRow,
+  UserRunsCount,
   UserRunSummary,
   WatchItem,
 } from "./types";
@@ -223,21 +227,31 @@ export const api = {
 
   blockSeed: (
     userId: number,
-    tmdbId: number,
-    title: string,
-  ): Promise<{ blocked_seeds: number[] }> =>
+    seed: { tmdbId: number; title: string; mediaType?: string; year?: number },
+  ): Promise<{ blocked_seeds: BlockedSeed[] }> =>
     request(`/api/users/${userId}/blocked-seeds`, {
       method: "POST",
-      body: JSON.stringify({ tmdb_id: tmdbId, title }),
+      body: JSON.stringify({
+        tmdb_id: seed.tmdbId,
+        title: seed.title,
+        media_type: seed.mediaType ?? "",
+        year: seed.year ?? null,
+      }),
     }),
 
   unblockSeed: (
     userId: number,
     tmdbId: number,
-  ): Promise<{ blocked_seeds: number[] }> =>
+  ): Promise<{ blocked_seeds: BlockedSeed[] }> =>
     request(`/api/users/${userId}/blocked-seeds/${tmdbId}`, {
       method: "DELETE",
     }),
+
+  /** TMDB's best guess for a title, for the "block a seed" picker. */
+  searchTitles: (q: string, mediaType: "movie" | "show"): Promise<BlockedSeed[]> =>
+    request(
+      `/api/users/search/titles?q=${encodeURIComponent(q)}&media_type=${mediaType}`,
+    ),
 
   getUserRows: (id: number): Promise<UserRow[]> =>
     request(`/api/users/${id}/rows`),
@@ -255,17 +269,27 @@ export const api = {
   getUserRuns: (id: number): Promise<UserRunSummary[]> =>
     request(`/api/users/${id}/runs`),
 
+  getUserRunsSummary: (id: number): Promise<UserRunsCount> =>
+    request(`/api/users/${id}/runs/summary`),
+
   getUserHistory: (id: number): Promise<WatchItem[]> =>
     request(`/api/users/${id}/history`),
 
   // --- Runs ---
-  /** Recent runs; pass a row slug to get only the runs that built that row. */
-  getRuns: (collection?: string): Promise<Run[]> =>
-    request(
-      collection
-        ? `/api/runs?collection=${encodeURIComponent(collection)}`
-        : "/api/runs",
-    ),
+  /** Recent runs; pass a row slug to get only the runs that built that row. `beforeId` pages
+   *  backwards — the id of the oldest run you already have. */
+  getRuns: (
+    collection?: string,
+    beforeId?: number,
+    limit?: number,
+  ): Promise<Run[]> => {
+    const params = new URLSearchParams();
+    if (collection) params.set("collection", collection);
+    if (beforeId !== undefined) params.set("before_id", String(beforeId));
+    if (limit !== undefined) params.set("limit", String(limit));
+    const query = params.toString();
+    return request(query ? `/api/runs?${query}` : "/api/runs");
+  },
 
   getRun: (id: number): Promise<RunDetail> => request(`/api/runs/${id}`),
 
@@ -278,6 +302,9 @@ export const api = {
 
   /** Totals for the Runs page header (count, succeeded/failed, last run). */
   getRunsSummary: (): Promise<RunsSummary> => request("/api/runs/summary"),
+
+  /** Everything on a timer — rows and jobs together, for the Schedule page. */
+  getSchedule: (): Promise<ScheduleResponse> => request("/api/schedule"),
 
   /** Delete ALL run history (runs, per-user rows, picks — and thus the report). Irreversible. */
   clearRuns: (): Promise<{ deleted: number }> =>
@@ -384,7 +411,8 @@ export const api = {
   getSyncs: (): Promise<SyncsInfo> => request("/api/system/syncs"),
 
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
-  getReport: (): Promise<EffectivenessReport> => request("/api/report"),
+  getReport: (window: ReportWindow = "30"): Promise<EffectivenessReport> =>
+    request(`/api/report?window=${window}`),
 
   /** Run the daily watch-status sync on demand (fires in the background). */
   syncWatched: (): Promise<{ started: boolean }> =>

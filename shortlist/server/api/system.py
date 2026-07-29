@@ -532,14 +532,17 @@ def _job_dict(job) -> dict:
 
 
 @router.get("/jobs", dependencies=[Depends(require_owner)])
-async def list_jobs(request: Request, limit: int = 25, kind: str | None = None) -> list[dict]:
+async def list_jobs(
+    request: Request, limit: int = 25, kind: str | None = None, before_id: int | None = None
+) -> list[dict]:
     """Recent background jobs, newest first — the "did that actually happen?" answer.
 
     Maintenance work used to be fire-and-forget: it landed in the logs and the events table and
     nowhere an operator would look. Runs keep their own page; this is everything else.
 
     `kind` narrows it to one job type, which is how the Jobs page shows a single job's own history
-    without pulling every other kind's rows down with it.
+    without pulling every other kind's rows down with it. `before_id` pages backwards — pass the id
+    of the oldest job you already have.
     """
     from shortlist.server.db.models import Job
 
@@ -547,6 +550,8 @@ async def list_jobs(request: Request, limit: int = 25, kind: str | None = None) 
         query = session.query(Job)
         if kind:
             query = query.filter(Job.kind == kind)
+        if before_id is not None:
+            query = query.filter(Job.id < before_id)
         rows = query.order_by(Job.created_at.desc(), Job.id.desc()).limit(min(limit, 200)).all()
         return [_job_dict(job) for job in rows]
 

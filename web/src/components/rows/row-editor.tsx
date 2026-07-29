@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { AudiencePicker } from "@/components/rows/audience-picker";
+import { GlobalDefaultToggle } from "@/components/rows/global-default-row";
 import { LibraryPicker } from "@/components/rows/library-picker";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
@@ -27,7 +28,17 @@ import { RecentCountField } from "@/components/recent-count-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
-import { useSaveCollection } from "@/lib/queries";
+import { useSaveCollection, useSettings } from "@/lib/queries";
+import type { RowTemplate } from "@/lib/row-templates";
+import {
+  freshnessGlobal,
+  freshnessSeed,
+  maxSeedsGlobal,
+  recentCountGlobal,
+  recentCountSeed,
+  watchedPctGlobal,
+  watchedPctSeed,
+} from "@/lib/row-globals";
 import type { Collection, CollectionInput, Placement, User } from "@/lib/types";
 
 /** Decode/encode one audience's placement as its two independent surface flags. All four
@@ -56,6 +67,21 @@ function namedRowSeeds(media: string): number {
   return media === "both" ? 2 : 1;
 }
 
+/** The owner's display name, for labelling the "Just me" column with the account it actually means.
+ *  Null while the roster is still loading — the column then reads "Just me" with no subtitle rather
+ *  than flashing a wrong name. */
+function ownerName(users: User[]): string | null {
+  const owner = users.find((user) => user.user_type === "owner");
+  if (!owner) return null;
+  return owner.display_name || owner.nickname || owner.username || null;
+}
+
+/** Everyone who isn't the owner. Counts the whole roster, enabled or not — this labels who the
+ *  column is ABOUT, not who a run will reach. */
+function othersCount(users: User[]): number {
+  return users.filter((user) => user.user_type !== "owner").length;
+}
+
 /** Collapsed by default — the grid should read on its own, and this is here for the "wait, who sees
  *  what?" moment. Native <details> so it is keyboard- and screen-reader-accessible with no library. */
 function PlacementHelp({ isShared }: { isShared: boolean }) {
@@ -80,8 +106,14 @@ function PlacementHelp({ isShared }: { isShared: boolean }) {
         )}
         <div className="space-y-2">
           <p>
-            <strong className="text-foreground">You</strong> &mdash; the server
-            owner: your own row, on your own screens.
+            This decides <strong className="text-foreground">where</strong> the
+            row appears, not who gets one &mdash; that&rsquo;s{" "}
+            <em>Who gets it?</em> above.
+          </p>
+          <p>
+            <strong className="text-foreground">Just me</strong> &mdash; the
+            Plex account that owns this server: your own row, on your own
+            screens.
           </p>
           <p>
             <strong className="text-foreground">Everyone else</strong> &mdash;
@@ -177,13 +209,17 @@ function PlacementToggles({
   placement,
   placementFriends,
   isShared,
+  users,
   onChange,
 }: {
   placement: Placement;
   placementFriends: Placement;
   isShared: boolean;
+  users: User[];
   onChange: (placement: Placement, placementFriends: Placement) => void;
 }) {
+  const owner = ownerName(users);
+  const others = othersCount(users);
   const ownerLibrary = hasLibrary(placement);
   const ownerHome = hasHome(placement);
   const friendsLibrary = hasLibrary(placementFriends);
@@ -211,12 +247,26 @@ function PlacementToggles({
     <div className="space-y-3 rounded-md border p-4">
       <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-6 gap-y-3">
         <span />
-        <p className="text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          You
-        </p>
-        <p className="text-center text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Everyone else
-        </p>
+        <div className="text-center">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Just me
+          </p>
+          {owner && (
+            <p className="text-[11px] font-normal normal-case text-muted-foreground/70">
+              {owner}
+            </p>
+          )}
+        </div>
+        <div className="text-center">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Everyone else
+          </p>
+          {users.length > 0 && (
+            <p className="text-[11px] font-normal normal-case text-muted-foreground/70">
+              {others === 1 ? "1 other person" : `${others} other people`}
+            </p>
+          )}
+        </div>
 
         <p className="text-sm">Library Recommended</p>
         {isShared ? (
@@ -340,18 +390,26 @@ function SharedRowReachWarning({
 
 export function RowEditor({
   collection,
+  template = null,
   users,
   onClose,
   onRename,
 }: {
   collection: Collection | null;
+  /** Seeds a NEW row's fields. Never set when editing an existing row, and every field it fills
+   *  stays editable — a template is a starting point, not a mode. */
+  template?: RowTemplate | null;
   users: User[];
   onClose: () => void;
   onRename?: () => void;
 }) {
   const save = useSaveCollection();
+  // Read-only here: the editor never writes settings, it only names the globals a row inherits.
+  const settings = useSettings();
   const [input, setInput] = useState<CollectionInput>(
-    collection ? toInput(collection) : blankInput(),
+    collection
+      ? toInput(collection)
+      : { ...blankInput(), ...(template?.values ?? {}) },
   );
   const isDefault = collection?.slug === "picked";
 
@@ -382,6 +440,20 @@ export function RowEditor({
             users’ Plex home screens.
           </DialogDescription>
         </DialogHeader>
+
+        {/* Purely informational — nothing about the template is stored on the row, and every
+            field it filled is editable below. It's here so a prefilled form doesn't read as
+            settings that appeared from nowhere. */}
+        {template && !collection && (
+          <p className="rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+            Started from{" "}
+            <strong className="text-foreground">
+              {template.emoji} {template.title}
+            </strong>
+            . Change anything you like —{" "}
+            {template.highlights.join(", ").toLowerCase()}.
+          </p>
+        )}
 
         <div className="space-y-5 py-2">
           <div className="space-y-2">
@@ -516,14 +588,15 @@ export function RowEditor({
               How much of this row may be things a person has already finished.
               Leave on the global default to follow Settings → Recommendations.
             </p>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm">Use the global default</span>
-              <Switch
-                checked={input.watched_pct === null}
-                onCheckedChange={(on) => set({ watched_pct: on ? null : 0 })}
-                aria-label="Use the global already-watched default"
-              />
-            </div>
+            <GlobalDefaultToggle
+              ariaLabel="Use the global already-watched default"
+              inheriting={input.watched_pct === null}
+              globalValue={watchedPctGlobal(settings.data)}
+              settingsHash="recommendations"
+              onChange={(on) =>
+                set({ watched_pct: on ? null : watchedPctSeed(settings.data) })
+              }
+            />
             {input.watched_pct !== null && (
               <WatchedSlider
                 id="row-watched-pct"
@@ -539,14 +612,15 @@ export function RowEditor({
               How much this row changes day to day. Leave on the global default
               to follow Settings → Recommendations.
             </p>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm">Use the global default</span>
-              <Switch
-                checked={input.freshness === null}
-                onCheckedChange={(on) => set({ freshness: on ? null : 0 })}
-                aria-label="Use the global freshness default"
-              />
-            </div>
+            <GlobalDefaultToggle
+              ariaLabel="Use the global freshness default"
+              inheriting={input.freshness === null}
+              globalValue={freshnessGlobal(settings.data)}
+              settingsHash="recommendations"
+              onChange={(on) =>
+                set({ freshness: on ? null : freshnessSeed(settings.data) })
+              }
+            />
             {input.freshness !== null && (
               <FreshnessSlider
                 id="row-freshness"
@@ -564,14 +638,17 @@ export function RowEditor({
               affects rows using AI web search. Leave on the global default to
               follow Settings → Recommendations.
             </p>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm">Use the global default</span>
-              <Switch
-                checked={input.recent_count === null}
-                onCheckedChange={(on) => set({ recent_count: on ? null : 10 })}
-                aria-label="Use the global recent-watches default"
-              />
-            </div>
+            <GlobalDefaultToggle
+              ariaLabel="Use the global recent-watches default"
+              inheriting={input.recent_count === null}
+              globalValue={recentCountGlobal(settings.data)}
+              settingsHash="recommendations"
+              onChange={(on) =>
+                set({
+                  recent_count: on ? null : recentCountSeed(settings.data),
+                })
+              }
+            />
             {input.recent_count !== null && (
               <RecentCountField
                 value={input.recent_count}
@@ -584,8 +661,8 @@ export function RowEditor({
             <p className="text-sm font-medium">Watches to build from</p>
             <p className="text-sm text-muted-foreground">
               How many of a person&rsquo;s recent watches this row is built
-              from. The default (30) blends their whole recent history, which is
-              right for a general &ldquo;Picked for you&rdquo; row. A small
+              from. The global default blends their whole recent history, which
+              is right for a general &ldquo;Picked for you&rdquo; row. A small
               number makes the row about one or two specific things they
               watched.
             </p>
@@ -610,16 +687,18 @@ export function RowEditor({
                 )}
               </p>
             )}
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-sm">Use the default (30)</span>
-              <Switch
-                checked={input.max_seeds === null}
-                onCheckedChange={(on) =>
-                  set({ max_seeds: on ? null : namedRowSeeds(input.media) })
-                }
-                aria-label="Use the default number of watches to build from"
-              />
-            </div>
+            {/* Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
+                reaching for this control almost always wants a row about one specific watch, and
+                the global is one switch-flip away again. */}
+            <GlobalDefaultToggle
+              ariaLabel="Use the default number of watches to build from"
+              inheriting={input.max_seeds === null}
+              globalValue={maxSeedsGlobal(settings.data)}
+              settingsHash="recommendations"
+              onChange={(on) =>
+                set({ max_seeds: on ? null : namedRowSeeds(input.media) })
+              }
+            />
             {input.max_seeds !== null && (
               <MaxSeedsField
                 value={input.max_seeds}
@@ -638,6 +717,7 @@ export function RowEditor({
               placement={input.placement}
               placementFriends={input.placement_friends}
               isShared={input.build === "shared"}
+              users={users}
               onChange={(placement, placementFriends) =>
                 set({ placement, placement_friends: placementFriends })
               }

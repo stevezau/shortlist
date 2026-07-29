@@ -324,6 +324,40 @@ class TestRun:
         # And they come after the per-user work, not before it.
         assert stages.index(("Shortlist", "ordering")) > stages.index(("Shortlist", "filters"))
 
+    def test_every_tail_phase_narrates_itself_including_converge(self, ctx: EngineContext, mock_plextv):
+        """The third time this bug has appeared, so this asserts the WHOLE tail, not a sample.
+
+        Converge, the shelf reorder and the requests pass emitted nothing at all — they ran after
+        every per-user card was already terminal, so the feed's last line stayed on whoever finished
+        last while minutes of real work went by. Add a phase to `run()` without an `_emit` and this
+        fails.
+        """
+        stages: list[tuple[str, str]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: stages.append((slug, stage))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        tail = [stage for slug, stage in stages if slug == "Shortlist"]
+        for stage in ("users_done", "converging", "converged", "shelves", "finished"):
+            assert stage in tail, f"the {stage} phase is invisible in the activity feed"
+        # "all users done" must land before the server-wide tail, and "finished" must be last —
+        # that pair is what makes "is it still going?" answerable from the feed alone.
+        assert tail.index("users_done") < tail.index("filters")
+        assert tail[-1] == "finished"
+
+    def test_the_narration_counts_out_the_long_per_account_phases(self, ctx: EngineContext, mock_plextv):
+        """One plex.tv write per account, throttled — a bare "filters" line sits there for minutes."""
+        emitted: list[tuple[str, dict]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: emitted.append((stage, counts))
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(101, "mike")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=101)])
+
+        progress = [counts for stage, counts in emitted if stage == "filters" and counts]
+        assert progress, "the share-filter merge reports no progress at all"
+        assert progress[-1]["done"] == progress[-1]["total"], "the count never reaches its total"
+
     def test_a_roster_that_omits_someone_is_not_knowledge_about_them(self, ctx: EngineContext, mock_plextv):
         """A 200 is not the same as a complete answer.
 
@@ -1171,6 +1205,49 @@ class TestPerRowOverrides:
         shared_report = next(u for u in report.users if u.slug == "shared_popular")
         assert shared_report.breakdown, "the shared row records a breakdown"
         assert all(e["row_slug"] == "popular" for e in shared_report.breakdown)
+
+    def test_a_shared_row_honours_the_server_wide_block_list(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """The shared path called `derive_seeds` with no `blocked` at all, so blocks simply did not
+        apply to public rows.
+
+        Asserted on the ARGUMENT rather than on the resulting picks: the picks depend on what TMDB
+        returns for the surviving seeds, so a "no picks" assertion passes for a dozen reasons that
+        have nothing to do with blocking (verified — it passed with the fix removed).
+        """
+        import shortlist.engine.rows as rows_mod
+
+        captured: list[set[int] | None] = []
+        real = rows_mod.derive_seeds
+
+        def spy(*args, **kwargs):
+            captured.append(kwargs.get("blocked"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(rows_mod, "derive_seeds", spy)
+
+        ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
+        ctx.config.blocked_shared_seeds = {4242}
+        sarah = make_profile("sarah", account_id=100)
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999, tmdb_id=4242)]
+
+        pipeline_mod.run(ctx, [sarah, mike])
+
+        assert {4242} in captured, "the shared row derived its seeds without the server-wide block list"
+
+    def test_one_persons_block_does_not_reshape_the_shared_row(self, ctx: EngineContext, mock_plextv):
+        ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
+        sarah = make_profile("sarah", account_id=100)
+        sarah.blocked_seeds = {4242}  # sarah's own preference
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999, tmdb_id=4242)]
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        shared_report = next(u for u in report.users if u.slug == "shared_popular")
+        assert shared_report.status != "skipped", "sarah's private block silently emptied a public row"
 
     def test_per_person_tokens_come_from_the_web_search_source_and_land_under_its_step(
         self, ctx: EngineContext, mock_plextv

@@ -3,8 +3,10 @@
 ## The web interface
 
 - **Dashboard** — the impact report: what Shortlist delivered versus what people actually
-  watched (hit rate over time, per user and per row), recent watches, and a **Sync watched now**
-  button to refresh those numbers on demand.
+  watched, for a window you choose (7 / 30 / 90 days, or all time — 30 by default). Each headline
+  figure carries its change against the previous equal period, so you can see direction rather than
+  a running total. There's also a **Sync watched now** button to refresh the numbers on demand.
+  See "Reading the dashboard" below for what each figure actually means.
 - **Rows** — create, edit, and reorder your rows. Each card shows who sees it and how it
   differs from the defaults (sources, libraries, freshness, placement). This is where
   the whole multi-row feature lives — see "Naming a row" and "Row placement" below.
@@ -85,6 +87,18 @@
 
 ## Schedules
 
+The **Schedule** page lists everything on a timer — rows and background jobs together, in the order
+they actually fire, each with its next run and an inline editor. Row schedules are edited on the Rows
+page (one place per setting), and jobs are edited in place.
+
+Two jobs are worth knowing about there:
+
+- **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
+  builds, delivers and promotes nothing — so it can only ever make your server *more* private. It is
+  the cheapest safety net against drift.
+- **Sync check** is **off** by default. Unlike the privacy sync it *writes corrections* to Plex, so
+  turning it on unattended is a choice to make rather than a default to inherit.
+
 **Every row runs on its own schedule** — there is no single server-wide one. Open a row (Rows → edit)
 and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for
 anything else, or **Off** to only run that row by hand. New rows default to nightly at 03:30 server-local;
@@ -104,6 +118,29 @@ backup pickers on Jobs — takes either form:
 Whichever you type, the line underneath tells you what it will actually do and what gets saved, and
 nothing saves until it parses — so a typo can't quietly leave you on the built-in default. Times are
 the server's, not your browser's.
+
+## Blocking a seed
+
+A **seed** is one of a person's recent watches that Shortlist searches from. When a watch isn't
+really them — a film they put on for someone else, a genre they don't want more of — block it: the
+watch stays in their history, it just stops shaping their picks.
+
+The natural place to do it is a run's **How we picked** page, on the seeds list, where a bad seed is
+usually what you noticed in the first place. There's also a search box on a person's detail page
+(**Users → someone → Settings → Blocked seeds**) for a title you remember but can't find a run for.
+
+Blocks are personal. A **shared** row is public, so one person's block deliberately does *not*
+reshape what everyone else sees — otherwise an individual preference would become a server-wide edit
+nobody else can see or undo. Shared rows use their own server-wide list
+(`recommendations.blocked_shared_seeds`).
+
+## Starting from a template
+
+**Rows → Add a row** opens a gallery rather than a blank form: *Picked for You*, *Because you
+watched…*, *Comfort rewatch*, *Fresh finds*, *From the vault*, *Popular on this server*, *Movie
+night*, *Your next series*, and *Start from scratch*. Each tile names the two or three settings it
+changes, so picking one also shows you which knobs matter. Nothing is locked in — every field is
+editable afterwards, and the template is not stored on the row.
 
 ## Naming a row
 
@@ -217,11 +254,38 @@ Hit **Preview** to see a sample before saving. Generated images are made once an
 runs (they refresh when you change the text or style), so posters don't slow a run down or cost per
 user. Posters are cosmetic — a poster that can't be made never blocks a row from building.
 
-## Hit rate
+## Reading the dashboard
 
-The % of recommended items a user actually watched within 30 days, computed from the same
-history source that feeds recommendations. It's Shortlist's own proof of value — visible
-globally and per user. Expect ~20-40% on engaged users after a few weeks.
+Everything on the dashboard is scoped to the window selected at the top — **the last 30 days** by
+default. That matters more than it sounds: these figures used to be lifetime totals, which made
+every ratio a measure of how long Shortlist had been installed rather than of how good the picks
+were. A pick can only ever be credited as watched within **30 days** of being delivered, but the old
+denominator kept every pick ever delivered, for ever — so each night added ~60 permanently
+uncreditable picks per person to the bottom of the fraction and the number could only sink.
+
+**Watched** — picks people watched in the window. A pick delivered last month and watched this week
+counts here: this figure is about watching, not delivery.
+
+**People watching** — how many people watched at least one pick, out of everyone currently enabled.
+
+**Avg to watch** — average days from a title first being recommended to it first being watched, over
+titles first watched in the window. Lower is better, and the change arrow is coloured accordingly.
+
+**Landing rate** — the one percentage, and the only one computed carefully enough to trust. It is the
+share of picks watched within 30 days of delivery, measured over a **matured cohort**: picks
+delivered in the window *and* at least 30 days ago. A pick delivered yesterday cannot have been
+"watched within 30 days" yet, so counting it would drag the rate toward zero for no reason. On a
+7-day window there is usually no matured cohort at all, and the card says so instead of showing a
+misleading number.
+
+**By person / By row** — counts, not percentages, sorted by what was actually watched. At these
+sample sizes a percentage is noise: ranking by one put a person with `1/31` above a person with
+`3/103`. People and rows with nothing in the window fold away behind a disclosure rather than filling
+the list with empty bars, and rows you have since deleted are hidden the same way — their picks still
+count in the totals above.
+
+**Watches per week** is deliberately the long view: always the last 16 weeks, whatever window is
+selected.
 
 ## Recommendation sources
 

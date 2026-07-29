@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mergeRunLog } from "@/lib/run-log";
+import { latestSeq, mergeRunLog } from "@/lib/run-log";
 import type { RunLogEntry } from "@/lib/types";
 
 function entry(patch: Partial<RunLogEntry>): RunLogEntry {
@@ -54,5 +54,65 @@ describe("mergeRunLog", () => {
   it("returns the same array reference when nothing new is added", () => {
     const prev = mergeRunLog([], [entry({})], 2);
     expect(mergeRunLog(prev, [entry({ run_id: 9 })], 2)).toBe(prev);
+  });
+
+  it("keeps progress lines that share a timestamp and a stage", () => {
+    // "merging share filters 1/5" and "2/5" are the same user, stage and millisecond. Keyed on
+    // ts|user|stage they collapsed into one line and the phase looked frozen at 1/5.
+    const out = mergeRunLog(
+      [],
+      [
+        entry({
+          seq: 0,
+          user: "Shortlist",
+          stage: "filters",
+          counts: { done: 1, total: 5 },
+        }),
+        entry({
+          seq: 1,
+          user: "Shortlist",
+          stage: "filters",
+          counts: { done: 2, total: 5 },
+        }),
+      ],
+      2,
+    );
+    expect(out).toHaveLength(2);
+    expect(out.map((e) => e.counts.done)).toEqual([1, 2]);
+  });
+
+  it("still dedupes the same seq arriving from both the seed fetch and SSE", () => {
+    const line = entry({ seq: 7, stage: "promoting" });
+    const seeded = mergeRunLog([], [line], 2);
+    expect(mergeRunLog(seeded, [{ ...line }], 2)).toHaveLength(1);
+  });
+
+  it("orders by seq, which is the order the engine emitted them", () => {
+    // Two lines a millisecond apart in the wrong direction: seq is the truth, not the clock.
+    const later = entry({
+      seq: 2,
+      ts: "2026-07-15T04:18:00Z",
+      stage: "ordering",
+    });
+    const earlier = entry({
+      seq: 1,
+      ts: "2026-07-15T04:18:01Z",
+      stage: "promoting",
+    });
+    const out = mergeRunLog([], [later, earlier], 2);
+    expect(out.map((e) => e.stage)).toEqual(["promoting", "ordering"]);
+  });
+});
+
+describe("latestSeq", () => {
+  it("finds the highest seq, for asking the server only for what's new", () => {
+    expect(
+      latestSeq([entry({ seq: 3 }), entry({ seq: 11 }), entry({ seq: 7 })]),
+    ).toBe(11);
+  });
+
+  it("is null when nothing carries a seq, meaning fetch the whole log", () => {
+    expect(latestSeq([])).toBeNull();
+    expect(latestSeq([entry({})])).toBeNull();
   });
 });

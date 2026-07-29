@@ -39,6 +39,16 @@ def drain(state) -> int:
     return asyncio.run(jobs.run_pending(state))
 
 
+@pytest.fixture
+def sessions_state_with_cap(sessions):
+    """An app.state whose `jobs.max_parallel_readonly` is pinned to 1."""
+    from shortlist.server.settings_store import SettingsStore
+
+    with sessions() as session:
+        SettingsStore(session).set("jobs.max_parallel_readonly", 1)
+    return SimpleNamespace(sessions=sessions, run_service=None)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_handlers():
     """Each test registers its own handlers without leaking into the next."""
@@ -178,6 +188,207 @@ class TestPlexContention:
         assert drain(idle) == 1
 
 
+class TestReaderWriterConcurrency:
+    """Read-only jobs run together; anything that writes to Plex does not.
+
+    Share-filter writes are read-modify-write MERGES (plex-safety rule 3). Two running at once both
+    read the same "before" and the second silently drops the first's excludes — a row stays visible
+    to someone it should be hidden from, with nothing to catch it since the Privacy Check was
+    removed. That is what the writer lock exists for, so it is asserted directly rather than inferred
+    from a count.
+    """
+
+    @staticmethod
+    def _tracker():
+        """A handler factory recording overlap: max concurrent, and the order they ran."""
+        state = {"live": 0, "peak": 0, "order": []}
+
+        def make(name: str, delay: float = 0.05):
+            async def handler(st, payload):
+                state["live"] += 1
+                state["peak"] = max(state["peak"], state["live"])
+                state["order"].append(name)
+                await asyncio.sleep(delay)
+                state["live"] -= 1
+                return {}
+
+            return handler
+
+        return state, make
+
+    def test_read_only_jobs_run_at_the_same_time(self, sessions, state):
+        tracked, make = self._tracker()
+        jobs._HANDLERS["sync.history"] = make("history")
+        jobs._HANDLERS["backup.take"] = make("backup")
+        jobs.enqueue(sessions, "sync.history")
+        jobs.enqueue(sessions, "backup.take")
+
+        assert drain(state) == 2
+        assert tracked["peak"] == 2, "read-only jobs should not be queueing behind each other"
+
+    def test_plex_writers_never_overlap(self, sessions, state):
+        tracked, make = self._tracker()
+        jobs._HANDLERS["privacy.sync"] = make("privacy")
+        jobs._HANDLERS["sync.check"] = make("check")
+        jobs.enqueue(sessions, "privacy.sync")
+        jobs.enqueue(sessions, "sync.check")
+
+        assert drain(state) == 2
+        assert tracked["peak"] == 1, "two share-filter merges ran at once — one of them lost its excludes"
+
+    def test_a_reader_and_a_writer_may_overlap(self, sessions, state):
+        # Only writers contend. Backing up the database while filters merge is harmless.
+        tracked, make = self._tracker()
+        jobs._HANDLERS["privacy.sync"] = make("privacy")
+        jobs._HANDLERS["backup.take"] = make("backup")
+        jobs.enqueue(sessions, "privacy.sync")
+        jobs.enqueue(sessions, "backup.take")
+
+        assert drain(state) == 2
+        assert tracked["peak"] == 2
+
+    def test_a_run_blocks_writers_but_not_readers(self, sessions):
+        """The whole queue used to stop for the length of a run, so a server that ran for an hour did
+        no maintenance at all in that time."""
+        tracked, make = self._tracker()
+        jobs._HANDLERS["privacy.sync"] = make("privacy")
+        jobs._HANDLERS["backup.take"] = make("backup")
+        jobs.enqueue(sessions, "privacy.sync")
+        jobs.enqueue(sessions, "backup.take")
+        busy = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(is_running=lambda: True))
+
+        assert drain(busy) == 1
+        assert tracked["order"] == ["backup"], "the writer ran while a run held Plex"
+        # The writer is untouched and still queued — not failed, not counted as an attempt.
+        with sessions() as session:
+            writer = session.query(Job).filter_by(kind="privacy.sync").one()
+            assert writer.status == "queued" and writer.attempts == 0
+
+    def test_history_sync_waits_for_a_run_even_though_it_only_reads(self, sessions):
+        """The run refreshes history itself and both saturate the same PMS endpoints, so running
+        them together is pure waste."""
+        tracked, make = self._tracker()
+        jobs._HANDLERS["sync.history"] = make("history")
+        jobs._HANDLERS["backup.take"] = make("backup")
+        jobs.enqueue(sessions, "sync.history")
+        jobs.enqueue(sessions, "backup.take")
+        busy = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(is_running=lambda: True))
+
+        assert drain(busy) == 1
+        assert tracked["order"] == ["backup"]
+
+    def test_a_writer_stands_down_while_a_run_holds_the_lock(self, sessions):
+        """The mirror of `test_plex_writers_never_overlap`, and the half that was missing.
+
+        Jobs deferring to runs via `_plex_busy` used to be one-directional: it stopped a job STARTING
+        during a run, but a writer already mid-flight kept merging share filters straight through the
+        start of one. Runs now hold the same lock, and a writer that finds a run in progress stands
+        down rather than queueing behind it — a run holds the lock for its whole duration, and
+        `_drain` awaits its tasks while holding the drain lock, so parking would freeze the queue.
+        """
+
+        async def scenario():
+            ran: list[str] = []
+            jobs._HANDLERS["privacy.sync"] = lambda st, payload: ran.append("privacy") or {}
+            jobs.enqueue(sessions, "privacy.sync")
+            claimed = jobs._claim(sessions)
+            assert claimed is not None
+            job_id, kind = claimed
+            busy = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(is_running=lambda: True))
+            async with jobs.plex_writer_lock():  # a run, holding it
+                await asyncio.wait_for(jobs._run_writer(busy, sessions, job_id, kind), timeout=2)
+            return ran
+
+        assert asyncio.run(scenario()) == [], "a writer merged share filters while a run held the lock"
+        with sessions() as session:
+            job = session.query(Job).filter_by(kind="privacy.sync").one()
+            # Back on the queue with its attempt returned: losing the race is not a failure.
+            assert job.status == "queued" and job.attempts == 0
+
+    def test_a_writer_gives_up_on_the_lock_rather_than_parking_for_ever(self, sessions, state, monkeypatch):
+        """Bounds the late race: a run can take the lock between a writer's `_plex_busy` check and its
+        acquire. Without a cap the writer waits for the run's full duration, inside a `finally` the
+        drain lock is held across — freezing every other job, readers included."""
+        monkeypatch.setattr(jobs, "WRITER_LOCK_WAIT_S", 0.2)
+
+        async def scenario():
+            ran: list[str] = []
+            jobs._HANDLERS["privacy.sync"] = lambda st, payload: ran.append("privacy") or {}
+            jobs.enqueue(sessions, "privacy.sync")
+            claimed = jobs._claim(sessions)
+            assert claimed is not None
+            job_id, kind = claimed
+            # Lock held, but nothing reports a run — so only the timeout can rescue this.
+            async with jobs.plex_writer_lock():
+                await asyncio.wait_for(jobs._run_writer(state, sessions, job_id, kind), timeout=5)
+            return ran
+
+        assert asyncio.run(scenario()) == []
+        with sessions() as session:
+            job = session.query(Job).filter_by(kind="privacy.sync").one()
+            assert job.status == "queued" and job.attempts == 0
+
+    def test_writers_still_run_serially_within_one_drain(self, sessions, state):
+        """ "Disable everyone" queues one `user.cleanup` per person and drains them inline, so they
+        must all run — serially. A writer that refused to wait for another JOB would leave all but the
+        first requeued, and the UI would report one person cleaned out of five."""
+        tracked, make = self._tracker()
+        jobs._HANDLERS["user.cleanup"] = make("cleanup")
+        jobs._HANDLERS["privacy.sync"] = make("privacy")
+        jobs.enqueue(sessions, "user.cleanup", {"slug": "sarah"})
+        jobs.enqueue(sessions, "privacy.sync")
+
+        assert drain(state) == 2
+        assert sorted(tracked["order"]) == ["cleanup", "privacy"], "a writer was left requeued"
+        assert tracked["peak"] == 1, "and they still never overlapped"
+
+    def test_a_reader_still_runs_while_a_run_holds_the_writer_lock(self, sessions, state):
+        """The point of the lock being writer-only: a run must stop share-filter merges, not the
+        database backup. Refusing everything for a run's duration is what this change removed."""
+
+        async def scenario():
+            done: list[str] = []
+            jobs._HANDLERS["backup.take"] = lambda st, payload: done.append("backup") or {}
+            jobs.enqueue(sessions, "backup.take")
+            async with jobs.plex_writer_lock():
+                await asyncio.wait_for(jobs.run_pending(state), timeout=5)
+            return done
+
+        assert asyncio.run(scenario()) == ["backup"]
+
+    def test_a_writer_that_loses_the_race_keeps_its_attempts(self, sessions):
+        """A run starting between the claim and the lock is not a failure. Burning one of three
+        attempts for it would retire a healthy job after three unlucky nights."""
+        started = {"n": 0}
+
+        def racing_is_running():
+            # Idle at claim time, busy by the time the writer takes the lock.
+            started["n"] += 1
+            return started["n"] > 1
+
+        jobs._HANDLERS["privacy.sync"] = lambda st, payload: {}
+        jobs.enqueue(sessions, "privacy.sync")
+        racing = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(is_running=racing_is_running))
+
+        drain(racing)
+
+        with sessions() as session:
+            job = session.query(Job).filter_by(kind="privacy.sync").one()
+            assert job.status == "queued"
+            assert job.attempts == 0, "a lost race must not count against the retry budget"
+
+    def test_the_reader_pool_is_capped(self, sessions, sessions_state_with_cap):
+        """`jobs.max_parallel_readonly` is the dial for a PMS that objects to the concurrency."""
+        tracked, make = self._tracker()
+        jobs._HANDLERS["sync.history"] = make("history")
+        jobs._HANDLERS["backup.take"] = make("backup")
+        jobs.enqueue(sessions, "sync.history")
+        jobs.enqueue(sessions, "backup.take")
+
+        assert drain(sessions_state_with_cap) == 2
+        assert tracked["peak"] == 1, "the cap was ignored"
+
+
 class TestHandlers:
     """The registered job kinds — what a real server actually queues.
 
@@ -218,9 +429,54 @@ class TestHandlers:
             scheduler.WATCH_SYNC_JOB_ID,
             scheduler.USER_SYNC_JOB_ID,
             scheduler.BACKUP_JOB_ID,
+            scheduler.PRIVACY_SYNC_JOB_ID,
+            scheduler.SYNC_CHECK_JOB_ID,
         }
         scheduled = {e.schedule_job_id for e in jobs.CATALOG if e.schedule_job_id}
         assert scheduled == ids
+
+    def test_every_scheduled_kind_names_the_setting_that_edits_its_cron(self):
+        """The Schedule view edits crons by settings key. A kind with a timer but no key would
+        render a schedule nobody can change."""
+        from shortlist.server.settings_store import DEFAULTS
+
+        for entry in jobs.CATALOG:
+            if not entry.schedule_job_id:
+                continue
+            assert entry.schedule_setting, f"{entry.kind} is scheduled but names no settings key"
+            assert entry.schedule_setting in DEFAULTS, entry.schedule_setting
+
+    def test_every_kind_declares_whether_it_writes_to_plex(self):
+        """The flag that keeps share-filter merges correct.
+
+        A read-modify-write merge running twice at once loses one of the two sets of excludes — the
+        bug class §12 of jobs-and-runs-design.md tracks. Adding a kind without thinking about this
+        must fail here rather than defaulting quietly.
+        """
+        readers = {e.kind for e in jobs.CATALOG if not e.writes_plex}
+        # Pinned by name, not counted: if a kind changes side, that is a decision someone has to
+        # make here, in a diff, rather than a number quietly moving.
+        assert readers == {"sync.history", "backup.take"}
+        writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
+        assert "privacy.sync" in writers and "sync.check" in writers
+        assert {"user.cleanup", "user.hide", "user.restore", "row.reconcile"} <= writers
+
+    def test_sync_users_is_a_writer_because_it_renames_collections(self):
+        """It reads a roster — and then renames Shortlist collections on the PMS in the same handler.
+
+        Classed read-only, that rename could land mid-run. The run matches collections by rendered
+        TITLE, so a rename during converge can make a live collection look orphaned (converge deletes
+        orphans) or make delivery build a second collection beside the renamed one.
+        """
+        import inspect
+
+        from shortlist.server.api import users as users_api
+
+        assert jobs.BY_KIND["sync.users"].writes_plex is True
+        # The reason, asserted rather than trusted: if the rename ever moves out of this handler the
+        # flag can be revisited, and this points at where to look.
+        source = inspect.getsource(users_api.sync_users_from_state)
+        assert "_rename_after_nickname" in source
 
     def test_hiding_a_paused_user_takes_every_row_off_every_surface(self, sessions):
         """Pause keeps the collection and its label — so everyone else's exclude still matches, and

@@ -36,6 +36,7 @@ from sqlalchemy import text
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import row_marker
 from shortlist.server.db.models import Event, Job
+from shortlist.server.settings_store import SettingsStore
 
 # A job still marked `running` this long after it started is presumed dead — its process is gone.
 # Generous on purpose: a real sync check on a large server legitimately takes minutes, and requeuing
@@ -64,7 +65,23 @@ class JobKind:
     label: str
     description: str
     manual: bool  # may the UI trigger it from a button?
+    # Does this kind WRITE to Plex or plex.tv? The load-bearing flag on this dataclass.
+    #
+    # Share-filter writes are read-modify-write MERGES (plex-safety rule 3): two of them running at
+    # once both read the same "before" and the second silently drops the first's excludes — the bug
+    # class §12 of jobs-and-runs-design.md exists to track. Writers therefore take an exclusive lock
+    # that engine runs also hold; read-only kinds run concurrently up to `jobs.max_parallel_readonly`.
+    #
+    # Every kind must declare this deliberately. A test asserts the catalogue is exhaustive, so
+    # adding a kind without thinking about it fails CI rather than silently defaulting to "safe".
+    writes_plex: bool = True
     schedule_job_id: str | None = None  # APScheduler id, when this kind runs on a timer
+    # The settings key holding this kind's cron, so the Schedule view can edit it without a
+    # hard-coded map from kind to key. Blank when the kind has no schedule at all.
+    schedule_setting: str = ""
+    # Is the schedule opt-IN (blank cron = off)? True only for kinds that write to Plex unattended
+    # — running those on a timer is a choice to make, not a default to inherit.
+    schedule_optional: bool = False
     trigger: str = ""  # what causes it, for the kinds no button can start
 
 
@@ -82,7 +99,14 @@ CATALOG: tuple[JobKind, ...] = (
             "what notices someone leaving."
         ),
         manual=True,
+        # A WRITER, despite the name. The handler calls `_rename_after_nickname` inline, which renames
+        # Shortlist collections on the PMS when someone's display name has drifted. Marking it
+        # read-only let that rename land in the middle of a run — and the run matches collections by
+        # rendered TITLE, so a rename mid-converge can make a live collection look orphaned (converge
+        # deletes orphans) or make delivery build a second collection beside the renamed one.
+        writes_plex=True,
         schedule_job_id="user-sync",
+        schedule_setting="sync.users_cron",
     ),
     JobKind(
         kind="sync.history",
@@ -93,7 +117,9 @@ CATALOG: tuple[JobKind, ...] = (
             "nothing on Plex changes."
         ),
         manual=True,
+        writes_plex=False,  # "Reads only — nothing on Plex changes", as the description says
         schedule_job_id="watch-sync",
+        schedule_setting="sync.watch_cron",
     ),
     JobKind(
         kind="sync.check",
@@ -105,6 +131,9 @@ CATALOG: tuple[JobKind, ...] = (
             "run only updates the people in that run, so everyone else keeps whatever they last had."
         ),
         manual=True,
+        schedule_job_id="sync-check",
+        schedule_setting="sync.check_cron",
+        schedule_optional=True,
     ),
     JobKind(
         kind="privacy.sync",
@@ -114,13 +143,17 @@ CATALOG: tuple[JobKind, ...] = (
             "and promotes nothing — it can only ever make the server more private."
         ),
         manual=True,
+        schedule_job_id="privacy-sync",
+        schedule_setting="privacy.sync_cron",
     ),
     JobKind(
         kind="backup.take",
         label="Back up the database",
         description="Copy the database to /config/backups and prune to the keep limit.",
         manual=True,
+        writes_plex=False,  # local filesystem only
         schedule_job_id="db-backup",
+        schedule_setting="backup.cron",
     ),
     JobKind(
         kind="user.cleanup",
@@ -238,18 +271,40 @@ def recover_stale(sessions, *, boot: bool = False) -> int:
         return requeued
 
 
-def _claim(sessions) -> int | None:
-    """Take the oldest queued job whose backoff has elapsed, atomically. Returns its id.
+def writes_plex(kind: str) -> bool:
+    """Does this kind write to Plex or plex.tv? Unknown kinds are treated as writers — the safe
+    default is "take the lock", never "assume it is harmless"."""
+    entry = BY_KIND.get(kind)
+    return True if entry is None else entry.writes_plex
+
+
+def _claimable(kind: str, *, allow_writers: bool, allow_history: bool) -> bool:
+    """May a job of this kind START right now?
+
+    Filtered at CLAIM time rather than after, so a job we cannot run is never marked `running` and
+    then handed back — which would burn an attempt and its backoff for doing nothing.
+    """
+    if writes_plex(kind):
+        return allow_writers
+    # `sync.history` is read-only but is deferred during a run anyway: the run refreshes history
+    # itself and both saturate the same PMS endpoints, so running them together is pure waste.
+    return allow_history or kind != "sync.history"
+
+
+def _claim(sessions, *, allow_writers: bool = True, allow_history: bool = True) -> tuple[int, str] | None:
+    """Take the oldest runnable queued job whose backoff has elapsed, atomically. Returns (id, kind).
 
     SQLite has no ``SELECT ... FOR UPDATE SKIP LOCKED``, so the select-then-update is wrapped in
     ``BEGIN IMMEDIATE``, which takes the write lock up front and makes the pair atomic against any
-    other claimer. There is one worker today; this keeps it correct if that ever changes.
+    other claimer — including the concurrent read-only handlers this now dispatches.
     """
     now = datetime.now(UTC)
     with sessions() as session:
         session.execute(text("BEGIN IMMEDIATE"))
         try:
             for job in session.query(Job).filter(Job.status == "queued").order_by(Job.created_at, Job.id).all():
+                if not _claimable(job.kind, allow_writers=allow_writers, allow_history=allow_history):
+                    continue
                 if job.attempts:
                     ready_at = job.finished_at or job.created_at
                     if ready_at is not None and ready_at.tzinfo is None:
@@ -258,15 +313,35 @@ def _claim(sessions) -> int | None:
                     if ready_at is not None and now - ready_at < timedelta(seconds=wait):
                         continue  # still backing off after a failure
                 job.status = "running"
-                job.started_at = now
+                # `started_at` is stamped when the job actually STARTS (see `_execute`), not here.
+                # A writer can be claimed and then stand down without running, and dating it from the
+                # claim made those age toward STALE_AFTER — so the 30-minute sweep requeued jobs that
+                # had never begun, with a spurious "abandoned by a previous process" warning.
                 job.attempts += 1
+                kind = job.kind
                 session.commit()
-                return job.id
+                return job.id, kind
             session.rollback()
             return None
         except Exception:
             session.rollback()
             raise
+
+
+def _release(sessions, job_id: int) -> None:
+    """Put a claimed job back on the queue without counting the attempt.
+
+    Used when a run starts between claiming a writer and running it: the job did not fail, it simply
+    lost the race for the writer lock, and burning one of its three attempts for that would retire a
+    perfectly good job after three unlucky nights.
+    """
+    with sessions() as session:
+        job = session.get(Job, job_id)
+        if job is not None and job.status == "running":
+            job.status = "queued"
+            job.started_at = None
+            job.attempts = max(0, job.attempts - 1)
+            session.commit()
 
 
 def _finish(sessions, job_id: int, *, result: dict | None = None, error: str | None = None) -> None:
@@ -314,55 +389,190 @@ def _plex_busy(state) -> bool:
 
 _DRAIN_LOCK = asyncio.Lock()
 
+#: Per-event-loop locks. An `asyncio.Lock` binds itself to the loop of the first `await` that
+#: CONTENDS on it and raises from any other loop thereafter — so a single module-level lock is only
+#: safe while the process has exactly one loop for its lifetime. The server does; a test suite that
+#: calls `asyncio.run()` per test does not, and the failure mode is silent (the second writer raises,
+#: the drain swallows it, and the job simply never runs). Keyed by loop, pruned as loops close.
+_WRITER_LOCKS: dict[asyncio.AbstractEventLoop, asyncio.Lock] = {}
+
+
+def plex_writer_lock() -> asyncio.Lock:
+    """The one-writer lock for Plex/plex.tv, held by writer JOBS **and by engine runs**.
+
+    Both sides must take it. A job checking `_plex_busy` is not enough on its own: that only makes
+    jobs defer to runs, so a writer already mid-flight kept merging share filters straight through
+    the start of a run. Share-filter writes are read-modify-write merges (plex-safety rule 3), so the
+    second of two overlapping merges writes back a snapshot taken before the first's
+    `label!=shortlist_<slug>` exclude existed — and since the Privacy Check was removed on
+    2026-07-16, nothing catches it afterwards. `user.restore` is the worst case: it merges and then
+    PROMOTES in straight-line code, so a clobbered merge puts a row on shared Home with the excludes
+    gone.
+
+    Public because `RunService` acquires it around the engine run — that is what makes the exclusion
+    symmetric rather than one-directional.
+    """
+    loop = asyncio.get_running_loop()
+    for stale in [key for key in _WRITER_LOCKS if key.is_closed()]:
+        del _WRITER_LOCKS[stale]
+    lock = _WRITER_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _WRITER_LOCKS[loop] = lock
+    return lock
+
+
+#: How many read-only jobs may run at once. Dial to 1 if a PMS complains about the concurrency.
+DEFAULT_MAX_PARALLEL_READONLY = 3
+
+#: How long a writer will wait for the writer lock before standing down and requeueing.
+#:
+#: Long enough for another writer JOB to finish (a `user.cleanup` is seconds), short enough that a
+#: writer which loses a late race to a RUN costs the queue a minute rather than the run's full
+#: duration. A run is normally excluded by `_plex_busy` before we ever wait; this bounds the race.
+WRITER_LOCK_WAIT_S = 60
+
+
+def _max_parallel_readonly(state) -> int:
+    try:
+        with state.sessions() as session:
+            value = SettingsStore(session).get("jobs.max_parallel_readonly")
+    except Exception:
+        return DEFAULT_MAX_PARALLEL_READONLY
+    if isinstance(value, int) and value >= 1:
+        return value
+    return DEFAULT_MAX_PARALLEL_READONLY
+
 
 async def run_pending(state) -> int:
-    """Drain the queue. Returns how many jobs ran.
+    """Drain the queue. Returns how many jobs were dispatched.
 
-    Three callers reach this: the 10s scheduler tick, `POST /api/system/jobs`, and the disable path.
-    `max_instances=1` only guards the scheduler's own tick, and `_claim` being atomic just means two
-    drains take DIFFERENT jobs — then run them at once, each with its own PlexClient, its own
-    `write_lock` and its own adaptive plex.tv throttle. Two handlers writing plex.tv concurrently is
-    exactly what rule 6 forbids, so drains are serialized here. A caller that finds the lock held
-    returns immediately rather than queueing behind a long drain in a request path.
+    Three callers reach this: the scheduler tick, `POST /api/system/jobs`, and the disable path.
+    The drain LOOP is serialized (claiming is fast, and two loops racing would just interleave for
+    no gain); what runs inside it is not. Read-only kinds go out concurrently up to
+    `jobs.max_parallel_readonly`; anything that writes to Plex takes `_PLEX_WRITER_LOCK`.
+
+    A caller that finds the loop already running returns immediately rather than queueing behind it
+    in a request path.
+
+    Note this no longer bails on `_plex_busy`: a run blocks WRITERS, not the whole queue. Backing up
+    the database or re-reading the roster while a run is on is harmless, and refusing to was why a
+    server that ran for an hour did no maintenance at all in that time.
     """
     sessions = state.sessions
-    if _plex_busy(state) or _DRAIN_LOCK.locked():
+    if _DRAIN_LOCK.locked():
         return 0
     async with _DRAIN_LOCK:
         return await _drain(state, sessions)
 
 
+async def _execute(state, sessions, job_id: int, kind: str) -> None:
+    """Run one claimed job and close it out. Never raises — a handler's failure is the job's, not
+    the drain's, and one bad job must not stop everything queued behind it."""
+    with sessions() as session:
+        job = session.get(Job, job_id)
+        payload = dict(job.payload or {}) if job is not None else {}
+        if job is not None:
+            job.started_at = datetime.now(UTC)  # it is running NOW, not when it was claimed
+            session.commit()
+    fn = _HANDLERS.get(kind)
+    if fn is None:
+        # The kind was removed in an upgrade while a job was queued. Nothing can run it.
+        _finish(sessions, job_id, error=f"no handler registered for {kind!r}")
+        return
+    try:
+        if inspect.iscoroutinefunction(fn):
+            # An async handler is awaited on THIS loop rather than pushed to a worker thread.
+            # `sync.users` and `sync.history` were written as endpoint/scheduler coroutines: they
+            # publish to the SSE bus and hand their own blocking work to an executor. Running them
+            # under a fresh `asyncio.run()` in a worker thread would put their SSE publishes on a
+            # loop nothing is listening to. They already yield, so they do not stall the drain.
+            result = await fn(state, payload)
+        else:
+            result = await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, state, payload))
+        _finish(sessions, job_id, result=result or {})
+    except Exception as e:
+        # redact: a Plex/plex.tv error can carry a tokened URL (rule 9).
+        _finish(sessions, job_id, error=redact(f"{type(e).__name__}: {e}"))
+
+
+async def _run_writer(state, sessions, job_id: int, kind: str) -> None:
+    """A Plex-writing job: exclusive, and never alongside a run.
+
+    Waiting behind ANOTHER JOB is fine and necessary — "disable everyone" queues one `user.cleanup`
+    per person and drains them inline, and they have to run serially, not one-per-drain. Waiting
+    behind a RUN is not: a run holds the lock for its whole duration, and `_drain` awaits every task
+    it dispatched inside a `finally` while holding `_DRAIN_LOCK`, so a parked writer would freeze the
+    entire queue — readers included — for the length of the run. That is the exact behaviour this
+    change set out to remove.
+
+    So the wait is bounded two ways: skip entirely if a run is already in flight, and cap the wait for
+    the lock so losing a late race costs a minute rather than an hour. Standing down is not a failure,
+    so the job goes back on the queue with its attempt RETURNED — three unlucky nights would
+    otherwise retire a perfectly healthy job.
+    """
+    if _plex_busy(state):
+        _release(sessions, job_id)
+        return
+    lock = plex_writer_lock()
+    try:
+        await asyncio.wait_for(lock.acquire(), timeout=WRITER_LOCK_WAIT_S)
+    except TimeoutError:
+        logger.info("job {} ({}) stood down — the Plex writer lock stayed held", job_id, kind)
+        _release(sessions, job_id)
+        return
+    try:
+        # Re-checked with the lock in hand: a run can start between the check above and here.
+        if _plex_busy(state):
+            _release(sessions, job_id)
+            return
+        await _execute(state, sessions, job_id, kind)
+    finally:
+        lock.release()
+
+
+async def _run_reader(sem: asyncio.Semaphore, state, sessions, job_id: int, kind: str) -> None:
+    async with sem:
+        await _execute(state, sessions, job_id, kind)
+
+
 async def _drain(state, sessions) -> int:
     ran = 0
-    while True:
-        job_id = _claim(sessions)
-        if job_id is None:
-            return ran
-        with sessions() as session:
-            job = session.get(Job, job_id)
-            kind, payload = job.kind, dict(job.payload or {})
-        fn = _HANDLERS.get(kind)
-        if fn is None:
-            # The kind was removed in an upgrade while a job was queued. Nothing can run it.
-            _finish(sessions, job_id, error=f"no handler registered for {kind!r}")
-            continue
-        try:
-            if inspect.iscoroutinefunction(fn):
-                # An async handler is awaited on THIS loop rather than pushed to a worker thread.
-                # `sync.users` and `sync.history` were written as endpoint/scheduler coroutines: they
-                # publish to the SSE bus and hand their own blocking work to an executor. Running them
-                # under a fresh `asyncio.run()` in a worker thread would put their SSE publishes on a
-                # loop nothing is listening to. They already yield, so they do not stall the drain.
-                result = await fn(state, payload)
-            else:
-                result = await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, state, payload))
-            _finish(sessions, job_id, result=result or {})
-        except Exception as e:
-            # redact: a Plex/plex.tv error can carry a tokened URL (rule 9).
-            _finish(sessions, job_id, error=redact(f"{type(e).__name__}: {e}"))
-        ran += 1
-        if _plex_busy(state):
-            return ran  # a run started; yield the server to it
+    dispatched: set[asyncio.Task] = set()
+    # A separate list, because the done-callback below removes finished tasks from `dispatched` —
+    # gathering that set would only ever inspect the SLOW ones, and quietly skip the results of
+    # everything that finished first.
+    started: list[asyncio.Task] = []
+    sem = asyncio.Semaphore(_max_parallel_readonly(state))
+    try:
+        while True:
+            busy = _plex_busy(state)
+            claimed = _claim(sessions, allow_writers=not busy, allow_history=not busy)
+            if claimed is None:
+                break
+            job_id, kind = claimed
+            runner = (
+                _run_writer(state, sessions, job_id, kind)
+                if writes_plex(kind)
+                else _run_reader(sem, state, sessions, job_id, kind)
+            )
+            task = asyncio.create_task(runner)
+            dispatched.add(task)
+            started.append(task)
+            task.add_done_callback(dispatched.discard)
+            ran += 1
+    finally:
+        # Await everything dispatched before returning: callers (and tests) treat a completed
+        # `run_pending` as "the queue was drained", and a detached task outliving it would make
+        # "did that job run?" unanswerable.
+        if started:
+            # `return_exceptions` so one bad task never strands the others — but the results are
+            # LOOKED AT. Swallowing them silently is how a job that never ran looked like a job that
+            # ran and did nothing.
+            for outcome in await asyncio.gather(*started, return_exceptions=True):
+                if isinstance(outcome, BaseException):
+                    logger.exception("job dispatch failed", exc_info=outcome)
+    return ran
 
 
 # --- handlers ---------------------------------------------------------------------------------
@@ -464,7 +674,15 @@ async def _sync_history(state, payload: dict) -> dict:
 
     Watch history drives every recommendation, so a silent failure here degrades picks server-wide
     while everything still looks healthy. Reads only — nothing on Plex changes.
+
+    Bails when a run is in flight rather than waiting. `sync_watched` takes `RunService._lock`, which
+    a run holds for its whole duration — and `_drain` awaits every task it dispatched before
+    returning, holding `_DRAIN_LOCK`. Parking here would therefore freeze the entire queue, readers
+    included, for the length of the run. The run refreshes history itself anyway, so there is nothing
+    to lose: the scheduler's next tick picks this up.
     """
+    if _plex_busy(state):
+        return {"detail": "Skipped — a run is already reading watch history"}
     await state.run_service.sync_watched()
     return {"detail": "Watch history re-read for every enabled user"}
 

@@ -747,7 +747,14 @@ class PlexClient:
     # already-watched filter — the very 200-row bug the share-token read exists to end).
     _WATCHED_PAGE = 500
 
-    def watched_titles(self, section_key: str | int, media_type: MediaType, token: str) -> list[WatchedItem]:
+    def watched_titles(
+        self,
+        section_key: str | int,
+        media_type: MediaType,
+        token: str,
+        *,
+        since: datetime | None = None,
+    ) -> list[WatchedItem]:
         """Every title in one library this user has watched, read from the PMS AS that user.
 
         ``unwatched=0`` filters to ``viewCount>0`` — Plex's own binary "watched" flag, which INCLUDES a
@@ -765,6 +772,10 @@ class PlexClient:
             media_type: Which type the section holds — selects Plex's ``type`` (1=movie, 2=show).
             token: The server-scoped ``X-Plex-Token`` to read as (this user's, not the owner's) — a
                 live per-user credential, never logged (rule 9).
+            since: Return only titles last viewed at or after this moment (Plex's own
+                ``lastViewedAt>=`` section filter). This is an INCREMENTAL read: it cannot see a title
+                that was un-watched or deleted, so callers must still do a periodic full read.
+                ``None`` (the default) reads everything.
 
         Returns:
             One WatchedItem per distinct watched title, newest watch first is NOT guaranteed (callers
@@ -774,7 +785,7 @@ class PlexClient:
         items: list[WatchedItem] = []
         start = 0
         while True:
-            root = self._read_watched_page(section_key, plex_type, token, start)
+            root = self._read_watched_page(section_key, plex_type, token, start, since=since)
             entries = list(root)
             for el in entries:
                 item = self._watched_item(el, media_type)
@@ -786,18 +797,37 @@ class PlexClient:
             # total. An empty page also stops us — never loop forever on a server that ignores paging.
             if not entries or start >= total:
                 break
-        logger.debug("watched read: section {} ({}) -> {} titles", section_key, media_type.value, len(items))
+        logger.debug(
+            "watched read: section {} ({}) -> {} titles{}",
+            section_key,
+            media_type.value,
+            len(items),
+            f" since {since.isoformat()}" if since else "",
+        )
         return items
 
-    def _read_watched_page(self, section_key: str | int, plex_type: int, token: str, start: int) -> ET.Element:
+    def _read_watched_page(
+        self,
+        section_key: str | int,
+        plex_type: int,
+        token: str,
+        start: int,
+        *,
+        since: datetime | None = None,
+    ) -> ET.Element:
         """One page of a section's watched titles as XML, read as ``token``. Retries transient reads."""
         # Query params rather than plexapi: we need the raw per-user response as a specific token, and
         # includeGuids inlines the TMDB id so no library index is consulted. includeToken=False keeps
         # the OWNER's token out of the URL — we set the per-user token in the header instead (rule 9).
         url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
+        params: dict[str, object] = {"type": plex_type, "unwatched": 0, "includeGuids": 1}
+        if since is not None:
+            # Plex's section-filter syntax: the operator is part of the FIELD name, not the value.
+            # Epoch seconds, matching the `lastViewedAt` the items themselves carry.
+            params["lastViewedAt>="] = int(since.timestamp())
         r = http_retry.get(
             url,
-            params={"type": plex_type, "unwatched": 0, "includeGuids": 1},
+            params=params,
             headers={
                 "X-Plex-Token": token,
                 "X-Plex-Container-Start": str(start),

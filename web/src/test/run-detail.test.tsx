@@ -61,13 +61,15 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
   } as RunDetail;
 }
 
-function renderDetail() {
+/** `query` deep-links a tab (`?tab=users`) — the same URL a person's Runs tab links to, so these
+ *  tests exercise the real entry point rather than a state the UI can't reach. */
+function renderDetail(query = "?tab=users") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/runs/2"]}>
+      <MemoryRouter initialEntries={[`/runs/2${query}`]}>
         <Routes>
           <Route path="/runs/:id" element={<RunDetailPage />} />
         </Routes>
@@ -168,7 +170,7 @@ describe("RunDetailPage — grouped by library", () => {
     };
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     // Duration is computed from started_at → finished_at (04:18 → 04:24 = 6 minutes).
     expect(await screen.findByText("Duration")).toBeInTheDocument();
@@ -196,7 +198,7 @@ describe("RunDetailPage — grouped by library", () => {
     };
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     expect(await screen.findByText("Exa searches")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument(); // billed
@@ -216,7 +218,7 @@ describe("RunDetailPage — grouped by library", () => {
     };
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     expect(await screen.findByText("all succeeded")).toBeInTheDocument();
     // No AI this run → those tiles don't render at all (0-value tiles would be noise).
@@ -229,7 +231,7 @@ describe("RunDetailPage — grouped by library", () => {
     r.stats = { users_ok: 1, users_error: 0, llm_tokens: 9000 }; // legacy run: total but no split
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     expect(await screen.findByText("9,000")).toBeInTheDocument();
     expect(screen.getByText("curate + AI sources")).toBeInTheDocument();
@@ -330,11 +332,71 @@ describe("RunDetailPage — grouped by library", () => {
       },
     ]);
 
-    renderDetail();
+    renderDetail("?tab=log");
 
     // The stage renders with its human label + the count detail.
     expect(await screen.findByText(/curating with AI/)).toBeInTheDocument();
     expect(screen.getByText(/120 candidates/)).toBeInTheDocument();
+  });
+
+  it("filters the log down to Plex writes, and says what it hid", async () => {
+    getRun.mockResolvedValue(run([]));
+    getRunLog.mockResolvedValue([
+      {
+        seq: 0,
+        ts: "2026-07-15T04:18:05Z",
+        run_id: 2,
+        user: "moohouse",
+        stage: "curating",
+        counts: {},
+      },
+      {
+        seq: 1,
+        ts: "2026-07-15T04:18:06Z",
+        run_id: 2,
+        user: "Shortlist",
+        stage: "filters",
+        counts: { done: 2, total: 5 },
+      },
+    ]);
+
+    renderDetail("?tab=log");
+    await screen.findByText(/curating with AI/);
+
+    await userEvent.click(screen.getByRole("button", { name: "Plex writes" }));
+
+    expect(screen.getByText(/merging share filters/)).toBeInTheDocument();
+    expect(screen.queryByText(/curating with AI/)).toBeNull();
+    expect(screen.getByText("1 of 2 lines")).toBeInTheDocument();
+  });
+
+  it("names the phase a still-running run is actually in", async () => {
+    // The complaint this whole tab exists for: every person shows "done" and the run still says
+    // running, with nothing anywhere saying what it is doing.
+    getRun.mockResolvedValue({
+      ...run([]),
+      finished_at: null,
+      status: "running",
+    });
+    getRunLog.mockResolvedValue([
+      {
+        seq: 0,
+        ts: "2026-07-15T04:18:05Z",
+        run_id: 2,
+        user: "Shortlist",
+        stage: "converging",
+        counts: {},
+      },
+    ]);
+
+    renderDetail("");
+
+    expect(await screen.findByText(/Finishing up/)).toBeInTheDocument();
+    // Named in the header AND in Overview's latest-activity panel — both answer "what is it
+    // doing right now", so both carry it.
+    expect(
+      screen.getAllByText("checking for stranded rows").length,
+    ).toBeGreaterThan(0);
   });
 
   it("falls back to the flat pick list for legacy runs with no breakdown", async () => {
@@ -466,16 +528,33 @@ describe("RunDetail — a skipped person is not a success", () => {
     ) as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
-    // Both surfaces that used to say "succeeded": the People tile's hint and the list summary.
+    // The Overview tile's hint — one of the two surfaces that used to say "succeeded".
     expect(
       await screen.findByText(/3 skipped, built nothing/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/3 skipped — nothing was built/i),
-    ).toBeInTheDocument();
     expect(screen.queryByText("all succeeded")).toBeNull();
+  });
+
+  it("explains a skip on the person's own panel too", async () => {
+    const r = run([]);
+    r.stats = {
+      users_ok: 0,
+      users_error: 0,
+      users_skipped: 3,
+      titles_requested: 0,
+    };
+    r.users = ["sarah", "mike", "canary"].map((u, i) =>
+      skippedUser(u, i),
+    ) as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail("?tab=users");
+
+    expect(
+      await screen.findByText(/3 skipped — nothing was built/i),
+    ).toBeInTheDocument();
     // …and the person panel explains WHY rather than leaving them on "Working on this person…".
     expect(
       await screen.findByText(/no per-person rows to build/i),
@@ -524,7 +603,7 @@ describe("RunDetail — a failed run says why", () => {
     ];
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     expect(
       await screen.findByText(/Plex wouldn’t accept a share filter/i),
@@ -539,7 +618,7 @@ describe("RunDetail — a failed run says why", () => {
 
   it("stays quiet on a clean run", async () => {
     getRun.mockResolvedValue(run([]));
-    renderDetail();
+    renderDetail("");
     // The tiles only render once a run has finished — wait for one, then assert no alarm.
     expect(await screen.findByText("all succeeded")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();

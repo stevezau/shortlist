@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 
@@ -38,14 +39,26 @@ def _run_summary(run: Run) -> dict:
 
 
 @router.get("")
-async def list_runs(request: Request, limit: int = 50, collection: str | None = None) -> list[dict]:
+async def list_runs(
+    request: Request,
+    limit: int = 50,
+    collection: str | None = None,
+    before_id: int | None = None,
+) -> list[dict]:
     """Recent runs, newest first. `collection` (a row slug) narrows to runs that actually built that
-    row — the ones whose picks carry its slug — so the Rows page can link a row to its own history."""
+    row — the ones whose picks carry its slug — so the Rows page can link a row to its own history.
+
+    `before_id` pages backwards through history: pass the id of the oldest run you already have.
+    Cursor rather than offset because runs are inserted while you read — an offset would skip or
+    repeat rows as the list shifts under you.
+    """
     with request.app.state.sessions() as session:
         query = session.query(Run).order_by(Run.id.desc())
         if collection:
             built_in = session.query(PickRow.run_id).filter(PickRow.collection_slug == collection).distinct()
             query = query.filter(Run.id.in_(built_in))
+        if before_id is not None:
+            query = query.filter(Run.id < before_id)
         runs = query.limit(min(limit, 200)).all()
         return [_run_summary(r) for r in runs]
 
@@ -244,14 +257,38 @@ async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dic
         }
 
 
-@router.get("/{run_id}/log")
-async def get_run_log(run_id: int, request: Request) -> list[dict]:
-    """The run's stage activity log (history -> candidates -> curating -> delivering, per user).
+@router.get("/{run_id}/log", response_model=None)
+async def get_run_log(
+    run_id: int,
+    request: Request,
+    after_seq: int | None = None,
+    format: str = "json",
+) -> list[dict] | PlainTextResponse:
+    """The run's activity log: per-user stages, then the server-wide phases that follow them.
 
-    In-memory and live: it seeds the run page's activity feed on load and is topped up by the SSE
-    `run.user.stage` stream. Empty for a run whose process has since restarted — the per-user results
-    are the durable record; this is the live/recent debugging feed."""
-    return request.app.state.run_service.run_log(run_id)
+    Served from the live in-memory tail while the run is in flight and from `run_log_lines`
+    afterwards, so a run whose process has since restarted still has a readable log.
+
+    `after_seq` returns only lines past that sequence number, for topping up without refetching the
+    whole feed. `format=text` renders it as plain text for the download button.
+    """
+    lines = request.app.state.run_service.run_log(run_id, after_seq=after_seq)
+    if format == "text":
+        return PlainTextResponse(
+            _log_as_text(lines), headers={"Content-Disposition": f'inline; filename="run-{run_id}.log"'}
+        )
+    return lines
+
+
+def _log_as_text(lines: list[dict]) -> str:
+    """One line per entry: timestamp, subject, stage, then counts and reason. Deliberately plain —
+    this is what someone pastes into a bug report."""
+    out = []
+    for entry in lines:
+        counts = " ".join(f"{k}={v}" for k, v in (entry.get("counts") or {}).items())
+        parts = [entry.get("ts", ""), entry.get("user", ""), entry.get("stage", ""), counts, entry.get("reason", "")]
+        out.append("  ".join(p for p in parts if p))
+    return "\n".join(out) + ("\n" if out else "")
 
 
 @router.post("", status_code=202)

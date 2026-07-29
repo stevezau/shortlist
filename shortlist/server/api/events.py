@@ -21,11 +21,20 @@ async def stream(request: Request) -> StreamingResponse:
 
 
 @router.get("/log")
-async def audit_log(request: Request, scope: str | None = None, limit: int = 200) -> list[dict]:
+async def audit_log(
+    request: Request,
+    scope: str | None = None,
+    limit: int = 200,
+    before_id: int | None = None,
+) -> list[dict]:
+    """The audit trail, newest first. `before_id` pages backwards — pass the id of the oldest entry
+    you already have. A cursor, not an offset: events are appended while you read."""
     with request.app.state.sessions() as session:
         query = session.query(Event).order_by(Event.id.desc())
         if scope:
             query = query.filter(Event.scope == scope)
+        if before_id is not None:
+            query = query.filter(Event.id < before_id)
         return [
             {"id": e.id, "ts": iso_utc(e.ts), "level": e.level, "scope": e.scope, "message": e.message}
             for e in query.limit(min(limit, 1000)).all()

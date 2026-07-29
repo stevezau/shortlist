@@ -57,7 +57,23 @@ Consequences, worst first:
    after share filters are merged. Rule 1 of `.claude/rules/plex-safety.md` is unchanged.
 5. **Idempotent, no churn.** Read before writing; write only on difference. A nightly converge over
    hundreds of collections must cost reads, not writes — plex.tv is adaptively throttled.
-6. **One writer.** A job and a run must never write to Plex/plex.tv concurrently.
+6. **One writer.** A job and a run must never write to Plex/plex.tv concurrently. Since 2026-07-30
+   this is enforced by an explicit flag plus a lock **both sides take**, rather than by serializing
+   everything:
+
+   - every `JobKind` declares `writes_plex` (a test asserts the catalogue is exhaustive, so adding a
+     kind without deciding fails CI);
+   - writer jobs **and engine runs** hold `jobs.plex_writer_lock()`. Runs taking it is the load-bearing
+     half: `_plex_busy` alone only stopped a job *starting* during a run, so a writer already
+     mid-flight kept merging share filters straight through the start of one;
+   - read-only kinds run concurrently up to `jobs.max_parallel_readonly` (default 3).
+
+   The invariant is unchanged — what changed is that backing up the database no longer waits behind a
+   share-filter merge, and a run no longer stops the whole queue for its duration.
+
+   **`sync.users` is a writer** despite its name: the handler renames Shortlist collections on the PMS
+   inline (`_rename_after_nickname`). Runs match collections by rendered *title*, so a rename landing
+   mid-converge can make a live collection look orphaned — and converge deletes orphans.
 7. **Failures find the operator.** Anything that exhausts its retries raises a notification.
 
 ---
@@ -113,7 +129,25 @@ mid-job; startup requeues those. Every job kind must therefore be **idempotent**
 
 **Retries:** `attempts` / `max_attempts` (default 3) with backoff. Exhausted → `failed` → notification.
 
-**Serialization:** a single worker. Plex-writing jobs additionally wait while a run is active (§2.6).
+**Serialization:** by writer class, not by worker count (§2 principle 6). A kind that writes to
+Plex/plex.tv holds an exclusive lock and additionally waits while a run is active; read-only kinds
+(`sync.users`, `sync.history`, `backup.take`) run concurrently up to `jobs.max_parallel_readonly`
+(default 3).
+
+Two details that are easy to get wrong:
+
+- **`sync.history` is read-only but still waits for a run.** The run refreshes history itself and
+  both saturate the same PMS endpoints, so overlapping them is pure waste rather than a correctness
+  problem.
+- **Losing the race is not a failure.** A run can start between a writer being claimed and the lock
+  becoming free; that job goes back on the queue with its attempt *returned*, or three unlucky
+  nights would retire a perfectly healthy job.
+- **A writer waits for another JOB, never for a RUN.** "Disable everyone" queues one `user.cleanup`
+  per person and drains them inline, so they must run serially rather than one-per-drain — but a run
+  holds the lock for its whole duration, and `_drain` awaits its dispatched tasks inside a `finally`
+  while holding the drain lock. A writer parked behind a run would therefore freeze the entire queue,
+  readers included. So the wait is bounded twice: skip if a run is already in flight, and cap the
+  acquire at `WRITER_LOCK_WAIT_S` (60s) for the late race.
 
 ### 5.1 Job catalogue
 

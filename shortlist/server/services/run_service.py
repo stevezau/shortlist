@@ -21,12 +21,35 @@ from sqlalchemy.orm import Session, sessionmaker
 from shortlist.engine.models import SHARED_SLUG_PREFIX
 from shortlist.engine.pipeline import EngineContext
 from shortlist.engine.pipeline import run as engine_run
-from shortlist.server.db.models import Delivery, Event, PickRow, RequestCandidate, Run, RunUser, User
+from shortlist.server.db.models import (
+    Delivery,
+    Event,
+    PickRow,
+    RequestCandidate,
+    Run,
+    RunLogLine,
+    RunUser,
+    User,
+    iso_utc,
+)
 from shortlist.server.safe_mode import force_dry_run
+from shortlist.server.services import jobs
 from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.sse import EventBus
+from shortlist.server.settings_store import SettingsStore
 
 HIT_WINDOW_DAYS = 30  # a pick counts as a hit if it is watched within 30 days of being recommended
+
+
+def _parse_ts(value: str | None) -> datetime:
+    """The progress hook stamps `iso_utc()` strings; turn one back into a datetime for the DB.
+    A malformed or missing stamp falls back to now rather than dropping the line."""
+    if not value:
+        return datetime.now(UTC)
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return datetime.now(UTC)
 
 
 def _record_deliveries(session: Session, user_slug: str, breakdown: list[dict]) -> None:
@@ -97,24 +120,108 @@ class RunService:
         # to stop. The engine checks it before each user (cooperative), so an in-flight user finishes.
         self._cancels: dict[int, threading.Event] = {}
         self._tasks: set[asyncio.Task] = set()  # strong refs so in-flight runs aren't GC'd
-        # run_id -> the run's stage activity log, in memory so a page reload can replay it. Bounded
-        # per run and to the last few runs (the per-user RESULTS are the durable record; this is the
-        # live/recent debugging feed). Lost on restart, which is fine — it's not an audit trail.
+        # run_id -> the run's stage activity log, in memory as the LIVE tail: the SSE stream and a
+        # reload during the run read from here. The durable copy lands in `run_log_lines` (see
+        # `_new_run_log`), which is what any later read uses.
         self._run_logs: OrderedDict[int, deque[dict]] = OrderedDict()
-        self._run_log_runs = 10  # keep the activity log for this many most-recent runs
+        self._run_log_runs = 10  # keep the in-memory tail for this many most-recent runs
+        self._log_seq: dict[int, int] = {}  # run_id -> next seq
+        self._log_buffer: dict[int, list[dict]] = {}  # run_id -> lines not yet flushed
+        self._log_lock = threading.Lock()
+
+    #: Flush the narration in batches. A chatty run emits thousands of lines; one INSERT each would
+    #: put a write on the hot path of every stage transition for no benefit — nothing reads the
+    #: durable copy while the run is live (the SSE tail serves that).
+    _LOG_FLUSH_EVERY = 50
 
     def _new_run_log(self, run_id: int) -> Callable[[dict], None]:
-        """Start (or reset) a run's activity buffer and return an append sink for the progress hook."""
+        """Start (or reset) a run's activity buffer and return an append sink for the progress hook.
+
+        The sink stamps a monotonic `seq` (a timestamp is not unique enough to dedupe on — several
+        lines land in the same millisecond), appends to the live tail, and buffers for the DB.
+        """
         log: deque[dict] = deque(maxlen=2000)
         self._run_logs[run_id] = log
         self._run_logs.move_to_end(run_id)
         while len(self._run_logs) > self._run_log_runs:
-            self._run_logs.popitem(last=False)
-        return log.append
+            evicted, _ = self._run_logs.popitem(last=False)
+            self._log_seq.pop(evicted, None)
+            self._log_buffer.pop(evicted, None)
+        self._log_seq[run_id] = 0
+        self._log_buffer[run_id] = []
 
-    def run_log(self, run_id: int) -> list[dict]:
-        """The in-memory stage activity log for a run (empty if evicted or never run this process)."""
-        return list(self._run_logs.get(run_id, ()))
+        def sink(entry: dict) -> None:
+            with self._log_lock:
+                seq = self._log_seq.get(run_id, 0)
+                self._log_seq[run_id] = seq + 1
+                entry["seq"] = seq
+                log.append(entry)
+                buffered = self._log_buffer.setdefault(run_id, [])
+                buffered.append(entry)
+                due = len(buffered) >= self._LOG_FLUSH_EVERY
+            if due:
+                self.flush_run_log(run_id)
+
+        return sink
+
+    def flush_run_log(self, run_id: int) -> None:
+        """Write buffered narration to `run_log_lines`. Best-effort: losing a log line must never
+        fail a run that has already written to Plex."""
+        with self._log_lock:
+            pending = self._log_buffer.get(run_id) or []
+            self._log_buffer[run_id] = []
+        if not pending:
+            return
+        try:
+            with self._sessions() as session:
+                session.add_all(
+                    [
+                        RunLogLine(
+                            run_id=run_id,
+                            seq=entry["seq"],
+                            ts=_parse_ts(entry.get("ts")),
+                            user_slug=entry.get("user") or "",
+                            stage=entry.get("stage") or "",
+                            counts=entry.get("counts") or {},
+                            reason=(entry.get("reason") or "")[:1024],
+                            level=entry.get("level") or "info",
+                        )
+                        for entry in pending
+                    ]
+                )
+                session.commit()
+        except Exception:
+            logger.exception("could not persist {} run-log line(s) for run {}", len(pending), run_id)
+
+    def run_log(self, run_id: int, after_seq: int | None = None) -> list[dict]:
+        """A run's activity log, newest-last.
+
+        Serves the live in-memory tail while the run is in flight, and falls back to the durable
+        `run_log_lines` rows for any run this process didn't handle — which, before those rows
+        existed, was every run after a restart.
+        """
+        live = list(self._run_logs.get(run_id, ()))
+        if live:
+            entries = live
+        else:
+            with self._sessions() as session:
+                query = session.query(RunLogLine).filter(RunLogLine.run_id == run_id)
+                rows = query.order_by(RunLogLine.seq).all()
+            entries = [
+                {
+                    "seq": row.seq,
+                    "ts": iso_utc(row.ts),
+                    "run_id": run_id,
+                    "user": row.user_slug,
+                    "stage": row.stage,
+                    "counts": row.counts or {},
+                    **({"reason": row.reason} if row.reason else {}),
+                }
+                for row in rows
+            ]
+        if after_seq is not None:
+            entries = [e for e in entries if e.get("seq", -1) > after_seq]
+        return entries
 
     # -- context assembly (delegated to ContextBuilder) ----------------------------------
 
@@ -146,6 +253,152 @@ class RunService:
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         return self._ctx.user_history(user_id, limit=limit)
 
+    def _full_resync_due(self, store) -> bool:
+        """Is tonight the weekly complete re-read?
+
+        An incremental read cannot see an un-watch, a deleted title, or one whose `lastViewedAt`
+        never moved, so a full read has to happen on a schedule regardless of how well the cursor is
+        working. Never having done one counts as due.
+        """
+        stamp = store.get("report.watch_full_at")
+        if not isinstance(stamp, str) or not stamp:
+            return True
+        try:
+            last = datetime.fromisoformat(stamp)
+        except ValueError:
+            return True
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        days = store.get("sync.watch_full_days")
+        every = days if isinstance(days, int) and days > 0 else 7
+        return datetime.now(UTC) - last >= timedelta(days=every)
+
+    def refresh_watched(self, ctx, profile, *, incremental: bool = True, force_full: bool = False) -> list:
+        """This person's watched set, read as cheaply as is safe, and cached.
+
+        The complete read is the fallback, not the exception: anything that leaves the cache unable
+        to answer — incremental turned off, no cursor, a section never read, the weekly reconcile
+        falling due — takes it. Incremental is only ever an optimisation on top.
+
+        Returns the full cached set (not just what this read fetched), so callers see the same thing
+        a complete read would have given them.
+        """
+        from shortlist.engine.models import MediaType
+
+        user_id = getattr(profile, "db_id", None)
+        if user_id is None:
+            with self._sessions() as session:
+                row = session.query(User).filter(User.slug == profile.slug).one_or_none()
+                user_id = row.id if row else None
+        if user_id is None or not incremental:
+            # Nothing to cache against (a profile with no DB row), or caching is switched off.
+            return ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
+
+        cache = self._watch_cache()
+        token_source = ctx.history_source
+        outcomes = []
+        failed: list[str] = []
+        with self._sessions() as session:
+            for section in ctx.plex.sections():
+                media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
+
+                def read(since, _section=section, _media=media_type):
+                    return token_source.fetch_section(profile, _section, _media, since=since)
+
+                try:
+                    outcomes.append(
+                        cache.sync_section(
+                            session,
+                            profile,
+                            user_id,
+                            str(section.key),
+                            media_type,
+                            read,
+                            force_full=force_full,
+                        )
+                    )
+                except Exception as e:
+                    failed.append(str(section.key))
+                    logger.warning(
+                        "watch cache: {} section {} failed ({})", profile.username, section.key, type(e).__name__
+                    )
+                    # Self-heal. The commonest way this fails is the PMS refusing the incremental
+                    # `lastViewedAt>=` filter — and a full read sends no filter at all, so forcing
+                    # one is the escape from a section that can never be topped up. Without this the
+                    # cursor simply never advances and the cache silently goes stale for ever.
+                    cache.force_full_next_time(session, user_id, str(section.key))
+            session.commit()
+            history = cache.watched_set(session, user_id)
+
+        if failed:
+            # A partial cache must NEVER be served as if it were complete: the watched set is what
+            # stops an already-seen title being recommended again, so a stale one is a visible,
+            # confusing regression. Fall back to the direct complete read — exactly the behaviour
+            # before this cache existed, so it cannot be worse, only slower.
+            logger.warning(
+                "watch cache: {} — {} section(s) unreadable, falling back to a complete read",
+                profile.username,
+                len(failed),
+            )
+            return ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
+
+        fetched = sum(o.fetched for o in outcomes)
+        full = any(o.full for o in outcomes)
+        logger.info(
+            "watch cache: {} {} -> {} fetched, {} cached",
+            profile.username,
+            "FULL" if full else "incremental",
+            fetched,
+            len(history),
+        )
+        return history
+
+    def _prefill_history(self, ctx, profiles, run_id: int | None = None) -> None:
+        """Top up the cache and hand each profile its watched set, so the engine reads none itself.
+
+        Narrated, not silent: on a cold cache this is a complete per-user PMS read, so without a
+        progress line the run's first minutes look exactly like the wedge the rest of this work exists
+        to remove.
+
+        Best-effort per person: anyone whose top-up fails is left with an empty history, and the
+        engine falls back to its own complete read for them — the behaviour before the cache existed.
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session)
+            incremental = bool(store.get("sync.watch_incremental"))
+        # getattr, not attribute access: narration must never be the thing that fails a run, and a
+        # caller may hand in a context that has no progress hook at all.
+        progress = getattr(ctx, "progress", None)
+        total = len(profiles)
+        for position, profile in enumerate(profiles, start=1):
+            if progress is not None:
+                try:
+                    progress("Shortlist", "reading_history", {"done": position, "total": total}, None)
+                except Exception:  # a broken listener must never fail the run
+                    logger.exception("progress callback failed during history pre-fill")
+            try:
+                profile.history = self.refresh_watched(ctx, profile, incremental=incremental)
+            except Exception as e:
+                logger.warning(
+                    "run: could not pre-fill history for {} ({}) — the engine will read it directly",
+                    profile.slug,
+                    type(e).__name__,
+                )
+
+    def _watch_cache(self):
+        """The cache, honouring `sync.watch_full_days`.
+
+        The setting has to reach `WatchCache` itself, not just the global `force_full` decision:
+        `needs_full` independently re-reads a section whose `last_full_at` is older than this, so
+        leaving the constructor on its 7-day default silently capped the setting at 7.
+        """
+        from shortlist.server.services.watch_cache import DEFAULT_FULL_EVERY, WatchCache
+
+        with self._sessions() as session:
+            days = SettingsStore(session).get("sync.watch_full_days")
+        every = timedelta(days=days) if isinstance(days, int) and days > 0 else DEFAULT_FULL_EVERY
+        return WatchCache(self._sessions, full_every=every)
+
     def sync_watched_background(self) -> None:
         """Fire sync_watched as a tracked background task (the reference is kept so it isn't GC'd) —
         for the dashboard's manual 'Sync now'."""
@@ -171,23 +424,27 @@ class RunService:
             loop.call_soon_threadsafe(self._bus.publish, event, {"kind": "watched", **data})
 
         def work() -> int:
-            from shortlist.server.settings_store import SettingsStore
-
             ctx = self.build_context(dry_run=True)  # dry: builds clients, writes nothing to Plex
             with self._sessions() as session:
                 profiles = self.enabled_profiles(session)
+                store = SettingsStore(session)
+                incremental = bool(store.get("sync.watch_incremental"))
+                force_full = self._full_resync_due(store)
             total = len(profiles)
             emit("sync.progress", {"done": 0, "total": total})
             for i, profile in enumerate(profiles, start=1):
                 try:
-                    profile.history = ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
+                    profile.history = self.refresh_watched(ctx, profile, incremental=incremental, force_full=force_full)
                 except Exception as e:
                     logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
                 emit("sync.progress", {"done": i, "total": total})
             self._reconcile_watched(profiles)
             with self._sessions() as session:
+                store = SettingsStore(session)
                 # Stamp the sync so the dashboard can show "watch status synced N ago".
-                SettingsStore(session).set("report.watch_synced_at", datetime.now(UTC).isoformat())
+                store.set("report.watch_synced_at", datetime.now(UTC).isoformat())
+                if force_full:
+                    store.set("report.watch_full_at", datetime.now(UTC).isoformat())
             return total
 
         async with self._lock:
@@ -272,7 +529,17 @@ class RunService:
                 ctx.on_user_done = lambda profile, user_report: self._persist_user_live(
                     run_id, profile, user_report, dry_run
                 )
-                report = await loop.run_in_executor(None, engine_run, ctx, profiles)
+                # Fill each person's history from the cache BEFORE the engine runs. The run used to
+                # do its own complete per-user read — the same read the nightly sync had already
+                # done hours earlier — which was half the total cost of a night.
+                await loop.run_in_executor(None, self._prefill_history, ctx, profiles, run_id)
+                # The ONE-WRITER lock, held for the whole engine run (plex-safety rule 3 + design
+                # doc §2 principle 6). Jobs deferring to runs via `_plex_busy` is only half of it:
+                # without this, a writer job already mid-flight kept merging share filters straight
+                # through the start of a run, and the second of two read-modify-write merges drops
+                # the first's `label!=shortlist_<slug>` excludes with nothing left to catch it.
+                async with jobs.plex_writer_lock():
+                    report = await loop.run_in_executor(None, engine_run, ctx, profiles)
                 aborted = cancel is not None and cancel.is_set()
                 self._persist_report(run_id, report, status="aborted" if aborted else None)
                 # The engine filled each profile's history in place, so this is the one moment we hold
@@ -290,6 +557,9 @@ class RunService:
                 return
             finally:
                 self._cancels.pop(run_id, None)
+                # In the `finally` so a crashed run still leaves its narration behind — that is
+                # exactly the run whose log someone will want to read.
+                self.flush_run_log(run_id)
             # Carry the reason on failure so the UI (e.g. the wizard's first run) can show it inline
             # rather than only pointing at the Runs page.
             self._bus.publish(
@@ -458,21 +728,30 @@ class RunService:
             if report.error:
                 self._add_event(session, "run", "error", run_id, error=report.error)
             self._finalize_run(run, report, status, error, ok, errors, skipped)
-            from shortlist.server.settings_store import SettingsStore
-
-            months = int(SettingsStore(session).get("runs.retention"))
+            store = SettingsStore(session)
+            months = int(store.get("runs.retention"))
             # Legacy DBs store the old count-based "100" — values beyond the new 24-month max are
             # treated as 0 (keep forever) until the owner visits Settings and sets a real month value.
             self._prune_runs(session, months if 0 < months <= 24 else 0)
+            event_months = int(store.get("events.retention") or 0)
+            self._prune_events(session, event_months if 0 < event_months <= 24 else 0)
             session.commit()
 
     @staticmethod
     def _prune_runs(session: Session, retention_months: int) -> None:
         """Delete runs older than `retention_months`. 0 = keep everything forever.
 
-        Picks are KEPT (their run_id is nulled) so the dashboard's lifetime metrics survive. Only the
-        run history (the Runs list, per-user detail/trace) is pruned — those are the storage hog
-        (~100 KB per user per run in trace blobs).
+        What is pruned: the run row, its per-user results/traces, and its activity log — the storage
+        hog (~100 KB per user per run in trace blobs).
+
+        What is NOT, and must never be:
+
+        * **picks** — the impact ledger. Their `run_id` is nulled, not the row deleted, so the
+          dashboard's history survives a run being pruned.
+        * **deliveries** — the record of which Plex collection is which row for which person. It is
+          keyed by SLUG rather than by foreign key precisely so it outlives runs and rows; deleting
+          it would strand real collections on real users' servers with nothing left that knows to
+          clean them up.
         """
         if retention_months <= 0:
             return
@@ -485,7 +764,23 @@ class RunService:
             {PickRow.run_id: None}, synchronize_session=False
         )
         session.query(RunUser).filter(RunUser.run_id.in_(old_ids)).delete(synchronize_session=False)
+        # Explicit, not left to the FK's ON DELETE CASCADE: SQLite only enforces foreign keys when
+        # `PRAGMA foreign_keys` is on, and a bulk ORM delete does not cascade in Python either.
+        session.query(RunLogLine).filter(RunLogLine.run_id.in_(old_ids)).delete(synchronize_session=False)
         session.query(Run).filter(Run.id.in_(old_ids)).delete(synchronize_session=False)
+
+    @staticmethod
+    def _prune_events(session: Session, retention_months: int) -> None:
+        """Trim the audit trail. 0 = keep everything forever, which is the default.
+
+        Separate from run retention on purpose: `events` is the answer to "what changed on whose
+        share at 03:31" (plex-safety rule 10), so it is the one thing an operator may want to keep
+        far longer than the run detail around it.
+        """
+        if retention_months <= 0:
+            return
+        cutoff = datetime.now(UTC) - timedelta(days=retention_months * 30)
+        session.query(Event).filter(Event.ts < cutoff).delete(synchronize_session=False)
 
     @staticmethod
     def _add_event(session: Session, scope: str, level: str, run_id: int, *, dry_run: bool | None = None, **fields):

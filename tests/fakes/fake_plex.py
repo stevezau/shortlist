@@ -527,6 +527,14 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
             watched = state.watched_keys(account_id) if account_id is not None else set()
             listing = [item for item in _sorted_items(list(items.values()), None) if item.rating_key in watched]
+            # The INCREMENTAL read's own filter (`lastViewedAt>=<epoch>`, Plex's section-filter
+            # syntax — the operator is part of the field name). Honoured here so the cache's
+            # incremental path is genuinely exercised end-to-end: a fake that ignored it would
+            # return the whole set every time and the e2e suite would pass either way.
+            since = query.get("lastViewedAt>=")
+            if since is not None and account_id is not None:
+                cutoff = int(since)
+                listing = [i for i in listing if state.last_viewed_at(account_id, i.rating_key) >= cutoff]
             start, size = _page(request, len(listing))
             page = listing[start : start + size]
             root = _container(size=len(page), totalSize=len(listing), librarySectionID=section_id)

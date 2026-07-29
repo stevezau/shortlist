@@ -3,13 +3,14 @@ import {
   Clock,
   RefreshCw,
   Send,
-  Target,
   TrendingUp,
   Users as UsersIcon,
 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router";
 
 import { QueryBoundary } from "@/components/query-boundary";
+import { Segmented } from "@/components/segmented";
 import { StatTile } from "@/components/stat-tile";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,7 +18,21 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate, timeAgo } from "@/lib/format";
 import { useReport, useSyncWatched } from "@/lib/queries";
-import type { EffectivenessReport } from "@/lib/types";
+import type { EffectivenessReport, ReportWindow } from "@/lib/types";
+
+const WINDOW_OPTIONS: { value: ReportWindow; label: string }[] = [
+  { value: "7", label: "7 days" },
+  { value: "30", label: "30 days" },
+  { value: "90", label: "90 days" },
+  { value: "all", label: "All time" },
+];
+
+const WINDOW_PHRASE: Record<ReportWindow, string> = {
+  "7": "the last 7 days",
+  "30": "the last 30 days",
+  "90": "the last 90 days",
+  all: "all time",
+};
 
 /** Shows when the daily watch-status sync last ran and next fires, with a manual "Sync now". */
 function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
@@ -47,21 +62,52 @@ function pct(rate: number | null): string {
   return rate === null ? "—" : `${Math.round(rate * 100)}%`;
 }
 
+/**
+ * Change vs the previous equal period, as a hint line.
+ *
+ * `lowerIsBetter` for "days to watch": a drop there is an improvement, and colouring it red because
+ * the number went down would read exactly backwards.
+ */
+function Delta({
+  value,
+  window,
+  suffix = "",
+  lowerIsBetter = false,
+}: {
+  value: number | null;
+  window: ReportWindow;
+  suffix?: string;
+  lowerIsBetter?: boolean;
+}) {
+  if (window === "all") return <>all time</>;
+  if (value === null || value === 0) {
+    return <>vs previous {WINDOW_PHRASE[window].replace("the last ", "")}</>;
+  }
+  const up = value > 0;
+  const good = lowerIsBetter ? !up : up;
+  return (
+    <span className={good ? "text-success" : "text-muted-foreground"}>
+      {up ? "▲" : "▼"} {up ? "+" : "−"}
+      {Math.abs(value)}
+      {suffix} vs previous
+    </span>
+  );
+}
+
 /** A tiny watches-per-week bar chart — no library, just normalized divs. */
 function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
-  const recent = trend.slice(-16);
-  const max = Math.max(1, ...recent.map((t) => t.watched));
-  if (recent.length === 0)
+  const max = Math.max(1, ...trend.map((t) => t.watched));
+  if (trend.length === 0)
     return (
       <p className="text-sm text-muted-foreground">
         No watches recorded yet — this fills in as people watch their picks.
       </p>
     );
-  if (recent.length < 3)
+  if (trend.length < 3)
     return (
       <div className="flex h-20 flex-col items-center justify-center gap-1">
         <p className="text-2xl font-semibold tabular-nums">
-          {recent.reduce((s, t) => s + t.watched, 0)}
+          {trend.reduce((s, t) => s + t.watched, 0)}
         </p>
         <p className="text-xs text-muted-foreground">
           watched this week — chart fills in after a few weeks
@@ -70,7 +116,7 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
     );
   return (
     <div className="flex h-20 items-end gap-1" aria-hidden="true">
-      {recent.map((t) => (
+      {trend.map((t) => (
         <div
           key={t.week}
           className="flex-1 rounded-t bg-primary/70"
@@ -82,28 +128,37 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
   );
 }
 
-function HitBar({
-  delivered,
+/**
+ * One line in a breakdown: a bar scaled to the BIGGEST value in its own list, and the count.
+ *
+ * Not a percentage of anything. The bar used to be a share of a 0–100% hit rate, so real values
+ * (0–3%) were a one-pixel sliver on every row and the chart said nothing. Scaling to the list's own
+ * maximum is what makes "Luke watched four times what Cassie did" visible at a glance.
+ */
+function CountBar({
   watched,
-  hit_rate,
+  delivered,
+  max,
 }: {
-  delivered: number;
   watched: number;
-  hit_rate: number | null;
+  delivered: number;
+  max: number;
 }) {
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
         <div
           className="h-full rounded-full bg-primary"
-          style={{ width: `${Math.round((hit_rate ?? 0) * 100)}%` }}
+          style={{ width: `${max > 0 ? (watched / max) * 100 : 0}%` }}
         />
       </div>
-      <span className="tabular-nums text-muted-foreground">
-        {pct(hit_rate)}{" "}
-        <span className="text-xs">
-          ({watched}/{delivered})
-        </span>
+      {/* Two labelled numbers, NOT "{watched} of {delivered}". They are counts over two different
+          sets — watched-in-window and delivered-in-window — so presenting them as a fraction makes
+          "4 of 0" reachable whenever delivery paused (a weekly row cron on a 7-day window). That is
+          the same misleading fraction this rewrite exists to remove. */}
+      <span className="w-32 shrink-0 text-right tabular-nums text-muted-foreground">
+        <span className="font-medium text-foreground">{watched}</span> watched
+        {delivered > 0 && ` · ${delivered} sent`}
       </span>
     </div>
   );
@@ -111,50 +166,252 @@ function HitBar({
 
 function Section({
   title,
+  hint,
   children,
 }: {
   title: string;
+  hint?: string;
   children: React.ReactNode;
 }) {
   return (
     <Card>
       <CardContent className="space-y-3 pt-6">
-        <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
+        <div>
+          <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
+          {hint && (
+            <p className="mt-0.5 text-xs text-muted-foreground/80">{hint}</p>
+          )}
+        </div>
         {children}
       </CardContent>
     </Card>
   );
 }
 
-function ReportBody({ report }: { report: EffectivenessReport }) {
-  const { overall, coverage, runs, requests } = report;
+/** Rows with nothing in the window, folded away behind a count.
+ *
+ *  Seven of ten people reading "0" is a wall of empty bars that says nothing. It is still true, and
+ *  still one click away — it just isn't the first thing the page shows you. */
+function ZeroDisclosure({
+  count,
+  noun,
+  children,
+}: {
+  count: number;
+  noun: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  if (count === 0) return null;
+  return (
+    <div className="space-y-1.5 border-t pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {open ? "▾" : "›"} {count} {noun} with none in this window
+      </button>
+      {open && <div className="space-y-1.5">{children}</div>}
+    </div>
+  );
+}
 
-  if (overall.delivered === 0) {
+function ByPerson({
+  people,
+  window,
+}: {
+  people: EffectivenessReport["per_user"];
+  window: ReportWindow;
+}) {
+  const active = people.filter((p) => p.watched > 0);
+  const idle = people.filter((p) => p.watched === 0);
+  const max = Math.max(1, ...active.map((p) => p.watched));
+
+  const line = (p: EffectivenessReport["per_user"][number]) => (
+    <div
+      key={p.slug}
+      className="flex items-center justify-between gap-3 text-sm"
+    >
+      <span className="truncate">{p.display_name || p.username}</span>
+      <CountBar watched={p.watched} delivered={p.delivered} max={max} />
+    </div>
+  );
+
+  return (
+    <Section
+      title="By person"
+      hint={`Picks watched in ${WINDOW_PHRASE[window]}, of picks delivered.`}
+    >
+      {active.length === 0 && idle.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          Nobody was delivered a pick in this window.
+        </p>
+      ) : (
+        <>
+          <div className="space-y-1.5">{active.slice(0, 10).map(line)}</div>
+          {active.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              Nobody watched a pick in this window.
+            </p>
+          )}
+          <ZeroDisclosure count={idle.length} noun="people">
+            {idle.map(line)}
+          </ZeroDisclosure>
+        </>
+      )}
+    </Section>
+  );
+}
+
+function ByRow({
+  rows,
+  window,
+}: {
+  rows: EffectivenessReport["per_row"];
+  window: ReportWindow;
+}) {
+  // Deleted rows are kept — those watches really happened and still count in the totals — but they
+  // are history, not something you can act on, so they don't get to crowd out the live rows.
+  const live = rows.filter((r) => !r.deleted);
+  const gone = rows.filter((r) => r.deleted);
+  const max = Math.max(1, ...rows.map((r) => r.watched));
+
+  const line = (r: EffectivenessReport["per_row"][number]) => (
+    <div
+      key={`${r.slug}-${r.section_key}-${r.library}`}
+      className="flex items-center justify-between gap-3 text-sm"
+    >
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span
+          className={`truncate ${r.deleted ? "text-muted-foreground" : ""}`}
+        >
+          {r.name}
+        </span>
+        {/* A row across >1 library is one collection per library. A {library_name} name
+            already reads "✨ Movies …"; otherwise tag which library this line is. */}
+        {r.library && !r.name.includes(r.library) && (
+          <Badge variant="secondary" className="shrink-0 font-normal">
+            {r.library}
+          </Badge>
+        )}
+      </span>
+      <CountBar watched={r.watched} delivered={r.delivered} max={max} />
+    </div>
+  );
+
+  return (
+    <Section
+      title="By row"
+      hint={`Picks watched in ${WINDOW_PHRASE[window]}, of picks delivered.`}
+    >
+      {live.length === 0 && gone.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No row delivered a pick in this window.
+        </p>
+      ) : (
+        <>
+          <div className="space-y-1.5">{live.map(line)}</div>
+          {gone.length > 0 && (
+            <DeletedRows count={gone.length}>{gone.map(line)}</DeletedRows>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** Deleted rows, folded away. Their picks still count in every total above — nothing is destroyed,
+ *  it just stops being the noise you scroll past to reach the rows you can still change. */
+function DeletedRows({
+  count,
+  children,
+}: {
+  count: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="space-y-1.5 border-t pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {open ? "▾" : "›"} {open ? "Hide" : "Show"} {count} deleted{" "}
+        {count === 1 ? "row" : "rows"}
+      </button>
+      {open && (
+        <>
+          <p className="text-xs text-muted-foreground/80">
+            These rows were removed from Shortlist. Their picks still count in
+            the totals above.
+          </p>
+          {children}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ReportBody({
+  report,
+  window,
+  onWindowChange,
+}: {
+  report: EffectivenessReport;
+  window: ReportWindow;
+  onWindowChange: (next: ReportWindow) => void;
+}) {
+  const { overall, coverage, runs, requests } = report;
+  const { landing } = overall;
+
+  const selector = (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h1 className="text-sm font-medium text-muted-foreground">Impact</h1>
+      <Segmented
+        value={window}
+        onChange={onWindowChange}
+        options={WINDOW_OPTIONS}
+        ariaLabel="Report window"
+      />
+    </div>
+  );
+
+  if (overall.delivered === 0 && overall.watched === 0) {
     return (
-      <Card>
-        <CardContent className="pt-6 text-sm text-muted-foreground">
-          No picks delivered yet — run Shortlist, and once people start watching
-          what it picked, the tracking shows up here.
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        {selector}
+        <Card>
+          <CardContent className="pt-6 text-sm text-muted-foreground">
+            {runs.total === 0
+              ? "No picks delivered yet — run Shortlist, and once people start watching what it picked, the tracking shows up here."
+              : `Nothing delivered or watched in ${WINDOW_PHRASE[window]}. Try a longer window.`}
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      {/* Headline metrics */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        <StatTile
-          icon={Target}
-          label="Hit rate"
-          value={pct(overall.hit_rate)}
-          hint={`${overall.watched} of ${overall.delivered} picks watched`}
-        />
+      {selector}
+
+      {/* Is it working? Counts for the window, each against the previous equal period. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           icon={TrendingUp}
-          label="Watched (7d)"
-          value={overall.watched_last_7d}
-          hint="last 7 days"
+          label="Watched"
+          value={overall.watched}
+          hint={<Delta value={overall.watched_delta} window={window} />}
+          title="Picks people watched in this window. A pick delivered earlier and watched now counts here — this is about watching, not delivery."
+        />
+        <StatTile
+          icon={UsersIcon}
+          label="People watching"
+          value={`${coverage.users_watched} of ${coverage.users_enabled}`}
+          hint={<Delta value={coverage.users_watched_delta} window={window} />}
+          title="People who watched at least one pick in this window, out of everyone currently enabled."
         />
         <StatTile
           icon={Clock}
@@ -164,81 +421,81 @@ function ReportBody({ report }: { report: EffectivenessReport }) {
               ? "—"
               : `${overall.avg_days_to_watch}d`
           }
-          hint="delivery → watch"
-        />
-        <StatTile
-          icon={UsersIcon}
-          label="Reach"
-          value={coverage.users_with_picks}
-          hint={`of ${coverage.users_enabled} enabled`}
+          hint={
+            <Delta
+              value={overall.avg_days_to_watch_delta}
+              window={window}
+              suffix="d"
+              lowerIsBetter
+            />
+          }
+          title="Average days from a title first being recommended to it first being watched, over titles first watched in this window."
         />
         <StatTile
           icon={CalendarClock}
           label="Runs"
-          value={runs.total}
+          value={runs.in_window}
           hint={runs.last_finished ? timeAgo(runs.last_finished) : "never"}
           tone={runs.errors_last ? "destructive" : "default"}
+          title={`Runs started in this window. ${runs.total} in total since install.`}
         />
       </div>
 
       <WatchSyncLine sync={report.watch_sync} />
 
-      <Section title="Watches per week">
-        <Trend trend={report.trend} />
-      </Section>
-
       <div className="grid gap-4 lg:grid-cols-2">
-        <Section title="By person">
-          <div className="space-y-1.5">
-            {report.per_user.slice(0, 10).map((u) => (
-              <div
-                key={u.slug}
-                className="flex items-center justify-between gap-3 text-sm"
-              >
-                <span className="truncate">{u.display_name || u.username}</span>
-                <HitBar {...u} />
-              </div>
-            ))}
-          </div>
+        <Section
+          title="Watches per week"
+          hint="The long view — always the last 16 weeks, whatever window is selected."
+        >
+          <Trend trend={report.trend} />
         </Section>
 
-        <Section title="By row">
-          <div className="space-y-1.5">
-            {report.per_row.map((r) => (
-              <div
-                key={`${r.slug}-${r.section_key}-${r.library}`}
-                className="flex items-center justify-between gap-3 text-sm"
-              >
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <span
-                    className={`truncate ${r.deleted ? "text-muted-foreground" : ""}`}
-                  >
-                    {r.name}
-                  </span>
-                  {/* A row across >1 library is one collection per library. A {library_name} name
-                      already reads "✨ Movies …"; otherwise tag which library this line is. */}
-                  {r.library && !r.name.includes(r.library) && (
-                    <Badge variant="secondary" className="shrink-0 font-normal">
-                      {r.library}
-                    </Badge>
-                  )}
-                  {/* Kept, not hidden: these watches really happened and still count in the totals. */}
-                  {r.deleted && (
-                    <Badge variant="outline" className="shrink-0 font-normal">
-                      deleted row
-                    </Badge>
-                  )}
-                </span>
-                <HitBar {...r} />
-              </div>
-            ))}
-          </div>
+        <Section
+          title="Landing rate"
+          hint={`Share of picks watched within ${landing.matured_days} days of being delivered.`}
+        >
+          {landing.rate === null ? (
+            <p className="text-sm text-muted-foreground">
+              Not enough time has passed. A pick only counts as watched within{" "}
+              {landing.matured_days} days of delivery, so this needs picks
+              delivered at least {landing.matured_days} days ago — try a longer
+              window.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              <p className="text-2xl font-semibold tabular-nums">
+                {pct(landing.rate)}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                {landing.watched} of {landing.delivered} picks delivered
+                {landing.cohort_from
+                  ? ` between ${formatDate(landing.cohort_from)} and ${formatDate(landing.cohort_to)}`
+                  : ` before ${formatDate(landing.cohort_to)}`}
+                .
+              </p>
+              <p className="text-xs text-muted-foreground/80">
+                Measured only over picks old enough to have had their full{" "}
+                {landing.matured_days} days — a pick delivered yesterday can’t
+                have been watched “within 30 days” yet, so counting it would
+                drag this toward zero for no reason.
+              </p>
+            </div>
+          )}
         </Section>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        <ByPerson people={report.per_user} window={window} />
+        <ByRow rows={report.per_row} window={window} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
         {report.top_titles.length > 0 && (
-          <Section title="Landing best">
+          <Section
+            title="Landing best"
+            hint={`Most-watched picks in ${WINDOW_PHRASE[window]}.`}
+          >
             <ul className="space-y-1 text-sm">
               {report.top_titles.map((t) => (
                 <li
@@ -256,14 +513,17 @@ function ReportBody({ report }: { report: EffectivenessReport }) {
         )}
 
         {requests.sent > 0 && (
-          <Section title="Requests">
+          <Section
+            title="Requests"
+            hint={`Sent to Sonarr/Radarr in ${WINDOW_PHRASE[window]}.`}
+          >
             <div className="flex items-center gap-2 text-sm">
               <Send className="h-4 w-4 text-muted-foreground" aria-hidden />
               <span>
                 <span className="font-medium text-foreground">
                   {requests.sent}
                 </span>{" "}
-                sent to Sonarr/Radarr ·{" "}
+                sent ·{" "}
                 <span className="font-medium text-foreground">
                   {requests.watched_after_sent}
                 </span>{" "}
@@ -310,16 +570,25 @@ function ReportBody({ report }: { report: EffectivenessReport }) {
   );
 }
 
-/** The dashboard tracking report — delivered-vs-watched, reach, momentum, top titles, requests, and a
- * recent-watches feed. All from picks.watched_at. */
+/**
+ * The dashboard tracking report — what got watched, by whom, from which row, over a chosen window.
+ *
+ * Windowed on purpose. Every figure here used to be lifetime-cumulative, which made each ratio a
+ * measure of how long Shortlist had been installed rather than of how good the picks were: a pick
+ * can only be credited within 30 days of delivery, but the old denominator kept every pick ever
+ * delivered, forever.
+ */
 export function ImpactReport() {
-  const report = useReport();
+  const [window, setWindow] = useState<ReportWindow>("30");
+  const report = useReport(window);
   return (
     <QueryBoundary
       query={report}
       skeleton={<Skeleton className="h-96 w-full" />}
     >
-      {(data) => <ReportBody report={data} />}
+      {(data) => (
+        <ReportBody report={data} window={window} onWindowChange={setWindow} />
+      )}
     </QueryBoundary>
   );
 }

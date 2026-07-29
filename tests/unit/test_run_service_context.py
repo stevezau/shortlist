@@ -421,8 +421,14 @@ class TestSyncWatched:
         # This person has since watched the recommended title — the sync must credit it, no run needed.
         profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
         watch = WatchedItem(title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42)
+        # The sync reads through the watched-title cache, which walks the server's sections and asks
+        # the history source for one library at a time — so the fake has to offer both.
         fake_ctx = SimpleNamespace(
-            history_source=SimpleNamespace(fetch=lambda p, **k: [watch]),
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(
+                fetch=lambda p, **k: [watch],
+                fetch_section=lambda p, section, media_type, since=None: [watch],
+            ),
             config=SimpleNamespace(min_completion=0.7),
         )
         monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
@@ -432,6 +438,42 @@ class TestSyncWatched:
 
         with sessions() as s:
             assert s.query(PickRow).filter_by(tmdb_id=42).one().watched_at is not None
+
+    def test_an_unreadable_library_falls_back_to_a_complete_read(self, service, sessions, monkeypatch):
+        """A PARTIAL cache must never be served as if it were complete.
+
+        The watched set is what stops an already-seen title being recommended again, so serving a
+        stale one is a visible regression. If any section fails — most likely the PMS refusing the
+        incremental filter — fall back to the direct complete read: the behaviour before the cache
+        existed, so it cannot be worse, only slower.
+        """
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        complete = WatchedItem(
+            title="From the complete read", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=9
+        )
+
+        def boom(_profile, _section, _media, since=None):
+            raise RuntimeError("PMS refused the filter")
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: [complete], fetch_section=boom),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+
+        history = service.refresh_watched(ctx, profile)
+
+        assert [i.title for i in history] == ["From the complete read"]
 
     def test_streams_per_user_progress_and_a_finished_event(self, service, monkeypatch):
         """The Tools page bar is driven by these events — a sync that emits nothing shows no bar."""

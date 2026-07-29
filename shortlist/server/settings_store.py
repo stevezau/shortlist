@@ -62,13 +62,39 @@ DEFAULTS: dict[str, Any] = {
     # per-user traces are deleted; picks are kept so the dashboard's lifetime metrics survive).
     # 0 = keep everything forever.
     "runs.retention": 3,
+    # How many months of the audit trail (`events`) to keep. 0 = forever, and that is the default:
+    # "what changed on whose share at 03:31" (plex-safety rule 10) is the one record an operator may
+    # want long after the run detail around it is gone.
+    "events.retention": 0,
     # The cron expression for the daily watch-history sync. Blank = the default (04:17 daily).
     "sync.watch_cron": "",
+    # Read only what changed since the last sync (Plex's `lastViewedAt>=` filter) instead of every
+    # watched title, every night, per user, per library. An incremental read cannot see an un-watch
+    # or a deletion, so a COMPLETE read still runs every `sync.watch_full_days` regardless — this
+    # switch only decides whether the nights in between are cheap. Off = always read everything.
+    "sync.watch_incremental": True,
+    # How often the complete re-read happens, in days. It is the only thing that can notice a title
+    # being un-watched or removed, so it is not optional — only its frequency is.
+    "sync.watch_full_days": 7,
     # The cron expression for the user-list sync (plex.tv + Tautulli). Blank = the default (daily 04:47).
     "sync.users_cron": "",
+    # The cron for the nightly privacy sync — a re-merge of every account's share filter.
+    #
+    # It exists because the automatic Privacy Check + write gate was removed on 2026-07-16 at the
+    # owner's request: nothing verifies hiding after the fact any more, so leak-safe write ORDERING
+    # is the only remaining guarantee. This is the cheapest safety net against drift, and it can only
+    # ever make the server more private (it builds, delivers and promotes nothing).
+    "privacy.sync_cron": "15 5 * * *",
+    # The cron for the drift check. Blank = off; it is a converge-to-desired-state pass that is safe
+    # to schedule, but it WRITES to Plex, so turning it on is a deliberate choice.
+    "sync.check_cron": "",
     # Backup schedule. Blank cron = the default (daily 03:00). max_keep = number of backups to retain.
     "backup.cron": "",
     "backup.max_keep": 10,
+    # How many read-only jobs may run at once. Jobs that WRITE to Plex/plex.tv are always exclusive
+    # and never overlap a run — share-filter writes are read-modify-write merges, so two at once lose
+    # one of them (plex-safety rule 3). Dial to 1 if a PMS complains about the concurrency.
+    "jobs.max_parallel_readonly": 3,
     # Notification ids the owner dismissed. Each id encodes its state (run id / version), so the same
     # alert stays hidden but a new failure or a newer release surfaces again. Capped to the newest 100.
     "notifications.dismissed": [],
@@ -94,6 +120,10 @@ DEFAULTS: dict[str, Any] = {
     # Row-overridable, and the row is where a deliberately narrow value belongs: the floor here is 5
     # because a server-wide 1 or 2 would starve every movies-and-TV row of one of its media types.
     "recommendations.max_seeds": 30,
+    # TMDB ids that must never seed a SHARED row. Separate from each person's own blocked seeds on
+    # purpose: a shared row is public, so letting one person's block reshape what everyone sees would
+    # make an individual preference into a server-wide edit nobody else can see or undo.
+    "recommendations.blocked_shared_seeds": [],
     # When on (default), disabling a user hides EVERY shared row from them too (even public "Popular on
     # this server" rows), so a disabled user sees nothing from Shortlist. Off = disabled users still see
     # public shared rows like any other account with library access.

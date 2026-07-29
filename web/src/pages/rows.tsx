@@ -5,9 +5,11 @@ import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { RowCard } from "@/components/rows/row-card";
 import { RowEditor } from "@/components/rows/row-editor";
+import { RowTemplateGallery } from "@/components/rows/row-template-gallery";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCollections, useUsers } from "@/lib/queries";
+import type { RowTemplate } from "@/lib/row-templates";
 import type { Collection } from "@/lib/types";
 
 function RowsSkeleton() {
@@ -23,10 +25,15 @@ function RowsSkeleton() {
 export function RowsPage() {
   const collectionsQuery = useCollections();
   const usersQuery = useUsers();
-  // null = closed; { collection } = editing (collection null = adding).
+  // null = closed; { collection } = editing (collection null = adding). `template` seeds a NEW
+  // row's fields; it is never set when editing an existing one.
   const [editing, setEditing] = useState<{
     collection: Collection | null;
+    template?: RowTemplate | null;
   } | null>(null);
+  // Adding goes through the gallery first — a blank 17-field form only ever helped someone who
+  // already knew what they wanted to build.
+  const [pickingTemplate, setPickingTemplate] = useState(false);
   // When set, the matching RowCard opens its rename dialog on mount.
   const [renameTarget, setRenameTarget] = useState<number | null>(null);
 
@@ -38,7 +45,7 @@ export function RowsPage() {
         subtitle="The curated strips Shortlist builds on your users’ Plex home screens. Each row picks its own recommendation sources, AI style, libraries, size and audience."
         actions={
           <Button
-            onClick={() => setEditing({ collection: null })}
+            onClick={() => setPickingTemplate(true)}
             // Without the user list, the editor's audience picker would offer nobody to choose —
             // and an owner could save "chosen people: none" believing they'd picked everyone.
             disabled={!usersQuery.isSuccess}
@@ -64,7 +71,7 @@ export function RowsPage() {
                   title="No rows yet"
                   hint="Add a row to start building recommendations. The default “Picked for You” usually seeds itself."
                   action={
-                    <Button onClick={() => setEditing({ collection: null })}>
+                    <Button onClick={() => setPickingTemplate(true)}>
                       Add a row
                     </Button>
                   }
@@ -87,9 +94,19 @@ export function RowsPage() {
               )}
             </QueryBoundary>
 
+            <RowTemplateGallery
+              open={pickingTemplate}
+              onClose={() => setPickingTemplate(false)}
+              onPick={(template) => {
+                setPickingTemplate(false);
+                setEditing({ collection: null, template });
+              }}
+            />
+
             {editing && (
               <RowEditor
                 collection={editing.collection}
+                template={editing.template ?? null}
                 users={users}
                 onClose={() => setEditing(null)}
                 onRename={() => {

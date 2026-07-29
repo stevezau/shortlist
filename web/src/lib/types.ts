@@ -182,7 +182,8 @@ export interface UserPrefs {
   row_name_tpl?: string;
   row_size?: number;
   excluded_genres?: string[];
-  blocked_seeds?: number[];
+  /** Bare ints on installs that predate the richer shape; records since. Read with `blockedSeeds`. */
+  blocked_seeds?: (number | BlockedSeed)[];
   max_rating?: string | null;
   paused?: boolean;
 }
@@ -296,11 +297,26 @@ export interface UserRunSummary {
   run_id: number;
   started_at: string | null;
   finished_at: string | null;
+  /** THIS person's outcome in the run: ok | cold_start | skipped | error | pending. Not the run's. */
   status: string;
   error: string | null;
+  /** Why a non-failing outcome happened ("no watch history yet"). Blank when there's nothing to say. */
+  reason: string;
+  duration_ms: number | null;
+  /** The run's own status, for when the run failed around this person rather than because of them. */
+  run_status: string | null;
   dry_run: boolean;
   diff: RunDiff;
   picks: Pick[];
+}
+
+/** Alias kept short for the components that render one line of this. */
+export type UserRun = UserRunSummary;
+
+/** GET /api/users/{id}/runs/summary — how many runs included this person, of how many exist. */
+export interface UserRunsCount {
+  included: number;
+  total: number;
 }
 
 /** GET /api/users/{id}/history — one recent watch. */
@@ -675,8 +691,13 @@ export interface RunUserStageEvent {
 
 /** One line of a run's activity log (GET /api/runs/{id}/log + the SSE stage stream). */
 export interface RunLogEntry {
+  /** Monotonic per-run counter stamped server-side. The dedup key: several lines land in the same
+   *  millisecond, so a timestamp alone collapsed "1/5" and "2/5" into one entry. Absent on entries
+   *  from a server that predates it. */
+  seq?: number;
   ts?: string | null;
   run_id?: number | null;
+  /** A user slug, or "Shortlist" for the server-wide phases. */
   user: string;
   stage: string;
   counts: Record<string, number | string>;
@@ -768,24 +789,55 @@ export interface RunsSummary {
   last_status: string | null;
 }
 
+/** Report windows, in days. "all" is lifetime. */
+export type ReportWindow = "7" | "30" | "90" | "all";
+
 export interface EffectivenessReport {
+  window: ReportWindow;
+  /** null for "all". */
+  window_days: number | null;
+  /** Start of the window (ISO), null for "all". */
+  since: string | null;
   overall: {
+    /** Picks DELIVERED in the window. */
     delivered: number;
+    /** Picks WATCHED in the window — not the same set as `delivered`, deliberately: a pick
+     *  delivered last month and watched this week is a watch this week. Counts, never a ratio. */
     watched: number;
-    hit_rate: number | null;
-    watched_last_7d: number;
+    watched_prev: number | null;
+    watched_delta: number | null;
     avg_days_to_watch: number | null;
+    avg_days_to_watch_delta: number | null;
+    /** The one surviving ratio, over a MATURED cohort: picks delivered in the window that are also
+     *  old enough to have had their full `matured_days` to be watched. Numerator and denominator
+     *  describe the same picks, which is what makes it mean anything. */
+    landing: {
+      delivered: number;
+      watched: number;
+      rate: number | null;
+      cohort_from: string | null;
+      cohort_to: string;
+      matured_days: number;
+    };
   };
   /** The daily watch-status sync: when it last ran and next fires (ISO), so the report reads as live. */
   watch_sync: { last: string | null; next: string | null };
   coverage: {
+    /** Current server state, deliberately NOT windowed — "3 of 11 people" only reads if 11 is now. */
     users_enabled: number;
     users_total: number;
+    /** People delivered a pick in the window. */
     users_with_picks: number;
+    /** People who watched a pick in the window. */
+    users_watched: number;
+    users_watched_delta: number | null;
     rows_enabled: number;
   };
   runs: {
+    /** All-time odometer. */
     total: number;
+    in_window: number;
+    in_window_delta: number | null;
     last_finished: string | null;
     last_status: string | null;
     errors_last: number;
@@ -798,6 +850,8 @@ export interface EffectivenessReport {
     watchers: number;
   }[];
   trend: { week: string; watched: number }[];
+  /** Counts for the window, sorted by watched desc. No per-person rate: at these sample sizes a
+   *  percentage is noise dressed as precision, and sorting by it put 1/31 above 3/103. */
   per_user: {
     username: string;
     /** nickname → friendly_name → username, resolved server-side. */
@@ -805,10 +859,9 @@ export interface EffectivenessReport {
     slug: string;
     delivered: number;
     watched: number;
-    hit_rate: number | null;
   }[];
-  /** One line per (row × library): a row targeting >1 library is a separate Plex collection in each,
-   *  so each library gets its own hit rate. `section_key` disambiguates rows sharing a slug. */
+  /** One line per (row × library): a row targeting >1 library is a separate Plex collection in each.
+   *  `section_key` disambiguates rows sharing a slug. */
   per_row: {
     slug: string;
     section_key: string;
@@ -818,7 +871,6 @@ export interface EffectivenessReport {
     deleted?: boolean;
     delivered: number;
     watched: number;
-    hit_rate: number | null;
   }[];
   recent: {
     username: string;
@@ -987,4 +1039,47 @@ export interface JobResult {
   /** sync.check only: collections DELETED (or, in a dry run, that would be) because their user is
    *  gone. Kept apart from `fixed` — this is the one action that cannot be undone. */
   orphans?: string[];
+}
+
+/** GET /api/schedule — one recurring thing, whether it is a job or a group of rows. */
+export interface ScheduleEntry {
+  type: "job" | "rows";
+  cron: string;
+  next_run: string | null;
+  /** Jobs only. */
+  kind?: string;
+  label?: string;
+  description?: string;
+  /** The settings key that holds this job's cron — what the UI writes to change it. */
+  setting?: string;
+  /** Blank cron means "off" rather than "use the default". */
+  optional?: boolean;
+  writes_plex?: boolean;
+  /** Row groups only: every enabled row sharing this cron. One trigger builds all of them. */
+  rows?: { id: number; slug: string; name: string }[];
+}
+
+export interface ScheduleResponse {
+  jobs: ScheduleEntry[];
+  rows: ScheduleEntry[];
+}
+
+/** One blocked seed: a title that must never shape this person's recommendations. */
+export interface BlockedSeed {
+  tmdb_id: number;
+  title: string;
+  media_type: string;
+  year: number | null;
+}
+
+/** `prefs.blocked_seeds` as records, whatever shape it is stored in. Mirrors the server's
+ *  `blocked_entries` — an old install's bare-int list is valid data and keeps working. */
+export function blockedSeeds(
+  prefs: UserPrefs | undefined,
+): BlockedSeed[] {
+  return (prefs?.blocked_seeds ?? []).map((entry) =>
+    typeof entry === "number"
+      ? { tmdb_id: entry, title: "", media_type: "", year: null }
+      : entry,
+  );
 }

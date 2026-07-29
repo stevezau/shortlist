@@ -6,6 +6,7 @@
  *  in the row and why. If the run failed for this person, the error leads. The trace blob is large,
  *  so it's fetched on demand for this page only. */
 import {
+  Ban,
   AlertTriangle,
   ArrowRight,
   Check,
@@ -27,7 +28,8 @@ import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { provenanceLabel, sourceLabel } from "@/lib/pick-provenance";
-import { useRunUserTrace } from "@/lib/queries";
+import { Button } from "@/components/ui/button";
+import { useBlockSeed, useRunUserTrace } from "@/lib/queries";
 import type {
   Pick,
   RunLibraryBreakdown,
@@ -83,7 +85,7 @@ export function RunUserTracePage() {
             />
           }
         >
-          {(data) => <TraceView data={data} />}
+          {(data) => <TraceView data={data} userId={uid} />}
         </QueryBoundary>
       )}
     </div>
@@ -108,7 +110,15 @@ function TraceSkeleton() {
   );
 }
 
-export function TraceView({ data }: { data: RunUserTraceResponse }) {
+/** `userId` is optional so the trace renders standalone in tests and anywhere the id is unknown;
+ *  without it the per-seed "don't seed" action simply isn't offered, since it has nobody to act on. */
+export function TraceView({
+  data,
+  userId,
+}: {
+  data: RunUserTraceResponse;
+  userId?: number;
+}) {
   const name = data.display_name || data.username;
   const libraries = useMemo(() => buildLibraries(data), [data]);
   const [active, setActive] = useState(libraries[0]?.key ?? "");
@@ -142,7 +152,7 @@ export function TraceView({ data }: { data: RunUserTraceResponse }) {
               active={current?.key ?? ""}
               onSelect={setActive}
             />
-            {current && <LibraryFlow lib={current} />}
+            {current && <LibraryFlow lib={current} userId={userId} />}
           </>
         )}
       </div>
@@ -434,7 +444,13 @@ interface FlowStepDef {
   body: ReactNode;
 }
 
-function LibraryFlow({ lib }: { lib: LibraryView }) {
+function LibraryFlow({
+  lib,
+  userId,
+}: {
+  lib: LibraryView;
+  userId?: number;
+}) {
   const searchNoun = mediaLabel(lib.media).toLowerCase();
   const hasWeb = Boolean(lib.web || lib.webSource);
   const placesSearched = lib.sources.length + (hasWeb ? 1 : 0);
@@ -450,7 +466,7 @@ function LibraryFlow({ lib }: { lib: LibraryView }) {
   // they lead; we fall back to the raw recent-watch sample only when nothing resolved to a seed.
   const recentBody =
     lib.seeds.length > 0 ? (
-      <SeedList seeds={lib.seeds} />
+      <SeedList seeds={lib.seeds} userId={userId} />
     ) : lib.watched.length > 0 ? (
       <WatchList watched={lib.watched} />
     ) : (
@@ -689,20 +705,68 @@ function Muted({ children }: { children: ReactNode }) {
  *  now pure recency (frequency no longer scores), so there's no "influence" to rank: this is just the
  *  list, in recency order. A play-count bar or "watched N×" here would imply a weighting we no longer
  *  apply. Seeds arrive already sorted newest-first, so their order IS the recency order. */
-function SeedList({ seeds }: { seeds: TraceSeed[] }) {
+/** The per-seed block action.
+ *
+ *  Its own component so the mutation hook only mounts when a user id is actually available — the
+ *  trace renders standalone in places that have no QueryClient, and a hook cannot be called
+ *  conditionally. */
+function BlockSeedButton({
+  seed,
+  userId,
+}: {
+  seed: TraceSeed;
+  userId: number;
+}) {
+  const block = useBlockSeed(userId);
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-6 px-1.5 text-xs text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+      disabled={block.isPending}
+      title={`Stop "${seed.title}" shaping this person's picks. It stays in their history — it just stops being a seed.`}
+      onClick={() =>
+        block.mutate({
+          tmdbId: seed.tmdb_id,
+          title: seed.title,
+          mediaType: seed.media === "show" ? "show" : "movie",
+        })
+      }
+    >
+      <Ban className="h-3 w-3" aria-hidden />
+      Don&rsquo;t seed
+    </Button>
+  );
+}
+
+function SeedList({
+  seeds,
+  userId,
+}: {
+  seeds: TraceSeed[];
+  userId?: number;
+}) {
   return (
     <ol className="space-y-1.5">
       {seeds.map((s) => (
         <li
           key={`${s.media}-${s.tmdb_id}`}
-          className="flex items-baseline justify-between gap-3"
+          className="group flex items-baseline justify-between gap-3"
         >
           <span className="truncate text-sm font-medium">{s.title}</span>
-          {seedWhy(s) && (
-            <span className="shrink-0 text-xs text-muted-foreground">
-              {seedWhy(s)}
-            </span>
-          )}
+          <span className="flex shrink-0 items-baseline gap-2">
+            {seedWhy(s) && (
+              <span className="text-xs text-muted-foreground">
+                {seedWhy(s)}
+              </span>
+            )}
+            {/* This is where a bad seed is actually noticed — the page that says "these are the
+                watches your picks came from". Blocking anywhere else means remembering a title and
+                going to find it. */}
+            {userId !== undefined && (
+              <BlockSeedButton seed={s} userId={userId} />
+            )}
+          </span>
         </li>
       ))}
     </ol>

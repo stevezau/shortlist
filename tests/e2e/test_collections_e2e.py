@@ -16,6 +16,18 @@ pytestmark = pytest.mark.e2e
 LOAD = 20_000
 
 
+def _add_a_row(page: Page) -> None:
+    """Open the row editor via the template gallery.
+
+    "Add a row" now opens a gallery first — a blank 17-field form only ever helped someone who
+    already knew what they wanted to build. These tests are about the editor, so they take the
+    "Start from scratch" tile, which is the same blank form as before.
+    """
+    _add_a_row(page)
+    page.get_by_role("button", name="Start from scratch").click()
+    expect(page.get_by_role("heading", name="Add a row")).to_be_visible()
+
+
 def _open_rows(page: Page) -> None:
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
@@ -27,8 +39,7 @@ def test_default_row_is_listed_and_a_per_person_row_can_be_added(page: Page, app
     expect(page.get_by_text("Picked for You").first).to_be_visible(timeout=LOAD)
     expect(page.get_by_text("default")).to_be_visible()
 
-    page.get_by_role("button", name="Add a row").click()
-    expect(page.get_by_role("heading", name="Add a row")).to_be_visible()
+    _add_a_row(page)
     # exact=True: get_by_label is a substring match, and the default row's name is the *template*
     # "✨ {library_name} Picked for You" — so its card's "Enable …"/"Remove …" aria-labels contain
     # "name" and would otherwise collide with the dialog's real "Name" field.
@@ -42,7 +53,7 @@ def test_default_row_is_listed_and_a_per_person_row_can_be_added(page: Page, app
 
 def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: ShortlistApp):
     _open_rows(page)
-    page.get_by_role("button", name="Add a row").click()
+    _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Popular Here")
     page.get_by_role("button", name="Shared", exact=True).click()
     # The aggregate-privacy control appears only for shared rows.
@@ -56,7 +67,7 @@ def test_a_shared_row_created_in_the_ui_is_stored_as_shared(page: Page, app: Sho
 
 def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp):
     _open_rows(page)
-    page.get_by_role("button", name="Add a row").click()
+    _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Poster Row")
     page.get_by_role("button", name="Add row").click()
     expect(page.get_by_text("Poster Row").first).to_be_visible(timeout=LOAD)
@@ -126,7 +137,7 @@ def test_every_surface_can_be_turned_off_and_reaches_the_api(page: Page, app: Sh
     "the toggles are mutually exclusive".
     """
     _open_rows(page)
-    page.get_by_role("button", name="Add a row").click()
+    _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Quiet Row")
 
     for name in PLACEMENT_SWITCHES:
@@ -146,7 +157,7 @@ def test_the_two_placement_columns_are_saved_independently(page: Page, app: Shor
     """The owner keeps their own row on the Recommended shelf while friends' rows come off it —
     the split that is only possible because every person gets their own Plex collection."""
     _open_rows(page)
-    page.get_by_role("button", name="Add a row").click()
+    _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Split Row")
 
     page.get_by_role("switch", name="Friends Library Recommended").click()

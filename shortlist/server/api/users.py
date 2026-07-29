@@ -27,6 +27,7 @@ from shortlist.server.db.models import (
     User,
     iso_utc,
 )
+from shortlist.server.prefs import blocked_entries
 from shortlist.server.services import jobs
 from shortlist.server.services.setup_probe import plextv_account
 from shortlist.server.settings_store import SettingsStore
@@ -57,7 +58,9 @@ class UserPrefs(BaseModel):
     # (PUT /users/{id}/rows/{collection_id}), which the UI actually exposes.
     row_name_tpl: str | None = None
     excluded_genres: list[str] | None = None
-    blocked_seeds: list[int] | None = None
+    # int entries are the original storage shape and are still accepted for ever; dict entries carry
+    # the title, so the UI can show a name instead of "tmdb 346648". See `blocked_entries`.
+    blocked_seeds: list[int | dict] | None = None
     paused: bool | None = None
 
 
@@ -334,22 +337,36 @@ async def _rename_after_nickname(state, was_called: dict[str, str]) -> None:
 class BlockSeedBody(BaseModel):
     tmdb_id: int
     title: str = ""
+    media_type: str = ""  # movie | show; blank on a client that predates it
+    year: int | None = None
 
 
 @router.post("/{user_id}/blocked-seeds")
 async def block_seed(user_id: int, body: BlockSeedBody, request: Request) -> dict:
-    """Block a title from being used as a seed for this user's recommendations."""
+    """Stop a title being used as a seed for this person's recommendations.
+
+    Blocking a seed does not ban the title outright — it stops that watch from SHAPING their picks,
+    which is the thing you want after a one-off that isn't representative of them.
+    """
     with request.app.state.sessions() as session:
         user = session.get(User, user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
         prefs = dict(user.prefs or {})
-        blocked = set(prefs.get("blocked_seeds") or [])
-        blocked.add(body.tmdb_id)
-        prefs["blocked_seeds"] = sorted(blocked)
+        entries = [e for e in blocked_entries(prefs) if e["tmdb_id"] != body.tmdb_id]
+        entries.append(
+            {
+                "tmdb_id": body.tmdb_id,
+                "title": body.title,
+                "media_type": body.media_type,
+                "year": body.year,
+            }
+        )
+        entries.sort(key=lambda e: (e["title"].lower(), e["tmdb_id"]))
+        prefs["blocked_seeds"] = entries
         user.prefs = prefs
         session.commit()
-    return {"blocked_seeds": sorted(blocked)}
+    return {"blocked_seeds": entries}
 
 
 @router.delete("/{user_id}/blocked-seeds/{tmdb_id}")
@@ -360,12 +377,50 @@ async def unblock_seed(user_id: int, tmdb_id: int, request: Request) -> dict:
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
         prefs = dict(user.prefs or {})
-        blocked = set(prefs.get("blocked_seeds") or [])
-        blocked.discard(tmdb_id)
-        prefs["blocked_seeds"] = sorted(blocked)
+        entries = [e for e in blocked_entries(prefs) if e["tmdb_id"] != tmdb_id]
+        prefs["blocked_seeds"] = entries
         user.prefs = prefs
         session.commit()
-    return {"blocked_seeds": sorted(blocked)}
+    return {"blocked_seeds": entries}
+
+
+@router.get("/search/titles")
+async def search_titles(request: Request, q: str, media_type: str = "movie") -> list[dict]:
+    """Look a title up on TMDB, for the "block a seed" picker.
+
+    Owner-gated like the rest of this router. Returns at most one match per query — TMDB's own best
+    guess — because the only thing the caller needs is a tmdb_id to attach a name to.
+    """
+    if media_type not in ("movie", "show"):
+        raise HTTPException(status_code=422, detail="media_type must be 'movie' or 'show'")
+    query = q.strip()
+    if not query:
+        return []
+    # The requests-only context: a TMDB client without connecting to the PMS or building the LLM
+    # curator, neither of which a title lookup needs.
+    _config, tmdb = request.app.state.run_service.build_requests_context()
+    if tmdb is None:
+        raise HTTPException(status_code=503, detail="TMDB is not configured — add an API key in Settings.")
+
+    def lookup():
+        return tmdb.search(query, media_type)
+
+    try:
+        found = await asyncio.get_running_loop().run_in_executor(None, lookup)
+    except Exception as e:
+        logger.warning("TMDB title search failed ({})", type(e).__name__)
+        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
+    if not found:
+        return []
+    date = found.get("release_date") or found.get("first_air_date") or ""
+    return [
+        {
+            "tmdb_id": found.get("id"),
+            "title": found.get("title") or found.get("name") or query,
+            "media_type": media_type,
+            "year": int(date[:4]) if date[:4].isdigit() else None,
+        }
+    ]
 
 
 @router.get("/{user_id}/runs")
@@ -393,12 +448,32 @@ async def user_runs(user_id: int, request: Request, limit: int = 15) -> list[dic
                     "finished_at": iso_utc(run.finished_at) if run else None,
                     "status": ru.status,
                     "error": ru.error,
+                    # Why a non-failing outcome happened ("no watch history yet"). Without it a
+                    # `skipped` reads as a failure, which is the opposite of what it means.
+                    "reason": ru.reason or "",
+                    "duration_ms": ru.duration_ms,
+                    "run_status": run.status if run else None,
                     "dry_run": run.dry_run if run else False,
                     "diff": ru.diff or {},
                     "picks": [_pick_dict(p) for p in picks],
                 }
             )
         return out
+
+
+@router.get("/{user_id}/runs/summary")
+async def user_runs_summary(user_id: int, request: Request) -> dict:
+    """How many runs included this person, against how many there have been.
+
+    A run is server-wide, so "6 runs" on a person's page is only honest next to "of 148" — otherwise
+    the page reads as though the server has run six times.
+    """
+    with request.app.state.sessions() as session:
+        if session.get(User, user_id) is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        included = session.query(func.count(RunUser.user_id)).filter(RunUser.user_id == user_id).scalar() or 0
+        total = session.query(func.count(Run.id)).scalar() or 0
+        return {"included": included, "total": total}
 
 
 @router.get("/{user_id}/history")

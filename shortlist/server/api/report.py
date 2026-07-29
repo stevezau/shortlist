@@ -5,6 +5,16 @@ history), joined against runs, collections and the request queue. A "recommendat
 (user, title) pair — a title recommended to one person — and it's a "hit" once that person watches it.
 Distinct titles, not pick rows: a title re-recommended over several runs is one recommendation, and one
 watch is one hit (counting rows would skew both). Owner-only, read-only.
+
+**Everything here is windowed** (``?window=7|30|90|all``, default 30). It used to be lifetime-cumulative,
+which made every ratio meaningless: a pick can only ever be CREDITED within ``HIT_WINDOW_DAYS`` of
+delivery, but the old denominator counted every pick ever delivered, forever. Each night therefore
+added ~60 permanently-uncreditable picks per person to the bottom of the fraction, so the number
+measured how long Shortlist had been installed rather than how good the picks were.
+
+The one ratio that survives — ``overall.landing`` — is computed over a **matured cohort**: picks
+delivered in the window *and* old enough to have had their full 30 days. Numerator and denominator
+then describe the same set of picks, which is the only way the rate means anything.
 """
 
 from __future__ import annotations
@@ -12,16 +22,25 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import String, cast, func
 
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, PickRow, RequestCandidate, Run, RunUser, User, iso_utc
 from shortlist.server.scheduler import WATCH_SYNC_JOB_ID
+from shortlist.server.services.run_service import HIT_WINDOW_DAYS
 from shortlist.server.settings_store import SettingsStore
 
 _PLACEHOLDER = re.compile(r"\{[^}]+\}")
+
+#: Selectable report windows, in days. ``None`` = all time.
+WINDOWS: dict[str, int | None] = {"7": 7, "30": 30, "90": 90, "all": None}
+DEFAULT_WINDOW = "30"
+
+#: How many weekly buckets the trend chart carries. The trend is the LONG view — it deliberately
+#: ignores the window selector, because a 7-day window would leave it with one bar.
+TREND_WEEKS = 16
 
 router = APIRouter(prefix="/report", tags=["report"], dependencies=[Depends(require_owner)])
 
@@ -38,12 +57,32 @@ def _rate(watched: int, delivered: int) -> float | None:
     return round(watched / delivered, 3) if delivered else None
 
 
+def _delta(current: int | float | None, previous: int | float | None) -> float | None:
+    """Change vs the previous equal-length period, or None when there is nothing to compare against
+    (the ``all`` window, or a stat that was null in either period)."""
+    if current is None or previous is None:
+        return None
+    return round(current - previous, 1)
+
+
 @router.get("")
-async def effectiveness(request: Request) -> dict:
-    """The dashboard tracking report: headline hit rate + reach, watch momentum, per-user and per-row
-    breakdowns, the titles landing best, requests that paid off, and a recent-watches feed."""
+async def effectiveness(
+    request: Request,
+    window: str = Query(DEFAULT_WINDOW, description="Report window in days: 7, 30, 90, or 'all'."),
+) -> dict:
+    """The dashboard tracking report: headline counts for the chosen window with their change vs the
+    previous equal period, the landing rate over a matured cohort, watch momentum, per-user and
+    per-row breakdowns, the titles landing best, requests that paid off, and a recent-watches feed."""
+    if window not in WINDOWS:
+        window = DEFAULT_WINDOW
+    days = WINDOWS[window]
     now = datetime.now(UTC)
-    week_ago = now - timedelta(days=7)
+
+    # The current period is [since, now); the previous is [prev_since, since). Both are None for
+    # "all", which has no previous period and therefore no deltas.
+    since = now - timedelta(days=days) if days is not None else None
+    prev_since = now - timedelta(days=2 * days) if days is not None else None
+
     with request.app.state.sessions() as session:
         # A title within one person's set: (tmdb_id, media_type). `.concat()` (SQL `||`), never
         # func.concat — the latter needs SQLite >= 3.44 and the runtime image ships 3.40.
@@ -51,56 +90,122 @@ async def effectiveness(request: Request) -> dict:
         # A title across everyone: prefix the person, so one film recommended to two people counts twice.
         person_title = cast(PickRow.user_id, String).concat("-").concat(title)
 
-        def counts(group_cols, key_expr):
-            """{group key -> (delivered, watched)} distinct-title counts, in two grouped scans. Pass one
-            column for scalar keys, or several for tuple keys (grouped by every column together)."""
+        def in_period(column, start, end=None):
+            """Filters restricting `column` to [start, end). Empty when start is None (all time)."""
+            clauses = []
+            if start is not None:
+                clauses.append(column >= start)
+            if end is not None:
+                clauses.append(column < end)
+            return clauses
+
+        def watched_in(start, end=None):
+            """Filters for picks WATCHED in [start, end) — the numerator side of every count here."""
+            return [PickRow.watched_at.isnot(None), *in_period(PickRow.watched_at, start, end)]
+
+        def counts(group_cols, key_expr, start):
+            """{group key -> (delivered, watched)} distinct-title counts for one period, in two scans.
+
+            `delivered` counts picks CREATED in the period; `watched` counts picks WATCHED in it —
+            deliberately not the same set. A pick delivered last month and watched this week is a
+            watch this week, and pinning it to its delivery period would hide it entirely. These are
+            counts, never a ratio, so the mismatch is honest rather than misleading.
+            """
             cols = list(group_cols) if isinstance(group_cols, (list, tuple)) else [group_cols]
 
             def scan(*extra):
                 rows = session.query(*cols, func.count(func.distinct(key_expr))).filter(*extra).group_by(*cols).all()
                 return {(r[:-1] if len(cols) > 1 else r[0]): r[-1] for r in rows}
 
-            delivered, watched = scan(), scan(PickRow.watched_at.isnot(None))
-            return {k: (delivered.get(k, 0), watched.get(k, 0)) for k in delivered}
+            delivered = scan(*in_period(PickRow.created_at, start))
+            watched = scan(*watched_in(start))
+            return {k: (delivered.get(k, 0), watched.get(k, 0)) for k in set(delivered) | set(watched)}
 
-        per_user_raw = counts(PickRow.user_id, title)
+        per_user_raw = counts(PickRow.user_id, title, since)
         # A row that targets >1 library is one Plex collection PER library, so it's tracked per
         # (row, library) — each library gets its own delivered/watched line, keyed (slug, section, library).
-        per_row_raw = counts([PickRow.collection_slug, PickRow.section_key, PickRow.library], person_title)
+        per_row_raw = counts([PickRow.collection_slug, PickRow.section_key, PickRow.library], person_title, since)
 
-        delivered_total = sum(d for d, _ in per_user_raw.values())
-        watched_total = sum(w for _, w in per_user_raw.values())
+        def watched_count(start, end=None) -> int:
+            return session.query(func.count(func.distinct(person_title))).filter(*watched_in(start, end)).scalar() or 0
 
-        watched_last_7d = (
+        def watchers_count(start, end=None) -> int:
+            return (
+                session.query(func.count(func.distinct(PickRow.user_id))).filter(*watched_in(start, end)).scalar() or 0
+            )
+
+        def avg_days_to_watch(start, end=None) -> float | None:
+            """Average days from FIRST delivery to FIRST watch, over titles first watched in the period.
+
+            Per (user, title), not per delivery row — a title re-recommended nightly is one data point,
+            measured from when it was first added (MIN created_at) to when it was first watched.
+            """
+            firsts = (
+                session.query(
+                    func.min(PickRow.created_at).label("added"),
+                    func.min(PickRow.watched_at).label("watched"),
+                )
+                .group_by(PickRow.user_id, PickRow.tmdb_id, PickRow.media_type)
+                .subquery()
+            )
+            clauses = [firsts.c.watched.isnot(None), *in_period(firsts.c.watched, start, end)]
+            value = (
+                session.query(func.avg(func.julianday(firsts.c.watched) - func.julianday(firsts.c.added)))
+                .filter(*clauses)
+                .scalar()
+            )
+            return round(value, 1) if value is not None else None
+
+        watched_now = watched_count(since)
+        watchers_now = watchers_count(since)
+        avg_now = avg_days_to_watch(since)
+        watched_prev = watched_count(prev_since, since) if since else None
+        watchers_prev = watchers_count(prev_since, since) if since else None
+        avg_prev = avg_days_to_watch(prev_since, since) if since else None
+
+        delivered_now = (
             session.query(func.count(func.distinct(person_title)))
-            .filter(PickRow.watched_at.isnot(None), PickRow.watched_at >= week_ago)
+            .filter(*in_period(PickRow.created_at, since))
             .scalar()
             or 0
         )
-        # Average days from FIRST delivery to FIRST watch, per (user, title) — not per delivery row, so
-        # a title re-recommended nightly is one data point measured from when it was first added (MIN
-        # created_at over all its rows) to when it was first watched (MIN watched_at). SQLite julianday.
-        firsts = (
-            session.query(
-                func.min(PickRow.created_at).label("added"),
-                func.min(PickRow.watched_at).label("watched"),
-            )
-            .group_by(PickRow.user_id, PickRow.tmdb_id, PickRow.media_type)
-            .subquery()
-        )
-        avg_days = (
-            session.query(func.avg(func.julianday(firsts.c.watched) - func.julianday(firsts.c.added)))
-            .filter(firsts.c.watched.isnot(None))
-            .scalar()
-        )
 
+        # --- The landing rate, over a MATURED cohort -------------------------------------------
+        # The equally-long window ending `HIT_WINDOW_DAYS` ago — i.e. the most recent stretch of
+        # picks that have all had their full 30 days. Anything younger cannot have been credited yet,
+        # so including it would recreate the very bug this rewrite exists to fix, inside a smaller
+        # box. Note this is a SHIFTED window, not an intersection with the selected one: for
+        # `window=30` the cohort is [now-60d, now-30d). The UI prints `cohort_from`/`cohort_to` so the
+        # dates are never left to be inferred.
+        matured_until = now - timedelta(days=HIT_WINDOW_DAYS)
+        matured_since = matured_until - timedelta(days=days) if days is not None else None
+        cohort = in_period(PickRow.created_at, matured_since, matured_until)
+        cohort_delivered = session.query(func.count(func.distinct(person_title))).filter(*cohort).scalar() or 0
+        cohort_watched = (
+            session.query(func.count(func.distinct(person_title)))
+            .filter(PickRow.watched_at.isnot(None), *cohort)
+            .scalar()
+            or 0
+        )
+        landing = {
+            "delivered": cohort_delivered,
+            "watched": cohort_watched,
+            "rate": _rate(cohort_watched, cohort_delivered),
+            "cohort_from": iso_utc(matured_since) if matured_since else None,
+            "cohort_to": iso_utc(matured_until),
+            "matured_days": HIT_WINDOW_DAYS,
+        }
+
+        # The trend ignores the window on purpose — see TREND_WEEKS.
         trend_rows = (
             session.query(func.strftime("%Y-%W", PickRow.watched_at), func.count(func.distinct(person_title)))
             .filter(PickRow.watched_at.isnot(None))
             .group_by(func.strftime("%Y-%W", PickRow.watched_at))
-            .order_by(func.strftime("%Y-%W", PickRow.watched_at))
+            .order_by(func.strftime("%Y-%W", PickRow.watched_at).desc())
+            .limit(TREND_WEEKS)
             .all()
         )
+        trend_rows = list(reversed(trend_rows))
 
         store = SettingsStore(session)
         last_watch_sync = store.get("report.watch_synced_at")  # when the daily job last ran
@@ -137,13 +242,25 @@ async def effectiveness(request: Request) -> dict:
             name = _PLACEHOLDER.sub(lambda m: library if m.group(0) == "{library_name}" else "", template)
             return " ".join(name.split()) or "Picked for You"
 
-        # Reach: who's actually covered.
+        # Reach: who's actually covered. `users_enabled`/`rows_enabled` describe the server as it is
+        # NOW, so they are deliberately not windowed — "3 of 11 people" only reads if 11 is current.
         users_enabled = sum(1 for u in users.values() if u.enabled)
-        users_with_picks = session.query(func.count(func.distinct(PickRow.user_id))).scalar() or 0
+        users_with_picks = (
+            session.query(func.count(func.distinct(PickRow.user_id)))
+            .filter(*in_period(PickRow.created_at, since))
+            .scalar()
+            or 0
+        )
         rows_enabled = session.query(func.count(Collection.id)).filter(Collection.enabled.is_(True)).scalar() or 0
 
-        # Runs summary.
+        # Runs. `total` stays all-time (it is the odometer); `in_window` is what the delta is about.
         runs_total = session.query(func.count(Run.id)).scalar() or 0
+        runs_in_window = session.query(func.count(Run.id)).filter(*in_period(Run.started_at, since)).scalar() or 0
+        runs_prev = (
+            session.query(func.count(Run.id)).filter(*in_period(Run.started_at, prev_since, since)).scalar() or 0
+            if since
+            else None
+        )
         last_run = session.query(Run).filter(Run.status.in_(("ok", "error"))).order_by(Run.id.desc()).first()
         errors_last = (
             session.query(func.count(RunUser.user_id))
@@ -153,22 +270,42 @@ async def effectiveness(request: Request) -> dict:
             else 0
         )
 
-        # Requests that paid off: auto/hand-sent titles that were later watched by anyone.
-        sent_keys = {(r.tmdb_id, r.media_type) for r in session.query(RequestCandidate).filter_by(status="sent").all()}
-        watched_keys = {
-            (tid, mt)
-            for tid, mt in session.query(PickRow.tmdb_id, PickRow.media_type)
-            .filter(PickRow.watched_at.isnot(None))
-            .distinct()
+        # Requests that paid off: titles asked of Sonarr/Radarr that were LATER watched by someone.
+        #
+        # "Later" is the fix here — this used to be a plain set intersection with no ordering check,
+        # so a title watched before it was ever requested (in the library, deleted, re-requested)
+        # counted as a request that paid off. `updated_at` is the send timestamp: the row is written
+        # when status flips to "sent". It is only a PROXY, and it skews both ways: clearing an old
+        # title from the Sent log bumps `updated_at` (the column has `onupdate`), which can pull a
+        # months-old request into the window. A dedicated `sent_at` column is the honest fix; until
+        # then this is still strictly better than the unordered set intersection it replaced.
+        sent = {
+            (r.tmdb_id, r.media_type): r.updated_at
+            for r in session.query(RequestCandidate)
+            .filter(RequestCandidate.status == "sent", *in_period(RequestCandidate.updated_at, since))
             .all()
         }
+        watched_at_by_title: dict[tuple[int, str], datetime] = {}
+        for tid, mt, watched in (
+            session.query(PickRow.tmdb_id, PickRow.media_type, func.max(PickRow.watched_at))
+            .filter(PickRow.watched_at.isnot(None))
+            .group_by(PickRow.tmdb_id, PickRow.media_type)
+            .all()
+        ):
+            watched_at_by_title[(tid, mt)] = watched
+        paid_off = sum(
+            1
+            for key, sent_at in sent.items()
+            if (watched := watched_at_by_title.get(key)) is not None
+            and (sent_at is None or _as_utc(watched) >= _as_utc(sent_at))
+        )
         requests = {
-            "sent": len(sent_keys),
+            "sent": len(sent),
             "pending": session.query(func.count(RequestCandidate.id)).filter_by(status="pending").scalar() or 0,
-            "watched_after_sent": len(sent_keys & watched_keys),
+            "watched_after_sent": paid_off,
         }
 
-        # The titles landing best: most distinct watchers among delivered picks.
+        # The titles landing best: most distinct watchers among picks watched in the window.
         top_rows = (
             session.query(
                 PickRow.tmdb_id,
@@ -176,7 +313,7 @@ async def effectiveness(request: Request) -> dict:
                 func.max(PickRow.title),
                 func.count(func.distinct(PickRow.user_id)),
             )
-            .filter(PickRow.watched_at.isnot(None))
+            .filter(*watched_in(since))
             .group_by(PickRow.tmdb_id, PickRow.media_type)
             .order_by(func.count(func.distinct(PickRow.user_id)).desc())
             .limit(8)
@@ -184,13 +321,15 @@ async def effectiveness(request: Request) -> dict:
         )
 
         def _breakdown(raw, label):
+            """Counts, sorted by what was actually watched.
+
+            Sorting by rate is what put `1/31` above `3/103` — a single data point outranking three
+            times the evidence. Watched count first, delivered as the tiebreak, so the list reads as
+            "who is getting the most out of this".
+            """
             return sorted(
-                (
-                    {**label(key), "delivered": d, "watched": w, "hit_rate": _rate(w, d)}
-                    for key, (d, w) in raw.items()
-                    if label(key) is not None
-                ),
-                key=lambda r: (r["hit_rate"] is not None, r["hit_rate"] or 0, r["watched"]),
+                ({**label(key), "delivered": d, "watched": w} for key, (d, w) in raw.items() if label(key) is not None),
+                key=lambda r: (r["watched"], r["delivered"]),
                 reverse=True,
             )
 
@@ -213,8 +352,8 @@ async def effectiveness(request: Request) -> dict:
                 "section_key": key[1],
                 "library": key[2],
                 "name": row_label(key[0], key[2]),
-                # History from a row that no longer exists. Flagged so the UI can say so rather than
-                # showing it as another nameless copy of the default row.
+                # History from a row that no longer exists. Flagged so the UI can collapse it out of
+                # the way rather than showing it as another nameless copy of the default row.
                 "deleted": row_template(key[0]) is None,
             },
         )
@@ -229,7 +368,7 @@ async def effectiveness(request: Request) -> dict:
                 func.max(PickRow.id).label("pick_id"),
                 func.max(PickRow.watched_at).label("watched"),
             )
-            .filter(PickRow.watched_at.isnot(None))
+            .filter(*watched_in(since))
             .group_by(PickRow.user_id, PickRow.tmdb_id, PickRow.media_type)
             .order_by(func.max(PickRow.watched_at).desc())
             .limit(20)
@@ -258,22 +397,31 @@ async def effectiveness(request: Request) -> dict:
     next_watch_sync = iso_utc(job.next_run_time) if job and job.next_run_time else None
 
     return {
+        "window": window,
+        "window_days": days,
+        "since": iso_utc(since) if since else None,
         "overall": {
-            "delivered": delivered_total,
-            "watched": watched_total,
-            "hit_rate": _rate(watched_total, delivered_total),
-            "watched_last_7d": watched_last_7d,
-            "avg_days_to_watch": round(avg_days, 1) if avg_days is not None else None,
+            "delivered": delivered_now,
+            "watched": watched_now,
+            "watched_prev": watched_prev,
+            "watched_delta": _delta(watched_now, watched_prev),
+            "avg_days_to_watch": avg_now,
+            "avg_days_to_watch_delta": _delta(avg_now, avg_prev),
+            "landing": landing,
         },
         "watch_sync": {"last": last_watch_sync, "next": next_watch_sync},
         "coverage": {
             "users_enabled": users_enabled,
             "users_total": len(users),
             "users_with_picks": users_with_picks,
+            "users_watched": watchers_now,
+            "users_watched_delta": _delta(watchers_now, watchers_prev),
             "rows_enabled": rows_enabled,
         },
         "runs": {
             "total": runs_total,
+            "in_window": runs_in_window,
+            "in_window_delta": _delta(runs_in_window, runs_prev),
             "last_finished": iso_utc(last_run.finished_at) if last_run else None,
             "last_status": last_run.status if last_run else None,
             "errors_last": errors_last or 0,
@@ -285,3 +433,9 @@ async def effectiveness(request: Request) -> dict:
         "top_titles": [{"tmdb_id": tid, "media_type": mt, "title": ttl, "watchers": n} for tid, mt, ttl, n in top_rows],
         "recent": recent,
     }
+
+
+def _as_utc(value: datetime) -> datetime:
+    """SQLite hands back naive datetimes for some columns and aware ones for others; comparing the
+    two raises. Treat naive as UTC, which is what every writer in this app stores."""
+    return value if value.tzinfo else value.replace(tzinfo=UTC)

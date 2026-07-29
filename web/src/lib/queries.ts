@@ -1,8 +1,15 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { api } from "./api";
 import type {
   CollectionInput,
+  ReportWindow,
+  Run,
   RowOverridePatch,
   RunRequest,
   Settings,
@@ -25,6 +32,7 @@ export const queryKeys = {
     ["curator-models", provider, credential] as const,
   userRows: (id: number) => ["users", id, "rows"] as const,
   userRuns: (id: number) => ["users", id, "runs"] as const,
+  userRunsSummary: (id: number) => ["users", id, "runs", "summary"] as const,
   userHistory: (id: number) => ["users", id, "history"] as const,
   session: ["auth", "session"] as const,
   setupState: ["setup", "state"] as const,
@@ -63,11 +71,63 @@ export function useRuns(collection?: string) {
   });
 }
 
+/** How many runs a "Load more" click fetches. Matches the server's default page. */
+export const RUNS_PAGE = 50;
+
+/**
+ * The runs list, paged backwards through history.
+ *
+ * Cursor, not offset: runs are inserted while you read, so an offset would skip or repeat rows as
+ * the list shifts under you. A short page means there is nothing older — the list is the only place
+ * that knows, since the endpoint returns a plain array.
+ */
+export function useRunsPaged(collection?: string) {
+  return useInfiniteQuery({
+    queryKey: collection
+      ? ([...queryKeys.runs, "paged", { collection }] as const)
+      : ([...queryKeys.runs, "paged"] as const),
+    queryFn: ({ pageParam }) =>
+      api.getRuns(collection, pageParam as number | undefined, RUNS_PAGE),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (lastPage: Run[]) =>
+      lastPage.length < RUNS_PAGE
+        ? undefined
+        : lastPage[lastPage.length - 1]?.id,
+  });
+}
+
 export function useRunsSummary() {
   return useQuery({
     queryKey: [...queryKeys.runs, "summary"] as const,
     queryFn: api.getRunsSummary,
   });
+}
+
+export function useBlockSeed(userId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (seed: {
+      tmdbId: number;
+      title: string;
+      mediaType?: string;
+      year?: number;
+    }) => api.blockSeed(userId, seed),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.users }),
+  });
+}
+
+export function useUnblockSeed(userId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (tmdbId: number) => api.unblockSeed(userId, tmdbId),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.users }),
+  });
+}
+
+export function useSchedule() {
+  return useQuery({ queryKey: ["schedule"], queryFn: api.getSchedule });
 }
 
 export function useClearRuns() {
@@ -341,6 +401,13 @@ export function useUserRuns(id: number) {
   });
 }
 
+export function useUserRunsSummary(id: number) {
+  return useQuery({
+    queryKey: queryKeys.userRunsSummary(id),
+    queryFn: () => api.getUserRunsSummary(id),
+  });
+}
+
 export function useUserHistory(id: number) {
   return useQuery({
     queryKey: queryKeys.userHistory(id),
@@ -404,10 +471,10 @@ export function useVersion() {
   });
 }
 
-export function useReport() {
+export function useReport(window: ReportWindow = "30") {
   return useQuery({
-    queryKey: ["report"],
-    queryFn: api.getReport,
+    queryKey: ["report", window],
+    queryFn: () => api.getReport(window),
     staleTime: 60_000,
   });
 }

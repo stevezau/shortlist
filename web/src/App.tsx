@@ -19,6 +19,7 @@ import { RunsPage } from "@/pages/runs";
 import { SettingsPage } from "@/pages/settings";
 import { SetupPage } from "@/pages/setup";
 import { JobsPage } from "@/pages/jobs";
+import { SchedulePage } from "@/pages/schedule";
 import { UninstallPage } from "@/pages/uninstall";
 import { UserDetailPage } from "@/pages/user-detail";
 import { UsersPage } from "@/pages/users";
@@ -112,6 +113,7 @@ export default function App() {
             />
             <Route path="requests" element={<RequestsPage />} />
             <Route path="jobs" element={<JobsPage />} />
+            <Route path="schedule" element={<SchedulePage />} />
             {/* The page was /tools until the nav started calling it Jobs. Kept as a redirect:
                 bookmarks and the `action_url` baked into notifications already in the DB. */}
             <Route path="tools" element={<Navigate to="/jobs" replace />} />

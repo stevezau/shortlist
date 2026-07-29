@@ -535,6 +535,12 @@ class EngineConfig:
     # How many watched titles seed a row (the most recently watched win, balanced across media types).
     # Row-overridable via RowSpec.max_seeds.
     max_seeds: int = 30
+    # Titles that must never seed a SHARED row, server-wide.
+    #
+    # Per-person blocks deliberately do NOT apply here: a shared row is public, and letting one
+    # person's "don't seed this" quietly reshape what everyone else sees would make an individual
+    # preference into a server-wide edit nobody else can see or undo.
+    blocked_shared_seeds: set[int] = field(default_factory=set)
     # Cap on already-watched titles in a row, as a fraction of the row. 0.0 (default): all fresh —
     # drop every finished title (a movie you watched, or a show you've seen >= watched_show_pct of;
     # a partly-watched show or one with a new season stays eligible). 1.0: no filtering. Between:

@@ -94,6 +94,14 @@ def _hub_anchors(value: object) -> str | None:
     return None
 
 
+def _int_list(value: object) -> str | None:
+    """A list of TMDB ids. Reached only by API/config today (there is no UI for it), which is exactly
+    why it needs validating — an untyped blob here would reach the engine as a set of whatever."""
+    if not isinstance(value, list) or not all(isinstance(v, int) and not isinstance(v, bool) for v in value):
+        return "must be a list of whole numbers (TMDB ids)"
+    return None
+
+
 def _known_sources(value: object) -> str | None:
     from shortlist.engine.candidates import KNOWN_SOURCES
 
@@ -108,6 +116,9 @@ def _known_sources(value: object) -> str | None:
 VALIDATORS = {
     "row.size": _bounded_int(5, 40),  # ceiling = candidates_pre_rank (per-media pool cap)
     "runs.retention": _bounded_int(0, 24),  # months; 0 = keep forever
+    "events.retention": _bounded_int(0, 24),  # months; 0 = keep forever (the default)
+    "sync.watch_incremental": _is_bool,
+    "sync.watch_full_days": _bounded_int(1, 90),
     # The FLOOR (minimum seconds) between plex.tv writes. 0 = fire as fast as plex.tv accepts; the
     # client backs off adaptively on 429 (rule 6), so 0 is safe, not an "off switch" like it once was.
     "plextv.throttle_s": _bounded_float(0.0, 60.0),
@@ -123,6 +134,9 @@ VALIDATORS = {
     "recommendations.freshness": _bounded_float(0.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
     "recommendations.max_seeds": _bounded_int(5, 100),
+    "recommendations.blocked_shared_seeds": _int_list,
+    # Above 1 only affects READ-ONLY jobs — Plex writers stay exclusive whatever this says.
+    "jobs.max_parallel_readonly": _bounded_int(1, 8),
     "log.level": _one_of("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"),
     # "ollama" stays accepted: it is the pre-merge name for openai_compatible, and an instance
     # configured before the merge still has it stored.

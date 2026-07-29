@@ -660,7 +660,10 @@ def _run_user(
         user_report.reason = _why_no_rows(user, cfg)
         return False
     _pipeline._emit(ctx, user.slug, "history", {})
-    user.history = ctx.history_source.fetch(user, min_completion=cfg.min_completion)
+    # Reuse a history the CALLER already filled, exactly as the shared-row path does. The server
+    # pre-fills it from its watched-title cache, which turns the run's second complete per-user read
+    # of the night into a no-op; a direct engine run leaves it empty and reads here as before.
+    user.history = user.history or ctx.history_source.fetch(user, min_completion=cfg.min_completion)
     user_report.counts.history = len(user.history)
 
     cold = len(user.history) < cfg.min_history
@@ -1232,6 +1235,10 @@ def _shared_row(
         user_type=UserType.SHARED,
         slug=slug,
         history=agg_history,
+        # The server-wide list, never the union of everyone's personal blocks: a shared row is public,
+        # and letting one person's "don't seed this" reshape what everyone else sees would turn an
+        # individual preference into a server-wide edit nobody else can see or undo.
+        blocked_seeds=set(cfg.blocked_shared_seeds),
     )
     if not agg_history:
         user_report.status = "skipped"
@@ -1257,7 +1264,7 @@ def _shared_row(
         logger.info("shared row '{}': no title watched by >= {} people yet", spec.slug, threshold)
         return None
 
-    seeds = derive_seeds(agg_history, resolve, max_seeds=effective_max_seeds(spec, cfg))
+    seeds = derive_seeds(agg_history, resolve, max_seeds=effective_max_seeds(spec, cfg), blocked=agg.blocked_seeds)
     row_sources = spec.candidate_sources if spec.candidate_sources else None  # None -> global default
     # Same three narrowings a per-person row gets: its sources, its media, its libraries.
     (_pool, _in_library, ranked), gather_stats = _candidate_pool(
