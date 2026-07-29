@@ -757,8 +757,16 @@ def _run_user(
                 logger.warning("{}: row '{}' has no working candidate source ({})", user.username, spec.slug, e)
                 return None
             # Once per pool computation (this cache miss) — the gather's AI cost belongs to this user.
-            # Label the pool by its media + sources so a multi-pool user's trace stays legible.
+            # Label the pool by its media + sources so a multi-pool user's trace stays legible, and by
+            # its seed count when rows differ there: two rows that share media and sources but not
+            # their seed budget are two real gathers, and without the count they render as two
+            # identical cards with different numbers and no way to tell which row is which. The media
+            # prefix must stay first — the trace page reads it to decide which library a gather belongs
+            # to (`poolCoversMedia` splits on " · ").
+            seed_n = len(seeds_for(spec))
             pool_label = f"{spec.media} · {', '.join(key[0])}"
+            if any(len(seeds_for(other)) != seed_n for other in specs):
+                pool_label += f" · {seed_n} seed{'' if seed_n == 1 else 's'}"
             _record_gather(user_report, gather_stats, pool_label=pool_label)
         return pool_cache[key]
 

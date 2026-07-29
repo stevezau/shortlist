@@ -737,6 +737,37 @@ class TestPerRowOverrides:
         # One suggestions() call per seed: 4 + 1 across two pools. A shared pool would be 4.
         assert ctx.tmdb.suggestions.call_count == 5
 
+    def test_pools_that_differ_only_in_seed_count_are_labelled_apart(self, ctx: EngineContext, mock_plextv):
+        # The trace labels a gather by media + sources. Two rows differing only in max_seeds share
+        # both, so without the seed count they file two IDENTICAL cards on the "How we picked" page
+        # with different candidate counts and no way to tell which row is which. The media prefix
+        # must stay first: the page splits on " · " to decide which library a gather belongs to.
+        ctx.history_source.fetch.return_value = [
+            make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)
+        ]
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=5, max_seeds=4),
+            RowSpec(slug="because", name_template="Because {top_seed}", size=5, max_seeds=1),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        labels = [g["pool"] for g in report.users[0].trace["gathers"]]
+        assert len(set(labels)) == 2, labels
+        assert all(lbl.startswith("movie · ") or lbl.startswith("both · ") for lbl in labels), labels
+        assert any("1 seed" in lbl for lbl in labels) and any("4 seeds" in lbl for lbl in labels), labels
+
+    def test_a_single_pool_is_not_labelled_with_a_seed_count(self, ctx: EngineContext, mock_plextv):
+        # The count is noise when nothing differs — every row inheriting the default is the common
+        # case, and its trace should read exactly as it did before per-row budgets existed.
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert all("seed" not in g["pool"] for g in report.users[0].trace["gathers"])
+
     def test_per_row_candidate_sources_gate_which_apis_run(self, ctx: EngineContext, mock_plextv):
         # A row pinned to tmdb_discover only must query discover and NOT the tmdb_similar endpoint —
         # per-row sources override the global set for that row.

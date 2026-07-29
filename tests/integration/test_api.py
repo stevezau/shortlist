@@ -1912,6 +1912,31 @@ class TestCollectionsSeed:
         # A row that never set one keeps None, so the engine falls back to its own budget.
         assert next(s for s in specs if s.slug == "picked").max_seeds is None
 
+    def test_global_max_seeds_is_bounded_and_defaults_to_the_engines_own(self, client: TestClient):
+        """The server-wide seed budget: bounds, round-trip, and a default that matches the engine's.
+
+        The one link NOT asserted here is `store.get(...)` -> `EngineConfig(max_seeds=...)` inside
+        `ContextBuilder.build`, which needs a live PMS to reach and is stubbed out in every test that
+        goes near it — the same untested seam its three neighbours (watched_pct, freshness,
+        recent_count) already sit on. The engine half IS covered: test_pipeline's
+        `test_two_rows_differing_only_in_max_seeds_do_not_share_seeds` asserts a row with no override
+        falls back to `cfg.max_seeds`.
+        """
+        from shortlist.engine.models import EngineConfig
+
+        # Floored at 5, not 1: this applies to EVERY row on the server, and seeds are shared across
+        # the media types a row covers — so a server-wide 1 or 2 would leave every movies-and-TV row
+        # with one of its halves unseeded. A deliberately narrow value belongs on the row (1..100).
+        assert client.put("/api/settings", json={"values": {"recommendations.max_seeds": 1}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.max_seeds": 101}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.max_seeds": 12}}).status_code == 200
+        assert client.get("/api/settings").json()["recommendations.max_seeds"] == 12
+
+        # A fresh install must behave exactly as it did before this setting existed.
+        from shortlist.server.settings_store import DEFAULTS
+
+        assert DEFAULTS["recommendations.max_seeds"] == EngineConfig().max_seeds
+
     def test_per_row_placement_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder
         from shortlist.server.services.sse import EventBus

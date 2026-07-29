@@ -162,6 +162,7 @@ class ContextBuilder:
                 watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
                 freshness=float(store.get("recommendations.freshness") or 0.0),
                 recent_count=int(store.get("recommendations.recent_count") or 10),
+                max_seeds=int(store.get("recommendations.max_seeds") or 30),
                 hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
                 dry_run=dry_run,
                 rows=self._build_rows(session, store),
@@ -546,7 +547,7 @@ class ContextBuilder:
                     watched_pct=collection.watched_pct,  # None -> inherit the global watched cap
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
-                    max_seeds=collection.max_seeds,  # None -> inherit the engine's seed budget
+                    max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
                     placement=collection.placement or "both",
                     placement_friends=collection.placement_friends or "both",
                     pin_top=bool(collection.pin_top),

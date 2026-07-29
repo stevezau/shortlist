@@ -122,6 +122,7 @@ VALIDATORS = {
     "recommendations.watched_pct": _bounded_float(0.0, 1.0),
     "recommendations.freshness": _bounded_float(0.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
+    "recommendations.max_seeds": _bounded_int(5, 100),
     "log.level": _one_of("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"),
     # "ollama" stays accepted: it is the pre-merge name for openai_compatible, and an instance
     # configured before the merge still has it stored.

@@ -72,6 +72,10 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     const value = Number(settings["recommendations.recent_count"]);
     return Number.isFinite(value) ? Math.min(25, Math.max(1, value)) : 10;
   });
+  const [maxSeeds, setMaxSeeds] = useState<number>(() => {
+    const value = Number(settings["recommendations.max_seeds"]);
+    return Number.isFinite(value) ? Math.min(100, Math.max(5, value)) : 30;
+  });
   const [searchBackend, setSearchBackend] = useState<string>(() =>
     webSearchProvider(settings),
   );
@@ -84,12 +88,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   // Persist the owner's INTENT (the enabled set as chosen). A source whose dependency isn't met yet
   // no-ops safely in the engine and shows an inline "here's what's needed" prompt — never a silent lie.
   const save = useAutosavedSettings(
-    { enabled, watchedPct, freshness, recentCount, searchBackend },
+    { enabled, watchedPct, freshness, recentCount, maxSeeds, searchBackend },
     () => ({
       "candidates.sources": enabled,
       "recommendations.watched_pct": watchedPct / 100,
       "recommendations.freshness": freshness / 100,
       "recommendations.recent_count": recentCount,
+      "recommendations.max_seeds": maxSeeds,
       "llm_web.search_provider": searchBackend,
     }),
   );
@@ -242,6 +247,33 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 onChange={(e) =>
                   setRecentCount(
                     Math.max(1, Math.min(25, Number(e.target.value) || 1)),
+                  )
+                }
+                className="w-28"
+              />
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              <Label htmlFor="max-seeds">Watches to build from</Label>
+              <p className="text-sm text-muted-foreground">
+                How many of a person&rsquo;s recent watches a row is built from
+                &mdash; the titles every source searches from, not just the AI
+                one. Fewer makes a row tighter and more about a couple of
+                things; more covers more of their taste. Any row can set its own,
+                and a row named after one title (
+                <span className="font-mono">{"{top_seed}"}</span>) should
+                &mdash; the row editor prompts you there. This server-wide
+                default stops at 5 for that reason: a row covering movies and TV
+                needs at least one seed of each.
+              </p>
+              <Input
+                id="max-seeds"
+                type="number"
+                min={5}
+                max={100}
+                value={maxSeeds}
+                onChange={(e) =>
+                  setMaxSeeds(
+                    Math.max(5, Math.min(100, Number(e.target.value) || 5)),
                   )
                 }
                 className="w-28"
