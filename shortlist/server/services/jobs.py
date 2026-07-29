@@ -388,6 +388,7 @@ def _user_cleanup(state, payload: dict) -> dict:
     run touches a disabled user."""
     from shortlist.engine.delivery import remove_row_collections
     from shortlist.server.safe_mode import force_dry_run
+    from shortlist.server.services.collection_reconcile import forget_user_deliveries
 
     slug = payload["slug"]
     dry_run = force_dry_run()
@@ -395,6 +396,13 @@ def _user_cleanup(state, payload: dict) -> dict:
     removed = remove_row_collections(
         ctx.plex, ctx.config, label=f"{ctx.config.label_prefix}_{slug}", displays=None, dry_run=dry_run
     )
+    if not dry_run:
+        # Their whole label just came off the server, so every ledger row naming it is now a pointer to
+        # nothing. Only after a real removal — a dry run changed nothing and must leave the ledger able
+        # to address the collections it previewed.
+        with state.sessions() as session:
+            forget_user_deliveries(session, slug)
+            session.commit()
     # Deleting someone's collections is a destructive Plex write, so it emits its own structured
     # audit row (plex-safety rule 10) — "what changed on whose server at 03:31" must stay answerable
     # from the events feed, not only from the jobs list. `dry_run` is recorded because

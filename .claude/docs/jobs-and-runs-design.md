@@ -594,3 +594,42 @@ than the linked `Server` row. The settings guard only fires when the new server 
 so a box that is down then and up later slipped past — and a stranger's PMS enumerates zero Shortlist
 collections, which is exactly the empty-read input the prune must never act on. Two independent checks
 now, at the door and at the point of use.
+
+
+---
+
+## 15. Live verification on SFLIX, 2026-07-29
+
+Run against the real server (50 accounts, 105 MB database) after deploying `199c6fa`. A throwaway row
+and Steve's own MooHouse account were used; no other user's row was touched.
+
+| What | Result |
+| --- | --- |
+| Migration 0045 on the production DB | applied, pre-migration backup taken, `deliveries` created |
+| Ledger records a real ratingKey | `574466` — matched the actual collection on the PMS |
+| **C1**: narrow a shared row's audience | `privacy.sync` fired; the dropped account gained the exclude on plex.tv |
+| Widen it back | the exclude was pruned again — both directions |
+| Narrow media both→movie | removed ONLY the TV copy (`574467` gone, `574466` alive), ledger kept the live library |
+| Delete a row | both copies gone, ledger emptied |
+| Pause → unpause | all three flags off, then restored identically; filters merged first, in one job |
+| Disable a user | collections removed AND their own filter written (`hide_shared_from_disabled`) |
+| `sync.users` / `sync.history` / `backup.take` as jobs | all `done`; 50 accounts synced, real backup file written |
+| Dead shared-row excludes | pruned from every account once the row was gone from config and server |
+| Owner's Home | 2 rows, both the owner's own — still converged |
+
+### Robustness
+
+| Failure | Behaviour |
+| --- | --- |
+| `docker kill` mid-RUN | run marked `aborted` (not left `running`); boot queued a `privacy.sync` |
+| Job left `running` by a dead process | requeued at boot and completed by the worker unaided (attempts 1→2) |
+| Job stuck `running` >30 min, container UP | caught by the 5-minute sweep and completed (attempts 1→2) |
+| Handler removed in an upgrade | failed cleanly, retried to its limit, reached the notification bell |
+
+### The one bug the unit tests missed
+
+`user.cleanup` removes a user's WHOLE label in one call, which the per-row `_forget_deliveries` never
+sees — so disabling someone left the ledger pointing at ratingKeys that no longer existed. Bounded
+(a stale key still has to find a collection under one of OUR labels, and re-enabling overwrites the
+row) but it grew for ever and made the audit lie. `forget_user_deliveries` now runs on the cleanup
+path. **Only a live disable surfaced it**: every unit test exercised the per-row path.

@@ -90,6 +90,18 @@ def _ledger_keys(session, slug: str) -> dict[str, set[int]]:
     return keys
 
 
+def forget_user_deliveries(session, user_slug: str) -> None:
+    """Drop every ledger row for one person — their whole label was just removed from Plex.
+
+    `user.cleanup` deletes ALL of a user's collections at once (disable, or leaving the share), which
+    the per-row `_forget_deliveries` never sees. Without this the ledger keeps pointing at ratingKeys
+    that no longer exist: harmless for correctness (a removal still has to find the collection under
+    one of OUR labels first, so a stale key cannot reach anything) but it grows for ever and makes the
+    audit lie about what is on the server. Found by testing a disable against a real PMS.
+    """
+    session.query(Delivery).filter_by(user_slug=user_slug).delete(synchronize_session=False)
+
+
 def _forget_deliveries(
     session, slug: str, user_slugs: set[str] | None = None, in_sections: set[str] | None = None
 ) -> None:

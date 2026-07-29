@@ -505,3 +505,59 @@ class TestSafeMode:
         assert wrote == []
         assert len(result["hidden"]) == 1 and result["dry_run"] is True
         assert result["detail"].startswith("Would hide")
+
+
+class TestCleanupForgetsTheLedger:
+    """Disabling someone removes their WHOLE label from Plex in one go — which the per-row
+    `_forget_deliveries` never sees, because it is scoped to a row.
+
+    Left alone, the ledger keeps pointing at ratingKeys that no longer exist. Not a correctness
+    problem (a removal still has to find the collection under one of OUR labels first, so a stale key
+    cannot reach anything) but it grows for ever and makes the audit lie. Found by running a disable
+    against a real PMS, not by these tests — which is why this one exists.
+    """
+
+    def _state(self, sessions, *, removed: list[str]):
+        plex = SimpleNamespace(
+            sections=lambda: [SimpleNamespace(title="Movies", key=1, type="movie")],
+            find_owned_collections=lambda section, label: (
+                [SimpleNamespace(title=t, ratingKey=i) for i, t in enumerate(removed, start=900)]
+                if label == "shortlist_sarah"
+                else []
+            ),
+            delete_owned_collection=lambda c, prefix: None,
+        )
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig(), write_lock=None)
+        return SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+
+    def _ledger(self, sessions) -> list[tuple]:
+        from shortlist.server.db.models import Delivery
+
+        with sessions() as session:
+            return [(d.user_slug, d.library_key) for d in session.query(Delivery)]
+
+    def _seed(self, sessions):
+        from shortlist.server.db.models import Delivery
+
+        with sessions() as session:
+            session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=900))
+            session.add(Delivery(collection_slug="picked", user_slug="mike", library_key="1", rating_key=901))
+            session.commit()
+
+    def test_it_forgets_that_users_rows_and_nobody_elses(self, sessions):
+        self._seed(sessions)
+
+        jobs._HANDLERS["user.cleanup"](self._state(sessions, removed=["✨ Picked for You"]), {"slug": "sarah"})
+
+        assert self._ledger(sessions) == [("mike", "1")]
+
+    def test_a_dry_run_leaves_the_ledger_alone(self, sessions, monkeypatch):
+        """A preview removed nothing, so the ledger must still be able to address what it previewed."""
+        import shortlist.server.safe_mode as safe_mode
+
+        monkeypatch.setattr(safe_mode, "force_dry_run", lambda: True)
+        self._seed(sessions)
+
+        jobs._HANDLERS["user.cleanup"](self._state(sessions, removed=["✨ Picked for You"]), {"slug": "sarah"})
+
+        assert sorted(self._ledger(sessions)) == [("mike", "1"), ("sarah", "1")]
