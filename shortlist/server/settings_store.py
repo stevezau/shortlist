@@ -120,6 +120,7 @@ DEFAULTS: dict[str, Any] = {
 SECRET_KEYS = {
     "plex.token",
     "tautulli.apikey",
+    "tmdb.apikey",  # was the ONE api key stored in the clear — and returned unredacted by all_public()
     "curator.api_key",
     "requests.radarr.apikey",
     "requests.sonarr.apikey",
@@ -186,6 +187,36 @@ class SettingsStore:
             else:
                 out[row.key] = row.value["v"]
         return out
+
+    def encrypt_plaintext_secrets(self) -> list[str]:
+        """Re-store any SECRET_KEY still sitting in the clear, encrypted. Returns the keys healed.
+
+        `tmdb.apikey` was the one API key missing from SECRET_KEYS, so it was plaintext at rest AND
+        returned unredacted by `all_public()` — visible to anything with a session, and to anyone
+        handed a `/config` backup. Simply adding it to the set is not enough: `get()` would then try to
+        Fernet-decrypt the existing plaintext and raise, breaking TMDB (and so every recommendation)
+        on every existing install.
+
+        Runs at boot, idempotent, and covers any key added to SECRET_KEYS in future — an encrypted
+        value round-trips, a plaintext one is re-written. Detection is by decryptability rather than a
+        prefix check, so it cannot be fooled by a key that merely looks Fernet-shaped.
+        """
+        if not self._secrets:
+            return []
+        healed = []
+        for key in sorted(SECRET_KEYS):
+            row = self._session.get(Setting, key)
+            value = (row.value or {}).get("v") if row else None
+            if not value or not isinstance(value, str):
+                continue
+            try:
+                self._secrets.decrypt(value)
+            except Exception:  # any decrypt failure means the value is not encrypted
+                row.value = {"v": self._secrets.encrypt(value)}
+                healed.append(key)
+        if healed:
+            self._session.commit()
+        return healed
 
     def purge_legacy(self) -> None:
         """Delete rows for keys we no longer use (e.g. the old hash-only API-token fields), so stale

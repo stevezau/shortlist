@@ -135,6 +135,12 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         with sessions() as session:
             store = SettingsStore(session, secret_box)
             store.purge_legacy()  # drop stale rows from removed settings (e.g. old API-token hash)
+            # Heal any secret still stored in the clear — `tmdb.apikey` was, on every install that
+            # predates it joining SECRET_KEYS (rule 9).
+            if healed := store.encrypt_plaintext_secrets():
+                logger.warning(
+                    "encrypted {} setting(s) that were stored in the clear: {}", len(healed), ", ".join(healed)
+                )
             store.seed_from_env(dict(os.environ))
             # Configure logging from the DB setting (seeded from LOG_LEVEL on first boot). The
             # rotating file sink under /config/logs always captures DEBUG, so a quiet console still
