@@ -23,7 +23,7 @@ def _add_a_row(page: Page) -> None:
     already knew what they wanted to build. These tests are about the editor, so they take the
     "Start from scratch" tile, which is the same blank form as before.
     """
-    _add_a_row(page)
+    page.get_by_role("button", name="Add a row").click()
     page.get_by_role("button", name="Start from scratch").click()
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible()
 
