@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -365,8 +365,11 @@ describe("RunDetailPage — grouped by library", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Plex writes" }));
 
-    expect(screen.getByText(/merging share filters/)).toBeInTheDocument();
-    expect(screen.queryByText(/curating with AI/)).toBeNull();
+    // Scoped to the log box: the phase timeline above it is always on now, and it names the same
+    // phases — so an unscoped query matches both and proves nothing about the filter.
+    const log = within(screen.getByRole("log", { name: /Run activity log/i }));
+    expect(log.getByText(/merging share filters/)).toBeInTheDocument();
+    expect(log.queryByText(/curating with AI/)).toBeNull();
     expect(screen.getByText("1 of 2 lines")).toBeInTheDocument();
   });
 

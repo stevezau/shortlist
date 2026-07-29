@@ -1,9 +1,10 @@
-import { ArrowDownToLine, Download, Loader2 } from "lucide-react";
+import { Download } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   countLabel,
   isServerStage,
@@ -84,9 +85,9 @@ export function RunLogPanel({
   const [filter, setFilter] = useState<LogFilter>("all");
   const [person, setPerson] = useState("");
   const [search, setSearch] = useState("");
-  // Follow the tail unless the reader has scrolled up. Pinning is a state, not a guess about
-  // scroll position, so reading an earlier line isn't fought on the next update.
-  const [pinned, setPinned] = useState(true);
+  // "Follow", named and behaved exactly as on the main Logs page — same control, same wording, so
+  // the two log views are not two different ideas of the same thing.
+  const [follow, setFollow] = useState(true);
   const boxRef = useRef<HTMLDivElement>(null);
 
   const visible = useMemo(() => {
@@ -103,9 +104,22 @@ export function RunLogPanel({
   }, [entries, filter, person, search]);
 
   useEffect(() => {
+    if (!follow) return;
     const box = boxRef.current;
-    if (box && pinned) box.scrollTop = box.scrollHeight;
-  }, [visible.length, pinned]);
+    if (!box) return;
+    // Scroll the BOX, never the page: scrollIntoView here walks up and drags the whole page to the
+    // bottom every time a person completes.
+    //
+    // `scrollTo` is optional-chained and falls back to assigning scrollTop, because jsdom does not
+    // implement it on elements — calling it unguarded threw and took the entire log panel down with
+    // it, which is a poor trade for a smooth scroll.
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (typeof box.scrollTo === "function") {
+      box.scrollTo({ top: box.scrollHeight, behavior: reduce ? "auto" : "smooth" });
+    } else {
+      box.scrollTop = box.scrollHeight;
+    }
+  }, [visible.length, follow]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -138,26 +152,15 @@ export function RunLogPanel({
           aria-label="Search the activity log"
           className="h-8 w-40"
         />
-        <div className="ml-auto flex items-center gap-2">
-          {running && (
-            <Button
-              variant={pinned ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => setPinned((v) => !v)}
-              title={
-                pinned
-                  ? "Following new lines as they arrive"
-                  : "Jump to the latest line and follow it"
-              }
-            >
-              {pinned ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              ) : (
-                <ArrowDownToLine className="h-3.5 w-3.5" aria-hidden />
-              )}
-              {pinned ? "Live" : "Jump to latest"}
-            </Button>
-          )}
+        <div className="ml-auto flex items-center gap-3">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+            <Switch
+              checked={follow}
+              onCheckedChange={setFollow}
+              aria-label="Follow new log lines"
+            />
+            Follow
+          </label>
           <Button asChild variant="ghost" size="sm">
             <a href={`/api/runs/${runId}/log?format=text`} download>
               <Download className="h-3.5 w-3.5" aria-hidden />
@@ -173,13 +176,13 @@ export function RunLogPanel({
         // own box so the page body never scrolls sideways or jumps.
         className="h-[60vh] min-h-64 overflow-auto rounded-md bg-muted/40 p-3 font-mono text-xs"
         role="log"
-        aria-live={pinned ? "polite" : "off"}
+        aria-live={follow ? "polite" : "off"}
         aria-label="Run activity log"
         onScroll={(event) => {
           const box = event.currentTarget;
           const nearBottom =
             box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-          if (!nearBottom && pinned) setPinned(false);
+          if (!nearBottom && follow) setFollow(false);
         }}
       >
         {visible.length === 0 ? (

@@ -724,7 +724,9 @@ function GroupLabel({ children }: { children: ReactNode }) {
   );
 }
 
-type RunTab = "overview" | "users" | "log";
+/** The two things that differ per tab. The metrics and the failure banner are NOT tabbed: they are
+ *  the answer to "how did this run go", which you want regardless of which detail you came for. */
+type RunTab = "users" | "log";
 
 /** The stage the run is in RIGHT NOW, phrased for the header.
  *
@@ -752,11 +754,11 @@ export function RunDetailPage() {
   // Tab and the deep-linked person both live in the URL, so a refresh, a bookmark, and the link
   // from a person's Runs tab all land exactly where they said they would.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = (searchParams.get("tab") as RunTab | null) ?? "overview";
+  const tab = (searchParams.get("tab") as RunTab | null) ?? "users";
   const linkedUser = searchParams.get("user") ?? "";
   const setTab = (next: RunTab) => {
     const params = new URLSearchParams(searchParams);
-    if (next === "overview") params.delete("tab");
+    if (next === "users") params.delete("tab");
     else params.set("tab", next);
     setSearchParams(params, { replace: true });
   };
@@ -902,7 +904,6 @@ export function RunDetailPage() {
                 onChange={setTab}
                 ariaLabel="Run detail sections"
                 options={[
-                  { value: "overview", label: "Overview" },
                   { value: "users", label: `People (${run.users.length})` },
                   {
                     value: "log",
@@ -911,19 +912,20 @@ export function RunDetailPage() {
                 ]}
               />
 
-              {tab === "overview" && <RunFailureBanner run={run} />}
+              <RunFailureBanner run={run} />
 
               {/* Stats are only finalized once a run ends; while it's live we show the why-slow note instead. */}
-              {tab === "overview" && run.finished_at && (
+              {/* Always on, both tabs: the numbers are the run's summary, not one view of it. */}
+              {run.finished_at && (
                 <>
                   <RunStatTiles run={run} />
                   <RunPhaseTimeline entries={liveLog} />
                 </>
               )}
 
-              {/* While a run is live, Overview's job is "what is it doing right now" — the tail of
-                  the feed, not a static explainer. The full log is one tab away. */}
-              {tab === "overview" && !run.finished_at && liveLog.length > 0 && (
+              {/* A peek at the tail while a live run's People tab is open — the full thing is one
+                  tab away, and on the Log tab it would be a duplicate. */}
+              {tab === "users" && !run.finished_at && liveLog.length > 0 && (
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
                     <CardTitle className="text-base">Latest activity</CardTitle>
@@ -963,7 +965,7 @@ export function RunDetailPage() {
                 </Card>
               )}
 
-              {tab === "overview" && !run.finished_at && (
+              {!run.finished_at && (
                 <div className="flex gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
                   <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="space-y-1">

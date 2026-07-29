@@ -51,6 +51,44 @@ describe("ROW_TEMPLATES", () => {
     }
   });
 
+  it("every template actually changes how the row behaves, not just its name", () => {
+    // A template whose only difference is a title is a lie dressed as a feature: it promises a
+    // distinct kind of row and produces the default one. Every tile must move at least one knob the
+    // engine reads.
+    const behavioural = [
+      "build",
+      "media",
+      "size",
+      "min_watchers",
+      "watched_pct",
+      "freshness",
+      "recent_count",
+      "max_seeds",
+      "candidate_sources",
+      "audience",
+    ] as const;
+    const blank = blankInput();
+
+    for (const template of ROW_TEMPLATES) {
+      const moved = behavioural.filter(
+        (key) =>
+          key in template.values &&
+          JSON.stringify(template.values[key]) !== JSON.stringify(blank[key]),
+      );
+      // "Picked for You" is the deliberate exception: it IS the everyday defaults, and its whole
+      // point is to be the plain starting row.
+      if (template.id === "picked-for-you") continue;
+      expect(moved.length, `${template.id} only changes its name`).toBeGreaterThan(0);
+    }
+  });
+
+  it("gives every template a name and a template string, so nothing saves blank", () => {
+    for (const template of ROW_TEMPLATES) {
+      expect(template.values.name, template.id).toBeTruthy();
+      expect(template.values.name_template, template.id).toBeTruthy();
+    }
+  });
+
   it("keeps a {top_seed} row down to the one watch it names", () => {
     // The whole point of the template: at the default budget the row names one watch and fills
     // itself from the other 29, so the title claims something the contents don't honour.

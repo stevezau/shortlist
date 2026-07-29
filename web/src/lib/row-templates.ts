@@ -134,17 +134,21 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     },
   },
   {
-    id: "next-series",
+    id: "more-tv",
     emoji: "📺",
-    title: "Your next series",
-    blurb:
-      "TV only. For the moment someone finishes a show and wants the next one.",
-    highlights: ["TV only", "10 picks"],
+    title: "More TV to watch",
+    // Deliberately NOT "your next series". That promises a show they have not STARTED, and the engine
+    // only excludes shows they have FINISHED (`watched_show_pct`) — one they are three episodes into
+    // is still eligible. Naming a capability that does not exist is the kind of small lie that makes
+    // a whole feature feel untrustworthy.
+    blurb: "Shows only, and nothing they've already finished. A shelf of series to start.",
+    highlights: ["TV only", "Nothing already finished"],
     values: {
-      name: "Your next series",
-      name_template: "📺 Your next series",
+      name: "More TV to watch",
+      name_template: "📺 More TV to watch",
       build: "per_person",
       media: "show",
+      watched_pct: 0,
       size: 10,
     },
   },
