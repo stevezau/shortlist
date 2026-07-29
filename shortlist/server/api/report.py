@@ -114,10 +114,26 @@ async def effectiveness(request: Request) -> dict:
             for c in session.query(Collection).all()
         }
 
+        def row_template(slug: str) -> str | None:
+            """This row's name template, or None once the row itself is gone.
+
+            Picks outlive the row that made them (deleting a row keeps its watch history), and a slug
+            with no Collection behind it must NOT borrow the default row's template — every deleted row
+            then renders "✨ Movies Picked for You" and the breakdown shows the default row two, three,
+            five times over with different numbers. The caller labels those by slug instead.
+            """
+            if slug in row_templates:
+                return row_templates[slug]
+            # Pre-0004 picks predate multi-row and carry a blank slug; they ARE the default row.
+            return default_template if slug in ("", DEFAULT_SLUG) else None
+
         def row_label(slug: str, library: str) -> str:
             """The row's display name for THIS library: `{library_name}` becomes the library ("Movies"),
-            and any other placeholder (e.g. `{top_seed}`, which is per-person) is dropped for the aggregate."""
-            template = row_templates.get(slug, DEFAULT_ROW_TEMPLATE)
+            and any other placeholder (e.g. `{top_seed}`, which is per-person) is dropped for the aggregate.
+            A deleted row has no template left, so its slug is the only identity it still has."""
+            template = row_template(slug)
+            if template is None:
+                return slug
             name = _PLACEHOLDER.sub(lambda m: library if m.group(0) == "{library_name}" else "", template)
             return " ".join(name.split()) or "Picked for You"
 
@@ -193,10 +209,13 @@ async def effectiveness(request: Request) -> dict:
         per_row = _breakdown(
             per_row_raw,
             lambda key: {
-                "slug": key[0] or "picked",
+                "slug": key[0] or DEFAULT_SLUG,
                 "section_key": key[1],
                 "library": key[2],
                 "name": row_label(key[0], key[2]),
+                # History from a row that no longer exists. Flagged so the UI can say so rather than
+                # showing it as another nameless copy of the default row.
+                "deleted": row_template(key[0]) is None,
             },
         )
 

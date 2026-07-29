@@ -101,6 +101,29 @@ def _client_headers(client_id: str) -> dict[str, str]:
     }
 
 
+async def owned_machine_ids(client_id: str, token: str) -> set[str]:
+    """The machine ids of every Plex server this token's account **owns**.
+
+    plex.tv's ``owned`` flag on ``/api/v2/resources`` is the only thing that separates a server you
+    own from one merely shared with you — both appear in the listing, and Shortlist writes
+    collections, labels and share filters, which is owner-level work on someone else's server.
+
+    Raises on any plex.tv failure. Callers must fail closed: "couldn't ask plex.tv" is never
+    "yes, they own it".
+    """
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(
+            f"{PLEXTV}/api/v2/resources?includeHttps=1",
+            headers={**_client_headers(client_id), "X-Plex-Token": token},
+        )
+    response.raise_for_status()
+    return {
+        r["clientIdentifier"]
+        for r in response.json()
+        if r.get("owned") and r.get("clientIdentifier") and "server" in (r.get("provides") or "")
+    }
+
+
 def session_serializer(secret: str) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret, salt="shortlist-session")
 
@@ -118,6 +141,30 @@ def read_session(request: Request) -> dict | None:
 def _check_csrf(request: Request) -> None:
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
         raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
+
+
+# Failed API-token attempts, globally. The token is a 32-char urlsafe secret so brute force is not a
+# realistic threat, but an unthrottled `Bearer` check is a free oracle: it answers on every request,
+# at network speed, with no lockout and nothing in the log to notice. A global cap is the right shape
+# here rather than per-IP — behind `--forwarded-allow-ips=*` (the shipped default, so a reverse proxy
+# on any host works out of the box) `request.client.host` comes from a header the caller controls, so
+# a per-IP bucket is trivially evaded by rotating it.
+_TOKEN_FAILS: deque[float] = deque()
+_TOKEN_MAX_FAILS = 20
+_TOKEN_WINDOW_S = 60.0
+
+
+def _rate_limit_token_failures() -> None:
+    """Raise 429 once failed token attempts exceed the window's budget.
+
+    Only FAILURES are counted, so a busy legitimate integration is never throttled — the limit is
+    invisible unless something is guessing.
+    """
+    now = time.monotonic()
+    while _TOKEN_FAILS and now - _TOKEN_FAILS[0] > _TOKEN_WINDOW_S:
+        _TOKEN_FAILS.popleft()
+    if len(_TOKEN_FAILS) >= _TOKEN_MAX_FAILS:
+        raise HTTPException(status_code=429, detail="Too many failed API-token attempts — wait a minute.")
 
 
 def require_owner(request: Request) -> dict:
@@ -139,6 +186,9 @@ def require_owner(request: Request) -> dict:
     if bearer is not None:
         if owner_id is not None and request.app.state.verify_api_token(bearer):
             return {"account_id": owner_id, "via": "api_token"}
+        _TOKEN_FAILS.append(time.monotonic())
+        logger.warning("rejected an invalid or revoked API token")
+        _rate_limit_token_failures()
         raise HTTPException(status_code=401, detail="invalid or revoked API token")
     _check_csrf(request)
     session = read_session(request)
@@ -216,9 +266,30 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
     account_id = int(info["id"])
 
     owner_id = state.owner_account_id()
-    if owner_id is not None and account_id != owner_id:
-        logger.warning("login rejected: account {} is not the server owner", account_id)
-        raise HTTPException(status_code=403, detail="only the server owner can sign in to Shortlist")
+    if owner_id is not None:
+        if account_id != owner_id:
+            logger.warning("login rejected: Plex account {} is not the owner of the linked server", account_id)
+            raise HTTPException(status_code=403, detail="only the server owner can sign in to Shortlist")
+    else:
+        # Unclaimed instance: nobody to compare against yet, so ownership is checked against plex.tv
+        # directly. Someone who owns NO Plex server can never legitimately finish setup — Shortlist
+        # only ever writes to a server you own — so reject the sign-in outright instead of handing
+        # out a session that can browse the wizard. A friend who merely has a share on the owner's
+        # server lands here, and this is the line that turns them away.
+        try:
+            owned = await owned_machine_ids(state.client_id, token)
+        except httpx.HTTPError as e:
+            # Fail CLOSED. An unreachable plex.tv must never read as "sure, they own a server".
+            logger.warning("login deferred: could not confirm server ownership with plex.tv ({})", type(e).__name__)
+            raise HTTPException(
+                status_code=503, detail="could not reach plex.tv to confirm your server — try again in a moment"
+            ) from e
+        if not owned:
+            logger.warning("login rejected: Plex account {} does not own a Plex server", account_id)
+            raise HTTPException(
+                status_code=403,
+                detail="Shortlist has to be set up by the owner of a Plex server, and this account does not own one.",
+            )
 
     payload = {"account_id": account_id, "username": info.get("username") or info.get("title") or ""}
     cookie = session_serializer(state.session_secret).dumps(payload)

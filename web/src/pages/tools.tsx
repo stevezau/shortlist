@@ -1,40 +1,35 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
-  Clock,
+  Cog,
   Database,
   Download,
+  Lock,
+  Play,
   RefreshCw,
   ShieldCheck,
   Users as UsersIcon,
   Wrench,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useState } from "react";
 
 import { CronInput } from "@/components/cron-input";
-import { JobsTable } from "@/components/jobs-table";
+import { JobCard } from "@/components/jobs/job-card";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { api } from "@/lib/api";
-import { timeAgo, timeUntil } from "@/lib/format";
-import {
-  queryKeys,
-  useSettings,
-  useSaveSettings,
-  useSyncs,
-} from "@/lib/queries";
+import { timeAgo } from "@/lib/format";
+import { queryKeys, useSettings, useSaveSettings } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
-import type { SyncFinishedEvent, SyncProgressEvent } from "@/lib/types";
+import type {
+  JobCatalogEntry,
+  SyncFinishedEvent,
+  SyncProgressEvent,
+} from "@/lib/types";
 
 const SYNC_PRESETS = [
   { value: "", label: "Daily" },
@@ -76,13 +71,82 @@ function CronPicker({
   );
 }
 
+/** Names for the cards that render before the catalogue arrives, so a card is never blank-titled.
+ *  The server's catalogue is authoritative and replaces these as soon as it lands. */
+const PENDING_LABELS: Record<string, string> = {
+  "sync.history": "Sync watch history",
+  "sync.users": "Sync people from Plex",
+  "sync.check": "Sync check",
+  "privacy.sync": "Privacy sync",
+  "backup.take": "Back up the database",
+};
+
+function pendingEntry(kind: string): JobCatalogEntry {
+  return {
+    kind,
+    label: PENDING_LABELS[kind] ?? kind,
+    description: "",
+    manual: true,
+    trigger: "",
+    scheduled: false,
+    next_run: null,
+    last: null,
+    total: 0,
+    queued: 0,
+    running: 0,
+    failed: 0,
+  };
+}
+
+/** A stat in the strip above the job list. */
+function Tally({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: "destructive" | "primary";
+}) {
+  return (
+    <div className="rounded-lg border px-3 py-2">
+      <p
+        className={`text-xl font-semibold tabular-nums ${
+          tone === "destructive"
+            ? "text-destructive"
+            : tone === "primary"
+              ? "text-primary"
+              : ""
+        }`}
+      >
+        {value}
+      </p>
+      <p className="text-xs text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
 /**
- * Tools — on-demand maintenance the owner runs by hand, distinct from the nightly schedule. Each
- * action here is a deliberate "reconcile now" for when something has drifted; none of them writes
- * to Plex. Every card handles its own pending / error / success states inline.
+ * Jobs — every piece of background maintenance Shortlist does, one card each.
+ *
+ * Organised BY JOB rather than by chronology. The page used to be four hand-written cards with
+ * "run now" buttons, followed by one flat table of the last 25 job rows across every kind mixed
+ * together — so "did the thing I just pressed work?" and "has the roster sync been failing?" both
+ * meant scanning that table for the right rows. Now each job owns its status, its schedule, its
+ * controls and its own history, and the four with bespoke controls pass them into the same card.
  */
 export function ToolsPage() {
   const queryClient = useQueryClient();
+  const catalog = useQuery({
+    queryKey: ["jobs", "catalog"],
+    queryFn: api.getJobCatalog,
+    // Poll only while something is in flight, then stop — a job started here finishes without a
+    // reload, but an idle page isn't hitting the API forever.
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((e) => e.running + e.queued > 0)
+        ? 3_000
+        : false,
+  });
   // One EventSource for the whole page (rules/frontend.md); the two sync cards read the slice of
   // `sync.*` events that carries their own `kind`. `null` = idle, so no bar shows until a run starts.
   const [watchedProgress, setWatchedProgress] =
@@ -119,75 +183,183 @@ export function ToolsPage() {
     },
   });
 
-  const syncs = useSyncs();
   const settings = useSettings();
   const saveSettings = useSaveSettings();
   const watchCron = ((settings.data ?? {})["sync.watch_cron"] as string) ?? "";
 
+  const entries = catalog.data ?? [];
+  const byKind = Object.fromEntries(entries.map((e) => [e.kind, e]));
+  // Automatic jobs are queued by a mutation that knows its target (disabling someone, renaming a
+  // row). They get no button, but they very much need a status and a history — a cleanup that
+  // exhausted its retries is invisible otherwise.
+  const automatic = entries.filter((e) => !e.manual);
+  const totals = entries.reduce(
+    (acc, e) => ({
+      total: acc.total + e.total,
+      active: acc.active + e.running + e.queued,
+      failed: acc.failed + e.failed,
+    }),
+    { total: 0, active: 0, failed: 0 },
+  );
+
+  /**
+   * Renders a job's bespoke controls inside its catalogue card.
+   *
+   * ALWAYS a JobCard, even before the catalogue lands — falling back to the bare controls would
+   * change the element type at this position the moment the request settled, and React unmounts on
+   * a type change. That threw away whatever the controls were holding: a sync you had just started,
+   * a drift preview you were reading. The catalogue also refetches while a job is in flight, so it
+   * was not only a first-paint problem.
+   */
+  const shell = (kind: string, icon: LucideIcon, controls: React.ReactNode) => (
+    <JobCard
+      entry={byKind[kind] ?? pendingEntry(kind)}
+      icon={icon}
+      statusUnknown={!byKind[kind]}
+    >
+      {controls}
+    </JobCard>
+  );
+
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
         icon={Wrench}
         title="Jobs"
-        subtitle="Maintenance jobs you can run now, and what they did. Use these when something has drifted — a new user, or watched state that's out of sync — rather than waiting for the nightly run."
+        subtitle="Every piece of background maintenance Shortlist does — what it is, when it next runs, how it went last time, and its full history. Run any of them now when something has drifted rather than waiting for the nightly run."
       />
-      <div className="grid gap-4">
-        <SyncHistoryCard
-          progress={watchedProgress}
-          result={watchedResult}
-          lastSynced={syncs.data?.watched.last ?? null}
-          nextRun={syncs.data?.watched.next ?? null}
-          watchCron={watchCron}
-          onCronChange={(cron) =>
-            saveSettings.mutate(
-              { "sync.watch_cron": cron },
-              {
-                onSuccess: () =>
-                  queryClient.invalidateQueries({ queryKey: ["syncs"] }),
-              },
-            )
-          }
+
+      <div className="flex flex-wrap gap-3">
+        <Tally label="jobs run" value={totals.total} />
+        <Tally
+          label="in flight"
+          value={totals.active}
+          tone={totals.active > 0 ? "primary" : undefined}
         />
-        <SyncUsersCard
-          progress={usersProgress}
-          lastSynced={syncs.data?.users.last ?? null}
-          nextRun={syncs.data?.users.next ?? null}
-          usersCron={((settings.data ?? {})["sync.users_cron"] as string) ?? ""}
-          onCronChange={(cron) =>
-            saveSettings.mutate(
-              { "sync.users_cron": cron },
-              {
-                onSuccess: () =>
-                  queryClient.invalidateQueries({ queryKey: ["syncs"] }),
-              },
-            )
-          }
+        <Tally
+          label="failed"
+          value={totals.failed}
+          tone={totals.failed > 0 ? "destructive" : undefined}
         />
-        <SyncCheckCard />
-        <BackupsCard />
       </div>
 
-      {/* What running these actually did. On the same page as the buttons on purpose: "I pressed it,
-          did it work?" is one question, and jobs retry themselves — so a failure that resolved on
-          the second attempt has no other place to be seen. */}
-      <JobsTable />
+      {catalog.isError && (
+        <MutationAlert
+          error={catalog.error}
+          fallback="Couldn't load the job list."
+          onRetry={() => catalog.refetch()}
+        />
+      )}
+
+      <div className="grid gap-4">
+        {shell(
+          "sync.history",
+          RefreshCw,
+          <SyncHistoryControls
+            progress={watchedProgress}
+            result={watchedResult}
+            watchCron={watchCron}
+            onCronChange={(cron) =>
+              saveSettings.mutate(
+                { "sync.watch_cron": cron },
+                {
+                  onSuccess: () =>
+                    queryClient.invalidateQueries({ queryKey: ["syncs"] }),
+                },
+              )
+            }
+          />,
+        )}
+        {shell(
+          "sync.users",
+          UsersIcon,
+          <SyncUsersControls
+            progress={usersProgress}
+            usersCron={
+              ((settings.data ?? {})["sync.users_cron"] as string) ?? ""
+            }
+            onCronChange={(cron) =>
+              saveSettings.mutate(
+                { "sync.users_cron": cron },
+                {
+                  onSuccess: () =>
+                    queryClient.invalidateQueries({ queryKey: ["syncs"] }),
+                },
+              )
+            }
+          />,
+        )}
+        {shell("sync.check", ShieldCheck, <SyncCheckControls />)}
+        {shell(
+          "privacy.sync",
+          Lock,
+          <RunJobButton kind="privacy.sync" label="Sync privacy now" />,
+        )}
+        {shell("backup.take", Database, <BackupControls />)}
+      </div>
+
+      {automatic.length > 0 && (
+        <section aria-labelledby="automatic-heading" className="space-y-3">
+          <div>
+            <h2 id="automatic-heading" className="text-lg font-semibold">
+              Automatic
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Queued for you when something changes — you never start these
+              yourself. They&rsquo;re here because one that runs out of retries
+              has nowhere else to be seen.
+            </p>
+          </div>
+          <div className="grid gap-4">
+            {automatic.map((entry) => (
+              <JobCard key={entry.kind} entry={entry} icon={Cog} />
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+/** "Run now" for a job with no bespoke controls of its own. */
+function RunJobButton({ kind, label }: { kind: string; label: string }) {
+  const queryClient = useQueryClient();
+  const run = useMutation({
+    // background: the request returns as soon as the job is queued and the card polls for the
+    // outcome, so a slow job can't end in a proxy timeout that reads as a failure.
+    mutationFn: () => api.runJob(kind, {}, true),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+  return (
+    <div className="space-y-3">
+      <Button
+        variant="outline"
+        loading={run.isPending}
+        onClick={() => run.mutate()}
+      >
+        <Play aria-hidden="true" />
+        {label}
+      </Button>
+      {run.isError && (
+        <MutationAlert
+          error={run.error}
+          fallback="Couldn't start that job. Try again."
+          onRetry={() => run.mutate()}
+        />
+      )}
     </div>
   );
 }
 
 /** Re-read every user's complete watched set now, rather than waiting for the nightly sync. */
-function SyncHistoryCard({
+function SyncHistoryControls({
   progress,
   result,
-  lastSynced,
-  nextRun,
   watchCron,
   onCronChange,
 }: {
   progress: SyncProgressEvent | null;
   result: SyncFinishedEvent | null;
-  lastSynced: string | null;
-  nextRun: string | null;
   watchCron: string;
   onCronChange: (cron: string) => void;
 }) {
@@ -197,30 +369,8 @@ function SyncHistoryCard({
   const running = progress !== null;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <RefreshCw
-            aria-hidden="true"
-            className="size-5 text-muted-foreground"
-          />
-          Sync watch history now
-        </CardTitle>
-        <CardDescription>
-          Re-read every user's complete watched set from Plex right now —
-          including anything they've marked as watched. Use it when you want the
-          effectiveness report refreshed straight away.
-        </CardDescription>
-        {(lastSynced || nextRun) && (
-          <p className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
-            <Clock className="size-3.5 shrink-0" aria-hidden="true" />
-            {lastSynced && <span>Last synced {timeAgo(lastSynced)}</span>}
-            {lastSynced && nextRun && <span aria-hidden="true">·</span>}
-            {nextRun && <span>Next: {timeUntil(nextRun)}</span>}
-          </p>
-        )}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+    <>
+      <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start gap-3">
           <Button
             variant="outline"
@@ -282,22 +432,18 @@ function SyncHistoryCard({
             effectiveness report updates on its own once it finishes.
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </>
   );
 }
 
 /** Re-pull the shared + Home users (and the owner) from plex.tv into the users table. */
-function SyncUsersCard({
+function SyncUsersControls({
   progress,
-  lastSynced,
-  nextRun,
   usersCron,
   onCronChange,
 }: {
   progress: SyncProgressEvent | null;
-  lastSynced: string | null;
-  nextRun: string | null;
   usersCron: string;
   onCronChange: (cron: string) => void;
 }) {
@@ -312,31 +458,8 @@ function SyncUsersCard({
   // drive the live bar while it's in flight: an indeterminate "fetch" phase, then a "save" count.
   const running = sync.isPending;
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <UsersIcon
-            aria-hidden="true"
-            className="size-5 text-muted-foreground"
-          />
-          Sync users
-        </CardTitle>
-        <CardDescription>
-          Re-pull everyone you share with — and yourself — from plex.tv and
-          Tautulli (if connected). Refreshes usernames, display names/friendly
-          names, and share status. Use it after inviting someone new so they
-          show up in the user list without waiting for the next run.
-        </CardDescription>
-        {(lastSynced || nextRun) && (
-          <p className="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
-            <Clock className="size-3.5 shrink-0" aria-hidden="true" />
-            {lastSynced && <span>Last synced {timeAgo(lastSynced)}</span>}
-            {lastSynced && nextRun && <span aria-hidden="true">·</span>}
-            {nextRun && <span>Next: {timeUntil(nextRun)}</span>}
-          </p>
-        )}
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+    <>
+      <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-start gap-3">
           <Button
             variant="outline"
@@ -380,8 +503,8 @@ function SyncUsersCard({
               : `All ${result.total} ${result.total === 1 ? "user is" : "users are"} already up to date.`}
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </>
   );
 }
 
@@ -392,9 +515,8 @@ const RETENTION_OPTIONS = [
   { value: 30, label: "30" },
 ];
 
-function BackupsCard() {
+function BackupControls() {
   const queryClient = useQueryClient();
-  const syncs = useSyncs();
   const settings = useSettings();
   const saveSettings = useSaveSettings();
   const backups = useQuery({
@@ -421,23 +543,8 @@ function BackupsCard() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Database className="h-4 w-4" aria-hidden="true" />
-          Backups
-        </CardTitle>
-        <CardDescription>
-          A copy of Shortlist’s whole database, taken on the schedule below and
-          again before every upgrade.
-          {syncs.data?.backup?.next && (
-            <span className="ml-1">
-              Next: {timeUntil(syncs.data.backup.next)}
-            </span>
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <>
+      <div className="space-y-4">
         <div className="space-y-1.5 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
           <p>
             <span className="font-medium text-foreground">What:</span> settings,
@@ -534,9 +641,9 @@ function BackupsCard() {
             role="alert"
             className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm text-warning-foreground"
           >
-            Restoring also puts back who could see which rows at the time of the backup. If you have
-            narrowed a shared row&rsquo;s audience since then, those people will be able to see it
-            again after the next run.
+            Restoring also puts back who could see which rows at the time of the
+            backup. If you have narrowed a shared row&rsquo;s audience since
+            then, those people will be able to see it again after the next run.
           </p>
         )}
         {backups.data && backups.data.length > 0 && (
@@ -606,8 +713,8 @@ function BackupsCard() {
             No backups yet. One will be created automatically tonight at 3 AM.
           </p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </>
   );
 }
 
@@ -618,7 +725,7 @@ function BackupsCard() {
  * run: anyone paused, disabled, or caught by a run that died keeps whatever flags they last got.
  * The nightly run fixes it, but that can be a day away.
  */
-function SyncCheckCard() {
+function SyncCheckControls() {
   const queryClient = useQueryClient();
   // Preview first, then act. Converge only ever REMOVES visibility so a live pass is never unsafe,
   // but "press a button, we silently rewrite every library" is the wrong default — the operator
@@ -638,26 +745,8 @@ function SyncCheckCard() {
     preview.data?.status === "done" ? (preview.data.orphans ?? []) : [];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <ShieldCheck
-            aria-hidden="true"
-            className="size-5 text-muted-foreground"
-          />
-          Sync check
-        </CardTitle>
-        <CardDescription>
-          Checks every row on Plex against what Shortlist intends, and fixes
-          anything that drifted. Rows can fall out of step when a run
-          doesn&rsquo;t finish, when the container restarts mid-write, or when
-          someone was paused or disabled while their row was already live
-          &mdash; a run only updates the people in that run, so everyone else
-          keeps whatever they last had. This runs the same check without waiting
-          for tonight.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+    <>
+      <div className="flex flex-col gap-3">
         <div className="flex flex-wrap gap-3">
           <Button
             variant="outline"
@@ -723,7 +812,7 @@ function SyncCheckCard() {
         {fix.data && !fix.data.error && (
           <p className="text-sm text-muted-foreground">{fix.data.detail}</p>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </>
   );
 }

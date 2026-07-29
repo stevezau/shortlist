@@ -191,11 +191,36 @@ class TestHandlers:
             assert kind in jobs._HANDLERS, kind
 
     def test_only_safe_kinds_are_triggerable_from_the_ui(self):
-        """`user.cleanup`, `user.hide` and `row.reconcile` all take a target and DELETE or hide that
-        target's rows. A generic "run a job" button must never be able to aim them."""
-        assert set(jobs.KINDS) == {"sync.check", "privacy.sync"}
-        for destructive in ("user.cleanup", "user.hide", "row.reconcile"):
-            assert destructive not in jobs.KINDS, destructive
+        """`user.cleanup`, `user.hide`, `user.restore` and `row.reconcile` all take a target and
+        DELETE or hide that target's rows. A generic "run a job" button must never be able to aim
+        them — every one of them is queued by the mutation handler that knows the target."""
+        for targeted in ("user.cleanup", "user.hide", "user.restore", "row.reconcile"):
+            assert targeted not in jobs.KINDS, targeted
+            assert not jobs.BY_KIND[targeted].manual, targeted
+        # The manual kinds are all converge-to-desired-state passes that take no target.
+        assert set(jobs.KINDS) == {"sync.check", "privacy.sync", "sync.users", "sync.history", "backup.take"}
+
+    def test_the_catalog_describes_every_registered_handler(self):
+        """The Jobs page renders straight from CATALOG, so a kind missing from it is a job the
+        operator cannot see ran at all — and a CATALOG entry with no handler is a button that 500s."""
+        assert set(jobs.BY_KIND) == set(jobs._HANDLERS)
+        for entry in jobs.CATALOG:
+            assert entry.label and entry.description, entry.kind
+            # A kind no button can start has to say what DOES start it, or its card reads as broken.
+            assert entry.manual or entry.trigger, entry.kind
+
+    def test_scheduled_kinds_point_at_a_real_scheduler_job_id(self):
+        """`schedule_job_id` is how a card finds its next run. The ids are string literals here
+        (importing scheduler would be circular), so this is what catches them drifting apart."""
+        from shortlist.server import scheduler
+
+        ids = {
+            scheduler.WATCH_SYNC_JOB_ID,
+            scheduler.USER_SYNC_JOB_ID,
+            scheduler.BACKUP_JOB_ID,
+        }
+        scheduled = {e.schedule_job_id for e in jobs.CATALOG if e.schedule_job_id}
+        assert scheduled == ids
 
     def test_hiding_a_paused_user_takes_every_row_off_every_surface(self, sessions):
         """Pause keeps the collection and its label — so everyone else's exclude still matches, and

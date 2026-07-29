@@ -14,6 +14,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from shortlist.server.net_guard import safe_backup_name
+
 DEFAULT_MAX_BACKUPS = 10
 BACKUP_SUBDIR = "backups"
 
@@ -86,6 +88,12 @@ def restore_backup(config_dir: Path, backup_name: str) -> bool:
 
     The caller must stop the app or hold the DB lock before calling this.
     """
+    try:
+        backup_name = safe_backup_name(backup_name)
+    except ValueError:
+        # `../../etc/passwd` would otherwise escape the backups directory and be copied over the DB.
+        logger.error("refusing a backup name that is not a plain filename: {!r}", backup_name)
+        return False
     backup_path = config_dir / BACKUP_SUBDIR / backup_name
     db_path = config_dir / "shortlist.db"
     if not backup_path.exists():

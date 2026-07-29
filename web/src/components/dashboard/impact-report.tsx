@@ -210,12 +210,22 @@ function ReportBody({ report }: { report: EffectivenessReport }) {
                 className="flex items-center justify-between gap-3 text-sm"
               >
                 <span className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate">{r.name}</span>
+                  <span
+                    className={`truncate ${r.deleted ? "text-muted-foreground" : ""}`}
+                  >
+                    {r.name}
+                  </span>
                   {/* A row across >1 library is one collection per library. A {library_name} name
                       already reads "✨ Movies …"; otherwise tag which library this line is. */}
                   {r.library && !r.name.includes(r.library) && (
                     <Badge variant="secondary" className="shrink-0 font-normal">
                       {r.library}
+                    </Badge>
+                  )}
+                  {/* Kept, not hidden: these watches really happened and still count in the totals. */}
+                  {r.deleted && (
+                    <Badge variant="outline" className="shrink-0 font-normal">
+                      deleted row
                     </Badge>
                   )}
                 </span>

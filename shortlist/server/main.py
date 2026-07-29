@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse
 
 import shortlist
@@ -50,6 +51,37 @@ def _instance_secret(config_dir: Path, name: str) -> str:
         path.write_text(pysecrets.token_urlsafe(48))
         os.chmod(path, 0o600)
     return path.read_text().strip()
+
+
+# Baseline response headers. Deliberately NOT a locked-down CSP: Shortlist renders Plex avatars and
+# TMDB artwork from hosts that vary per install, and Vite's build emits inline styles — a strict
+# policy would blank the UI on somebody else's server, which is how security headers get switched off
+# entirely. This is the subset that is safe everywhere.
+_SECURITY_HEADERS = {
+    # Clickjacking: nothing here should ever be framed.
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    # Stop a browser second-guessing a declared Content-Type (an uploaded "image" sniffed as HTML).
+    "X-Content-Type-Options": "nosniff",
+    # Don't leak the instance URL — which often carries the server name — to TMDB/plex.tv/GitHub.
+    "Referrer-Policy": "same-origin",
+    # This app needs none of these.
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+}
+
+
+class _SecurityHeaders(BaseHTTPMiddleware):
+    """Add the baseline headers to every response, without clobbering one a handler set itself."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        for header, value in _SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        # HSTS only when the request actually arrived over TLS — sending it over plain HTTP is
+        # meaningless, and sending it from a LAN install could strand someone on https they don't have.
+        if request.url.scheme == "https":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+        return response
 
 
 class _AccessNoiseFilter(logging.Filter):
@@ -213,6 +245,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         docs_url="/api/docs" if docs_enabled else None,
         openapi_url="/api/openapi.json" if docs_enabled else None,
     )
+    app.add_middleware(_SecurityHeaders)
 
     app.include_router(auth.router, prefix="/api")
     for module in (

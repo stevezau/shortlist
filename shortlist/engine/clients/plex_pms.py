@@ -609,7 +609,13 @@ class PlexClient:
         if to_remove:
             collection.removeItems(to_remove)
         collection.sortUpdate(sort="custom")
-        logger.info("{}: items +{} -{}", collection.title, len(add_items), len(to_remove))
+        # INFO only when the membership actually MOVED. A steady row is the common case on a nightly
+        # converge, and "items +0 -0" once per collection buried the lines that mattered — a
+        # 96-collection server logged ~96 of them a night saying nothing happened.
+        if add_items or to_remove:
+            logger.info("{}: items +{} -{}", collection.title, len(add_items), len(to_remove))
+        else:
+            logger.debug("{}: items unchanged", collection.title)
 
     def order_collection(self, collection: Collection, wanted_keys: list[int]) -> int:
         """Order a collection's visible head to ``wanted_keys`` (ranked) via ``moveItem`` — the expensive

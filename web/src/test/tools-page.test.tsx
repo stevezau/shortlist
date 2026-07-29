@@ -7,12 +7,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ApiModule from "@/lib/api";
 import { ToolsPage } from "@/pages/tools";
 
-const { syncWatched, syncUsers, getJobs, runJob } = vi.hoisted(() => ({
-  syncWatched: vi.fn(),
-  syncUsers: vi.fn(),
-  getJobs: vi.fn(),
-  runJob: vi.fn(),
-}));
+const { syncWatched, syncUsers, getJobs, getJobCatalog, runJob } = vi.hoisted(
+  () => ({
+    syncWatched: vi.fn(),
+    syncUsers: vi.fn(),
+    getJobs: vi.fn(),
+    getJobCatalog: vi.fn(),
+    runJob: vi.fn(),
+  }),
+);
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -22,10 +25,47 @@ vi.mock("@/lib/api", async (importOriginal) => {
       syncWatched,
       syncUsers,
       getJobs,
+      getJobCatalog,
       runJob,
     },
   };
 });
+
+/** A catalogue entry with the shape the page renders from; override what a test cares about. */
+function entry(kind: string, patch: Record<string, unknown> = {}) {
+  return {
+    kind,
+    label: kind,
+    description: "",
+    manual: true,
+    trigger: "",
+    scheduled: false,
+    next_run: null,
+    last: null,
+    total: 0,
+    queued: 0,
+    running: 0,
+    failed: 0,
+    ...patch,
+  };
+}
+
+const CATALOG = [
+  entry("sync.history", { label: "Sync watch history" }),
+  entry("sync.users", { label: "Sync people from Plex" }),
+  entry("sync.check", {
+    label: "Sync check",
+    description:
+      "Checks every row on Plex against what Shortlist intends, and fixes anything that drifted. Rows fall out of step when a run doesn't finish, when the container restarts mid-write, or when someone was paused or disabled while their row was already live.",
+  }),
+  entry("privacy.sync", { label: "Privacy sync" }),
+  entry("backup.take", { label: "Back up the database" }),
+  entry("user.cleanup", {
+    label: "Remove a disabled person's rows",
+    manual: false,
+    trigger: "Queued when you disable someone.",
+  }),
+];
 
 // useSSE opens an EventSource; jsdom has none. This capturing stub lets a test drive the sync bars
 // by emitting `sync.progress` / `sync.finished` frames the way the server would.
@@ -74,6 +114,8 @@ describe("ToolsPage — sync users and watch history", () => {
     syncUsers.mockReset();
     getJobs.mockReset();
     getJobs.mockResolvedValue([]);
+    getJobCatalog.mockReset();
+    getJobCatalog.mockResolvedValue(CATALOG);
     runJob.mockReset();
     FakeEventSource.latest = null;
     vi.stubGlobal("EventSource", FakeEventSource);
@@ -202,6 +244,8 @@ describe("ToolsPage — sync check", () => {
   beforeEach(() => {
     getJobs.mockReset();
     getJobs.mockResolvedValue([]);
+    getJobCatalog.mockReset();
+    getJobCatalog.mockResolvedValue(CATALOG);
     runJob.mockReset();
     syncWatched.mockReset();
     syncUsers.mockReset();
@@ -345,17 +389,78 @@ describe("ToolsPage — sync check", () => {
     expect(await screen.findByText(/corrected 1/i)).toBeInTheDocument();
   });
 
-  it("lists what the jobs actually did, below the buttons", async () => {
-    // "I pressed it — did it work?" is one question, so the history lives on the same page as the
-    // triggers. Per-status rendering is covered in jobs-table.test.tsx.
+  it("shows each job's last outcome on its own card", async () => {
+    // The whole point of the restructure: "did the roster sync work?" is answered on the roster
+    // sync's card, not by scanning a flat table where every kind's rows are interleaved.
+    getJobCatalog.mockResolvedValue([
+      entry("sync.users", {
+        label: "Sync people from Plex",
+        total: 4,
+        last: {
+          id: 9,
+          kind: "sync.users",
+          status: "done",
+          attempts: 1,
+          max_attempts: 3,
+          detail: "Synced 7 people from plex.tv",
+          error: null,
+          created_at: "2026-07-28T10:00:00Z",
+          started_at: "2026-07-28T10:00:00Z",
+          finished_at: "2026-07-28T10:00:04Z",
+        },
+      }),
+    ]);
+    renderPage();
+
+    // The card exists before the catalogue answers (its controls are not gated on it), so wait for
+    // the outcome itself rather than the card.
+    await screen.findByText(/synced 7 people from plex\.tv/i);
+    const card = screen.getByTestId("job-sync.users");
+    expect(card).toHaveTextContent(/synced 7 people from plex\.tv/i);
+    expect(card).toHaveTextContent(/Done/);
+    expect(card).toHaveTextContent(/took 4\.0s/i);
+  });
+
+  it("shows a failed job's error on its card and flags the count", async () => {
+    getJobCatalog.mockResolvedValue([
+      entry("sync.users", {
+        label: "Sync people from Plex",
+        total: 3,
+        failed: 1,
+        last: {
+          id: 9,
+          kind: "sync.users",
+          status: "failed",
+          attempts: 3,
+          max_attempts: 3,
+          detail: "",
+          error: "ConnectError: plex.tv unreachable",
+          created_at: "2026-07-28T10:00:00Z",
+          started_at: null,
+          finished_at: null,
+        },
+      }),
+    ]);
+    renderPage();
+
+    await screen.findByText(/plex\.tv unreachable/i);
+    const card = screen.getByTestId("job-sync.users");
+    expect(card).toHaveTextContent(/plex\.tv unreachable/i);
+    expect(card).toHaveTextContent(/1 failed/i);
+  });
+
+  it("opens a job's own history on demand, asking only for that kind", async () => {
+    getJobCatalog.mockResolvedValue([
+      entry("sync.users", { label: "Sync people from Plex", total: 2 }),
+    ]);
     getJobs.mockResolvedValue([
       {
         id: 9,
-        kind: "privacy.sync",
+        kind: "sync.users",
         status: "done",
         attempts: 1,
         max_attempts: 3,
-        detail: "Share filters merged for every account",
+        detail: "Synced 7 people from plex.tv",
         error: null,
         created_at: "2026-07-28T10:00:00Z",
         started_at: null,
@@ -364,9 +469,36 @@ describe("ToolsPage — sync check", () => {
     ]);
     renderPage();
 
-    expect(await screen.findByText(/background jobs/i)).toBeInTheDocument();
+    // Not fetched until it's opened — a page of cards must not fire one history request each.
+    await screen.findByTestId("job-sync.users");
+    expect(getJobs).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /previous runs/i }),
+    );
+
+    expect(getJobs).toHaveBeenCalledWith("sync.users", 50);
     expect(
-      await screen.findByText(/share filters merged for every account/i),
+      await screen.findByText(/synced 7 people from plex\.tv/i),
     ).toBeInTheDocument();
+  });
+
+  it("shows an automatic job with no run button, and says what queues it", async () => {
+    getJobCatalog.mockResolvedValue([
+      entry("user.cleanup", {
+        label: "Remove a disabled person's rows",
+        manual: false,
+        trigger: "Queued when you disable someone.",
+      }),
+    ]);
+    renderPage();
+
+    const card = await screen.findByTestId("job-user.cleanup");
+    expect(card).toHaveTextContent(/automatic/i);
+    expect(card).toHaveTextContent(/queued when you disable someone/i);
+    // A button that queued a row-deleting job at no particular target must not exist.
+    expect(
+      screen.queryByRole("button", { name: /^run /i }),
+    ).not.toBeInTheDocument();
   });
 });

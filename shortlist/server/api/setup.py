@@ -21,8 +21,9 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.plextv import PLEXTV
-from shortlist.server.auth import require_setup_access
+from shortlist.server.auth import owned_machine_ids, require_setup_access
 from shortlist.server.db.models import Server
+from shortlist.server.net_guard import BlockedUrl
 from shortlist.server.services.setup_probe import run_capability_probe
 from shortlist.server.settings_store import SettingsStore
 
@@ -150,6 +151,9 @@ async def probe(body: ProbeRequest, request: Request) -> dict:
 
     try:
         return await asyncio.get_running_loop().run_in_executor(None, run_probe)
+    except BlockedUrl as e:
+        # A refused address is the caller's mistake, not an unreachable server — say which, and say why.
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"could not reach that server: {type(e).__name__}") from e
 
@@ -175,6 +179,21 @@ async def link_server(body: LinkRequest, request: Request) -> dict:
         raise HTTPException(status_code=403, detail="you can only link a server your account owns")
     state = request.app.state
     token = _plex_token(request, session_data)
+
+    # `owner_account_id` above is the caller asserting they own it, checked only against their own
+    # session — which is circular and passes for anyone. plex.tv is the authority: `/servers` lists
+    # shared servers alongside owned ones, so without this a friend with a share on the owner's PMS
+    # could link it, become this instance's owner, and have Shortlist write collections and share
+    # filters on a server that isn't theirs.
+    try:
+        owned = await owned_machine_ids(state.client_id, token)
+    except httpx.HTTPError as e:
+        raise HTTPException(
+            status_code=502, detail="could not reach plex.tv to confirm you own that server — try again"
+        ) from e
+    if body.machine_id not in owned:
+        logger.warning("link rejected: account {} does not own server {}", session_data["account_id"], body.machine_id)
+        raise HTTPException(status_code=403, detail="you can only link a Plex server your own account owns")
 
     with state.sessions() as db:
         store = SettingsStore(db, state.secrets)

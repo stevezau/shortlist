@@ -1177,6 +1177,96 @@ class TestRunsApi:
         # Overall still dedupes to distinct (user, title): two titles, one watched — not skewed by the split.
         assert body["overall"]["delivered"] == 2 and body["overall"]["watched"] == 1
 
+    def test_report_names_a_deleted_rows_history_by_slug_not_the_default_rows_name(self, client: TestClient):
+        """Deleting a row keeps its picks, and those picks must not borrow the DEFAULT row's name.
+
+        Regression: `row_label` fell back to the default template for ANY unknown slug, so every
+        deleted row rendered "✨ Movies Picked for You" — the dashboard listed the default row over
+        and over with wildly different counts and no way to tell which line was which.
+        """
+
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).filter_by(slug="sarah").first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add_all(
+                [
+                    # The live default row.
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=1,
+                        media_type="movie",
+                        rating_key=1,
+                        rank=1,
+                        collection_slug="picked",
+                        section_key="10",
+                        library="Movies",
+                        title="Dune",
+                    ),
+                    # A row the owner deleted; its history stays, but the row is gone.
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=2,
+                        media_type="movie",
+                        rating_key=2,
+                        rank=1,
+                        collection_slug="date-night",
+                        section_key="10",
+                        library="Movies",
+                        title="Arrival",
+                    ),
+                ]
+            )
+            session.commit()
+
+        per_row = client.get("/api/report").json()["per_row"]
+        by_slug = {r["slug"]: r for r in per_row}
+        assert by_slug["picked"]["name"] == "✨ Movies Picked for You"
+        assert by_slug["picked"]["deleted"] is False
+        # The deleted row keeps its own identity instead of impersonating the default row.
+        assert by_slug["date-night"]["name"] == "date-night"
+        assert by_slug["date-night"]["deleted"] is True
+        # Which is the whole point: no two lines in the same library share a name.
+        names = [(r["name"], r["library"]) for r in per_row]
+        assert len(names) == len(set(names))
+
+    def test_report_still_names_legacy_blank_slug_picks_as_the_default_row(self, client: TestClient):
+        """Pre-0004 picks predate multi-row and carry a blank slug — they ARE the default row, so the
+        deleted-row fallback above must not relabel them as a row called ""."""
+
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).filter_by(slug="sarah").first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=uid,
+                    tmdb_id=1,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    collection_slug="",
+                    section_key="10",
+                    library="Movies",
+                    title="Dune",
+                )
+            )
+            session.commit()
+
+        per_row = client.get("/api/report").json()["per_row"]
+        assert len(per_row) == 1
+        assert per_row[0]["name"] == "✨ Movies Picked for You"
+        assert per_row[0]["slug"] == "picked" and per_row[0]["deleted"] is False
+
     def test_report_tracks_a_title_moving_rows_and_a_second_watcher(self, client: TestClient):
         """The full lifecycle: a title watched in one row, later moved to another row (no re-credit,
         the watch predates it), then watched by a DIFFERENT person in that other row. Overall must not
@@ -3740,22 +3830,32 @@ class TestDeletingAPosterImage:
 
 
 class TestEveryJobKindIsExplained:
-    """A job kind with no UI label renders as its raw name — `backup.take` on someone's screen.
+    """A registered handler with no catalogue entry shows up as its raw kind — `backup.take` on
+    somebody's screen — and cannot be described or triggered from the UI at all.
 
-    That is precisely what `KIND_LABELS` exists to prevent, and it silently regressed the moment three
-    kinds were added: the map lives in the frontend and nothing tied it to the handler registry. This
-    is the tie.
+    The catalogue lives in `jobs.py` beside the handlers precisely so this is checkable in one place;
+    it used to be a map in the SPA, which drifted the moment three kinds were added.
     """
 
-    def test_the_frontend_names_every_registered_kind(self):
-        import re
-        from pathlib import Path
-
+    def test_the_catalogue_names_every_registered_kind(self):
         from shortlist.server.services import jobs
 
-        source = (Path(__file__).parent.parent.parent / "web/src/components/jobs-table.tsx").read_text()
-        block = source.split("KIND_LABELS: Record<string, string> = {", 1)[1].split("};", 1)[0]
-        labelled = set(re.findall(r'"([^"]+)":', block))
+        missing = sorted(set(jobs._HANDLERS) - set(jobs.BY_KIND))
+        assert not missing, f"job kind(s) with no catalogue entry: {missing}"
 
-        missing = sorted(set(jobs._HANDLERS) - labelled)
-        assert not missing, f"job kind(s) with no plain-English label: {missing}"
+    def test_every_catalogue_entry_has_a_handler(self):
+        """The other direction: a catalogue entry with no handler is a button that always fails."""
+        from shortlist.server.services import jobs
+
+        orphans = sorted(set(jobs.BY_KIND) - set(jobs._HANDLERS))
+        assert not orphans, f"catalogue entr(ies) with no handler: {orphans}"
+
+    def test_the_destructive_kinds_are_not_manually_triggerable(self):
+        """`user.cleanup` DELETES someone's rows and `user.restore` makes rows visible. Neither may be
+        reachable from a generic 'run a job' button — hence `manual` as an allow-list."""
+        from shortlist.server.services import jobs
+
+        for kind in ("user.cleanup", "user.hide", "user.restore", "row.reconcile"):
+            assert kind in jobs.BY_KIND, kind
+            assert not jobs.BY_KIND[kind].manual, f"{kind} must not be manually triggerable"
+            assert kind not in jobs.KINDS

@@ -808,6 +808,8 @@ export interface EffectivenessReport {
     section_key: string;
     library: string;
     name: string;
+    /** History from a row that has since been deleted — `name` is its slug, all it has left. */
+    deleted?: boolean;
     delivered: number;
     watched: number;
     hit_rate: number | null;
@@ -941,6 +943,30 @@ export interface Job {
   created_at: string | null;
   started_at: string | null;
   finished_at: string | null;
+}
+
+/** GET /api/system/jobs/catalog — one entry per job kind Shortlist knows how to run.
+ *
+ *  The Jobs page is organised by JOB, not by chronology: "is the roster sync healthy?" can't be
+ *  answered from a flat list of the last 25 rows with every kind mixed together. */
+export interface JobCatalogEntry {
+  kind: string;
+  label: string;
+  description: string;
+  /** Can the owner start it from a button? False for the kinds that take a target and delete
+   *  or hide that target's rows — those are queued by the mutation that knows the target. */
+  manual: boolean;
+  /** For an automatic job, what causes it to be queued. */
+  trigger: string;
+  scheduled: boolean;
+  /** ISO time of the next scheduled firing, when this kind runs on a timer. */
+  next_run: string | null;
+  /** The most recent job of this kind, or null if it has never run. */
+  last: Job | null;
+  total: number;
+  queued: number;
+  running: number;
+  failed: number;
 }
 
 /** POST /api/system/jobs — the job as it stood after the inline drain. */

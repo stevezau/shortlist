@@ -1,5 +1,6 @@
 import type {
   Job,
+  JobCatalogEntry,
   JobResult,
   ApiTokenCreated,
   ApiTokenStatus,
@@ -201,15 +202,23 @@ export const api = {
     request("/api/users/sync", { method: "POST" }),
 
   // --- Background jobs ---
-  getJobs: (): Promise<Job[]> => request("/api/system/jobs"),
+  getJobs: (kind?: string, limit = 25): Promise<Job[]> =>
+    request(
+      `/api/system/jobs?limit=${limit}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`,
+    ),
+
+  /** Every job Shortlist can run, with its schedule and how it went last time. */
+  getJobCatalog: (): Promise<JobCatalogEntry[]> =>
+    request("/api/system/jobs/catalog"),
 
   runJob: (
     kind: string,
     payload: Record<string, unknown> = {},
+    background = false,
   ): Promise<JobResult> =>
     request("/api/system/jobs", {
       method: "POST",
-      body: JSON.stringify({ kind, payload }),
+      body: JSON.stringify({ kind, payload, background }),
     }),
 
   blockSeed: (

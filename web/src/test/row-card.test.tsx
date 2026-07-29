@@ -9,6 +9,7 @@ import type { Collection, User } from "@/lib/types";
 vi.mock("@/lib/api", () => ({
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
   api: {
+    posterImageUrl: (id: number) => `/api/collections/${id}/poster/image`,
     getSettings: () => Promise.resolve({ "row.size": "15" }),
     getLibraries: () =>
       Promise.resolve([
@@ -51,7 +52,7 @@ function renderCard(value: Collection) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <RowCard collection={value} users={USERS} onEdit={() => {}} />
@@ -76,5 +77,34 @@ describe("RowCard", () => {
     renderCard(collection());
     expect(screen.queryByText(/^Sources:/)).toBeNull();
     expect(screen.queryByText(/^Libraries:/)).toBeNull();
+  });
+
+  // The poster slot is fixed-width whether or not there's an image, so every card in the list lines
+  // up. Rendering the <img> conditionally with nothing in its place shifted posterless rows left.
+  it("keeps a poster-sized slot for a row with no poster", () => {
+    const { container } = renderCard(collection());
+    expect(container.querySelector("img")).toBeNull();
+    const slot = container.querySelector('[title^="No poster"]');
+    expect(slot).toBeTruthy();
+    expect(slot?.className).toContain("h-16");
+    expect(slot?.className).toContain("w-11");
+  });
+
+  it("shows the image, and no placeholder, for a row that has a poster", () => {
+    const { container } = renderCard(
+      collection({
+        poster: {
+          mode: "upload",
+          title: "",
+          subtitle: "",
+          style: "",
+          has_image: true,
+        },
+      }),
+    );
+    const img = container.querySelector("img");
+    expect(img).toBeTruthy();
+    expect(img?.className).toContain("h-16");
+    expect(container.querySelector('[title^="No poster"]')).toBeNull();
   });
 });

@@ -37,7 +37,10 @@ async def version(request: Request) -> dict:
 
 @router.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "version": shortlist.__version__}
+    """Liveness only — this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its
+    consumer. The version used to be here too; an unauthenticated caller does not need to know which
+    build to look up advisories for. The UI reads it from `/system/version`, which is owner-gated."""
+    return {"status": "ok"}
 
 
 @router.get("/syncs", dependencies=[Depends(require_owner)])
@@ -503,43 +506,116 @@ async def restore_backup_endpoint(body: RestoreRequest, request: Request):
     }
 
 
+# Strong references to in-flight background drains. asyncio holds only a weak reference to a task,
+# so without this the garbage collector can cancel one mid-job.
+_BACKGROUND_DRAINS: set[asyncio.Task] = set()
+
+
+def _job_dict(job) -> dict:
+    return {
+        "id": job.id,
+        "kind": job.kind,
+        "status": job.status,
+        "attempts": job.attempts,
+        "max_attempts": job.max_attempts,
+        "detail": job.detail,
+        "error": job.error,
+        # What it was asked to do and what came back — the two things an operator needs to judge a
+        # failure without going to the container log. `payload` is data by design (a slug, a row),
+        # never a secret: job kinds that touch tokens read them from the settings store at run time.
+        "payload": job.payload or {},
+        "result": job.result or {},
+        "created_at": iso_utc(job.created_at),
+        "started_at": iso_utc(job.started_at),
+        "finished_at": iso_utc(job.finished_at),
+    }
+
+
 @router.get("/jobs", dependencies=[Depends(require_owner)])
-async def list_jobs(request: Request, limit: int = 25) -> list[dict]:
+async def list_jobs(request: Request, limit: int = 25, kind: str | None = None) -> list[dict]:
     """Recent background jobs, newest first — the "did that actually happen?" answer.
 
     Maintenance work used to be fire-and-forget: it landed in the logs and the events table and
     nowhere an operator would look. Runs keep their own page; this is everything else.
+
+    `kind` narrows it to one job type, which is how the Jobs page shows a single job's own history
+    without pulling every other kind's rows down with it.
     """
     from shortlist.server.db.models import Job
 
     with request.app.state.sessions() as session:
-        rows = session.query(Job).order_by(Job.created_at.desc(), Job.id.desc()).limit(min(limit, 100)).all()
-        return [
-            {
-                "id": job.id,
-                "kind": job.kind,
-                "status": job.status,
-                "attempts": job.attempts,
-                "max_attempts": job.max_attempts,
-                "detail": job.detail,
-                "error": job.error,
-                # What it was asked to do and what came back — the two things an operator needs to
-                # judge a failure without going to the container log. `payload` is data by design
-                # (a slug, a row), never a secret: job kinds that touch tokens read them from the
-                # settings store at run time.
-                "payload": job.payload or {},
-                "result": job.result or {},
-                "created_at": iso_utc(job.created_at),
-                "started_at": iso_utc(job.started_at),
-                "finished_at": iso_utc(job.finished_at),
-            }
-            for job in rows
-        ]
+        query = session.query(Job)
+        if kind:
+            query = query.filter(Job.kind == kind)
+        rows = query.order_by(Job.created_at.desc(), Job.id.desc()).limit(min(limit, 200)).all()
+        return [_job_dict(job) for job in rows]
+
+
+@router.get("/jobs/catalog", dependencies=[Depends(require_owner)])
+async def jobs_catalog(request: Request) -> list[dict]:
+    """Every job Shortlist can run: what it does, when it next runs, and how it went last time.
+
+    The Jobs page is organised BY JOB, not by chronology — "is the roster sync healthy?" was
+    unanswerable from a flat list of the last 25 rows mixing every kind together. Each entry
+    carries enough to render a card without a second request per kind.
+    """
+    from sqlalchemy import func
+
+    from shortlist.server.db.models import Job
+    from shortlist.server.services.jobs import CATALOG
+
+    scheduler = getattr(request.app.state, "scheduler", None)
+
+    def next_run(job_id: str | None) -> str | None:
+        if not (scheduler and job_id):
+            return None
+        scheduled = scheduler.get_job(job_id)
+        return iso_utc(scheduled.next_run_time) if scheduled and scheduled.next_run_time else None
+
+    with request.app.state.sessions() as session:
+        # One grouped scan for the counts, rather than a query per kind per status.
+        tallies: dict[tuple[str, str], int] = {
+            (kind, status): n
+            for kind, status, n in session.query(Job.kind, Job.status, func.count(Job.id)).group_by(
+                Job.kind, Job.status
+            )
+        }
+        latest = {
+            job.kind: job
+            for job in session.query(Job).filter(Job.id.in_(session.query(func.max(Job.id)).group_by(Job.kind))).all()
+        }
+        out = []
+        for entry in CATALOG:
+            counts = {status: n for (kind, status), n in tallies.items() if kind == entry.kind}
+            last = latest.get(entry.kind)
+            out.append(
+                {
+                    "kind": entry.kind,
+                    "label": entry.label,
+                    "description": entry.description,
+                    "manual": entry.manual,
+                    "trigger": entry.trigger,
+                    "scheduled": bool(entry.schedule_job_id),
+                    "next_run": next_run(entry.schedule_job_id),
+                    "last": _job_dict(last) if last else None,
+                    "total": sum(counts.values()),
+                    "queued": counts.get("queued", 0),
+                    "running": counts.get("running", 0),
+                    "failed": counts.get("failed", 0),
+                }
+            )
+        return out
 
 
 class RunJobRequest(BaseModel):
     kind: str
     payload: dict = {}
+    # Return as soon as the job is queued instead of waiting out the drain. The Jobs page sets this
+    # and polls: `sync.history` on a large server takes minutes, and holding an HTTP request open
+    # that long only ever ends in a proxy timeout — which reads to the operator as a failed job when
+    # the job is in fact still running fine. The default stays False so the Tools page's Sync Check
+    # card keeps getting its `fixed`/`orphans` preview inline.
+    background: bool = False
 
 
 @router.post("/jobs", dependencies=[Depends(require_owner)])
@@ -555,7 +631,14 @@ async def run_job(body: RunJobRequest, request: Request) -> dict:
         raise HTTPException(422, f"unknown job kind; valid: {sorted(KINDS)}")
     state = request.app.state
     job_id = enqueue(state.sessions, body.kind, body.payload)
-    await run_pending(state)
+    if body.background:
+        # Fire and forget on THIS loop. Losing the task to a restart is not a lost job — the row is
+        # committed, and the drain tick picks it up regardless.
+        task = asyncio.create_task(run_pending(state))
+        _BACKGROUND_DRAINS.add(task)  # a bare create_task can be garbage-collected mid-flight
+        task.add_done_callback(_BACKGROUND_DRAINS.discard)
+    else:
+        await run_pending(state)
     from shortlist.server.db.models import Job
 
     with state.sessions() as session:

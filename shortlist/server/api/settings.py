@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from shortlist.engine.clients.http_retry import redact
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Server
+from shortlist.server.net_guard import BlockedUrl, check_url
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
@@ -150,6 +151,35 @@ def _check(key: str, value: object) -> str | None:
     return validator(value) if validator else None
 
 
+# Settings whose value the SERVER later fetches. Guarded as they are SAVED rather than at each
+# consumer: one place to keep right, and a blocked address never reaches the store.
+_FETCHED_URL_KEYS = (
+    "plex.url",
+    "tautulli.url",
+    "requests.radarr.url",
+    "requests.sonarr.url",
+    "curator.ollama_url",
+    "curator.openai_base_url",
+)
+
+
+def _reject_blocked_urls(values: dict[str, object]) -> None:
+    """Refuse a URL the server must not fetch on the owner's behalf (SSRF — see `net_guard`).
+
+    Narrow on purpose: private and loopback addresses stay ALLOWED, because `192.168.1.50:32400`,
+    `http://plex:32400` and `http://localhost:11434` are the normal configuration for a self-hosted
+    app. Only non-HTTP schemes and the cloud metadata addresses are refused.
+    """
+    for key in _FETCHED_URL_KEYS:
+        value = values.get(key)
+        if not value or not isinstance(value, str) or not value.strip():
+            continue  # blank clears the setting — nothing to fetch
+        try:
+            check_url(value, what=f"{key}")
+        except BlockedUrl as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+
 async def _reject_a_different_server(state, values: dict[str, object]) -> None:
     """Refuse a `plex.url`/`plex.token` edit that points at a DIFFERENT Plex server.
 
@@ -208,6 +238,7 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown settings: {sorted(unknown)}")
     _validate_values(update.values)
+    _reject_blocked_urls(update.values)
     await _reject_a_different_server(request.app.state, update.values)
     with request.app.state.sessions() as session:
         store = SettingsStore(session, request.app.state.secrets)

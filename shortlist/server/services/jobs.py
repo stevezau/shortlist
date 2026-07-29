@@ -27,6 +27,7 @@ import asyncio
 import functools
 import inspect
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -49,9 +50,112 @@ Handler = Callable[[object, dict], dict]  # (app.state, payload) -> result
 
 _HANDLERS: dict[str, Handler] = {}
 
-# Kinds the UI may trigger by hand. A deliberate allow-list, not `_HANDLERS.keys()`: `user.cleanup`
-# takes a slug and DELETES that person's rows, so it must never be runnable from a generic button.
-KINDS = ("sync.check", "privacy.sync")
+
+@dataclass(frozen=True)
+class JobKind:
+    """What a job kind IS, for the Jobs page — the catalogue an operator browses.
+
+    Kept here rather than in the SPA so the labels, the descriptions and (critically) the `manual`
+    allow-list have one definition. A kind the UI can name but the API refuses to run, or vice
+    versa, is exactly the drift this avoids.
+    """
+
+    kind: str
+    label: str
+    description: str
+    manual: bool  # may the UI trigger it from a button?
+    schedule_job_id: str | None = None  # APScheduler id, when this kind runs on a timer
+    trigger: str = ""  # what causes it, for the kinds no button can start
+
+
+# Every registered kind, in the order the Jobs page shows them. `manual` is a deliberate allow-list,
+# NOT `_HANDLERS.keys()`: `user.cleanup` takes a slug and DELETES that person's rows, so it must never
+# be runnable from a generic button. The four scheduled/maintenance kinds above it are all
+# converge-to-desired-state passes that are safe to press at any time.
+CATALOG: tuple[JobKind, ...] = (
+    JobKind(
+        kind="sync.users",
+        label="Sync people from Plex",
+        description=(
+            "Re-read who has access to your server from plex.tv and Tautulli. This is what notices a "
+            "new person (and writes the share filters that stop them seeing everyone else's rows) and "
+            "what notices someone leaving."
+        ),
+        manual=True,
+        schedule_job_id="user-sync",
+    ),
+    JobKind(
+        kind="sync.history",
+        label="Sync watch history",
+        description=(
+            "Re-read every enabled person's watched set. Drives every recommendation, and marks "
+            "delivered picks as watched so the dashboard's hit rate stays current. Reads only — "
+            "nothing on Plex changes."
+        ),
+        manual=True,
+        schedule_job_id="watch-sync",
+    ),
+    JobKind(
+        kind="sync.check",
+        label="Sync check",
+        description=(
+            "Checks every row on Plex against what Shortlist intends, and fixes anything that "
+            "drifted. Rows fall out of step when a run doesn't finish, when the container restarts "
+            "mid-write, or when someone was paused or disabled while their row was already live — a "
+            "run only updates the people in that run, so everyone else keeps whatever they last had."
+        ),
+        manual=True,
+    ),
+    JobKind(
+        kind="privacy.sync",
+        label="Privacy sync",
+        description=(
+            "Merge every account's share filter so nobody sees anyone else's row. Builds, delivers "
+            "and promotes nothing — it can only ever make the server more private."
+        ),
+        manual=True,
+    ),
+    JobKind(
+        kind="backup.take",
+        label="Back up the database",
+        description="Copy the database to /config/backups and prune to the keep limit.",
+        manual=True,
+        schedule_job_id="db-backup",
+    ),
+    JobKind(
+        kind="user.cleanup",
+        label="Remove a disabled person's rows",
+        description="Deletes the collections belonging to someone you disabled.",
+        manual=False,
+        trigger="Queued when you disable someone.",
+    ),
+    JobKind(
+        kind="user.hide",
+        label="Hide a paused person's rows",
+        description="Takes a paused person's rows off every surface, keeping the collections so unpausing is instant.",
+        manual=False,
+        trigger="Queued when you pause someone.",
+    ),
+    JobKind(
+        kind="user.restore",
+        label="Put an un-paused person's rows back",
+        description="Re-promotes the rows that pausing hid.",
+        manual=False,
+        trigger="Queued when you un-pause someone.",
+    ),
+    JobKind(
+        kind="row.reconcile",
+        label="Tidy up after a row change",
+        description="Brings Plex back in line after a row is renamed, retargeted, or has its audience narrowed.",
+        manual=False,
+        trigger="Queued when you change a row.",
+    ),
+)
+
+BY_KIND: dict[str, JobKind] = {k.kind: k for k in CATALOG}
+
+# Kinds the UI may trigger by hand.
+KINDS = tuple(k.kind for k in CATALOG if k.manual)
 
 
 def handler(kind: str) -> Callable[[Handler], Handler]:

@@ -126,6 +126,31 @@ describe("ImpactReport", () => {
     expect(screen.getByText("TV Shows")).toBeTruthy(); // the library badge on the plain-named row
   });
 
+  it("marks history from a deleted row instead of showing it as another default row", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      per_row: [
+        ...REPORT.per_row,
+        {
+          slug: "date-night",
+          section_key: "10",
+          library: "Movies",
+          name: "date-night",
+          deleted: true,
+          delivered: 5,
+          watched: 0,
+          hit_rate: 0,
+        },
+      ],
+    });
+    renderReport();
+
+    expect(await screen.findByText("date-night")).toBeTruthy();
+    expect(screen.getByText("deleted row")).toBeTruthy();
+    // The live default row keeps its name and is NOT badged — only the orphaned line is.
+    expect(screen.getAllByText("deleted row")).toHaveLength(1);
+  });
+
   it("explains the empty state before anything is delivered", async () => {
     getReport.mockResolvedValue({
       overall: {

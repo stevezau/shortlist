@@ -1063,7 +1063,21 @@ def _run_user(
     user_report.picks = all_picks
     user_report.counts.picks = len(all_picks)
     if not all_picks:
-        logger.warning("{}: no picks produced — existing rows are left as they are", user.username)
+        # "My row is empty / hasn't changed" is the most common thing an operator gets asked, and
+        # the answer is always somewhere in this chain — no watch history, no seeds from it, no
+        # candidates from the sources, or nothing of the candidates actually in their libraries.
+        # Without the counts this line said only that it happened, sending the operator to the trace.
+        counts = user_report.counts
+        logger.warning(
+            "{}: no picks produced — existing rows are left as they are "
+            "(history={} seeds={} candidates={} in_library={}){}",
+            user.username,
+            counts.history,
+            counts.seeds,
+            counts.candidates,
+            counts.in_library,
+            f" — {user_report.reason}" if user_report.reason else "",
+        )
     return delivered_any  # nothing delivered -> nothing to promote
 
 
