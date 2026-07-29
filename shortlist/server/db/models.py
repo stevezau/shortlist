@@ -491,6 +491,14 @@ class RequestCandidate(Base):
     # — so we hide it from the UI instead of deleting it. Excluded from the inbox list; engine unaffected.
     hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     first_seen_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # which run first surfaced it
+    # When this title was actually asked of Sonarr/Radarr. Stamped ONCE, when status flips to "sent".
+    #
+    # `updated_at` was used as a proxy and is wrong in both directions: it has `onupdate`, so clearing
+    # an old title from the Sent log bumps it and pulls a months-old request into a recent window,
+    # while an edit after the send pushes it out. The dashboard's "watched since sent" needs a
+    # timestamp that means what it says. NULL on rows sent before this column existed — the report
+    # falls back to `updated_at` for those, which is exactly as good as it used to be.
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

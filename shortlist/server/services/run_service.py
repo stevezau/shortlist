@@ -1070,10 +1070,15 @@ class RunService:
             outcome = auto_outcomes.get((m.tmdb_id, m.media_type.value))
             if row is None:
                 new_row = _candidate_row(m, run_id, status="sent")
+                new_row.sent_at = datetime.now(UTC)
                 if outcome is not None:
                     new_row.detail = outcome.detail
                 session.add(new_row)
             else:
+                # Only on the TRANSITION: a title re-surfaced by a later run is not a second send,
+                # and re-stamping would keep sliding it into the current window for ever.
+                if row.status != "sent":
+                    row.sent_at = datetime.now(UTC)
                 row.status = "sent"
                 if outcome is not None:
                     row.detail = outcome.detail

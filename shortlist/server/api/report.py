@@ -272,19 +272,22 @@ async def effectiveness(
 
         # Requests that paid off: titles asked of Sonarr/Radarr that were LATER watched by someone.
         #
-        # "Later" is the fix here — this used to be a plain set intersection with no ordering check,
-        # so a title watched before it was ever requested (in the library, deleted, re-requested)
-        # counted as a request that paid off. `updated_at` is the send timestamp: the row is written
-        # when status flips to "sent". It is only a PROXY, and it skews both ways: clearing an old
-        # title from the Sent log bumps `updated_at` (the column has `onupdate`), which can pull a
-        # months-old request into the window. A dedicated `sent_at` column is the honest fix; until
-        # then this is still strictly better than the unordered set intersection it replaced.
-        sent = {
-            (r.tmdb_id, r.media_type): r.updated_at
-            for r in session.query(RequestCandidate)
-            .filter(RequestCandidate.status == "sent", *in_period(RequestCandidate.updated_at, since))
-            .all()
-        }
+        # "Later" is the point. This used to be a plain set intersection with no ordering check, so a
+        # title watched, then deleted from the library, then re-requested counted as a request that
+        # paid off. It now compares against `sent_at`, stamped once when the status flips to "sent".
+        #
+        # `updated_at` is the fallback for rows sent before that column existed. It is a poor proxy —
+        # it has `onupdate`, so clearing an old title from the Sent log bumps it — but it is what
+        # those rows have, and it is no worse than the behaviour they already had.
+        def sent_time(row) -> datetime | None:
+            return _as_utc(row.sent_at or row.updated_at) if (row.sent_at or row.updated_at) else None
+
+        sent_rows = [
+            row
+            for row in session.query(RequestCandidate).filter(RequestCandidate.status == "sent").all()
+            if (when := sent_time(row)) is not None and (since is None or when >= since)
+        ]
+        sent = {(row.tmdb_id, row.media_type): sent_time(row) for row in sent_rows}
         watched_at_by_title: dict[tuple[int, str], datetime] = {}
         for tid, mt, watched in (
             session.query(PickRow.tmdb_id, PickRow.media_type, func.max(PickRow.watched_at))
@@ -297,7 +300,7 @@ async def effectiveness(
             1
             for key, sent_at in sent.items()
             if (watched := watched_at_by_title.get(key)) is not None
-            and (sent_at is None or _as_utc(watched) >= _as_utc(sent_at))
+            and (sent_at is None or _as_utc(watched) >= sent_at)
         )
         requests = {
             "sent": len(sent),

@@ -8,6 +8,7 @@ worker thread (the Arr/TMDB clients are sync) and respects ``dry_run``.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
@@ -296,6 +297,9 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
                     row.arr_slug = outcome.arr_slug  # so the sent log deep-links to the arr page
                 if not body.dry_run and outcome.status == "requested":
                     row.status = "sent"
+                    # Stamped once, here, so "watched since sent" can compare against the real send
+                    # time rather than an `updated_at` that later edits move around.
+                    row.sent_at = datetime.now(UTC)
                 outcomes.append({"id": row.id, "title": row.title, "status": outcome.status, "detail": outcome.detail})
             session.add(
                 Event(scope="requests.send", level="info", message={"dry_run": body.dry_run, "outcomes": outcomes})

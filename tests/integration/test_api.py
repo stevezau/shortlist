@@ -1486,6 +1486,90 @@ class TestRunsApi:
         assert requests["sent"] == 2
         assert requests["watched_after_sent"] == 1
 
+    def test_report_uses_the_real_send_time_not_a_timestamp_that_drifts(self, client: TestClient):
+        """`updated_at` has `onupdate`, so clearing an old title from the Sent log bumped it and pulled
+        a months-old request into a recent window. `sent_at` is stamped once and cannot drift."""
+        from shortlist.server.db.models import PickRow, RequestCandidate, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=uid,
+                    tmdb_id=55,
+                    media_type="movie",
+                    rating_key=55,
+                    rank=1,
+                    collection_slug="picked",
+                    title="Watched Before The Send",
+                    created_at=now - timedelta(days=200),
+                    watched_at=now - timedelta(days=190),
+                )
+            )
+            # Sent long ago, then TOUCHED recently (hidden from the Sent log) — `updated_at` is now
+            # inside the window while the real send is not.
+            session.add(
+                RequestCandidate(
+                    tmdb_id=55,
+                    media_type="movie",
+                    title="Watched Before The Send",
+                    status="sent",
+                    sent_at=now - timedelta(days=180),
+                    updated_at=now - timedelta(days=1),
+                )
+            )
+            session.commit()
+
+        requests = client.get("/api/report?window=30").json()["requests"]
+        assert requests["sent"] == 0, "a request sent 180 days ago is not a send in the last 30"
+        assert requests["watched_after_sent"] == 0
+
+    def test_report_still_reads_a_request_sent_before_sent_at_existed(self, client: TestClient):
+        """Back-compat: rows written before the column fall back to `updated_at`, which is exactly the
+        behaviour they already had — no backfill, nothing silently dropped."""
+        from shortlist.server.db.models import PickRow, RequestCandidate, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=uid,
+                    tmdb_id=66,
+                    media_type="movie",
+                    rating_key=66,
+                    rank=1,
+                    collection_slug="picked",
+                    title="Legacy Sent",
+                    created_at=now - timedelta(days=20),
+                    watched_at=now - timedelta(days=2),
+                )
+            )
+            session.add(
+                RequestCandidate(
+                    tmdb_id=66,
+                    media_type="movie",
+                    title="Legacy Sent",
+                    status="sent",
+                    sent_at=None,  # predates the column
+                    updated_at=now - timedelta(days=10),
+                )
+            )
+            session.commit()
+
+        requests = client.get("/api/report?window=30").json()["requests"]
+        assert requests["sent"] == 1
+        assert requests["watched_after_sent"] == 1
+
     def test_report_falls_back_to_the_default_window_on_a_bogus_value(self, client: TestClient):
         body = client.get("/api/report?window=nonsense").json()
         assert body["window"] == "30"
