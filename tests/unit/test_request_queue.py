@@ -107,6 +107,47 @@ class TestPersistRequestQueue:
             assert len(rows) == 1  # the unique (tmdb_id, media_type) key prevents a duplicate
             assert rows[0].demand == 6 and rows[0].rating == 8.9  # latest run's facts win
 
+    def test_poster_path_is_persisted_on_insert(self, tmp_path: Path):
+        # The engine side of the poster chain is well covered, but THIS is where the value reaches
+        # the database — and nothing exercised it: deleting `poster_path=m.poster_path` from
+        # `_candidate_row` left the whole suite green.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, poster_path="/art.jpg")]))
+            s.commit()
+        with sessions() as s:
+            assert s.query(RequestCandidate).one().poster_path == "/art.jpg"
+
+    def test_a_resurfaced_title_keeps_its_artwork_when_the_new_pass_has_none(self, tmp_path: Path):
+        """The retain rule, and the ONLY way rows queued before 0044 ever get artwork.
+
+        A later run can surface the same title from a poster-less source (Trakt, the web search). If
+        that blanked the stored path, the inbox would lose artwork it already had — and the backfill
+        the migration relies on would never happen, because it IS this expression.
+        """
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, poster_path="/art.jpg")]))
+            s.commit()
+        with sessions() as s:
+            RunService._persist_request_queue(s, 2, _report([_title(1, poster_path="")]))
+            s.commit()
+        with sessions() as s:
+            assert s.query(RequestCandidate).one().poster_path == "/art.jpg"
+
+    def test_a_resurfaced_title_gains_artwork_it_did_not_have(self, tmp_path: Path):
+        # The backfill direction: a row stored before 0044 (or from a poster-less source) picks the
+        # artwork up on the first run that re-surfaces it with one.
+        sessions = _sessions(tmp_path)
+        with sessions() as s:
+            RunService._persist_request_queue(s, 1, _report([_title(1, poster_path="")]))
+            s.commit()
+        with sessions() as s:
+            RunService._persist_request_queue(s, 2, _report([_title(1, poster_path="/later.jpg")]))
+            s.commit()
+        with sessions() as s:
+            assert s.query(RequestCandidate).one().poster_path == "/later.jpg"
+
     def test_pending_titles_now_in_the_library_are_dropped(self, tmp_path: Path):
         sessions = _sessions(tmp_path)
         with sessions() as s:

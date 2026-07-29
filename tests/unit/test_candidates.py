@@ -114,6 +114,45 @@ class TestGatherCandidates:
         assert "trakt 1" in breakdown
         assert "1 unique" in breakdown
 
+    def test_a_title_trakt_found_first_picks_up_the_poster_a_later_source_has(self, mock_tmdb):
+        """Sources run in a FIXED order — similar, discover, trakt, llm_web — whatever order they
+        are listed in. So trakt (which has no artwork to give, and creates the pool entry via
+        `merge`) is genuinely followed by llm_web, which resolves through TMDB search and does.
+
+        Without folding the poster on that second sighting the entry keeps trakt's empty path, and
+        the request pass later buys it back with a detail call — while a TMDB response carrying it
+        was already in hand.
+        """
+        mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
+        mock_tmdb.genre_names.return_value = {}
+        mock_tmdb.search.side_effect = lambda title, mt, year=None: {
+            "id": 42,
+            "title": "Both",
+            "genre_ids": [],
+            "vote_average": 8.0,
+            "poster_path": "/art.jpg",
+        }
+        trakt = _FakeTrakt([{"tmdb_id": 42, "title": "Both", "year": 2020, "genres": []}])
+
+        class _WebCurator:
+            supports_native_web_search = True
+
+            def recommend_web(self, profile, seeds, k):
+                return [{"title": "Both", "year": 2020, "media": "movie"}]
+
+        pool = gather_candidates(
+            mock_tmdb,
+            [seed(1)],
+            sources=["trakt", "llm_web"],
+            trakt=trakt,
+            curator=_WebCurator(),
+            profile=object(),
+        )
+
+        both = next(c for c in pool if c.tmdb_id == 42)
+        assert both.poster_path == "/art.jpg"
+        assert both.sources == {"trakt", "llm_web"}  # one candidate, owned by both
+
     def test_genre_map_fetched_once_per_media_type(self, mock_tmdb):
         gather_candidates(mock_tmdb, [seed(1), seed(2), seed(3)])
         assert mock_tmdb.genre_names.call_count == 1
