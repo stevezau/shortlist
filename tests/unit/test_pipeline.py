@@ -739,9 +739,11 @@ class TestPerRowOverrides:
 
     def test_pools_that_differ_only_in_seed_count_are_labelled_apart(self, ctx: EngineContext, mock_plextv):
         # The trace labels a gather by media + sources. Two rows differing only in max_seeds share
-        # both, so without the seed count they file two IDENTICAL cards on the "How we picked" page
-        # with different candidate counts and no way to tell which row is which. The media prefix
-        # must stay first: the page splits on " · " to decide which library a gather belongs to.
+        # both, so without the seed count they record under two IDENTICAL names and the trace cannot
+        # say which gather belonged to which row. (The "How we picked" page doesn't render the label
+        # today — it merges a library's gathers into one source list — so this is about the stored
+        # record, not the screen.) The media prefix must stay first: `poolCoversMedia` splits on
+        # " · " to place a gather in a library.
         ctx.history_source.fetch.return_value = [
             make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)
         ]

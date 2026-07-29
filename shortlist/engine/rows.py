@@ -757,12 +757,13 @@ def _run_user(
                 logger.warning("{}: row '{}' has no working candidate source ({})", user.username, spec.slug, e)
                 return None
             # Once per pool computation (this cache miss) — the gather's AI cost belongs to this user.
-            # Label the pool by its media + sources so a multi-pool user's trace stays legible, and by
-            # its seed count when rows differ there: two rows that share media and sources but not
-            # their seed budget are two real gathers, and without the count they render as two
-            # identical cards with different numbers and no way to tell which row is which. The media
-            # prefix must stay first — the trace page reads it to decide which library a gather belongs
-            # to (`poolCoversMedia` splits on " · ").
+            # Label the pool by its media + sources, and by its seed count when this person's rows
+            # differ there: two rows sharing media and sources but not their seed budget are two real
+            # gathers that would otherwise record under one identical name, leaving the trace unable to
+            # say which is which. This names them in the RECORD; the trace page currently merges a
+            # library's gathers into one source list and never renders the label, so nothing changes on
+            # screen until that page grows a per-row axis. The media prefix must stay first —
+            # `poolCoversMedia` splits on " · " to decide which library a gather belongs to.
             seed_n = len(seeds_for(spec))
             pool_label = f"{spec.media} · {', '.join(key[0])}"
             if any(len(seeds_for(other)) != seed_n for other in specs):
