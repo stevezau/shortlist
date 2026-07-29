@@ -532,9 +532,20 @@ def _user_restore(state, payload: dict) -> dict:
         # above are a fallback for rows delivered before the ledger existed; a `{top_seed}` row has no
         # renderable title at all, so without this it lands on `_promote_one`'s no-spec branch and gets
         # its audience's Home rather than the placement the row actually asks for.
-        keys = {
-            d.rating_key: d.collection_slug for d in session.query(Delivery).filter_by(user_slug=slug) if d.rating_key
-        }
+        ledger = [d for d in session.query(Delivery).filter_by(user_slug=slug) if d.rating_key]
+        # An AMBIGUOUS ratingKey — two rows claiming the same collection — falls through to the title
+        # map rather than letting whichever row the query returned last win arbitrarily. Reachable if a
+        # run crashed between the delete and the persist on delivery's rebuild path.
+        claims: dict[int, int] = {}
+        for d in ledger:
+            claims[d.rating_key] = claims.get(d.rating_key, 0) + 1
+        keys = {d.rating_key: d.collection_slug for d in ledger if claims[d.rating_key] == 1}
+        if len(keys) != len(ledger):
+            logger.warning(
+                "{}: {} ledger key(s) claimed by more than one row — placing those by title",
+                slug,
+                len(ledger) - len(keys),
+            )
 
     # Rule 1's ordering: every account's excludes are merged BEFORE anything is promoted.
     engine_run(ctx, [])

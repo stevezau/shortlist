@@ -113,9 +113,11 @@ def _forget_deliveries(
     could ever address it again, since its title cannot be re-rendered and a blank schedule means no
     run will re-populate the ledger.
 
-    A stale key left behind is not dangerous — `remove_row_collections` only ever deletes a collection
-    it also finds under one of OUR labels, so a key pointing at something Plex has reused still cannot
-    reach a foreign collection — but leaving them would grow the table for ever and make the audit lie.
+    A stale key is BOUNDED, not inert. It no longer only narrows a removal: `promote_user_rows` reads
+    the ledger too, so a key naming the wrong collection writes that row's placement flags. It still
+    cannot reach a foreign collection (every candidate is found under one of OUR labels first) nor past
+    a share filter, and `_refuse_a_different_server` rules out a ledger from another machine — but
+    "harmless" is too strong, which is why forgetting is scoped as tightly as it is.
     """
     query = session.query(Delivery).filter_by(collection_slug=slug)
     if user_slugs is not None:

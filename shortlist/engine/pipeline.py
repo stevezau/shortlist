@@ -792,7 +792,16 @@ def promote_user_rows(
     # the dropped library — never re-promoted (out of scope) and never demoted either, keeping whatever
     # surfaces it last claimed indefinitely. The sweep and the removal paths already walk
     # `plex.sections()` for exactly this reason.
-    by_key = {key: spec_by_slug[slug] for key, slug in (placement_keys or {}).items() if slug in spec_by_slug}
+    # Identity beats a title — but a ratingKey is only trusted for a row this user is actually in the
+    # audience for. The title path applies that check above; without the same one here, a ledger entry
+    # left by a row whose audience later shrank (and whose reconcile failed) would promote it back with
+    # that row's placement. `spec_by_slug` is already per-person-only, so a shared row cannot leak in.
+    by_key = {
+        key: spec_by_slug[slug]
+        for key, slug in (placement_keys or {}).items()
+        if slug in spec_by_slug
+        and (spec_by_slug[slug].audience is None or user.plex_account_id in spec_by_slug[slug].audience)
+    }
     for section in ctx.plex.sections():
         for collection in ctx.plex.find_owned_collections(section, user.label):
             if ctx.config.dry_run:

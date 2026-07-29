@@ -628,14 +628,21 @@ def _run_user(
     user_report.diff = CollectionDiff()
     _remove_muted_and_retired(ctx, user, cfg, user_report.diff)
 
-    # Every row this user HAS, before tonight's scope narrows it. `sole_row` below is derived from
-    # THIS list, not from `specs`: it licenses delivery to treat a title mismatch as an in-place
-    # rename, which is only safe when there is genuinely one row that could have moved. Deriving it
-    # from the built set made a SCOPED run — which is every run on a server with per-row crons —
-    # claim "this user has one row" and rebuild a DIFFERENT row's collection as this one. Row A's
-    # 3am cron would eat row B's collection, nightly.
-    owned = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec) and not _is_muted(user, spec)]
-    specs = [spec for spec in owned if cfg.should_build(spec)]
+    # Every row that could still have a COLLECTION under this user's label — the predicate `sole_row`
+    # actually needs, since it licenses delivery to treat a title mismatch as an in-place rename and
+    # that is only safe when one collection could plausibly be there.
+    #
+    # Deliberately NOT filtered by scope or by mute:
+    #   * scope — every row has its own cron, so every scheduled run is scoped. Counting the built set
+    #     made row A's 3am cron claim "this user has one row", find row B's collection alone in that
+    #     library (all their rows share one label; only the title tells them apart) and rebuild it as
+    #     row A. Row B destroyed nightly, reported as an ordinary delivery.
+    #   * mute — `_remove_muted_and_retired` runs just above, but it CANNOT remove a muted row whose
+    #     title is unrenderable (`{top_seed}`): `remove_row` leaves those alone by design. So a muted
+    #     row's collection is still on the server, and excluding it re-opens the same takeover through
+    #     a different door.
+    owned = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec)]
+    specs = [s for s in owned if not _is_muted(user, s) and cfg.should_build(s)]
     if not specs:
         # Mark the STATUS too, not just the live event: the pipeline's terminal event said "skipped"
         # while the persisted row kept its default "pending", so a reload showed a user stuck

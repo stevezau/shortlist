@@ -1056,3 +1056,87 @@ class TestRenameRowCollections:
 
         assert renamed == ["Movies"]
         c.editTitle.assert_not_called()
+
+
+class TestMutingNeverDeletesADifferentRow:
+    """`remove_row` matches a muted row's collection by its rendered title — and per-person rows share
+    ONE label, told apart by title alone.
+
+    A `{top_seed}` (or blank) template renders to the bare default with no picks, so matching on that
+    finds whatever else is titled that: the user's live default row, or a cold-start row. Muting one
+    row deleted a different row's collection, in every library, every run.
+
+    `_retired_rows` guards the identical collision for DISABLED rows and its docstring claimed the mute
+    path already did the same. It did not.
+    """
+
+    def _plex(self, titles: list[str]):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        deleted: list[str] = []
+        section = SimpleNamespace(title="Movies", key="1", type="movie")
+        plex = MagicMock()
+        plex.sections_by_type.return_value = {"movie": section}
+        plex.find_owned_collections.return_value = [SimpleNamespace(title=t) for t in titles]
+        plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append(c.title)
+        return plex, [section], deleted
+
+    def _remove(self, plex, sections, template):
+        from shortlist.engine.delivery import remove_row
+        from shortlist.engine.models import CollectionDiff, EngineConfig, RowSpec, UserProfile, UserType
+
+        diff = CollectionDiff()
+        remove_row(
+            plex,
+            UserProfile(username="sarah", plex_account_id=100, user_type=UserType.SHARED, slug="sarah"),
+            EngineConfig(),
+            RowSpec(slug="because", name_template=template, size=5),
+            dry_run=False,
+            diff=diff,
+            sections=sections,
+        )
+        return diff
+
+    def test_a_top_seed_row_leaves_the_live_default_row_alone(self):
+        from shortlist.engine.delivery import DEFAULT_ROW_NAME, row_marker
+
+        plex, sections, deleted = self._plex([DEFAULT_ROW_NAME + row_marker(100)])
+
+        diff = self._remove(plex, sections, "Because you watched {top_seed}")
+
+        assert deleted == [], "muting a {top_seed} row must not touch the row that happens to hold that title"
+        assert diff.deleted == []
+
+    def test_a_blank_template_is_equally_refused(self):
+        """A whitespace-only template renders to the default too — test the RESULT, not a substring,
+        or '   ' slips through and re-opens the collision."""
+        from shortlist.engine.delivery import DEFAULT_ROW_NAME, row_marker
+
+        plex, sections, deleted = self._plex([DEFAULT_ROW_NAME + row_marker(100)])
+
+        self._remove(plex, sections, "   ")
+
+        assert deleted == []
+
+    def test_a_library_name_template_is_still_removed(self):
+        """The guard is per LIBRARY, not once up front: `{library_name}` collapses to the bare default
+        only when there is no library name, and here there always is. Guarding globally would stop the
+        default row — the one nearly every server has — from ever being un-muted correctly."""
+        from shortlist.engine.delivery import row_marker
+
+        plex, sections, deleted = self._plex(["✨ Movies Picked for You" + row_marker(100)])
+
+        diff = self._remove(plex, sections, "✨ {library_name} Picked for You")
+
+        assert deleted == ["✨ Movies Picked for You" + row_marker(100)]
+        assert diff.deleted == ["✨ Movies Picked for You"]
+
+    def test_a_static_titled_row_is_still_removed(self):
+        from shortlist.engine.delivery import row_marker
+
+        plex, sections, deleted = self._plex(["Hidden Gems" + row_marker(100)])
+
+        self._remove(plex, sections, "Hidden Gems")
+
+        assert deleted == ["Hidden Gems" + row_marker(100)]

@@ -665,3 +665,51 @@ The regression test now reproduces exactly that sequence, and fails on the old c
 
 **The lesson for this codebase:** `should_build` is a *scope* filter, and anything that reasons about
 what a user HAS must not read through it. Worth grepping for other uses before adding more.
+
+
+---
+
+## 17. The third review round: the other doors (2026-07-29)
+
+§16's `sole_row` fix closed one way into "a row's build takes over a different row's collection". The
+review round on that commit went looking for the others and found two, both pre-existing.
+
+### Muting a row could DELETE a different row's collection
+
+`remove_row` matches a muted row's collection by its rendered title. A `{top_seed}` (or blank)
+template renders to the bare `DEFAULT_ROW_NAME` with no picks — and per-person rows share one label,
+told apart by title ALONE. So muting one row found and deleted whatever else was titled that: the
+user's live default row, or a cold-start row, in every library, every run.
+
+`context_builder._retired_rows` guards exactly this collision for DISABLED rows, and its docstring
+said the mute path already did the same. It did not. The guard now lives in `remove_row` too —
+**per library**, not once up front, because a `{library_name}` template collapses to the bare default
+only when there is no library name, and inside the loop there always is. Guarding globally would stop
+the default row (the row nearly every server has) from ever being un-muted correctly.
+
+### A muted row's leftover collection was still takeover-able
+
+`sole_row`'s new predicate excluded muted rows — but `remove_row` provably CANNOT remove a muted row
+whose title is unrenderable, so its collection is still there. `owned` is therefore now filtered by
+audience only: **every row that could still have a collection under this label**, regardless of mute
+or scope. The right question for a rename heuristic is "how many collections could plausibly be here",
+not "how many rows are we building".
+
+### The ledger became a promotion input, so its own invariant expired
+
+`a3152f8` wrote "a stale key cannot reach anything — a removal still has to find the collection under
+one of OUR labels". True when the ledger only NARROWED removals. One commit later `promote_user_rows`
+started reading it, so a stale key selects the RowSpec whose placement flags get written. Now:
+`by_key` applies the same audience check the title path does, an ambiguous key (two rows claiming one
+collection) falls through to the title map rather than picking a winner arbitrarily, and the docstring
+says what is actually true.
+
+### The pattern
+
+All three are the same shape as §12's root cause 1: **identity questions answered by matching titles.**
+A title is not an identity here — one label, many rows, and some titles cannot be rendered at all. The
+ledger is the real answer, and delivery is now the last place still guessing. Retiring `sole_row` in
+favour of "rename only when the ledger's ratingKey for this (row, user, library) matches" would close
+the class rather than its instances — and would additionally heal the multi-row stale-duplicate case
+`sole_row` never could. Not done here: it changes the delivery hot path and wants its own review and
+live test.

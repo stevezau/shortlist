@@ -24,7 +24,7 @@ from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.curator import NullCurator
 from shortlist.engine.delivery import row_marker
 from shortlist.engine.history import ShareTokenWatchSource
-from shortlist.engine.models import EngineConfig, MediaType, RowSpec, UserProfile, UserType
+from shortlist.engine.models import EngineConfig, MediaType, RowOverride, RowSpec, UserProfile, UserType
 from shortlist.engine.pipeline import EngineContext
 from shortlist.engine.pipeline import run as engine_run
 from tests.fakes.fake_plex import (
@@ -1566,3 +1566,64 @@ def test_a_scoped_run_never_rebuilds_another_row_as_itself(fakes, tmp_path):
     after = {c.ratingKey for s in plex.sections() for c in plex.find_owned_collections(s, label)}
     assert before <= after, f"row B's scoped run destroyed row A's collection(s): {sorted(before - after)}"
     assert len(after) > len(before), "row B should have built its own collection alongside row A's"
+
+
+def test_a_muted_unrenderable_row_is_not_taken_over_by_another_row(fakes, tmp_path):
+    """The other door into the same incident, and the one the first fix left open.
+
+    A muted row is skipped for delivery, but `remove_row` deliberately CANNOT remove one whose title is
+    unrenderable — a `{top_seed}` template has no title without picks — so its collection is still on
+    the server. Counting only un-muted rows therefore said "this user has one row" while two
+    collections sat under the label, and the live row's build renamed the muted orphan into itself.
+
+    Two rows would then claim one ratingKey in the ledger, and deleting the muted row later would take
+    the live one with it.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    seeded = RowSpec(slug="because", name_template="Because you watched {top_seed}", size=8)
+    gems = RowSpec(slug="gems", name_template="Hidden Gems", size=8)
+
+    def ctx_for(rows, overrides=None):
+        return EngineContext(
+            config=EngineConfig(
+                row_size=8,
+                min_history=5,
+                candidates_pre_rank=40,
+                max_seeds=12,
+                rows=rows,
+                rows_defined=True,
+            ),
+            plex=plex,
+            plextv=plextv,
+            tmdb=TmdbClient("test-key"),
+            history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+            curator=NullCurator(),
+            snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        )
+
+    def users_now(overrides=None):
+        return [
+            UserProfile(
+                username=u.username,
+                plex_account_id=u.id,
+                user_type=UserType.SHARED,
+                row_overrides=overrides or {},
+            )
+            for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        ]
+
+    # Build the {top_seed} row, then mute it — its collection stays, because its title cannot be
+    # rendered to match.
+    assert engine_run(ctx_for([seeded]), users_now()).ok
+    label = f"shortlist_{users_now()[0].slug}"
+    before = {c.ratingKey for s in plex.sections() for c in plex.find_owned_collections(s, label)}
+    assert before, "the {top_seed} row built nothing, so there is nothing to be taken over"
+
+    muted = {"because": RowOverride(muted=True)}
+    assert engine_run(ctx_for([seeded, gems]), users_now(muted)).ok
+
+    after = {c.ratingKey for s in plex.sections() for c in plex.find_owned_collections(s, label)}
+    assert before <= after, f"the live row took over the muted row's collection: {sorted(before - after)}"
+    assert len(after) > len(before), "'Hidden Gems' should have built its own collection"
