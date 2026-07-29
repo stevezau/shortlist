@@ -289,7 +289,7 @@ class TestRun:
         sarah = make_profile("sarah", account_id=100)
         kid = make_profile("kid", account_id=500)
         mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
-        mock_plextv.home_profiles_known = False  # the endpoint could not be read
+        mock_plextv.home_profile_known.return_value = False  # the endpoint could not be read
 
         def refuse_the_kid(account_id, fields):
             if account_id == 500:
@@ -302,6 +302,60 @@ class TestRun:
         assert not report.promotion_blockers, "one restricted account must not stop the whole server"
         # sarah's filters were still written — the run carried on rather than aborting on the kid.
         assert 100 in [c.args[0] for c in mock_plextv.update_user_filters.call_args_list]
+
+    def test_a_roster_that_omits_someone_is_not_knowledge_about_them(self, ctx: EngineContext, mock_plextv):
+        """A 200 is not the same as a complete answer.
+
+        `/api/home/users` returning an empty `<MediaContainer>` — or simply omitting an account —
+        used to satisfy a single global "the read succeeded" flag. A genuinely profiled child then
+        read as having NO profile, so their 422 looked unexpected, and promotion was blocked for
+        EVERY user on the server, every night, behind a green suite. That is #14's shape re-created
+        by the very guard added to prevent it.
+
+        Knowledge is per account: somebody the roster never mentioned is unknown, whatever the
+        status code was, and falls back to trusting `restricted` like any other unknown.
+        """
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
+        # The read SUCCEEDED, but the roster covered sarah and never mentioned the kid.
+        mock_plextv.home_profile_known.side_effect = lambda account_id: account_id != 500
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+
+        assert not report.promotion_blockers, "an account the Home roster omitted must not stop the server"
+        assert 100 in [c.args[0] for c in mock_plextv.update_user_filters.call_args_list]
+
+    def test_a_covered_account_with_no_profile_still_blocks_on_a_422(self, ctx: EngineContext, mock_plextv):
+        """The other side of the same coin, and the reason the guard exists at all.
+
+        When the roster DID cover the account and reported no profile, a 422 is genuinely
+        unexpected — that account holds no excludes, so promoting anything would publish private
+        rows to them. Blocking is correct here and must survive the per-account change above.
+        """
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
+        mock_plextv.home_profile_known.return_value = True  # covered, and reported no profile
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+        assert report.promotion_blockers, "a 422 on an account with a KNOWN-absent profile must block"
 
     def test_a_profile_on_a_NON_restricted_account_keeps_its_excludes_and_never_blocks(
         self, ctx: EngineContext, mock_plextv

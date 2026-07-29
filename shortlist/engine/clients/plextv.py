@@ -189,9 +189,8 @@ class PlexTvClient:
         self._home_profiles = profiles
         return profiles
 
-    @property
-    def home_profiles_known(self) -> bool:
-        """Did the `/api/home/users` read actually succeed?
+    def home_profile_known(self, plex_account_id: int) -> bool:
+        """Do we actually know THIS account's parental profile?
 
         Without this, "this account has no parental profile" and "we could not find out" are the same
         value — an empty string — and a caller deciding whether a 422 is expected cannot tell them
@@ -199,10 +198,17 @@ class PlexTvClient:
         away every profiled account would 422, be treated as an unknown failure, and block promotion
         for the whole server every night. Which is exactly the shape of #14.
 
+        Answered PER ACCOUNT, not once for the whole read, because a 200 is not the same as a
+        complete answer. `/api/home/users` returning an empty `<MediaContainer>`, or a roster that
+        simply omits somebody, used to satisfy a global "the read succeeded" flag — so a genuinely
+        profiled child read as having NO profile, their 422 looked unexpected, and promotion was
+        blocked for every user on the server, every night, behind a green test suite. An account the
+        roster never mentioned is unknown, whatever the HTTP status was.
+
         False until a read succeeds, and failures are deliberately not cached, so a blip recovers
         within the same run.
         """
-        return self._home_profiles is not None
+        return self._home_profiles is not None and plex_account_id in self._home_profiles
 
     def get_user(self, plex_account_id: int) -> PlexTvUser:
         for user in self.list_users():

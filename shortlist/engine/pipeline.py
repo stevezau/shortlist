@@ -636,13 +636,17 @@ def _privacy_sync_phase(
             # accounts, they reach this handler for the first time; treating their 422 as a known-safe
             # skip would let the run promote every private row while that account holds no excludes at
             # all. That is #20's leak, re-opened, with the check that should catch it turned off.
-            # `not home_profiles_known` is the "we could not find out" case, kept separate from "no
+            # `not profile_known` is the "we could not find out" case, kept separate from "no
             # profile". Both look like an empty string otherwise — so a permanent `/api/home/users`
             # outage would make every profiled account an unknown failure and block promotion for the
             # entire server, nightly, until someone disabled those users by hand (#14's shape again).
-            # When the profiles are unknown, fall back to the pre-#20 behaviour and trust `restricted`.
+            # When the profile is unknown, fall back to the pre-#20 behaviour and trust `restricted`.
+            #
+            # Asked PER ACCOUNT: a 200 carrying an empty or partial roster is not knowledge about
+            # somebody it never mentioned, and treating it as such re-created the very server-wide
+            # block this guard exists to prevent.
             remote_user = roster.get(user.plex_account_id)
-            profiles_known = ctx.plextv.home_profiles_known
+            profiles_known = ctx.plextv.home_profile_known(user.plex_account_id)
             if remote_user and (remote_user.restriction_profile or (not profiles_known and remote_user.restricted)):
                 logger.warning(
                     "{}: plex.tv refused the filter write for a '{}' account — expected, skipping",

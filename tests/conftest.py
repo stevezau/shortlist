@@ -85,6 +85,9 @@ def mock_plextv():
     client.users = []
     client.list_users.side_effect = lambda: client.users
     client.get_user.side_effect = lambda account_id: next(u for u in client.users if u.id == account_id)
+    # Default: the Home roster was read AND covered this account. Tests that model an outage or a
+    # partial roster override it — a bare MagicMock would answer truthy and hide both cases.
+    client.home_profile_known.return_value = True
     return client
 
 

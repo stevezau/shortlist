@@ -71,7 +71,7 @@ class TestPlexTvClient:
 
         users = self._client().list_users()
 
-        assert [u.id for u in users] == [555000100, 555000200]
+        assert [u.id for u in users] == [555000100, 555000200, 555000300]
 
     @respx.mock
     def test_home_restriction_profiles_separates_managed_users_plex_cannot(self):
@@ -103,6 +103,49 @@ class TestPlexTvClient:
 
         assert by_id[555000200].restriction_profile == "little_kid", "the join matched nothing"
         assert by_id[555000100].restriction_profile == ""  # an ordinary shared user
+        # The #20 cell itself: restricted="1" on /api/users, but NO profile on /api/home/users. It is
+        # the account that never got its excludes, so it has to survive the join as profile-less
+        # rather than being lumped in with the parental-controlled ones.
+        assert by_id[555000300].restricted is True
+        assert by_id[555000300].restriction_profile == ""
+
+    @respx.mock
+    def test_an_omitted_account_is_unknown_not_unprofiled(self):
+        """A 200 is not the same as a complete answer.
+
+        `home_profile_known` used to be a single global "the read succeeded" flag, so an empty or
+        partial `<MediaContainer>` counted as knowledge about everybody in it AND everybody not.
+        A genuinely profiled child then read as having no profile, their share-filter 422 looked
+        unexpected, and the pipeline blocked promotion for EVERY user on the server, nightly, behind
+        a green suite — #14's shape re-created by the guard added to prevent it.
+        """
+        partial = '<MediaContainer><User id="555000200" restrictionProfile="little_kid"/></MediaContainer>'
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(200, text=partial))
+
+        client = self._client()
+        client.home_restriction_profiles()  # a successful read that simply does not mention 555000999
+
+        assert client.home_profile_known(555000200) is True
+        assert client.home_profile_known(555000999) is False, "the roster never mentioned them"
+
+    @respx.mock
+    def test_an_empty_but_successful_roster_is_knowledge_about_nobody(self):
+        """The starkest case: HTTP 200, well-formed, zero users."""
+        respx.get("https://plex.tv/api/home/users").mock(
+            return_value=httpx.Response(200, text="<MediaContainer></MediaContainer>")
+        )
+
+        client = self._client()
+        assert client.home_restriction_profiles() == {}
+        assert client.home_profile_known(555000200) is False
+
+    @respx.mock
+    def test_a_failed_read_is_knowledge_about_nobody_either(self):
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(500))
+
+        client = self._client()
+        assert client.home_restriction_profiles() == {}
+        assert client.home_profile_known(555000200) is False
 
     @respx.mock
     def test_a_malformed_home_user_id_does_not_sink_the_whole_roster(self):

@@ -534,9 +534,10 @@ class TestUserSync:
     def test_sync_adds_the_owner_disabled_and_badged(self, client: TestClient, plextv):
         r = client.post("/api/users/sync")
         assert r.status_code == 200
-        # The fixture's two accounts are both already in the DB (sarah, and 555000200 whom plex.tv
-        # now calls "kid") — so the only thing ADDED is the owner plex.tv never returns.
-        assert r.json() == {"added": 1, "updated": 2, "total": 3}
+        # Two of the fixture's three accounts are already in the DB (sarah, and 555000200 whom
+        # plex.tv now calls "kid"). ADDED are the owner plex.tv never returns, plus 555000300 —
+        # the issue-#20 account: managed with no parental profile.
+        assert r.json() == {"added": 2, "updated": 2, "total": 4}
 
         owner = self._users(client)["steve"]
         assert owner["user_type"] == "owner"
@@ -577,7 +578,7 @@ class TestUserSync:
         r = client.post("/api/users/sync")
 
         assert r.status_code == 200
-        assert r.json()["total"] == 2  # the fixture's shared users only
+        assert r.json()["total"] == 3  # the fixture's shared users only
         names = self._users(client)
         assert not any(u["user_type"] == "owner" for u in names.values())
 
@@ -621,7 +622,7 @@ class TestUserSync:
         r = client.post("/api/users/sync")
 
         assert r.status_code == 200, why
-        assert r.json()["total"] == 2, why  # both shared users still landed
+        assert r.json()["total"] == 3, why  # every shared user still landed
         assert "sarah" in self._users(client), why
         assert not any(u["user_type"] == "owner" for u in self._users(client).values()), why
 
