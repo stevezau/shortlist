@@ -310,7 +310,7 @@ describe("RowEditor — placement", () => {
 
 describe("RowEditor — placement on a shared row", () => {
   beforeEach(() => {
-    updateCollection.mockReset().mockResolvedValue(undefined);
+    updateCollection.mockClear();
   });
 
   const sharedRow = (patch: Partial<Collection> = {}) =>
