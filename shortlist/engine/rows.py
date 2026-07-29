@@ -1023,6 +1023,21 @@ def _run_user(
                     cfg,
                     spec,
                     sole_row=len(owned) == 1,
+                    # {section key -> ratingKey} for THIS row and user: which object delivery should
+                    # retitle rather than rebuild when the title has moved on.
+                    #
+                    # Minus anything THIS RUN has already delivered to. Plex ratingKeys are rowids and
+                    # get reused: the sweep can free row A's id at the top of a run, row B create and
+                    # be handed it, and row A then match B's brand-new collection and retitle it. The
+                    # breakdown is the record of what this run has already written, so excluding it
+                    # closes that window outright.
+                    delivered_keys={
+                        section_key: key
+                        for (u, r, section_key), key in ctx.delivered_keys.items()
+                        if u == user.slug
+                        and r == spec.slug
+                        and (section_key, key) not in _claimed_this_run(user_report)
+                    },
                     dry_run=cfg.dry_run,
                     stored_labels=stored_labels,
                     diff=user_report.diff,
@@ -1050,6 +1065,20 @@ def _run_user(
     if not all_picks:
         logger.warning("{}: no picks produced — existing rows are left as they are", user.username)
     return delivered_any  # nothing delivered -> nothing to promote
+
+
+def _claimed_this_run(user_report) -> set[tuple[str, int]]:
+    """(library_key, ratingKey) pairs this run has already delivered to for this user.
+
+    Delivery may retitle a collection the ledger names — so a key that has ALREADY been written this
+    run must not be offered to a second row, or the later row takes over the earlier one's brand-new
+    collection. Reachable because Plex ratingKeys are reused rowids and the sweep frees ids mid-run.
+    """
+    return {
+        (str(entry.get("library_key") or ""), int(entry.get("rating_key") or 0))
+        for entry in (user_report.breakdown or [])
+        if entry.get("rating_key")
+    }
 
 
 def _run_shared(

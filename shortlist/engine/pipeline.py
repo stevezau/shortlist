@@ -84,6 +84,15 @@ class EngineContext:
     # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
     # bootstraps by curating fresh, exactly like a first run.
     previous_picks: dict[tuple[str, str, str], list[Pick]] = field(default_factory=dict)
+    # (user_slug, row_slug, section_key) -> the Plex ratingKey that row last delivered there, from the
+    # delivery ledger. Delivery's ONE identity question is "is the collection in front of me this
+    # row's, under a title it no longer renders to?" — a rename in place versus a fresh build. It used
+    # to answer that by COUNTING ("if this user has one row, the one collection here must be it"),
+    # which is a guess that was wrong in three separate ways (see jobs-and-runs-design.md §17).
+    # A ratingKey answers it outright, and works for a multi-row user, which counting never could.
+    # Empty for direct engine runs and for rows delivered before the ledger existed — the count-based
+    # fallback still covers those.
+    delivered_keys: dict[tuple[str, str, str], int] = field(default_factory=dict)
     # plex_account_ids of DISABLED (opted-out) Shortlist users. With config.hide_shared_from_disabled,
     # the privacy sync hides even public shared rows from these accounts, so disabling a user removes
     # them from Shortlist entirely. A non-Shortlist account that merely shares the server is NOT here,

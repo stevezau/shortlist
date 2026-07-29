@@ -274,6 +274,97 @@ describe("RowEditor — placement", () => {
       screen.getByText(/you don.t have a share with yourself/i),
     ).toBeInTheDocument();
   });
+
+  it("restates the current toggles as the outcome they produce", () => {
+    renderEditor(row({ placement: "both", placement_friends: "home" }));
+    expect(
+      screen.getByText(
+        /Your row shows on your Home screen and your Recommended shelf\. Everyone else.s row shows on their Home screen\./i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("updates the outcome line as a surface is turned off", async () => {
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
+
+    await userEvent.click(screen.getByRole("switch", { name: /Owner Home/i }));
+
+    expect(
+      screen.getByText(/Your row shows on your Recommended shelf\./i),
+    ).toBeInTheDocument();
+  });
+
+  it("names the switch to turn off, and says so even when the owner's own is already off", () => {
+    // placement "home" = the owner's row is OFF the Recommended shelf, friends' are on it. The
+    // surprising state: your shelf is still full of their rows, which reads as a broken toggle.
+    renderEditor(row({ placement: "home", placement_friends: "both" }));
+
+    expect(
+      screen.getByText(/Your row is off this shelf, but everyone else.s rows/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Everyone else . Library Recommended/i),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — placement on a shared row", () => {
+  beforeEach(() => {
+    updateCollection.mockReset().mockResolvedValue(undefined);
+  });
+
+  const sharedRow = (patch: Partial<Collection> = {}) =>
+    row({ build: "shared", ...patch });
+
+  it("collapses the Recommended pair into one control", () => {
+    // One collection for everyone means one `promotedToRecommended` — two switches would be a lie.
+    renderEditor(sharedRow({ placement: "both", placement_friends: "both" }));
+
+    expect(
+      screen.queryByRole("switch", { name: /Owner Library Recommended/i }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("switch", { name: /Friends Library Recommended/i }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("switch", { name: /^Library Recommended$/i }),
+    ).toBeChecked();
+    // Home still splits by audience — those are two real Plex flags on the one collection.
+    expect(screen.getByRole("switch", { name: /Owner Home/i })).toBeChecked();
+    expect(
+      screen.getByRole("switch", { name: /Friends' Home/i }),
+    ).toBeChecked();
+  });
+
+  it("writes the collapsed Recommended flag to both audiences", async () => {
+    renderEditor(sharedRow({ placement: "both", placement_friends: "both" }));
+
+    await userEvent.click(
+      screen.getByRole("switch", { name: /^Library Recommended$/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const body = updateCollection.mock.calls.at(0)?.[1] as Collection;
+    expect(body.placement).toBe("home");
+    expect(body.placement_friends).toBe("home");
+  });
+
+  it("describes the one row everyone shares, not a row each", () => {
+    renderEditor(sharedRow({ placement: "both", placement_friends: "both" }));
+
+    expect(
+      screen.getByText(
+        /This row shows on everyone.s Home screen and the Recommended shelf\./i,
+      ),
+    ).toBeInTheDocument();
+    // The owner-shelf warning is about OTHER people's rows — a shared row has none.
+    expect(
+      screen.queryByText(/no share filter to hide them behind/i),
+    ).toBeNull();
+  });
 });
 
 describe("RowEditor — freshness", () => {

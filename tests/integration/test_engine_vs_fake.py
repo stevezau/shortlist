@@ -1627,3 +1627,127 @@ def test_a_muted_unrenderable_row_is_not_taken_over_by_another_row(fakes, tmp_pa
     after = {c.ratingKey for s in plex.sections() for c in plex.find_owned_collections(s, label)}
     assert before <= after, f"the live row took over the muted row's collection: {sorted(before - after)}"
     assert len(after) > len(before), "'Hidden Gems' should have built its own collection"
+
+
+def test_a_multi_row_user_gets_a_rename_in_place_that_counting_could_never_do(fakes, tmp_path):
+    """The reason identity beats counting, rather than merely being safer than it.
+
+    A row whose rendered title moves — a changed template, a renamed library, a nickname edit — must be
+    RETITLED, not orphaned and rebuilt. `sole_row` could only ever authorise that for a user with
+    exactly ONE row, because with two it had no way to tell which one moved. So every multi-row user
+    accumulated a stale duplicate on every rename: still labelled (so hidden from others), still
+    promoted onto their own Home by `_promote_one`'s no-spec branch, and swept by nothing.
+
+    The ledger names the exact object, so the rename works however many rows the user has.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+
+    def ctx_for(rows, delivered_keys=None):
+        return EngineContext(
+            config=EngineConfig(
+                row_size=8, min_history=5, candidates_pre_rank=40, max_seeds=12, rows=rows, rows_defined=True
+            ),
+            plex=plex,
+            plextv=plextv,
+            tmdb=TmdbClient("test-key"),
+            history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+            curator=NullCurator(),
+            snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+            delivered_keys=delivered_keys or {},
+        )
+
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+    before_rows = [
+        RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=8),
+        RowSpec(slug="gems", name_template="Hidden Gems", size=8),
+    ]
+    assert engine_run(ctx_for(before_rows), users).ok
+
+    slug = users[0].slug
+    label = f"shortlist_{slug}"
+    # The ledger as the server writes it: one entry per (row, user, LIBRARY). A row delivers into
+    # every library of its media type, so a per-row-only entry would leave the others orphaned.
+    ledger = {
+        (slug, "gems", str(section.key)): c.ratingKey
+        for section in plex.sections()
+        for c in plex.find_owned_collections(section, label)
+        if c.title.startswith("Hidden Gems")
+    }
+    assert ledger, "the gems row built nothing, so there is nothing to rename"
+    gems_keys = set(ledger.values())
+
+    # Rename "Hidden Gems" -> "Buried Treasure". Two rows, so counting cannot authorise a rename.
+    after_rows = [before_rows[0], RowSpec(slug="gems", name_template="Buried Treasure", size=8)]
+    assert engine_run(ctx_for(after_rows, ledger), users).ok
+
+    now = {c.ratingKey: c.title for s in plex.sections() for c in plex.find_owned_collections(s, label)}
+    assert gems_keys <= set(now), "the ledger names these objects — they must be retitled, not orphaned"
+    for key in gems_keys:
+        assert now[key].startswith("Buried Treasure"), f"expected a rename in place, got {now[key]!r}"
+    assert not any(t.startswith("Hidden Gems") for t in now.values()), "a stale duplicate was left behind"
+
+
+def test_a_ledger_key_naming_another_row_cannot_hijack_it_mid_run(fakes, tmp_path):
+    """Identity matching trusts the ledger, so a key naming the WRONG live collection would retitle it
+    and replace its membership — the takeover bug again, through the ledger this time.
+
+    Plex ratingKeys are reused rowids: the sweep can free row A's id at the top of a run, row B create
+    and be handed it, and row A then match B's brand-new collection. The run's own breakdown records
+    what has already been written, so a key already delivered to this run is withheld.
+
+    Simulated here by pointing `gems`' ledger entries at `picked`'s collections — the same end state,
+    without needing to provoke id reuse.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    rows = [
+        RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=8),
+        RowSpec(slug="gems", name_template="Hidden Gems", size=8),
+    ]
+
+    def ctx_for(these_rows, delivered_keys=None):
+        return EngineContext(
+            config=EngineConfig(
+                row_size=8, min_history=5, candidates_pre_rank=40, max_seeds=12, rows=these_rows, rows_defined=True
+            ),
+            plex=plex,
+            plextv=plextv,
+            tmdb=TmdbClient("test-key"),
+            history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+            curator=NullCurator(),
+            snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+            delivered_keys=delivered_keys or {},
+        )
+
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+    assert engine_run(ctx_for(rows), users).ok
+
+    slug = users[0].slug
+    label = f"shortlist_{slug}"
+    # A POISONED ledger: `gems` claims the ratingKeys that are actually `picked`'s.
+    poisoned = {
+        (slug, "gems", str(section.key)): c.ratingKey
+        for section in plex.sections()
+        for c in plex.find_owned_collections(section, label)
+        if c.title.startswith("✨")
+    }
+    assert poisoned, "picked built nothing, so there is nothing to hijack"
+
+    # `gems` is also RENAMED, so its own title no longer matches and it reaches the key branch —
+    # without that it matches by title and the poisoned key is never consulted.
+    renamed = [rows[0], RowSpec(slug="gems", name_template="Buried Treasure", size=8)]
+    assert engine_run(ctx_for(renamed, poisoned), users).ok
+
+    now = {c.ratingKey: c.title for s in plex.sections() for c in plex.find_owned_collections(s, label)}
+    for key in poisoned.values():
+        assert key in now, "picked's collection was destroyed"
+        assert now[key].startswith("✨"), f"gems hijacked picked's collection: now titled {now[key]!r}"

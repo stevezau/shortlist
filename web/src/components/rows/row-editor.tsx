@@ -48,23 +48,30 @@ function encode(library: boolean, home: boolean): Placement {
 
 /** Collapsed by default — the grid should read on its own, and this is here for the "wait, who sees
  *  what?" moment. Native <details> so it is keyboard- and screen-reader-accessible with no library. */
-function PlacementHelp() {
+function PlacementHelp({ isShared }: { isShared: boolean }) {
   return (
     <details className="group border-t pt-3">
       <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         How does this work?
       </summary>
       <div className="mt-3 space-y-3 text-xs text-muted-foreground">
-        <p>
-          Everyone gets their <strong>own</strong> row. Plex keeps them apart by
-          labelling each one and hiding everyone else&rsquo;s label from each
-          person&rsquo;s share &mdash; so a friend only ever sees theirs.
-        </p>
+        {isShared ? (
+          <p>
+            Everyone sees this <strong>same</strong> row &mdash; it&rsquo;s
+            built from titles several people have watched, so there&rsquo;s
+            nothing to keep apart.
+          </p>
+        ) : (
+          <p>
+            Everyone gets their <strong>own</strong> row. Plex keeps them apart
+            by labelling each one and hiding everyone else&rsquo;s label from
+            each person&rsquo;s share &mdash; so a friend only ever sees theirs.
+          </p>
+        )}
         <div className="space-y-2">
           <p>
             <strong className="text-foreground">You</strong> &mdash; the server
-            owner. Plex&rsquo;s Home shelf is owner-only, so this column only
-            ever affects your own row.
+            owner: your own row, on your own screens.
           </p>
           <p>
             <strong className="text-foreground">Everyone else</strong> &mdash;
@@ -80,11 +87,12 @@ function PlacementHelp() {
           <p>
             <strong className="text-foreground">Home screen</strong> puts it on
             a Home screen &mdash; yours in the first column, theirs in the
-            second.
+            second. Plex keeps those two apart, so your Home only ever shows
+            your row.
           </p>
         </div>
         <p>
-          Turn <strong>all four off</strong> and the row is still built and
+          Turn <strong>them all off</strong> and the row is still built and
           still private. It just doesn&rsquo;t claim a shelf &mdash;
           you&rsquo;ll find it in the library&rsquo;s Collections tab.
         </p>
@@ -99,26 +107,85 @@ function PlacementHelp() {
   );
 }
 
+/** "a", "a and b", "a, b and c" — for reading a placement back as a sentence. */
+function joinPhrases(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? "";
+  return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+function surfaces(home: boolean, library: boolean, whose: string): string {
+  return joinPhrases(
+    [
+      home ? `${whose} Home screen` : "",
+      library ? `${whose} Recommended shelf` : "",
+    ].filter(Boolean),
+  );
+}
+
+/**
+ * The toggles restated as the outcome they produce. Without this the grid only describes Plex's
+ * flags, leaving "what did I just do to this row" to be inferred from four switches and an essay.
+ */
+function placementSummary(
+  ownerLibrary: boolean,
+  ownerHome: boolean,
+  friendsLibrary: boolean,
+  friendsHome: boolean,
+  isShared: boolean,
+): string {
+  if (isShared) {
+    const where: string[] = [];
+    if (ownerHome && friendsHome) where.push("everyone’s Home screen");
+    else if (ownerHome) where.push("your Home screen");
+    else if (friendsHome) where.push("everyone else’s Home screen");
+    if (ownerLibrary || friendsLibrary) where.push("the Recommended shelf");
+    return `This row shows on ${joinPhrases(where)}.`;
+  }
+
+  const yours = surfaces(ownerHome, ownerLibrary, "your");
+  const theirs = surfaces(friendsHome, friendsLibrary, "their");
+  const first = yours
+    ? `Your row shows on ${yours}.`
+    : "Your row doesn’t claim a shelf.";
+  const second = theirs
+    ? `Everyone else’s row shows on ${theirs}.`
+    : "Everyone else’s row doesn’t claim a shelf.";
+  return `${first} ${second}`;
+}
+
 /**
  * "Where it shows" as a surface x audience grid. The two columns are real, not cosmetic: every
  * person gets their OWN Plex collection, so each of Plex's three flags is set per collection —
  * `promotedToRecommended` on the owner's vs on everyone else's, plus the two Home flags Plex
  * already splits by audience (`promotedToOwnHome` is owner-only; `promotedToSharedHome` covers
  * shared AND managed users — https://support.plex.tv/articles/manage-recommendations/).
+ *
+ * A SHARED row is the exception: one collection for everyone, so there is only one
+ * `promotedToRecommended` to set and the Recommended pair collapses to a single control.
  */
 function PlacementToggles({
   placement,
   placementFriends,
+  isShared,
   onChange,
 }: {
   placement: Placement;
   placementFriends: Placement;
+  isShared: boolean;
   onChange: (placement: Placement, placementFriends: Placement) => void;
 }) {
   const ownerLibrary = hasLibrary(placement);
   const ownerHome = hasHome(placement);
   const friendsLibrary = hasLibrary(placementFriends);
   const friendsHome = hasHome(placementFriends);
+  const allOff = placement === "off" && placementFriends === "off";
+
+  // A shared row is ONE Plex collection, so its single `promotedToRecommended` flag cannot be split
+  // by audience the way the two Home flags can — the engine ORs the pair (RowSpec.show_library).
+  // Collapse it into one control rather than drawing two switches that silently move together.
+  const sharedLibrary = ownerLibrary || friendsLibrary;
+  const setSharedLibrary = (v: boolean) =>
+    onChange(encode(v, ownerHome), encode(v, friendsHome));
 
   const cell = (
     checked: boolean,
@@ -142,11 +209,23 @@ function PlacementToggles({
         </p>
 
         <p className="text-sm">Library Recommended</p>
-        {cell(ownerLibrary, "Owner Library Recommended", (v) =>
-          onChange(encode(v, ownerHome), placementFriends),
-        )}
-        {cell(friendsLibrary, "Friends Library Recommended", (v) =>
-          onChange(placement, encode(v, friendsHome)),
+        {isShared ? (
+          <div className="col-span-2 flex justify-center">
+            <Switch
+              aria-label="Library Recommended"
+              checked={sharedLibrary}
+              onCheckedChange={setSharedLibrary}
+            />
+          </div>
+        ) : (
+          <>
+            {cell(ownerLibrary, "Owner Library Recommended", (v) =>
+              onChange(encode(v, ownerHome), placementFriends),
+            )}
+            {cell(friendsLibrary, "Friends Library Recommended", (v) =>
+              onChange(placement, encode(v, friendsHome)),
+            )}
+          </>
         )}
 
         <p className="text-sm">Home screen</p>
@@ -158,24 +237,48 @@ function PlacementToggles({
         )}
       </div>
 
-      <PlacementHelp />
-
-      {friendsLibrary && (
-        <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
-          Friends&rsquo; rows on the Recommended shelf are visible to{" "}
-          <strong className="text-foreground">you</strong> as well. You own the
-          server, so there&rsquo;s no share filter to hide them behind &mdash;
-          turn this off to keep your own shelf to just your row.
+      {isShared && (
+        <p className="text-xs text-muted-foreground">
+          Everyone shares this one row, so its Recommended shelf setting applies
+          to all of you at once.
         </p>
       )}
 
-      {placement === "off" && placementFriends === "off" && (
+      {!allOff && (
+        <p className="rounded-md bg-muted/50 p-3 text-sm">
+          {placementSummary(
+            ownerLibrary,
+            ownerHome,
+            friendsLibrary,
+            friendsHome,
+            isShared,
+          )}
+        </p>
+      )}
+
+      {friendsLibrary && !isShared && (
+        <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
+          {ownerLibrary
+            ? "Everyone else’s rows show on your Recommended shelf too."
+            : "Your row is off this shelf, but everyone else’s rows still show on your Recommended shelf."}{" "}
+          You own the server, so there&rsquo;s no share filter to hide them
+          behind. Turn off{" "}
+          <strong className="text-foreground">
+            Everyone else &rarr; Library Recommended
+          </strong>{" "}
+          to clear them from it.
+        </p>
+      )}
+
+      {allOff && (
         <p className="rounded-md border border-dashed bg-muted/30 p-3 text-xs text-muted-foreground">
           This row won&rsquo;t appear on any Home screen or Recommended shelf.
           It&rsquo;s still built and kept private &mdash; you&rsquo;ll find it
           under the library&rsquo;s Collections tab.
         </p>
       )}
+
+      <PlacementHelp isShared={isShared} />
     </div>
   );
 }
@@ -476,6 +579,7 @@ export function RowEditor({
             <PlacementToggles
               placement={input.placement}
               placementFriends={input.placement_friends}
+              isShared={input.build === "shared"}
               onChange={(placement, placementFriends) =>
                 set({ placement, placement_friends: placementFriends })
               }

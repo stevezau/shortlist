@@ -708,8 +708,60 @@ says what is actually true.
 
 All three are the same shape as §12's root cause 1: **identity questions answered by matching titles.**
 A title is not an identity here — one label, many rows, and some titles cannot be rendered at all. The
-ledger is the real answer, and delivery is now the last place still guessing. Retiring `sole_row` in
+ledger is the real answer, and delivery was the last place still guessing — closed in §18. Retiring `sole_row` in
 favour of "rename only when the ledger's ratingKey for this (row, user, library) matches" would close
 the class rather than its instances — and would additionally heal the multi-row stale-duplicate case
 `sole_row` never could. Not done here: it changes the delivery hot path and wants its own review and
 live test.
+
+
+---
+
+## 18. Delivery answers identity by ID (2026-07-29)
+
+The follow-up §17 named. `_deliver_one`'s one identity question — *is the collection in front of me
+this row's, under a title it no longer renders to?* — is a rename-in-place versus an
+orphan-and-rebuild, and it was answered by **counting**: `sole_row and len(owned) == 1`.
+
+Now, in order:
+
+1. **Exact title match** (unchanged, the common case).
+2. **`delivered_key`** — the ratingKey the ledger says this row put in THIS library, matched against
+   the collections under this user's label. An identity, so it works for a multi-row user, which
+   counting never could.
+3. **The `sole_row` count** — kept, not retired. It is still the only answer for rows delivered before
+   migration 0045 (nothing backfills the ledger; there is no source to backfill from), for direct
+   engine/CLI runs where `delivered_keys` is empty, and whenever a key was dropped as ambiguous.
+
+### What identity is NOT
+
+It is exactly as right as the ledger is. Three guards bound that:
+
+- **Scope.** A key is only matched against `find_owned_collections(section, shortlist_<user>)`, so a
+  wrong key can reach *another row of the same person* — never another user's row, never a foreign
+  (Kometa) collection. The label is untouched, so hiding and promotion are unaffected either way.
+- **Ambiguity.** `_delivered_keys` drops any ratingKey two rows claim rather than arbitrating; delivery
+  falls back to the title, which is where it was before the ledger. Reachable if a run died between
+  the delete and the persist on the rebuild path, and it self-heals on the next successful run.
+- **In-run reuse.** Plex ratingKeys are reused rowids. The sweep can free row A's id at the top of a
+  run, row B create and be handed it, and row A then match B's brand-new collection. So a key this run
+  has ALREADY delivered to is withheld — `_claimed_this_run` reads the run's own breakdown.
+
+The identity branch also keeps the account-marker check the count branch has: a pre-marker collection
+shares its tag with other users, and retitling one would hand this person sole ownership of an object
+holding several people's picks. The sweep removes those first, but that guarantee lives in another
+module, so it is restated at the point of use.
+
+### What it buys
+
+A rename now works for a multi-row user. `sole_row` could only ever authorise one for someone with
+exactly ONE row — with two it had no way to tell which had moved — so every multi-row user
+accumulated a stale duplicate on every rename: still labelled (hidden from others), still pushed onto
+their own Home by `_promote_one`'s no-spec branch, swept by nothing.
+
+### Tests
+
+`_delivered_keys`' key shape is asserted as a literal tuple, mirroring `_previous_picks` — swap two
+elements and every lookup silently misses, which is a full regression with a green suite. Plus the
+ambiguity drop, the multi-row rename, and the hijack (a poisoned ledger pointing one row at another's
+collections, with the row renamed so it reaches the key branch). All four fail on the old code.

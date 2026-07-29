@@ -147,6 +147,49 @@ class TestBuildContext:
             "api_key": "sk-or-abc",
         }
 
+    def test_delivered_keys_reach_the_engine_under_the_key_delivery_looks_up(self, service, sessions, configured):
+        """The DB→engine wiring for the delivery ledger, asserted as the literal tuple.
+
+        `rows.py` unpacks `(user_slug, row_slug, section_key)` and looks up by `str(section.key)`. Swap
+        two elements here, or drop the `str()`, and every lookup silently returns nothing — delivery
+        falls back to the count guess, which is a full regression to the bug the ledger exists to fix,
+        with a green suite. The sibling `_previous_picks` has exactly this test; this reader had none.
+        """
+        from shortlist.server.db.models import Delivery
+
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="sarah", slug="sarah", enabled=True))
+            session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=9001))
+            session.add(Delivery(collection_slug="gems", user_slug="sarah", library_key="2", rating_key=9002))
+            session.commit()
+
+        ctx = service.build_context(dry_run=True)
+
+        assert ctx.delivered_keys[("sarah", "picked", "1")] == 9001
+        assert ctx.delivered_keys[("sarah", "gems", "2")] == 9002
+
+    def test_a_ratingkey_two_rows_claim_is_dropped_rather_than_arbitrated(self, service, sessions, configured):
+        """The safety valve that makes a bad ledger self-heal. Two rows naming one collection is
+        reachable if a run died between the delete and the persist on delivery's rebuild path — and
+        picking a winner would let the loser's build retitle the winner's live collection.
+
+        Dropping BOTH sends delivery back to matching by title, which is where it was before the
+        ledger: no worse, and it recovers on the next successful run."""
+        from shortlist.server.db.models import Delivery
+
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="sarah", slug="sarah", enabled=True))
+            session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=9001))
+            session.add(Delivery(collection_slug="gems", user_slug="sarah", library_key="1", rating_key=9001))
+            session.add(Delivery(collection_slug="safe", user_slug="sarah", library_key="2", rating_key=9002))
+            session.commit()
+
+        ctx = service.build_context(dry_run=True)
+
+        assert ("sarah", "picked", "1") not in ctx.delivered_keys
+        assert ("sarah", "gems", "1") not in ctx.delivered_keys
+        assert ctx.delivered_keys[("sarah", "safe", "2")] == 9002, "an unambiguous key is unaffected"
+
     def test_previous_picks_carries_the_latest_run_per_row_and_library(self, service, sessions, configured):
         from shortlist.server.db.models import Run
 

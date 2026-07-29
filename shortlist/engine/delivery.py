@@ -228,6 +228,7 @@ def deliver_rows(
     spec: RowSpec | None = None,
     *,
     sole_row: bool = True,
+    delivered_keys: dict[str, int] | None = None,
     dry_run: bool = False,
     stored_labels: dict[str, str] | None = None,
     diff: CollectionDiff | None = None,
@@ -242,6 +243,10 @@ def deliver_rows(
 
     `spec` is the row being delivered; when omitted (legacy callers) it defaults to the
     single per-person row, whose name falls through to the profile's / config's template.
+
+    `delivered_keys` is {section key -> ratingKey} for THIS row and user, from the delivery ledger. It
+    is how a title that no longer renders is recognised as this row's rather than orphaned and rebuilt
+    — see `_deliver_one`. Empty is always safe: delivery falls back to matching by title.
 
     `stored_labels` and `diff` are caller-owned accumulators, written the moment the PMS confirms
     each library's row. A user gets a row per library, so delivery can half-succeed: if the second
@@ -323,6 +328,9 @@ def deliver_rows(
             wanted_label,
             marker,
             sole_row,
+            # This library's entry only: a row has one collection per library, and a key from a
+            # DIFFERENT library must never be allowed to match here.
+            delivered_key=(delivered_keys or {}).get(str(section.key)),
             dry_run=dry_run,
             label_prefix=config.label_prefix,
             poster=spec.poster if spec else None,
@@ -662,6 +670,7 @@ def _deliver_one(
     marker: str,
     sole_row: bool,
     *,
+    delivered_key: int | None = None,
     dry_run: bool,
     label_prefix: str = "shortlist",
     poster: PosterSpec | None = None,
@@ -670,12 +679,30 @@ def _deliver_one(
 ) -> tuple[CollectionDiff, str]:
     """Upsert one library's collection to exactly `picks`, in order. Returns (diff, stored_label).
 
-    A user can have several rows, all carrying their label and told apart by title, so the right one
-    is the labelled collection whose title matches. When this is the user's ONLY row (`sole_row`) and
-    exactly one labelled collection exists, a title mismatch is treated as an in-place rename — so a
-    changed name template updates the row rather than orphaning it. With more than one row that guess
-    is unsafe (which row was renamed?), so a mismatch builds a fresh row and the stale one, still
-    labelled, stays hidden. Foreign (e.g. Kometa) collections never carry our label, so are untouched.
+    A user can have several rows, all carrying their label and told apart by title, so the right one is
+    the labelled collection whose title matches. When it does NOT match — a changed name template, a
+    renamed library, a nickname edit — the row has to be recognised some other way or it is orphaned
+    and rebuilt, leaving a stale duplicate nothing sweeps.
+
+    Two answers, in order:
+
+    1. ``delivered_key`` — the ratingKey the LEDGER says this row put in this library. An identity, so
+       it is right for a multi-row user and cannot be confused by a title that no longer renders.
+    2. ``sole_row`` and exactly one labelled collection — the legacy fallback, for rows delivered
+       before the ledger existed (nothing backfills it; there is no source to backfill from), for
+       direct engine/CLI runs, and whenever a ledger entry was dropped as ambiguous. Safe only because
+       `sole_row` now counts every row that could HAVE a collection here. Counting was the sole answer
+       once, and it was wrong three ways: it read the run's SCOPE rather than the user's rows, it
+       ignored muted rows whose unrenderable collections cannot be removed, and it could not help a
+       multi-row user at all. See jobs-and-runs-design.md §16-§17.
+
+    The key is exactly as right as the ledger is — it is not magic. Both scopes below bound the damage
+    to ANOTHER ROW OF THE SAME PERSON (`wanted_label` is that user's own label), never another user's
+    row and never a foreign collection; the label is untouched either way, so hiding and promotion are
+    unaffected. `_delivered_keys` drops keys two rows claim, and the caller withholds keys this run has
+    already delivered to.
+
+    Foreign (e.g. Kometa) collections never carry our label, so are untouched either way.
     """
     # This library's own name fills {library_name}; every match/promote/retire caller renders with the
     # same section title, so the titles stay in lockstep (a mismatch would leave a row unhidden).
@@ -687,6 +714,23 @@ def _deliver_one(
     label = wanted_label
     owned = plex.find_owned_collections(section, label)
     collection = next((c for c in owned if c.title == title), None)
+    if collection is None and delivered_key:
+        # The ledger names the exact object this row built here. If it is still under our label, it IS
+        # this row — whatever it is currently called, and however many rows the user has.
+        #
+        # `endswith(marker)` is the same clause the count branch below insists on, and for the same
+        # reason: a pre-marker collection shares its tag with other users, so retitling one would hand
+        # this person exclusive ownership of an object holding several people's picks. The sweep
+        # removes those before delivery, but that guarantee lives in another module — restate it here.
+        collection = next((c for c in owned if _rating_key(c) == delivered_key and c.title.endswith(marker)), None)
+        if collection is not None:
+            logger.debug(
+                "{}: matched '{}' in '{}' by ledger ratingKey {} — retitling in place",
+                profile.username,
+                display,
+                section.title,
+                delivered_key,
+            )
     if collection is None and sole_row and len(owned) == 1 and owned[0].title.endswith(marker):
         # The sole row was renamed by a template change but still carries this account's marker, so
         # its membership is its own: update it in place rather than leave a stale duplicate. Only

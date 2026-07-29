@@ -43,6 +43,7 @@ from shortlist.server.db.models import (
     Collection,
     CollectionAudience,
     CollectionUserOverride,
+    Delivery,
     PickRow,
     RequestCandidate,
     Server,
@@ -178,6 +179,7 @@ class ContextBuilder:
                 requests=self._build_requests(store),
             )
             previous = self._previous_picks(session)
+            delivered_keys = self._delivered_keys(session)
             # Opted-out accounts: with hide_shared_from_disabled, even public shared rows are hidden
             # from them, so disabling a user removes them from Shortlist entirely.
             disabled_account_ids = {u.plex_account_id for u in session.query(User).filter_by(enabled=False).all()}
@@ -227,6 +229,7 @@ class ContextBuilder:
             mdblist=self._build_mdblist(store),
             concurrency=concurrency,
             previous_picks=previous,
+            delivered_keys=delivered_keys,
             disabled_account_ids=disabled_account_ids,
             known_slugs=known_slugs,
             owner_slug=owner_slug,
@@ -312,6 +315,34 @@ class ContextBuilder:
             }
             for w in distinct_recent(items, limit)
         ]
+
+    def _delivered_keys(self, session: Session) -> dict[tuple[str, str, str], int]:
+        """The delivery ledger as the engine wants it: (user_slug, row_slug, section_key) -> ratingKey.
+
+        Delivery uses it to answer "is this collection mine, under a title I no longer render?" by
+        IDENTITY rather than by counting rows — see `_deliver_one`. Same key shape as
+        `_previous_picks`, so the two read alike at the call site.
+
+        An ambiguous key (two rows naming one collection — reachable if a run died between the delete
+        and the persist on the rebuild path) is dropped rather than arbitrated: delivery then falls back
+        to the title, which is where it was before the ledger.
+        """
+        rows = list(session.query(Delivery).filter(Delivery.rating_key != 0))
+        claims: dict[int, int] = {}
+        for row in rows:
+            claims[row.rating_key] = claims.get(row.rating_key, 0) + 1
+        keys = {
+            (row.user_slug, row.collection_slug, row.library_key): row.rating_key
+            for row in rows
+            if claims[row.rating_key] == 1
+        }
+        if len(keys) != len(rows):
+            logger.warning(
+                "delivery ledger: {} entr(ies) name a collection another row also claims — those fall "
+                "back to matching by title",
+                len(rows) - len(keys),
+            )
+        return keys
 
     def _previous_picks(self, session: Session) -> dict[tuple[str, str, str], list[Pick]]:
         """Each row+library's picks from the run that last built it, keyed (user_slug, row_slug, section_key).
