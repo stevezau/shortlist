@@ -172,7 +172,9 @@ id is resolved once and reused for the send). A title on an Arr import-exclusion
 delete) is kept but flagged (`excluded` on `GET /api/requests`) and never auto-sent, so the inbox can
 warn that approving it is a no-op until the exclusion is removed in the Arr. A sent title records the
 Arr's `titleSlug` (`arr_slug` on `GET /api/requests`) so the Sent log deep-links straight to its
-Sonarr/Radarr page; **Clear** (`POST /api/requests/clear`) hides a sent entry via a `hidden` flag without
+Sonarr/Radarr page; each candidate also carries TMDB's `poster_path` (`"/abc.jpg"`, or `""` when
+TMDB has no artwork) — a path and not a URL, because the image host and size buckets are TMDB's to
+change, so the web UI builds the URL itself and draws a placeholder tile when the path is empty; **Clear** (`POST /api/requests/clear`) hides a sent entry via a `hidden` flag without
 deleting the tombstone that stops a still-downloading title being re-requested.
 
 All endpoints except `/api/system/health` require the owner session; mutations require the

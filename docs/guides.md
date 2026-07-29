@@ -423,11 +423,16 @@ like the global one.
 ### The Requests inbox
 
 The **Requests** tab (in the sidebar) is your approval queue. Each run adds the wanted-but-missing
-titles it didn't auto-send — with the title, year, rating, and a full **why it's here** breakdown:
-one line per person and row that wanted it, with the reason (e.g. "Sarah · Comedy Classics · because
+titles it didn't auto-send — with its poster, title, year, rating, and a full **why it's here**
+breakdown: one line per person and row that wanted it, with the reason (e.g. "Sarah · Comedy Classics · because
 they watched Fawlty Towers"). That answers where a request came from and why, not just a count.
 A long queue can be narrowed by a minimum rating and vote count (and to movies or shows) and
 sorted by **Newest**, **Top rated**, or **Most wanted**, so the best picks triage first.
+Posters come straight from TMDB's image CDN (`image.tmdb.org`) — the only third-party asset Shortlist's
+web UI fetches. An install behind a restrictive network, or a browser with an ad-blocker, will show a
+placeholder tile instead; so will a title TMDB has no artwork for, and one queued before posters existed
+(those fill in on the next run that re-surfaces the title). Nothing else on the page depends on it.
+
 Tick the ones you want and click **Send to Sonarr/Radarr**. For the rest you have two choices, and the
 difference is exactly what happens on the next run:
 
