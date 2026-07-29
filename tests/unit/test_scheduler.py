@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from shortlist.server.db.models import Collection
+from shortlist.server.db.models import Collection, Event
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.scheduler import schedule_groups
 
@@ -83,3 +83,129 @@ class TestBuildScope:
         cfg, personal, shared = self._cfg(None)
         assert cfg.should_build(personal) is True
         assert cfg.should_build(shared) is True
+
+
+class TestScheduledWorkIsDurable:
+    """The three scheduled tasks that keep a server correct BETWEEN runs — roster reconcile, watch
+    history, backups — were bare coroutines whose only failure path was `logger.exception`.
+
+    That made them the least observable code in the app and the most consequential when broken: the
+    roster sync is what notices a new account and writes the filters that stop them seeing everyone
+    else's rows, and the backup is the one thing nobody checks until they need it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _app_state(self, tmp_path: Path):
+        """A real `app.state` — sessions, run_service, config_dir — so the handlers run for real."""
+        from starlette.testclient import TestClient
+
+        from shortlist.server.main import create_app
+
+        application = create_app(config_dir=tmp_path / "live")
+        with TestClient(application):
+            self._state = application.state
+            yield
+
+    def _fire(self, app, job_id: str):
+        """Run the scheduler job registered under `job_id`, synchronously."""
+        import asyncio
+
+        from shortlist.server.scheduler import build_scheduler
+
+        job = build_scheduler(app).get_job(job_id)
+        assert job is not None, f"no scheduled job {job_id!r}"
+        asyncio.run(job.func())
+
+    @pytest.mark.parametrize(
+        ("job_id", "kind"),
+        [("user-sync", "sync.users"), ("watch-sync", "sync.history"), ("db-backup", "backup.take")],
+    )
+    def test_each_scheduled_task_lands_on_the_queue(self, app, job_id, kind, monkeypatch):
+        from shortlist.server.services import jobs
+
+        queued: list[tuple[str, dict]] = []
+        monkeypatch.setattr(jobs, "enqueue", lambda sessions, k, payload=None, **kw: queued.append((k, payload or {})))
+
+        async def no_drain(state, reason):
+            return None
+
+        monkeypatch.setattr(jobs, "drain_now", no_drain)
+
+        self._fire(app, job_id)
+
+        assert [k for k, _ in queued] == [kind]
+        if kind == "backup.take":
+            # The payload the SUT controls, not just that something was queued: the keep limit comes
+            # from settings and a dropped `max_keep` would silently prune to the built-in default.
+            assert set(queued[0][1]) == {"label", "max_keep"}
+
+    @pytest.mark.parametrize("kind", ["sync.users", "sync.history", "backup.take"])
+    def test_each_handler_actually_runs(self, kind):
+        """Mocking `enqueue`/`drain_now` proves the scheduler CALLS the queue and nothing more — it
+        passes whether the handler exists, is registered, or raises on its first line.
+
+        That is not hypothetical: `sync.users` shipped reading `state.app`, an attribute nothing ever
+        sets, and burned its three attempts every night behind a green suite. This is the probe that
+        catches it — enqueue for real, drain for real, and look at what came back.
+        """
+        import asyncio
+
+        from shortlist.server.db.models import Job
+        from shortlist.server.services import jobs
+
+        state = self._state
+        job_id = jobs.enqueue(state.sessions, kind, {"label": "test"})
+
+        asyncio.run(jobs.run_pending(state))
+
+        with state.sessions() as session:
+            error = session.get(Job, job_id).error or ""
+        # Plex is not connected in this fixture, so a RuntimeError saying so is a fine outcome — the
+        # handler ran and failed for an environmental reason the queue will retry. An AttributeError or
+        # TypeError is not: that is the handler reaching for something that does not exist.
+        assert "AttributeError" not in error, error
+        assert "TypeError" not in error, error
+
+    def test_a_failure_to_queue_never_kills_the_scheduler(self, app, monkeypatch):
+        """A scheduler job that raises stops firing. Whatever goes wrong here, the next tick must
+        still come round."""
+        from shortlist.server.services import jobs
+
+        monkeypatch.setattr(jobs, "enqueue", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db locked")))
+
+        self._fire(app, "user-sync")  # must not raise
+
+
+class TestSyncUsersOnAnUnlinkedServer:
+    """A nightly false alarm is how an owner learns to ignore the notification bell.
+
+    Making `sync.users` a durable job turned "Plex is not connected yet" from a silent log line into
+    three retries, a `failed` job and a bell notification — every night, on any install whose wizard
+    is unfinished or whose token was revoked. `sync.history` already treats the same condition as a
+    skip; the two must not disagree about what "not connected" means.
+    """
+
+    def test_it_skips_rather_than_failing(self, tmp_path: Path):
+        import asyncio
+
+        from starlette.testclient import TestClient
+
+        from shortlist.server.db.models import Job
+        from shortlist.server.main import create_app
+        from shortlist.server.services import jobs
+
+        application = create_app(config_dir=tmp_path / "unlinked")
+        with TestClient(application):
+            state = application.state
+            job_id = jobs.enqueue(state.sessions, "sync.users", {})
+
+            asyncio.run(jobs.run_pending(state))
+
+            with state.sessions() as session:
+                job = session.get(Job, job_id)
+                status, detail, error = job.status, job.detail, job.error
+                raised = session.query(Event).filter_by(scope="job.failed").count()
+
+        assert status == "done", f"a not-connected server must not fail the job ({error})"
+        assert "not connected" in detail.lower()
+        assert raised == 0, "and must not ring the bell"

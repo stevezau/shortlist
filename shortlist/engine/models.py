@@ -631,6 +631,11 @@ class CollectionDiff:
     deleted: list[str] = field(default_factory=list)  # rows destroyed this run (swept, or rebuilt)
     collection_title: str = ""
     created: bool = False
+    # The Plex ratingKey of the collection this landed in. The delivery LEDGER's whole point: it is
+    # the only stable handle on "which object on the server is this row, for this person, in this
+    # library". Titles are not — a `{top_seed}` row renders differently every run, so nothing computed
+    # from config can find it later. 0 in a dry run and whenever the PMS didn't hand one back.
+    rating_key: int = 0
 
 
 @dataclass

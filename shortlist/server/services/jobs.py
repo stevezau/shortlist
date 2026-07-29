@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -32,6 +33,7 @@ from loguru import logger
 from sqlalchemy import text
 
 from shortlist.engine.clients.http_retry import redact
+from shortlist.engine.delivery import row_marker
 from shortlist.server.db.models import Event, Job
 
 # A job still marked `running` this long after it started is presumed dead — its process is gone.
@@ -72,6 +74,34 @@ def enqueue(sessions, kind: str, payload: dict | None = None, *, max_attempts: i
         session.commit()
         logger.debug("queued job {} ({})", job.id, kind)
         return job.id
+
+
+async def drain_now(state, reason: str) -> None:
+    """Run whatever is queued, right now, without letting a failure reach the request.
+
+    The queue is the SAFETY NET, not a delay: an operator who just changed something should see it
+    take effect, and only when that is impossible (Plex down, a run mid-write) does the work fall back
+    to the worker's retry-with-backoff. Nothing is lost either way — the jobs stay queued.
+    """
+    try:
+        await run_pending(state)
+    except Exception as e:
+        # Named loudly: until these succeed the excludes are stale, which is the leak direction.
+        logger.warning(
+            "{}: queued work could not run now ({}: {}) — retrying", reason, type(e).__name__, redact(str(e))
+        )
+
+
+async def queue_privacy_sync(state, reason: str) -> None:
+    """Queue a share-filter pass because `reason` left a filter write owed, and drain it now.
+
+    The one entry point for "something changed and somebody's `label!=` excludes are now wrong".
+    `privacy.sync` is `engine_run(ctx, [])`: it merges every account's filter and creates, promotes
+    and delivers nothing, so it can only ever make the server MORE private (plex-safety rule 1) —
+    which is what makes it safe to fire straight from a mutation handler.
+    """
+    enqueue(state.sessions, "privacy.sync", {"reason": reason})
+    await drain_now(state, reason)
 
 
 def recover_stale(sessions, *, boot: bool = False) -> int:
@@ -213,7 +243,15 @@ async def _drain(state, sessions) -> int:
             _finish(sessions, job_id, error=f"no handler registered for {kind!r}")
             continue
         try:
-            result = await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, state, payload))
+            if inspect.iscoroutinefunction(fn):
+                # An async handler is awaited on THIS loop rather than pushed to a worker thread.
+                # `sync.users` and `sync.history` were written as endpoint/scheduler coroutines: they
+                # publish to the SSE bus and hand their own blocking work to an executor. Running them
+                # under a fresh `asyncio.run()` in a worker thread would put their SSE publishes on a
+                # loop nothing is listening to. They already yield, so they do not stall the drain.
+                result = await fn(state, payload)
+            else:
+                result = await asyncio.get_running_loop().run_in_executor(None, functools.partial(fn, state, payload))
             _finish(sessions, job_id, result=result or {})
         except Exception as e:
             # redact: a Plex/plex.tv error can carry a tokened URL (rule 9).
@@ -272,11 +310,75 @@ def _privacy_sync(state, payload: dict) -> dict:
     ctx = state.run_service.build_context(dry_run=False)
     report = engine_run(ctx, [])
     swept = sum(len(titles) for titles in report.swept_rows.values())
+    # The reason is carried through to the detail line so the Jobs page answers "why did this fire?"
+    # — "someone was removed from a shared row" reads very differently from a nightly housekeeping
+    # pass, and an operator seeing filters rewritten deserves to know which.
+    reason = str(payload.get("reason") or "")
+    detail = "Share filters merged for every account"
+    if reason:
+        detail += f" after {reason}"
+    if swept:
+        detail += f"; swept {swept} unhidable row(s)"
+    return {"swept": swept, "converged": report.converged, "reason": reason, "detail": detail}
+
+
+@handler("sync.users")
+async def _sync_users(state, payload: dict) -> dict:
+    """Pull the roster from plex.tv + Tautulli — the scheduled reconcile, as a durable job.
+
+    It used to be a bare APScheduler coroutine whose only failure path was `logger.exception`. That
+    made the ONE thing this does that touches Plex invisible when it broke: it is what notices a new
+    account (and writes the filters that stop them seeing everyone's rows) and what notices someone
+    leaving the share. A plex.tv wobble at 04:00 silently meant no roster reconcile for 24 hours.
+
+    Idempotent — it upserts from whatever plex.tv currently says.
+    """
+    from fastapi import HTTPException
+
+    from shortlist.server.api.users import sync_users_from_state
+
+    try:
+        result = await sync_users_from_state(state)
+    except HTTPException as e:
+        # An instance whose wizard is unfinished, or whose token was revoked, has nothing to sync.
+        # That is a STATE, not a failure: retrying it three times and then ringing the notification
+        # bell — nightly, for ever — is how an owner learns to ignore the bell. `sync_watched` already
+        # treats the same condition this way (`run_service.py:199`); these two must not disagree.
+        if e.status_code == 409:
+            logger.info("user-sync skipped: {}", e.detail)
+            return {"skipped": True, "detail": f"Skipped — {e.detail}"}
+        raise
     return {
-        "swept": swept,
-        "converged": report.converged,
-        "detail": f"Share filters merged for every account{f'; swept {swept} unhidable row(s)' if swept else ''}",
+        **result,
+        "detail": f"Synced {result['total']} account(s) — {result['added']} new, {result['updated']} updated",
     }
+
+
+@handler("sync.history")
+async def _sync_history(state, payload: dict) -> dict:
+    """Re-read every enabled user's watched set. Durable for the same reason `sync.users` is.
+
+    Watch history drives every recommendation, so a silent failure here degrades picks server-wide
+    while everything still looks healthy. Reads only — nothing on Plex changes.
+    """
+    await state.run_service.sync_watched()
+    return {"detail": "Watch history re-read for every enabled user"}
+
+
+@handler("backup.take")
+def _backup_take(state, payload: dict) -> dict:
+    """Copy the database to /config/backups and prune to the keep limit.
+
+    The one job whose failure nobody would notice until they needed the backup — which is the worst
+    possible moment to discover a month of `logger.exception` nobody read.
+    """
+    from shortlist.server.services.backup import take_backup
+
+    kwargs = {"max_keep": int(payload["max_keep"])} if payload.get("max_keep") else {}
+    path = take_backup(state.config_dir, label=payload.get("label") or "scheduled", **kwargs)
+    if path is None:
+        return {"path": "", "detail": "No database to back up yet"}
+    return {"path": str(path), "detail": f"Backed up to {path.name}"}
 
 
 @handler("user.cleanup")
@@ -329,11 +431,18 @@ def _user_hide(state, payload: dict) -> dict:
     removes visibility, so it is safe to replay after a crash.
     """
     slug = payload["slug"]
+    # `build_context` ORs in SHORTLIST_DRY_RUN, so `ctx.config.dry_run` can be True despite the False
+    # here — and `demote_all` has no dry-run branch of its own (rule 8).
     ctx = state.run_service.build_context(dry_run=False)
     hidden: list[str] = []
     label = f"{ctx.config.label_prefix}_{slug}"
     for section in ctx.plex.sections():
         for collection in ctx.plex.find_owned_collections(section, label):
+            if ctx.config.dry_run:
+                if ctx.plex.claims_any_surface(collection):
+                    logger.info("[dry-run] {}: would take off every surface", collection.title)
+                    hidden.append(collection.title)
+                continue
             if ctx.plex.demote_all(collection):
                 hidden.append(collection.title)
     with state.sessions() as session:
@@ -341,11 +450,90 @@ def _user_hide(state, payload: dict) -> dict:
             Event(
                 scope="user.pause.hide",
                 level="info",
-                message={"user": slug, "hidden": len(hidden), "at": datetime.now(UTC).isoformat()},
+                message={
+                    "user": slug,
+                    "hidden": len(hidden),
+                    "dry_run": ctx.config.dry_run,
+                    "at": datetime.now(UTC).isoformat(),
+                },
             )
         )
         session.commit()
-    return {"hidden": hidden, "detail": f"Hid {len(hidden)} row(s) for {slug} while paused"}
+    verb = "Would hide" if ctx.config.dry_run else "Hid"
+    return {"hidden": hidden, "dry_run": ctx.config.dry_run, "detail": f"{verb} {len(hidden)} row(s) for {slug}"}
+
+
+@handler("user.restore")
+def _user_restore(state, payload: dict) -> dict:
+    """Put an un-paused user's rows back on the surfaces their rows ask for.
+
+    The exact mirror of `user.hide`: pause demoted the collections but kept them and their labels, so
+    this is a re-promote, not a rebuild. Leaving it to "the next run" — which is what used to happen —
+    was wrong twice over: a row whose schedule is blank has no next run at all, and neither does one
+    while `paused_all` is set, so an un-paused person could stay invisible indefinitely.
+
+    This is the ONE job that makes something more visible, so plex-safety rule 1 applies — and the
+    merge happens HERE, in straight-line code, rather than in a `privacy.sync` queued just before it.
+    Two queued jobs would not have been ordered: `_claim` skips a job whose retry backoff has not
+    elapsed and takes the next one, so a `privacy.sync` that failed against a 503 plex.tv would be
+    stepped over and this handler would promote onto a healthy PMS with the excludes unmerged. That is
+    exactly the leak the ordering exists to prevent, and nothing downstream would have caught it.
+
+    `engine_run(ctx, [])` merges every account's filter and delivers, creates and promotes nothing, so
+    if it raises, this raises with it and the whole job is retried — no promotion happens.
+    """
+    from shortlist.engine.models import UserProfile, UserType
+    from shortlist.engine.pipeline import promote_user_rows
+    from shortlist.engine.pipeline import run as engine_run
+    from shortlist.server.db.models import Run, RunUser, User
+
+    slug = payload["slug"]
+    ctx = state.run_service.build_context(dry_run=False)
+    with state.sessions() as session:
+        user = session.query(User).filter_by(slug=slug).first()
+        if user is None or not user.enabled or (user.prefs or {}).get("paused"):
+            # Re-queued after a crash but the world moved on (deleted, disabled, paused again). Doing
+            # nothing is right: this handler only ever makes rows visible.
+            return {"restored": [], "detail": f"{slug} is no longer an un-paused user — nothing restored"}
+        profile = UserProfile(
+            username=user.username,
+            plex_account_id=user.plex_account_id,
+            user_type=UserType(user.user_type),
+            slug=user.slug,
+            nickname=user.nickname or user.friendly_name,
+            # Their own row-name override, resolved the way `resolve_row_template` does. Without it the
+            # GLOBAL template renders here and the per-library titles built below match nothing, so
+            # every one of this person's collections falls to `_promote_one`'s no-spec branch and lands
+            # on a surface their row's placement may have switched off.
+            row_name_template=(user.prefs or {}).get("row_name_tpl"),
+        )
+        # {delivered title -> row slug} rebuilt from the last run's breakdown, which is the same map
+        # `_promote_phase` passes. It is the only way to place a `{top_seed}` row: its title is
+        # different every run, so it cannot be re-rendered from the template here.
+        marker = row_marker(user.plex_account_id)
+        latest = session.query(Run).filter(Run.status.in_(("ok", "error"))).order_by(Run.id.desc()).first()
+        run_user = (
+            session.query(RunUser).filter_by(run_id=latest.id, user_id=user.id).first() if latest is not None else None
+        )
+        placements = {
+            entry["row_title"] + marker: entry["row_slug"]
+            for entry in ((run_user.breakdown if run_user else None) or [])
+            if entry.get("row_slug") and entry.get("row_title")
+        }
+
+    # Rule 1's ordering: every account's excludes are merged BEFORE anything is promoted.
+    engine_run(ctx, [])
+    restored = promote_user_rows(ctx, profile, placements)
+    with state.sessions() as session:
+        session.add(
+            Event(
+                scope="user.unpause.restore",
+                level="info",
+                message={"user": slug, "restored": len(restored), "at": datetime.now(UTC).isoformat()},
+            )
+        )
+        session.commit()
+    return {"restored": sorted(restored), "detail": f"Put {len(restored)} row(s) back for {slug}"}
 
 
 @handler("row.reconcile")
@@ -363,7 +551,20 @@ def _row_reconcile(state, payload: dict) -> dict:
     build = payload.get("build", "per_person")
     only_user_ids = set(payload["only_user_ids"]) if payload.get("only_user_ids") is not None else None
     removed: list[str] = []
-    _reconcile_row_removal(state, slug=slug, build=build, dry_run=False, removed=removed, only_user_ids=only_user_ids)
+    _reconcile_row_removal(
+        state,
+        slug=slug,
+        build=build,
+        dry_run=False,
+        removed=removed,
+        only_user_ids=only_user_ids,
+        # Carried in the payload by the DELETE path only: the row is gone by the time a retry runs, so
+        # the template it was titled with cannot be looked up any more. Everywhere else it reads the DB.
+        template=payload.get("template"),
+        # Carried by a NARROWED row: only the libraries it walked away from, so the ones it still
+        # targets survive. Absent means every library, which is right for an outright removal.
+        in_sections=set(payload["in_sections"]) if payload.get("in_sections") is not None else None,
+    )
     with state.sessions() as session:
         session.add(
             Event(

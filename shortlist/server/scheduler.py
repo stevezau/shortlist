@@ -71,6 +71,24 @@ def _register(scheduler: AsyncIOScheduler, app, groups: dict[str, list[int]]) ->
         )
 
 
+async def _queue_and_drain(app, kind: str, payload: dict | None = None) -> None:
+    """Put a scheduled task on the durable queue and run it now.
+
+    APScheduler stays the TRIGGER; the `jobs` table is what makes the work survive. Before this, each
+    of these was a bare coroutine whose only failure path was `logger.exception` — so the three tasks
+    that keep a server correct between runs (roster reconcile, watch history, backups) failed
+    invisibly, were never retried, and left nothing on the Jobs page to notice.
+    """
+    from shortlist.server.services import jobs
+
+    try:
+        jobs.enqueue(app.state.sessions, kind, payload or {})
+    except Exception:
+        logger.exception("could not queue {}", kind)
+        return
+    await jobs.drain_now(app.state, f"scheduled {kind}")
+
+
 def _resolve_watch_cron(app) -> str:
     """The watch sync cron, from the DB setting or the built-in default."""
     from shortlist.server.settings_store import SettingsStore
@@ -91,10 +109,9 @@ def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
     cron = _resolve_watch_cron(app)
 
     async def fire() -> None:
-        try:
-            await app.state.run_service.sync_watched()
-        except Exception:
-            logger.exception("daily watch-sync failed")
+        # Queued, not called: watch history drives every recommendation, so a silent failure here
+        # degrades picks server-wide while everything still looks healthy.
+        await _queue_and_drain(app, "sync.history")
 
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=WATCH_SYNC_JOB_ID, replace_existing=True)
 
@@ -119,17 +136,11 @@ def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
     cron = _resolve_users_cron(app)
 
     async def fire() -> None:
-        try:
-            from starlette.requests import Request
-
-            from shortlist.server.api.users import sync_users
-
-            # Build a minimal fake request so sync_users can read app.state
-            scope = {"type": "http", "app": app, "method": "POST", "path": "/api/users/sync"}
-            request = Request(scope)
-            await sync_users(request)
-        except Exception:
-            logger.exception("daily user-sync failed")
+        # Queued, not called. This is the sync that notices a NEW account (and writes the filters that
+        # stop them seeing everyone's rows) and notices someone leaving the share — and its only
+        # failure path used to be a log line nobody reads. As a job it retries with backoff, shows up
+        # on the Jobs page, and raises a notification if it gives up.
+        await _queue_and_drain(app, "sync.users")
 
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=USER_SYNC_JOB_ID, replace_existing=True)
 
@@ -158,20 +169,12 @@ def _resolve_backup_settings(app) -> tuple[str, int]:
 
 def _register_backup(scheduler: AsyncIOScheduler, app) -> None:
     """Scheduled DB backup — keeps the last N copies so a bad migration or data loss is recoverable."""
-    from shortlist.server.services.backup import take_backup
-
-    config_dir = app.state.config_dir
     cron, max_keep = _resolve_backup_settings(app)
 
     async def fire():
-        try:
-            import asyncio
-
-            await asyncio.get_running_loop().run_in_executor(
-                None, lambda: take_backup(config_dir, label="scheduled", max_keep=max_keep)
-            )
-        except Exception:
-            logger.exception("scheduled backup failed")
+        # The one job whose failure nobody notices until they need the backup — which is the worst
+        # possible moment to discover a month of unread log lines.
+        await _queue_and_drain(app, "backup.take", {"label": "scheduled", "max_keep": max_keep})
 
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=BACKUP_JOB_ID, replace_existing=True)
 

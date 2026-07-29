@@ -8,12 +8,15 @@ because no run revisits a disabled user, so those rows stayed on Plex for ever.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from shortlist.engine.delivery import row_marker
+from shortlist.engine.models import EngineConfig, RowSpec
 from shortlist.server.db.models import Event, Job
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.services import jobs
@@ -203,7 +206,7 @@ class TestHandlers:
             find_owned_collections=lambda section, label: [collection] if label == "shortlist_sarah" else [],
             demote_all=lambda c: True,
         )
-        ctx = SimpleNamespace(plex=plex, config=SimpleNamespace(label_prefix="shortlist"))
+        ctx = SimpleNamespace(plex=plex, config=SimpleNamespace(label_prefix="shortlist", dry_run=False))
         state = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
 
         result = jobs._HANDLERS["user.hide"](state, {"slug": "sarah"})
@@ -220,7 +223,285 @@ class TestHandlers:
             find_owned_collections=lambda section, label: [collection],
             demote_all=lambda c: False,  # already claims nothing
         )
-        ctx = SimpleNamespace(plex=plex, config=SimpleNamespace(label_prefix="shortlist"))
+        ctx = SimpleNamespace(plex=plex, config=SimpleNamespace(label_prefix="shortlist", dry_run=False))
         state = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
 
         assert jobs._HANDLERS["user.hide"](state, {"slug": "sarah"})["hidden"] == []
+
+
+class TestRestoreAfterUnpause:
+    """Un-pausing is the mirror of pausing: the collections were only DEMOTED, so putting them back is
+    a re-promote, not a rebuild.
+
+    Leaving it to "the next run" — which is what used to happen — was wrong twice over: a row whose
+    schedule is blank has no next run at all, and neither does one while `paused_all` is on. An
+    un-paused person could stay invisible indefinitely.
+    """
+
+    ROW = RowSpec(
+        slug="picked",
+        name_template="✨ {library_name} Picked for You",
+        size=10,
+        # Deliberately NOT the defaults: an assertion against `both/both` would pass with the row's
+        # placement ignored entirely, which is what the no-spec fallback does.
+        placement="off",  # the OWNER's own copy claims nothing
+        placement_friends="library",  # everyone else's is Recommended-only, never Home
+        pin_top=True,
+    )
+
+    def _state(self, sessions, *, promoted: list, merged: list, rows=(), merge_fails=False):
+        """A fake Plex + a stub `engine_run` that records the share-filter merge (or fails)."""
+        config = EngineConfig(rows=list(rows), rows_defined=bool(rows))
+        collection = SimpleNamespace(title="✨ Movies Picked for You" + row_marker(555000100), ratingKey=42)
+        plex = SimpleNamespace(
+            sections=lambda: [SimpleNamespace(title="Movies", key=1, type="movie")],
+            find_owned_collections=lambda section, label: [collection] if label == "shortlist_sarah" else [],
+            promote=lambda c, **kw: promoted.append((c.title, kw)),
+        )
+        ctx = SimpleNamespace(plex=plex, config=config, write_lock=None)
+
+        def fake_engine_run(_ctx, users):
+            merged.append(users)
+            if merge_fails:
+                raise RuntimeError("plex.tv 503")
+            return None
+
+        import shortlist.engine.pipeline as pipeline_mod
+
+        self._patched = (pipeline_mod, pipeline_mod.run)
+        pipeline_mod.run = fake_engine_run
+        return SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+
+    @pytest.fixture(autouse=True)
+    def _restore_engine_run(self):
+        self._patched = None
+        yield
+        if self._patched:
+            module, original = self._patched
+            module.run = original
+
+    def _add_user(self, sessions, **overrides):
+        from shortlist.server.db.models import User
+
+        with sessions() as session:
+            session.add(
+                User(
+                    plex_account_id=555000100,
+                    username="sarah",
+                    slug="sarah",
+                    user_type=overrides.pop("user_type", "shared"),
+                    **{"enabled": True, "prefs": {}, **overrides},
+                )
+            )
+            session.commit()
+
+    def test_the_share_filters_are_merged_before_anything_is_promoted(self, sessions):
+        """plex-safety rule 1, outside a run. This used to be two queued jobs relying on the queue
+        being FIFO — but `_claim` steps over a job whose retry backoff has not elapsed, so a filter
+        pass that failed against a 503 plex.tv was skipped and the promotion behind it landed anyway."""
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions)
+
+        jobs._HANDLERS["user.restore"](self._state(sessions, promoted=promoted, merged=merged), {"slug": "sarah"})
+
+        assert merged == [[]], "engine_run(ctx, []) merges every filter and builds nothing"
+        assert promoted, "and only then is anything promoted"
+
+    def test_a_failed_filter_merge_promotes_nothing_at_all(self, sessions):
+        """The whole point of doing the merge in this handler: if it cannot be proven private, the row
+        stays down and the JOB fails, so the queue retries the pair together."""
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions)
+        state = self._state(sessions, promoted=promoted, merged=merged, merge_fails=True)
+
+        with pytest.raises(RuntimeError, match="503"):
+            jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
+
+        assert promoted == []
+
+    @pytest.mark.parametrize(
+        ("user_type", "expected"),
+        [
+            # The row says: owner sees it nowhere, friends see it on the Recommended shelf only.
+            ("owner", {"shared": False, "home": False, "recommended": False, "pin_top": True}),
+            ("shared", {"shared": False, "home": False, "recommended": True, "pin_top": True}),
+            # MANAGED goes with SHARED, never the owner — Plex's own docs: promotedToSharedHome
+            # "applies to all shared users, INCLUDING managed users".
+            ("managed", {"shared": False, "home": False, "recommended": True, "pin_top": True}),
+        ],
+    )
+    def test_it_promotes_onto_the_surfaces_the_row_actually_asks_for(self, sessions, user_type, expected):
+        """Asserted against a REAL RowSpec with a non-default placement. With `rows=[]` the title lookup
+        misses and every collection takes `_promote_one`'s no-spec fallback, so an assertion there would
+        pass with the row's placement wrong in every field."""
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions, user_type=user_type)
+
+        jobs._HANDLERS["user.restore"](
+            self._state(sessions, promoted=promoted, merged=merged, rows=[self.ROW]), {"slug": "sarah"}
+        )
+
+        assert [kwargs for _title, kwargs in promoted] == [expected]
+
+    def test_a_users_own_row_name_override_still_finds_their_collection(self, sessions):
+        """`resolve_row_template` puts a user's `row_name_tpl` ABOVE the global template, so a profile
+        built without it renders the wrong title here, matches nothing, and drops the row onto the
+        fallback's surfaces — which for a `placement=off` row means putting it somewhere the operator
+        switched off.
+
+        The DEFAULT row, deliberately: it is the only one with a blank `name_template`, and so the only
+        one where the per-user override is consulted at all."""
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions, prefs={"row_name_tpl": "🌟 My Own Picks"})
+        default_row = replace(self.ROW, name_template="")
+        state = self._state(sessions, promoted=promoted, merged=merged, rows=[default_row])
+        # Their collection carries the title THEIR template renders to, not the global one.
+        ctx = state.run_service.build_context(dry_run=False)
+        collection = ctx.plex.find_owned_collections(None, "shortlist_sarah")[0]
+        collection.title = "🌟 My Own Picks" + row_marker(555000100)
+
+        jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
+
+        assert [kwargs for _t, kwargs in promoted] == [
+            {"shared": False, "home": False, "recommended": True, "pin_top": True}
+        ]
+
+    def test_a_top_seed_row_is_placed_from_what_the_last_run_delivered(self, sessions):
+        """A `{top_seed}` title is different every run, so it cannot be re-rendered from the template.
+        The last run's breakdown is the only record of which row a collection belongs to — without it
+        the row takes the no-spec fallback and lands on a surface its placement switched off."""
+        from shortlist.server.db.models import Run, RunUser, User
+
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions)
+        row = replace(self.ROW, name_template="Because you watched {top_seed}")
+        state = self._state(sessions, promoted=promoted, merged=merged, rows=[row])
+        ctx = state.run_service.build_context(dry_run=False)
+        ctx.plex.find_owned_collections(None, "shortlist_sarah")[0].title = "Because you watched Dune" + row_marker(
+            555000100
+        )
+        with sessions() as session:
+            user = session.query(User).filter_by(slug="sarah").one()
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user.id,
+                    status="ok",
+                    breakdown=[{"row_slug": "picked", "row_title": "Because you watched Dune"}],
+                )
+            )
+            session.commit()
+
+        jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
+
+        assert [kwargs for _t, kwargs in promoted] == [
+            {"shared": False, "home": False, "recommended": True, "pin_top": True}
+        ]
+
+    def test_a_replayed_job_does_nothing_once_the_user_is_paused_again(self, sessions):
+        """Jobs are replayed after a crash with no way to know how far they got. This is the one
+        handler that makes rows MORE visible, so a stale replay must not un-hide someone the owner
+        has since paused."""
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions, prefs={"paused": True})
+
+        result = jobs._HANDLERS["user.restore"](
+            self._state(sessions, promoted=promoted, merged=merged), {"slug": "sarah"}
+        )
+
+        assert promoted == [] and merged == []
+        assert "no longer an un-paused user" in result["detail"]
+
+    def test_a_replayed_job_does_nothing_once_the_user_is_disabled(self, sessions):
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions, enabled=False)
+
+        jobs._HANDLERS["user.restore"](self._state(sessions, promoted=promoted, merged=merged), {"slug": "sarah"})
+
+        assert promoted == []
+
+    def test_a_user_deleted_since_the_job_was_queued_is_not_an_error(self, sessions):
+        """A failed handler is retried three times and then raises a notification. "The user is gone"
+        is a correct outcome, not a failure to escalate."""
+        promoted: list = []
+        merged: list = []
+
+        result = jobs._HANDLERS["user.restore"](
+            self._state(sessions, promoted=promoted, merged=merged), {"slug": "ghost"}
+        )
+
+        assert promoted == [] and result["restored"] == []
+
+
+class TestSafeMode:
+    """`SHORTLIST_DRY_RUN=1` must make EVERY Plex write a preview (plex-safety rule 8).
+
+    `build_context` ORs the env flag into `ctx.config.dry_run`, so a handler passing `dry_run=False`
+    still gets a dry-run context — but neither `PlexClient.promote` nor `demote_all` has a dry-run
+    branch of its own, so the guard has to be at the call site. `_promote_phase` had one and
+    `promote_user_rows` did not, which stayed invisible until `user.restore` became a second caller:
+    un-pausing someone previewed the hiding and performed the showing.
+    """
+
+    def _ctx(self, *, wrote: list):
+        collection = SimpleNamespace(title="✨ Movies Picked for You" + row_marker(555000100), ratingKey=42)
+        plex = SimpleNamespace(
+            sections=lambda: [SimpleNamespace(title="Movies", key=1, type="movie")],
+            find_owned_collections=lambda section, label: [collection] if label == "shortlist_sarah" else [],
+            promote=lambda c, **kw: wrote.append(("promote", kw)),
+            demote_all=lambda c, **kw: wrote.append(("demote", kw)) or True,
+            claims_any_surface=lambda c: True,
+        )
+        return SimpleNamespace(plex=plex, config=EngineConfig(dry_run=True), write_lock=None)
+
+    def _state(self, sessions, ctx):
+        return SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+
+    def _add_sarah(self, sessions, **overrides):
+        from shortlist.server.db.models import User
+
+        with sessions() as session:
+            session.add(
+                User(
+                    plex_account_id=555000100,
+                    username="sarah",
+                    slug="sarah",
+                    user_type="shared",
+                    **{"enabled": True, "prefs": {}, **overrides},
+                )
+            )
+            session.commit()
+
+    def test_restoring_an_un_paused_user_promotes_nothing(self, sessions, monkeypatch):
+        wrote: list = []
+        self._add_sarah(sessions)
+        import shortlist.engine.pipeline as pipeline_mod
+
+        monkeypatch.setattr(pipeline_mod, "run", lambda ctx, users: None)
+
+        result = jobs._HANDLERS["user.restore"](self._state(sessions, self._ctx(wrote=wrote)), {"slug": "sarah"})
+
+        assert wrote == []
+        assert result["restored"] == []
+
+    def test_hiding_a_paused_user_writes_nothing_but_still_reports_the_plan(self, sessions):
+        """A preview has to say what WOULD change, or an operator cannot tell "nothing to do" from
+        "safe mode swallowed it"."""
+        wrote: list = []
+        self._add_sarah(sessions)
+
+        result = jobs._HANDLERS["user.hide"](self._state(sessions, self._ctx(wrote=wrote)), {"slug": "sarah"})
+
+        assert wrote == []
+        assert len(result["hidden"]) == 1 and result["dry_run"] is True
+        assert result["detail"].startswith("Would hide")

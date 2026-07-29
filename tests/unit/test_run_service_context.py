@@ -403,3 +403,37 @@ def test_build_scheduler_registers_the_daily_watch_sync(sessions, tmp_path):
     scheduler = build_scheduler(app)
     assert scheduler.get_job(WATCH_SYNC_JOB_ID) is not None  # daily, independent of any row's cron
     assert scheduler.get_job(BACKUP_JOB_ID) is not None  # daily DB backup
+
+
+class TestRefusingADifferentServer:
+    """Every record Shortlist holds is scoped to ONE Plex machine — the delivery ledger says which
+    collection is whose, `restriction_snapshots` holds each account's filters as they were before we
+    touched them, the user table says who the owner is.
+
+    Settings refuses a repoint, but only when the new server ANSWERS at save time; a box that is down
+    then and up later slips past. This is the check at the point of use, where it cannot be skipped —
+    and it matters most for the privacy sync, because a stranger's PMS enumerates ZERO Shortlist
+    collections, which reads as "every row is gone".
+    """
+
+    def _check(self, linked: str | None, reported: str):
+        from types import SimpleNamespace
+
+        from shortlist.server.services.context_builder import _refuse_a_different_server
+
+        session = SimpleNamespace(
+            query=lambda model: SimpleNamespace(first=lambda: SimpleNamespace(machine_id=linked) if linked else None)
+        )
+        _refuse_a_different_server(session, reported)
+
+    def test_a_different_machine_aborts_before_anything_is_touched(self):
+        with pytest.raises(RuntimeError, match="different server"):
+            self._check(linked="m1", reported="someone-elses-server")
+
+    def test_the_linked_machine_passes(self):
+        self._check(linked="m1", reported="m1")
+
+    def test_an_unlinked_instance_passes(self):
+        """Setup itself builds a context before a `Server` row exists — refusing there would make the
+        wizard unable to complete."""
+        self._check(linked=None, reported="m1")

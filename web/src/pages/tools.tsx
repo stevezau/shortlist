@@ -507,12 +507,38 @@ function BackupsCard() {
           <MutationAlert error={create.error} fallback="Backup failed." />
         )}
         {restore.isSuccess && (
-          <p className="text-sm text-success">{restore.data.message}</p>
+          <div className="space-y-1.5">
+            <p className="text-sm text-success">{restore.data.message}</p>
+            {/* A restore is not a neutral rollback: the database decides who may see which rows, so
+                restoring one from before an audience was narrowed puts the wider audience back. */}
+            {restore.data.privacy_note && (
+              <p
+                role="alert"
+                className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm text-warning-foreground"
+              >
+                {restore.data.privacy_note}
+              </p>
+            )}
+          </div>
         )}
         {restore.isError && (
           <MutationAlert error={restore.error} fallback="Restore failed." />
         )}
 
+        {/* Shown BEFORE the confirm, not after it. A restore is not a neutral rollback: the database
+            is what decides who may see which rows, so restoring a copy from before a shared row's
+            audience was narrowed puts the wider audience back — and the un-hiding happens on the next
+            run, long after this screen is closed. */}
+        {confirmRestore && (
+          <p
+            role="alert"
+            className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm text-warning-foreground"
+          >
+            Restoring also puts back who could see which rows at the time of the backup. If you have
+            narrowed a shared row&rsquo;s audience since then, those people will be able to see it
+            again after the next run.
+          </p>
+        )}
         {backups.data && backups.data.length > 0 && (
           <div className="max-h-48 overflow-y-auto rounded border">
             <table className="w-full text-sm">

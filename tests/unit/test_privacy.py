@@ -327,6 +327,9 @@ class TestSyncUserRestrictions:
             stored,
             snapshot_store,
             shared_labels=shared,
+            # Required for ANY prune. `wanted` is derived from `stored`, so a PMS that answers with no
+            # collections makes every shared exclude look unwanted — this says the enumeration is real.
+            collections_known=True,
         )
 
         # The public shared exclude is pruned; the private one and the foreign condition remain.
@@ -620,3 +623,126 @@ class TestRestrictedAccountFilters:
 
         for raw in self._fixture()["filters"].values():
             assert serialize_filter(parse_filter(raw)) == raw
+
+
+class TestDeadSharedRowExcludesArePruned:
+    """A `shortlist__shared_*` exclude for a row that no longer EXISTS on the server.
+
+    Deleting a shared row, or flipping it to per-person, takes its label out of `shared_labels` — so
+    the normal shared prune stops considering it and the dead entry sits in every account's filter for
+    ever. On a 48-user server each filter already carries every other account's exclude; dead ones
+    accumulate on top with nothing to ever collect them.
+
+    Safe to remove ONLY because the collection is gone: an exclude that matches nothing cannot be
+    hiding anything. That reasoning depends entirely on KNOWING it is gone, which is why it is gated
+    on a successful enumeration rather than on an empty lookup.
+    """
+
+    def _user(self):
+        from shortlist.engine.models import UserProfile, UserType
+
+        return UserProfile(username="sarah", plex_account_id=201, user_type=UserType.SHARED, slug="sarah")
+
+    def _sync(self, mock_plextv, *, stored, collections_known, filters):
+        from shortlist.engine.privacy import sync_user_restrictions
+        from tests.conftest import MemorySnapshotStore, plextv_user
+
+        return sync_user_restrictions(
+            mock_plextv,
+            self._user(),
+            plextv_user(201, "sarah", filters=filters),
+            stored,
+            MemorySnapshotStore(),
+            own_label="Shortlist_sarah",
+            shared_labels={},  # the row is no longer declared shared — that IS the scenario
+            collections_known=collections_known,
+        )
+
+    def test_a_dead_shared_label_is_removed_once_we_know_it_is_gone(self, mock_plextv):
+        written = self._sync(
+            mock_plextv,
+            stored={"sarah": "Shortlist_sarah", "mike": "Shortlist_mike"},
+            collections_known=True,
+            filters={"filterMovies": "label!=Shortlist_mike,shortlist__shared_popular"},
+        )
+
+        assert written is not None
+        after = written["filterMovies"][1]
+        assert "shortlist__shared_popular" not in after
+        assert "Shortlist_mike" in after  # a live private row's exclude is untouched
+
+    def test_a_shared_label_whose_collection_still_exists_is_left_alone(self, mock_plextv):
+        """The row was un-declared in config but its collection is still on the server — so the
+        exclude is doing real work, and `desired_excludes` re-adds it fail-safe. Pruning here would
+        make a live row public."""
+        written = self._sync(
+            mock_plextv,
+            stored={"sarah": "Shortlist_sarah", "shared_popular": "shortlist__shared_popular"},
+            collections_known=True,
+            filters={"filterMovies": "label!=shortlist__shared_popular"},
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=shortlist__shared_popular"))[1]
+        assert "shortlist__shared_popular" in after
+
+    def test_nothing_is_pruned_when_the_collections_could_not_be_read(self, mock_plextv):
+        """ "I could not enumerate the collections" and "that collection is gone" look identical from
+        here, and one of those readings un-hides a live row. Not knowing must mean not touching."""
+        written = self._sync(
+            mock_plextv,
+            stored={},  # the read failed, so we know nothing
+            collections_known=False,
+            filters={"filterMovies": "label!=shortlist__shared_popular"},
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=shortlist__shared_popular"))[1]
+        assert "shortlist__shared_popular" in after
+
+    def test_a_private_rows_exclude_is_never_pruned_even_when_its_collection_is_gone(self, mock_plextv):
+        """Only SHARED labels. A private row's exclude stays union-only: removing one is the leak
+        direction, and a missing collection may just be a row that failed to build tonight."""
+        written = self._sync(
+            mock_plextv,
+            stored={"sarah": "Shortlist_sarah"},
+            collections_known=True,
+            filters={"filterMovies": "label!=Shortlist_canary"},
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=Shortlist_canary"))[1]
+        assert "Shortlist_canary" in after
+
+    def test_an_empty_but_successful_read_prunes_nothing(self, mock_plextv):
+        """The exact hole the first version had. A PMS mid library-index rebuild answers 200 with no
+        collections — indistinguishable from "every row is gone" — and `collections_known` was set
+        purely from "the call did not raise". Acting on that reading strips shared excludes from every
+        account on the server at once."""
+        written = self._sync(
+            mock_plextv,
+            stored={},  # a successful call that returned nothing
+            collections_known=True,
+            filters={"filterMovies": "label!=shortlist__shared_popular,Shortlist_mike"},
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=shortlist__shared_popular,Shortlist_mike"))[1]
+        assert "shortlist__shared_popular" in after
+
+    def test_a_live_restricted_row_keeps_its_exclude_for_an_out_of_audience_account(self, mock_plextv):
+        """The row EXISTS and the config restricts it to accounts this one is not in — so the exclude
+        is the only thing hiding it, and no branch may take it away. `dead_shared` additionally
+        requires the config to have stopped declaring it, so a live row can never reach that path."""
+        from shortlist.engine.privacy import sync_user_restrictions
+        from tests.conftest import MemorySnapshotStore, plextv_user
+
+        written = sync_user_restrictions(
+            mock_plextv,
+            self._user(),
+            plextv_user(201, "sarah", filters={"filterMovies": "label!=shortlist__shared_popular"}),
+            {"sarah": "Shortlist_sarah", "shared_popular": "shortlist__shared_popular"},
+            MemorySnapshotStore(),
+            own_label="Shortlist_sarah",
+            shared_labels={"shortlist__shared_popular": {999}},  # audience 999 — NOT this account
+            collections_known=True,
+        )
+
+        after = (written or {}).get("filterMovies", ("", "label!=shortlist__shared_popular"))[1]
+        assert "shortlist__shared_popular" in after

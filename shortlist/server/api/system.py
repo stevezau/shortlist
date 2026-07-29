@@ -465,15 +465,42 @@ class RestoreRequest(BaseModel):
 
 @router.post("/backups/restore", dependencies=[Depends(require_owner)])
 async def restore_backup_endpoint(body: RestoreRequest, request: Request):
-    """Restore from a named backup. The app will need to be restarted after."""
+    """Restore from a named backup. The app will need to be restarted after.
+
+    A restore is not a neutral rollback: the database is what decides WHO MAY SEE WHAT. Restoring a
+    copy taken before a shared row's audience was narrowed puts the wider audience back, and the
+    shared-exclude prune — the only un-hiding path Shortlist has — then removes the `label!=` excludes
+    that were hiding that row. That is correct for the config being restored, and it is exactly the
+    kind of change an operator does not expect from a button labelled "restore".
+
+    So it is stated, in the response and in the audit trail (rule 10), rather than left to be
+    discovered on someone's Home screen.
+    """
     from shortlist.server.services.backup import restore_backup
 
-    ok = await asyncio.get_running_loop().run_in_executor(
-        None, lambda: restore_backup(request.app.state.config_dir, body.name)
-    )
+    state = request.app.state
+    ok = await asyncio.get_running_loop().run_in_executor(None, lambda: restore_backup(state.config_dir, body.name))
     if not ok:
         raise HTTPException(404, "backup not found")
-    return {"restored": body.name, "message": "Restored. Restart the container to pick up the restored database."}
+    with state.sessions() as session:
+        session.add(
+            Event(
+                scope="backup.restore",
+                level="warn",
+                message={"backup": body.name, "at": datetime.now(UTC).isoformat()},
+            )
+        )
+        session.commit()
+    return {
+        "restored": body.name,
+        "message": "Restored. Restart the container to pick up the restored database.",
+        # Named separately from `message` so the UI can render it as a warning rather than a receipt.
+        "privacy_note": (
+            "This also restores who could see which rows at the time of the backup. If you have "
+            "narrowed a shared row's audience since then, those people can see it again after the "
+            "next run — check Rows before restarting."
+        ),
+    }
 
 
 @router.get("/jobs", dependencies=[Depends(require_owner)])

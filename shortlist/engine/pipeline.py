@@ -498,19 +498,35 @@ def _privacy_sync_phase(
     # read here: this privacy-critical enumeration must not depend on the in-process cache being a
     # complete mirror of the server — it reads the server itself, unconditionally.
     sync_failed = False
-    if not ctx.config.dry_run:
-        try:
-            ctx.plex.invalidate_collections_cache()
-            stored_labels.update(
-                {slug: row.label for slug, row in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
+    # Whether `stored_labels` is a COMPLETE picture of what is on the server. Only a successful fresh
+    # enumeration earns it, and only then may a dead shared-row exclude be pruned — "I could not read
+    # the collections" and "that collection is gone" are indistinguishable, and one of those readings
+    # un-hides a live row.
+    collections_known = False
+    # Read in a DRY RUN too. The enumeration is read-only, and skipping it made `--dry-run` report the
+    # merges while silently omitting the exclude REMOVALS a live run would make — a preview that is
+    # missing the only destructive half is worse than no preview (rule 8).
+    try:
+        ctx.plex.invalidate_collections_cache()
+        owned = ctx.plex.owned_collections(ctx.config.label_prefix)
+        stored_labels.update({slug: row.label for slug, row in owned.items()})
+        collections_known = True
+        if not owned:
+            # A successful read that returned NOTHING. Correct to carry on — nothing is promoted that
+            # shouldn't be, and the prune declines to act on it (privacy.py) — but silent otherwise,
+            # and it defers every legitimate un-hide by a cycle. "I added Sarah to the Popular row and
+            # she still can't see it" has to be answerable from the log.
+            logger.warning(
+                "the PMS reported NO shortlist collections — share-filter excludes will be merged but "
+                "none removed this pass, since an empty read cannot prove a row is gone"
             )
-        except Exception as e:
-            # We can no longer enumerate what exists, so we cannot promise the filters cover it.
-            # Sync with what we know, but promote nothing: an unpromoted row is not on anyone's
-            # Home screen, and the next run will put this right.
-            sync_failed = True
-            report.error = f"could not re-read collections before the privacy sync: {type(e).__name__}: {e}"
-            logger.exception("could not re-read collections before the privacy sync — nothing will be promoted")
+    except Exception as e:
+        # We can no longer enumerate what exists, so we cannot promise the filters cover it.
+        # Sync with what we know, but promote nothing: an unpromoted row is not on anyone's
+        # Home screen, and the next run will put this right.
+        sync_failed = True
+        report.error = f"could not re-read collections before the privacy sync: {type(e).__name__}: {e}"
+        logger.exception("could not re-read collections before the privacy sync — nothing will be promoted")
 
     # Sync EVERY account that shares this server — not the users we happened to process.
     #
@@ -563,6 +579,7 @@ def _privacy_sync_phase(
                 own_label=stored_labels.get(own_slug) if own_slug else None,
                 label_prefix=ctx.config.label_prefix,
                 shared_labels=shared_labels,
+                collections_known=collections_known,
                 # A disabled (opted-out) Shortlist account gets even public shared rows hidden, so
                 # disabling someone removes them from Shortlist entirely. Non-Shortlist accounts that
                 # merely share the server aren't in disabled_account_ids, so they still see public rows.
@@ -674,54 +691,11 @@ def _promote_phase(
                 why,
             )
             continue
-        # Which row produced each of this user's collections, so promotion honours that row's
-        # placement (Home / Library) and pin-to-top. Keyed by the exact title delivery wrote and
-        # recorded per library during this user's run (a {top_seed} title differs per library).
-        # `per_person_rows()`, NOT `config.rows`: with no rows configured it synthesizes the legacy
-        # default spec, which is what every other phase builds from (_build_indexes, delivery). Reading
-        # the raw list here meant an unmanaged-rows config had an EMPTY map, so every title lookup
-        # missed and every collection fell to the no-spec fallback — placement silently ignored.
-        effective_rows = ctx.config.per_person_rows()
-        spec_by_slug = {spec.slug: spec for spec in effective_rows}
-        placements = {
-            title: spec_by_slug[slug] for title, slug in user_report.placement_titles.items() if slug in spec_by_slug
-        }
-        # Fallback for rows that EXIST but got no picks this run (so they're absent from
-        # placement_titles): a STATIC-titled row's title is stable, so map it to its spec by that title
-        # — otherwise _promote_one would fall to the everywhere-visible default and yank a "Library
-        # only" row onto Home for this one run. Dynamic ({top_seed}) titles can't be predicted without
-        # picks, so those keep the safe hide-everywhere fallback. resolve_row_template is the shared
-        # source of truth for the template precedence delivery also uses — they must not drift.
-        marker = row_marker(user.plex_account_id)
-        for spec in effective_rows:
-            if spec.audience is not None and user.plex_account_id not in spec.audience:
-                continue
-            title_template = resolve_row_template(spec, user, ctx.config)
-            if "{top_seed}" not in title_template:
-                # A {library_name} title differs per library, so map one per library — across EVERY
-                # library of the row's media type, not just where it delivers now. `library_keys`
-                # says where the row goes today; its collections may still sit in a library it was
-                # narrowed away from, and since promotion now reaches those, an unmatched one would
-                # take the no-spec fallback EVERY run rather than never being touched. A synthesized
-                # title matching no collection is inert, and setdefault leaves the recorded
-                # per-library titles (placement_titles) winning.
-                for section in target_sections(ctx.plex.sections(), replace(spec, library_keys=[])):
-                    name = render_row_name(title_template, user, [], library_name=getattr(section, "title", "") or "")
-                    placements.setdefault(name + marker, spec)
-
         try:
-            # Every row the user has, in every library — they can have several rows (all sharing
-            # their label), and promoting only one would leave the others invisible to the one
-            # person meant to see them.
-            # EVERY library, not just the ones a row currently targets. `delivery_sections` is
-            # narrowed to targeted libraries, so a row whose `library_keys` was narrowed left its old
-            # collection stranded in the dropped library: never re-promoted (out of scope) and never
-            # demoted either, keeping whatever surfaces it last claimed indefinitely. The sweep and
-            # the removal paths already walk `plex.sections()` for exactly this reason.
-            for section in ctx.plex.sections():
-                for collection in ctx.plex.find_owned_collections(section, user.label):
-                    _promote_one(ctx, collection, placements.get(collection.title), user.user_type)
-                    promoted.add(int(collection.ratingKey))
+            # `into=promoted`, not `promoted |= ...`: a PMS failure part-way through this user must
+            # still leave behind the ratingKeys already promoted, or converge would see them as
+            # untouched and demote rows this run had just correctly set.
+            promote_user_rows(ctx, user, user_report.placement_titles, into=promoted)
         except Exception as e:
             user_report.status = "error"
             user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
@@ -743,6 +717,84 @@ def _promote_phase(
                 shared_report.error = (shared_report.error or "") + f" | promote: {type(e).__name__}: {e}"
             logger.exception("shared row '{}': promote failed", spec.slug)
 
+    return promoted
+
+
+def promote_user_rows(
+    ctx: EngineContext,
+    user: UserProfile,
+    placement_titles: dict[str, str] | None = None,
+    *,
+    into: set[int] | None = None,
+) -> set[int]:
+    """Put every collection under one user's label onto the surfaces its row asks for.
+
+    Split out of ``_promote_phase`` so that un-pausing someone can reuse it. A paused user's rows were
+    only DEMOTED (the collections and their labels survive, so every other account's exclude still
+    matches), which makes restoring them a re-promote rather than a rebuild — and the flags to set are
+    exactly the ones a run would have set.
+
+    ``placement_titles`` is the {delivered title -> row slug} map a run records for this user. Without
+    it — the restore path, where no run just happened — only the static-title fallback below matches,
+    and a ``{top_seed}``-titled row lands on ``_promote_one``'s no-spec branch, which shows it on its
+    own audience's Home. That is the right failure direction for a restore: the row was visible before
+    the pause and the operator has just asked for it back.
+
+    Returns the ratingKeys touched, and writes them into ``into`` as it goes when given one — so a
+    caller that catches a mid-loop PMS failure still knows which collections were already set. Raises
+    on a PMS failure; the caller owns how that is reported.
+    """
+    # Which row produced each of this user's collections, so promotion honours that row's placement
+    # (Home / Library) and pin-to-top. Keyed by the exact title delivery wrote and recorded per library
+    # during this user's run (a {top_seed} title differs per library).
+    # `per_person_rows()`, NOT `config.rows`: with no rows configured it synthesizes the legacy default
+    # spec, which is what every other phase builds from (_build_indexes, delivery). Reading the raw
+    # list here meant an unmanaged-rows config had an EMPTY map, so every title lookup missed and every
+    # collection fell to the no-spec fallback — placement silently ignored.
+    effective_rows = ctx.config.per_person_rows()
+    spec_by_slug = {spec.slug: spec for spec in effective_rows}
+    placements = {title: spec_by_slug[slug] for title, slug in (placement_titles or {}).items() if slug in spec_by_slug}
+    # Fallback for rows that EXIST but got no picks this run (so they're absent from placement_titles):
+    # a STATIC-titled row's title is stable, so map it to its spec by that title — otherwise
+    # _promote_one would fall to the everywhere-visible default and yank a "Library only" row onto Home
+    # for this one run. Dynamic ({top_seed}) titles can't be predicted without picks, so those keep the
+    # safe hide-everywhere fallback. resolve_row_template is the shared source of truth for the template
+    # precedence delivery also uses — they must not drift.
+    marker = row_marker(user.plex_account_id)
+    for spec in effective_rows:
+        if spec.audience is not None and user.plex_account_id not in spec.audience:
+            continue
+        title_template = resolve_row_template(spec, user, ctx.config)
+        if "{top_seed}" not in title_template:
+            # A {library_name} title differs per library, so map one per library — across EVERY library
+            # of the row's media type, not just where it delivers now. `library_keys` says where the row
+            # goes today; its collections may still sit in a library it was narrowed away from, and
+            # since promotion now reaches those, an unmatched one would take the no-spec fallback EVERY
+            # run rather than never being touched. A synthesized title matching no collection is inert,
+            # and setdefault leaves the recorded per-library titles (placement_titles) winning.
+            for section in target_sections(ctx.plex.sections(), replace(spec, library_keys=[])):
+                name = render_row_name(title_template, user, [], library_name=getattr(section, "title", "") or "")
+                placements.setdefault(name + marker, spec)
+
+    promoted = into if into is not None else set()
+    # Every row the user has, in every library — they can have several rows (all sharing their label),
+    # and promoting only one would leave the others invisible to the one person meant to see them.
+    # EVERY library, not just the ones a row currently targets: `delivery_sections` is narrowed to
+    # targeted libraries, so a row whose `library_keys` was narrowed left its old collection stranded in
+    # the dropped library — never re-promoted (out of scope) and never demoted either, keeping whatever
+    # surfaces it last claimed indefinitely. The sweep and the removal paths already walk
+    # `plex.sections()` for exactly this reason.
+    for section in ctx.plex.sections():
+        for collection in ctx.plex.find_owned_collections(section, user.label):
+            if ctx.config.dry_run:
+                # The dry-run guard lives HERE, not in the callers (plex-safety rule 8). `_promote_phase`
+                # has its own `continue` further up, so this was invisible until `user.restore` became a
+                # second caller — and `PlexClient.promote` has no dry-run branch of its own, so under
+                # SHORTLIST_DRY_RUN an un-pause previewed the hiding and performed the showing.
+                logger.info("[dry-run] {}: would promote for {}", collection.title, user.username)
+                continue
+            _promote_one(ctx, collection, placements.get(collection.title), user.user_type)
+            promoted.add(int(collection.ratingKey))
     return promoted
 
 

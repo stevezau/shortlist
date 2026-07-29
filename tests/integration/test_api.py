@@ -186,6 +186,39 @@ class TestUsersApi:
         assert r.json()["display_name"] == "Sarah B"
         assert r.json()["slug"] == target["slug"], "the label must not move when someone is renamed"
 
+    def test_a_nickname_change_retitles_the_collection_already_on_plex(self, client: TestClient, monkeypatch):
+        """`{user}` renders the display name, so renaming someone gives their collections a title no
+        future run will ever write. The next run then builds a SECOND one under the new name and the
+        old one lives on, labelled and promoted, with nothing able to address it.
+
+        The reconcile therefore renders the OLD name to find the collection and the NEW one to set —
+        rendering the new name on both sides would match nothing and silently do nothing."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.delivery import row_marker
+        from shortlist.engine.models import EngineConfig
+        from shortlist.server.settings_store import SettingsStore
+
+        target = next(u for u in client.get("/api/users").json() if u["username"] == "sarah")
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("row.name_template", "{user}'s Picks")
+            session.commit()
+
+        renames: list[tuple[str, str]] = []
+        marker = row_marker(target["plex_account_id"])
+        col = MagicMock(title="sarah's Picks" + marker)
+        col.editTitle.side_effect = lambda new: renames.append((col.title, new))
+        plex = MagicMock()
+        plex.sections.return_value = [SimpleNamespace(title="Movies")]
+        plex.find_owned_collections.side_effect = lambda s, label: [col] if label == "shortlist_sarah" else []
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig())
+        monkeypatch.setattr(client.app.state.run_service, "build_context", lambda **kw: ctx)
+
+        assert client.patch(f"/api/users/{target['id']}", json={"nickname": "Sarah B"}).status_code == 200
+
+        assert renames == [("sarah's Picks" + marker, "Sarah B's Picks" + marker)]
+
     def test_clearing_a_nickname_falls_back_to_tautullis_name_then_plex(self, client: TestClient):
         from shortlist.server.db.models import User
 
@@ -390,8 +423,9 @@ class TestUserSync:
 
         calls: list = []
 
-        async def spy(state):
-            calls.append(state)
+        async def spy(state, was_called):
+            if was_called:  # a no-op call with nothing renamed is not Plex work
+                calls.append(was_called)
 
         monkeypatch.setattr(users_api, "_rename_after_nickname", spy)
         monkeypatch.setattr(
@@ -407,6 +441,10 @@ class TestUserSync:
 
         assert self._users(client)["sarah"]["display_name"] == "Sazza"
         assert len(calls) == 1, "a changed display name must reconcile the rows already on Plex"
+        # The PREVIOUS name goes with it. It is what their collections are still titled with, and
+        # rendering `{user}` from the NEW name on both sides matches nothing — leaving the stale
+        # collection in place for the next run to duplicate.
+        assert calls[0]["sarah"] == "sarah"
 
     def test_sync_streams_a_fetch_phase_then_a_save_bar_and_a_finish(self, client: TestClient, plextv, monkeypatch):
         """The Tools page bar reads these events: one indeterminate `fetch`, a determinate `save`
@@ -439,8 +477,9 @@ class TestUserSync:
 
         calls: list = []
 
-        async def spy(state):
-            calls.append(state)
+        async def spy(state, was_called):
+            if was_called:  # a no-op call with nothing renamed is not Plex work
+                calls.append(was_called)
 
         monkeypatch.setattr(users_api, "_rename_after_nickname", spy)
 
@@ -1635,23 +1674,26 @@ class TestCollectionsSeed:
         the collections already on Plex in place — the same reconcile a nickname change fires."""
         from shortlist.server.services import collection_reconcile as rec
 
-        calls: list[tuple[str, str, str]] = []
+        calls: list[tuple[str, str, str, str]] = []
 
-        async def fake_rename(state, *, slug, new_template, scope):
-            calls.append((slug, new_template, scope))
+        async def fake_rename(state, *, slug, new_template, old_template, scope):
+            calls.append((slug, new_template, old_template, scope))
             return [], None
 
-        monkeypatch.setattr(rec, "run_row_rename", fake_rename)
+        monkeypatch.setattr(rec, "run_row_rename_from_plex", fake_rename)
 
         picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        before = client.get("/api/settings").json()["row.name_template"]
         r = client.patch(f"/api/collections/{picked['id']}", json={"name": "✨ {library_name} Handpicked"})
         assert r.status_code == 200
         # The edit is surfaced as the row's name (read back from the global template) …
         assert r.json()["name"] == "✨ {library_name} Handpicked"
         # … persisted to the shared setting …
         assert client.get("/api/settings").json()["row.name_template"] == "✨ {library_name} Handpicked"
-        # … and reconciled onto Plex for the default slug.
-        assert calls == [("picked", "✨ {library_name} Handpicked", "collection.rename")]
+        # … and reconciled onto Plex for the default slug. The PREVIOUS template goes with it: it is
+        # what the collections on the server are titled with, and therefore the only way to tell which
+        # of a multi-row user's collections belongs to this row.
+        assert calls == [("picked", "✨ {library_name} Handpicked", before, "collection.rename")]
 
     def test_saving_the_default_row_with_an_unchanged_name_does_no_plex_work(self, client: TestClient, monkeypatch):
         """A save that doesn't move the name (e.g. an enable toggle carrying the current name) must not
@@ -2077,6 +2119,61 @@ class TestCollectionsApi:
         assert set(r.json()["removed"]) == {"Gems"}  # marker stripped; both users' collections
         assert len(deleted) == 2  # one per user WITH a breakdown entry for this row
 
+    def test_a_per_person_row_is_removed_with_no_run_history_at_all(self, client: TestClient, monkeypatch):
+        """Addressing a collection by "the title the LATEST completed run recorded" is why deleting a
+        row could remove nothing and audit it as "removed 0" — and for a deleted row there is no second
+        chance. Rows have their own crons, so the latest run is routinely scoped to a different row;
+        `DELETE /api/runs` empties the record outright.
+
+        Rendering the row's own template covers it: computed from config, so it holds whatever history
+        says. NO run is set up here, deliberately."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import User
+
+        created = client.post("/api/collections", json={"name": "Hidden Gems"})
+        cid = created.json()["id"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+
+        deleted = self._fake_plex_ctx(
+            monkeypatch, client, collections=[("Hidden Gems" + row_marker(acct), f"shortlist_{uslug}")]
+        )
+
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        assert r.status_code == 200
+        assert r.json()["removed"] == ["Hidden Gems"]
+        assert len(deleted) == 1
+
+    def test_removal_leaves_another_row_of_the_same_user_alone(self, client: TestClient, monkeypatch):
+        """All of one user's rows share ONE label, so the title is the only thing separating them.
+        Rendering a template that matched loosely would delete somebody's other row — the failure that
+        matters far more than missing one."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import User
+
+        keep = client.post("/api/collections", json={"name": "Keep Me"})
+        drop = client.post("/api/collections", json={"name": "Drop Me"})
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+
+        deleted = self._fake_plex_ctx(
+            monkeypatch,
+            client,
+            collections=[
+                ("Keep Me" + row_marker(acct), f"shortlist_{uslug}"),
+                ("Drop Me" + row_marker(acct), f"shortlist_{uslug}"),
+            ],
+        )
+
+        r = client.post(f"/api/collections/{drop.json()['id']}/cleanup", json={"dry_run": False})
+
+        assert r.json()["removed"] == ["Drop Me"]
+        assert deleted == ["Drop Me" + row_marker(acct)]
+        assert keep.status_code == 201
+
     def test_deleting_a_row_also_removes_its_plex_collection(self, client: TestClient, monkeypatch):
         """Delete now cleans Plex first (while the slug still exists), THEN drops the DB row.
 
@@ -2255,28 +2352,19 @@ class TestCollectionsApi:
 
     def test_renaming_a_row_retitles_each_users_collection_in_place(self, client: TestClient, monkeypatch):
         """Rename → every user who has the row gets their collection retitled in place (multi-row users
-        would otherwise keep the old-named copy). New human title, same per-account marker."""
+        would otherwise keep the old-named copy). New human title, same per-account marker.
+
+        NO run history is set up, deliberately. The reconcile enumerates collections from PLEX by label
+        and identifies this row's by what the OLD template renders to. It used to read the latest
+        completed run's breakdown instead, which meant a row renamed the morning after a DIFFERENT row
+        ran silently renamed nothing at all."""
         from shortlist.engine.delivery import row_marker
-        from shortlist.server.db.models import Run, RunUser, User
+        from shortlist.server.db.models import User
 
         created = client.post("/api/collections", json={"name": "Old Gems"})
-        cid, slug = created.json()["id"], created.json()["slug"]
+        cid = created.json()["id"]
         with client.app.state.sessions() as session:
-            users = session.query(User).order_by(User.id).all()[:2]
-            info = [(u.slug, u.plex_account_id) for u in users]
-            run = Run(trigger="manual", status="ok")
-            session.add(run)
-            session.flush()
-            for u in users:
-                session.add(
-                    RunUser(
-                        run_id=run.id,
-                        user_id=u.id,
-                        status="ok",
-                        breakdown=[{"row_slug": slug, "row_title": "Old Gems"}],
-                    )
-                )
-            session.commit()
+            info = [(u.slug, u.plex_account_id) for u in session.query(User).order_by(User.id).all()[:2]]
 
         renames = self._fake_rename_ctx(
             monkeypatch,
@@ -2300,29 +2388,41 @@ class TestCollectionsApi:
             assert by_user[uslug]["old"] == "Old Gems" and by_user[uslug]["new"] == "Buried Treasure"
             assert by_user[uslug]["libraries"] == ["Movies"]
 
-    def test_renaming_to_a_library_name_template_retitles_per_library(self, client: TestClient, monkeypatch):
-        """A {library_name} rename renders in the SAME library the old title was delivered in — the
-        library is read from the run breakdown, so 'Movies' fills the placeholder with that name."""
+    def test_a_rename_still_works_after_the_run_history_is_cleared(self, client: TestClient, monkeypatch):
+        """`DELETE /api/runs` says it "changes nothing on Plex" — and that was true only because it
+        silently disarmed every reconcile. Addressing a collection by "the title the latest completed
+        run recorded" meant clearing history left nothing able to find it, and so did the far more
+        common case: rows have their own crons, so the latest run is routinely scoped to ONE row."""
         from shortlist.engine.delivery import row_marker
-        from shortlist.server.db.models import Run, RunUser, User
+        from shortlist.server.db.models import User
 
         created = client.post("/api/collections", json={"name": "Old Gems"})
-        cid, slug = created.json()["id"], created.json()["slug"]
+        cid = created.json()["id"]
         with client.app.state.sessions() as session:
             user = session.query(User).order_by(User.id).first()
             uslug, acct = user.slug, user.plex_account_id
-            run = Run(trigger="manual", status="ok")
-            session.add(run)
-            session.flush()
-            session.add(
-                RunUser(
-                    run_id=run.id,
-                    user_id=user.id,
-                    status="ok",
-                    breakdown=[{"row_slug": slug, "row_title": "Old Gems", "library_title": "Movies"}],
-                )
-            )
-            session.commit()
+        assert client.delete("/api/runs").status_code in (200, 204)
+
+        renames = self._fake_rename_ctx(
+            monkeypatch, client, titles_by_label={f"shortlist_{uslug}": "Old Gems" + row_marker(acct)}
+        )
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Buried Treasure"})
+
+        assert r.status_code == 200
+        assert renames == [("Old Gems" + row_marker(acct), "Buried Treasure" + row_marker(acct))]
+
+    def test_renaming_to_a_library_name_template_retitles_per_library(self, client: TestClient, monkeypatch):
+        """A {library_name} rename renders per library, in the SAME library the collection is in — the
+        name comes from the Plex section being walked, so the Movies collection gets the Movies title
+        and not some other library's."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import User
+
+        created = client.post("/api/collections", json={"name": "Old Gems"})
+        cid = created.json()["id"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
 
         renames = self._fake_rename_ctx(
             monkeypatch, client, titles_by_label={f"shortlist_{uslug}": "Old Gems" + row_marker(acct)}
@@ -2337,22 +2437,13 @@ class TestCollectionsApi:
         """A name_template-only change (name untouched) is a rename too — the effective title is the
         template, so changing it must retitle the collection in place."""
         from shortlist.engine.delivery import row_marker
-        from shortlist.server.db.models import Run, RunUser, User
+        from shortlist.server.db.models import User
 
         created = client.post("/api/collections", json={"name": "Gems"})
-        cid, slug = created.json()["id"], created.json()["slug"]
+        cid = created.json()["id"]
         with client.app.state.sessions() as session:
             user = session.query(User).order_by(User.id).first()
             uslug, acct = user.slug, user.plex_account_id
-            run = Run(trigger="manual", status="ok")
-            session.add(run)
-            session.flush()
-            session.add(
-                RunUser(
-                    run_id=run.id, user_id=user.id, status="ok", breakdown=[{"row_slug": slug, "row_title": "Gems"}]
-                )
-            )
-            session.commit()
 
         renames = self._fake_rename_ctx(
             monkeypatch, client, titles_by_label={f"shortlist_{uslug}": "Gems" + row_marker(acct)}
@@ -2364,24 +2455,19 @@ class TestCollectionsApi:
 
     def test_rename_reconcile_survives_a_plex_error(self, client: TestClient, monkeypatch):
         """A PMS failure mid-rename is best-effort: the PATCH still returns 200, and the failure is
-        audited with the token redacted (rules 5 + 9) — never surfaced raw or fatal."""
+        audited with the token redacted (rules 5 + 9) — never surfaced raw or fatal.
+
+        The failure is per-collection, so it must not stop the walk NOR vanish from the audit: a
+        swallowed error records "renamed 0 collections", which reads exactly like "nothing needed
+        renaming" — the one distinction an operator has to be able to make."""
         from shortlist.engine.delivery import row_marker
-        from shortlist.server.db.models import Event, Run, RunUser, User
+        from shortlist.server.db.models import Event, User
 
         created = client.post("/api/collections", json={"name": "Old Gems"})
-        cid, slug = created.json()["id"], created.json()["slug"]
+        cid = created.json()["id"]
         with client.app.state.sessions() as session:
             user = session.query(User).order_by(User.id).first()
             uslug, acct = user.slug, user.plex_account_id
-            run = Run(trigger="manual", status="ok")
-            session.add(run)
-            session.flush()
-            session.add(
-                RunUser(
-                    run_id=run.id, user_id=user.id, status="ok", breakdown=[{"row_slug": slug, "row_title": "Old Gems"}]
-                )
-            )
-            session.commit()
 
         self._fake_rename_ctx(
             monkeypatch, client, titles_by_label={f"shortlist_{uslug}": "Old Gems" + row_marker(acct)}, fail=True
@@ -2428,7 +2514,7 @@ class TestCollectionsApi:
         Renaming the global template must retitle a user on the default, but NOT one who set a personal
         name — the reconcile re-renders the override user from THEIR template, sees no change, skips them."""
         from shortlist.engine.delivery import row_marker
-        from shortlist.server.db.models import Run, RunUser, User
+        from shortlist.server.db.models import User
 
         # Two users on the default row: one on the global template, one with a personal name override.
         with client.app.state.sessions() as session:
@@ -2436,33 +2522,15 @@ class TestCollectionsApi:
             custom.prefs = {"row_name_tpl": "🌟 My Own Picks"}
             plain_info = (plain.slug, plain.plex_account_id)
             custom_info = (custom.slug, custom.plex_account_id)
-            run = Run(trigger="manual", status="ok")
-            session.add(run)
-            session.flush()
-            # Each user's LAST delivered title reflects the template that applied to THEM.
-            session.add(
-                RunUser(
-                    run_id=run.id,
-                    user_id=plain.id,
-                    status="ok",
-                    breakdown=[{"row_slug": "picked", "row_title": "✨ Picked for You"}],
-                )
-            )
-            session.add(
-                RunUser(
-                    run_id=run.id,
-                    user_id=custom.id,
-                    status="ok",
-                    breakdown=[{"row_slug": "picked", "row_title": "🌟 My Own Picks"}],
-                )
-            )
             session.commit()
 
+        # Each user's collection carries the title THEIR template renders to in the Movies library —
+        # which is how the reconcile identifies them, with no run history involved.
         renames = self._fake_rename_ctx(
             monkeypatch,
             client,
             titles_by_label={
-                f"shortlist_{plain_info[0]}": "✨ Picked for You" + row_marker(plain_info[1]),
+                f"shortlist_{plain_info[0]}": "✨ Movies Picked for You" + row_marker(plain_info[1]),
                 f"shortlist_{custom_info[0]}": "🌟 My Own Picks" + row_marker(custom_info[1]),
             },
         )
@@ -2472,7 +2540,7 @@ class TestCollectionsApi:
         assert r.status_code == 200
         # Only the plain user is retitled; the override user's collection is left exactly as it was.
         plain_marker = row_marker(plain_info[1])
-        assert renames == [("✨ Picked for You" + plain_marker, "✨ Handpicked" + plain_marker)]
+        assert renames == [("✨ Movies Picked for You" + plain_marker, "✨ Handpicked" + plain_marker)]
 
     def test_changing_a_rows_build_removes_the_old_builds_collections(self, client: TestClient, monkeypatch):
         """Flipping per-person → shared removes the old per-person per-user collections, so both builds
@@ -2747,6 +2815,15 @@ class TestJobsApi:
             client.post("/api/system/jobs", json={"kind": "user.cleanup", "payload": {"slug": "sarah"}}).status_code
             == 422
         )
+        # `user.restore` is on the same list for the opposite reason: it is the one job that makes a
+        # row MORE visible. Reachable from a generic button, it would let someone be promoted onto
+        # Plex outside the un-pause that is supposed to be the only way in.
+        assert "user.restore" in jobs._HANDLERS and "user.restore" not in jobs.KINDS
+        assert (
+            client.post("/api/system/jobs", json={"kind": "user.restore", "payload": {"slug": "sarah"}}).status_code
+            == 422
+        )
+        assert "row.reconcile" in jobs._HANDLERS and "row.reconcile" not in jobs.KINDS
 
     def test_a_failing_job_is_reported_rather_than_500ing(self, client: TestClient, monkeypatch):
         """A Plex outage during a manual job must surface as a failed job, not an API error."""
@@ -2819,3 +2896,866 @@ class TestFailedJobNotifications:
         second = self._fail_a_job(client, kind="privacy.sync")
         after = client.get("/api/notifications").json()["notifications"]
         assert next(n["id"] for n in after if n["id"].startswith("failed-jobs-")) == f"failed-jobs-{second}"
+
+
+class TestFilterWritesAreQueuedWhenOwed:
+    """Every mutation that changes WHO MAY SEE WHAT must queue the share-filter pass that enforces it.
+
+    These are the "config says one thing, Plex still says another" bugs. They share a shape: the
+    handler updates the database, returns 200, and nothing ever writes the `label!=` excludes that
+    make the change real — so the person who was just removed keeps seeing the row until the next
+    nightly run, and an operator watching the UI has no way to tell.
+
+    Asserted at the JOB boundary rather than by spying on a helper: the whole mechanism is the
+    enqueue, so mocking it out would let the enqueue be deleted with the test still passing.
+    """
+
+    @pytest.fixture
+    def plextv(self, client: TestClient):
+        """The plex.tv roster at the HTTP boundary — the same recorded fixture TestUserSync replays,
+        so the departure sweep is tested against a real response shape (rule 11)."""
+        from shortlist.server.settings_store import SettingsStore
+
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("plex.token", "owner-token")
+            session.commit()
+        users_xml = (Path(__file__).parent.parent / "fixtures" / "plextv_users.xml.txt").read_text()
+        with respx.mock:
+            respx.get("https://plex.tv/api/users").mock(return_value=httpx.Response(200, text=users_xml))
+            respx.get("https://plex.tv/api/v2/user").mock(return_value=httpx.Response(200, json=dict(OWNER_JSON)))
+            yield
+
+    def _kinds(self, client: TestClient) -> list[str]:
+        """Queued kinds, OLDEST FIRST. Order is load-bearing on the restore path, so it is asserted."""
+        return [j["kind"] for j in reversed(client.get("/api/system/jobs").json())]
+
+    def _sarah_id(self, client: TestClient) -> int:
+        return next(u["id"] for u in client.get("/api/users").json() if u["slug"] == "sarah")
+
+    def test_narrowing_a_shared_rows_audience_queues_the_filter_pass(self, client: TestClient):
+        """A shared row is ONE collection for everyone, so removing somebody from its audience cannot
+        be done by deleting anything — the only mechanism that hides it from one account is a
+        `label!=` exclude on that account's share.
+
+        This gap was gated on `build == "per_person"`, which is never true for a shared row, so
+        narrowing the audience changed the config and NOTHING else. The dropped accounts kept the row
+        on their Home until the next nightly run."""
+        created = client.post(
+            "/api/collections",
+            json={"name": "Popular", "build": "shared", "audience": "subset", "audience_user_ids": [1, 2]},
+        )
+        assert created.status_code == 201
+        cid = created.json()["id"]
+
+        r = client.patch(
+            f"/api/collections/{cid}", json={"name": "Popular", "audience": "subset", "audience_user_ids": [1]}
+        )
+        assert r.status_code == 200
+
+        assert "privacy.sync" in self._kinds(client)
+
+    def test_widening_a_shared_rows_audience_queues_it_too(self, client: TestClient):
+        """The other direction is equally stale: someone just ADDED to the audience still carries the
+        exclude that was hiding the row from them, and pruning it is a filter write like any other."""
+        created = client.post(
+            "/api/collections",
+            json={"name": "Popular", "build": "shared", "audience": "subset", "audience_user_ids": [1]},
+        )
+        cid = created.json()["id"]
+
+        r = client.patch(
+            f"/api/collections/{cid}", json={"name": "Popular", "audience": "subset", "audience_user_ids": [1, 2]}
+        )
+        assert r.status_code == 200
+
+        assert "privacy.sync" in self._kinds(client)
+
+    def test_an_unchanged_shared_audience_queues_nothing(self, client: TestClient):
+        """A filter pass is throttled plex.tv traffic across every account on the server. Re-sending
+        the same audience — which the row editor does on every save — must not trigger one."""
+        created = client.post(
+            "/api/collections",
+            json={"name": "Popular", "build": "shared", "audience": "subset", "audience_user_ids": [1]},
+        )
+        cid = created.json()["id"]
+
+        r = client.patch(
+            f"/api/collections/{cid}",
+            json={"name": "Popular", "audience": "subset", "audience_user_ids": [1], "size": 15},
+        )
+        assert r.status_code == 200
+
+        assert self._kinds(client) == []
+
+    def test_disabling_someone_writes_their_filters_as_well_as_removing_their_rows(self, client: TestClient):
+        """Removing the collections is only half of "disabled". The other half is their OWN share
+        filter: with `privacy.hide_shared_from_disabled`, an opted-out account must stop seeing even
+        the public shared rows, and only a filter write does that.
+
+        Order matters and is asserted: the cleanup deletes the collections FIRST, so the privacy pass
+        computes each account's excludes from what is actually left on the server."""
+        uid = self._sarah_id(client)
+
+        client.patch(f"/api/users/{uid}", json={"enabled": False})
+
+        assert self._kinds(client) == ["user.cleanup", "privacy.sync"]
+
+    def test_disabling_everyone_queues_one_filter_pass_not_one_per_person(self, client: TestClient):
+        """The pass rewrites EVERY account's filter, so N of them is N times the plex.tv traffic for
+        an identical result. One cleanup per user, one pass at the end."""
+        client.post("/api/users/set-enabled", json={"enabled": True})
+        before = len(self._kinds(client))  # turning everyone ON queues a pass of its own
+
+        client.post("/api/users/set-enabled", json={"enabled": False})
+
+        assert self._kinds(client)[before:] == ["user.cleanup", "user.cleanup", "privacy.sync"]
+
+    def test_re_enabling_someone_gives_back_the_shared_rows_that_disabling_hid(self, client: TestClient):
+        """Disabling now writes excludes that hide every shared row from that account. Without the
+        mirror on the way back, turning them on again left those excludes in place until the next run
+        — so "off then on" was not a round trip."""
+        uid = self._sarah_id(client)
+        client.patch(f"/api/users/{uid}", json={"enabled": False})
+
+        client.patch(f"/api/users/{uid}", json={"enabled": True})
+
+        assert self._kinds(client)[-1] == "privacy.sync"
+
+    def test_un_pausing_queues_one_job_that_owns_its_own_ordering(self, client: TestClient):
+        """Restoring an un-paused user is the one maintenance path that makes a row MORE visible, so
+        plex-safety rule 1's ordering applies outside a run too: excludes first, promotion second.
+
+        It is ONE job because two would not have been ordered. `_claim` steps over a job whose retry
+        backoff has not elapsed and takes the next one — so a `privacy.sync` that failed against a 503
+        plex.tv would be skipped and the promotion behind it would land anyway, against a healthy PMS,
+        with the excludes unmerged. `user.restore` therefore does the merge itself; the ordering test
+        that matters lives in tests/unit/test_jobs.py."""
+        uid = self._sarah_id(client)
+        client.patch(f"/api/users/{uid}", json={"prefs": {"paused": True}})
+
+        client.patch(f"/api/users/{uid}", json={"prefs": {"paused": False}})
+
+        assert self._kinds(client) == ["user.hide", "user.restore"]
+
+    def test_someone_who_leaves_the_share_is_turned_off_and_cleaned_up(self, client: TestClient, plextv):
+        """A user who disappears from the plex.tv roster has lost access to the server, but nothing
+        noticed: they stayed enabled, so every run tried their dead share token, and their collection
+        sat promoted to Shared Home with no user left to see it.
+
+        Turning them off reuses the whole tested disable path and keeps their history, so the owner
+        can switch them back on if they return."""
+        with client.app.state.sessions() as session:
+            session.add(User(plex_account_id=999999, username="gone", slug="gone", enabled=True))
+            session.commit()
+
+        client.post("/api/users/sync")
+
+        assert next(u for u in client.get("/api/users").json() if u["slug"] == "gone")["enabled"] is False
+        assert "user.cleanup" in self._kinds(client)
+
+    def test_an_empty_roster_disables_nobody(self, client: TestClient):
+        """ "plex.tv returned nothing" is indistinguishable from "nobody shares this server any more",
+        and one of those readings switches off every user and queues deletion of all their collections.
+
+        This runs UNATTENDED on the daily user sync, and the disable commits before the cleanup jobs
+        even run — so a Plex outage would not save anyone; every account would have to be turned back
+        on by hand. An incomplete picture must therefore do nothing, exactly as converge gates orphan
+        deletion on a non-empty user list."""
+        from shortlist.server.settings_store import SettingsStore
+
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("plex.token", "owner-token")
+            session.commit()
+        with respx.mock:
+            respx.get("https://plex.tv/api/users").mock(
+                return_value=httpx.Response(200, text='<MediaContainer size="0" />')
+            )
+            respx.get("https://plex.tv/api/v2/user").mock(return_value=httpx.Response(200, json=dict(OWNER_JSON)))
+
+            client.post("/api/users/sync")
+
+        assert [u["enabled"] for u in client.get("/api/users").json() if u["slug"] == "sarah"] == [True]
+        assert "user.cleanup" not in self._kinds(client)
+
+    def test_a_roster_missing_half_the_server_disables_nobody(self, client: TestClient):
+        """A TRUNCATED read is as indistinguishable from a mass departure as an empty one, and just as
+        destructive: every one of those people is switched off and their collections queued for
+        deletion. One person leaving is routine and still acts immediately; half of them at once is not
+        a thing that happens, so it is refused and reported instead."""
+        from shortlist.server.db.models import Event
+        from shortlist.server.settings_store import SettingsStore
+
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("plex.token", "owner-token")
+            session.add(User(plex_account_id=555000300, username="ana", slug="ana", enabled=True))
+            session.query(User).filter_by(slug="mike").update({"enabled": True})
+            session.commit()
+        # The roster names only sarah — so mike and ana (2 of 3 enabled) would be departed.
+        one_user = '<MediaContainer size="1"><User id="555000100" title="sarah" username="sarah"/></MediaContainer>'
+        with respx.mock:
+            respx.get("https://plex.tv/api/users").mock(return_value=httpx.Response(200, text=one_user))
+            respx.get("https://plex.tv/api/v2/user").mock(return_value=httpx.Response(200, json=dict(OWNER_JSON)))
+
+            client.post("/api/users/sync")
+
+        assert {u["slug"] for u in client.get("/api/users").json() if u["enabled"]} >= {"mike", "ana"}
+        assert "user.cleanup" not in self._kinds(client)
+        with client.app.state.sessions() as session:
+            assert session.query(Event).filter_by(scope="user.departed.refused").count() == 1
+
+    def test_one_person_leaving_the_share_still_acts_immediately(self, client: TestClient):
+        """The guard must not swallow the case it exists to serve. One departure out of three is a
+        person being removed from the share, not a bad read."""
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("plex.token", "owner-token")
+            session.add(User(plex_account_id=555000300, username="ana", slug="ana", enabled=True))
+            session.query(User).filter_by(slug="mike").update({"enabled": True})
+            session.commit()
+        two_of_three = (
+            '<MediaContainer size="2">'
+            '<User id="555000100" title="sarah" username="sarah"/>'
+            '<User id="555000200" title="mike" username="mike"/>'
+            "</MediaContainer>"
+        )
+        with respx.mock:
+            respx.get("https://plex.tv/api/users").mock(return_value=httpx.Response(200, text=two_of_three))
+            respx.get("https://plex.tv/api/v2/user").mock(return_value=httpx.Response(200, json=dict(OWNER_JSON)))
+
+            client.post("/api/users/sync")
+
+        assert next(u for u in client.get("/api/users").json() if u["slug"] == "ana")["enabled"] is False
+        assert "user.cleanup" in self._kinds(client)
+
+    def test_someone_still_on_the_share_is_left_enabled(self, client: TestClient, plextv):
+        """The departure sweep reads the roster, so a normal sync must leave everybody alone — mass
+        auto-disabling on a transient plex.tv shape change would be far worse than the bug it fixes."""
+        client.patch(f"/api/users/{self._sarah_id(client)}", json={"enabled": True})
+
+        client.post("/api/users/sync")
+
+        assert next(u for u in client.get("/api/users").json() if u["slug"] == "sarah")["enabled"] is True
+
+
+class TestSettingsThatDoRealWork:
+    """Two settings change what is on somebody's Plex server, and saving them used to change only the
+    database: the toggle flipped, the page said "saved", and nothing on the server moved until the
+    next nightly run — or, for the row name, ever.
+    """
+
+    def test_flipping_the_hide_shared_from_disabled_toggle_queues_the_filter_pass(self, client: TestClient):
+        """This toggle decides whether an opted-out account still sees the public shared rows, which is
+        purely a `label!=` exclude on their share. Only a filter write makes it true — in BOTH
+        directions: turning it off owes those accounts the REMOVAL of an exclude, which is just as
+        invisible until something writes."""
+        client.put("/api/settings", json={"values": {"privacy.hide_shared_from_disabled": False}})
+
+        assert [j["kind"] for j in client.get("/api/system/jobs").json()] == ["privacy.sync"]
+
+    def test_saving_the_same_value_queues_nothing(self, client: TestClient):
+        """A settings save sends the whole form, so every unrelated edit would otherwise trigger a
+        server-wide pass over throttled plex.tv."""
+        client.put("/api/settings", json={"values": {"privacy.hide_shared_from_disabled": False}})
+        before = len(client.get("/api/system/jobs").json())
+
+        client.put("/api/settings", json={"values": {"privacy.hide_shared_from_disabled": False, "row.size": 20}})
+
+        assert len(client.get("/api/system/jobs").json()) == before
+
+    def test_renaming_the_default_row_from_settings_retitles_the_collections(self, client: TestClient, monkeypatch):
+        """The default row's title IS `row.name_template`. The Rows page reconciled a rename; this door
+        did not — so the next run built a SECOND collection under the new name and left the old one
+        labelled and promoted for ever, with nothing able to address a title no run would write again."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.delivery import row_marker
+        from shortlist.engine.models import EngineConfig
+        from shortlist.server.db.models import User
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+
+        renames: list[tuple[str, str]] = []
+        col = MagicMock(title="✨ Movies Picked for You" + row_marker(acct))
+        col.editTitle.side_effect = lambda new: renames.append((col.title, new))
+        plex = MagicMock()
+        plex.sections.return_value = [SimpleNamespace(title="Movies")]
+        plex.find_owned_collections.side_effect = lambda s, label: [col] if label == f"shortlist_{uslug}" else []
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig())
+        monkeypatch.setattr(client.app.state.run_service, "build_context", lambda **kw: ctx)
+
+        r = client.put("/api/settings", json={"values": {"row.name_template": "🔥 {library_name} Handpicked"}})
+        assert r.status_code == 200
+
+        marker = row_marker(acct)
+        assert renames == [("✨ Movies Picked for You" + marker, "🔥 Movies Handpicked" + marker)]
+
+
+class TestRowEditsReachPlexDurably:
+    """Editing a row is a Plex write, not just a config change — and it has to survive Plex being down.
+
+    Every one of these used to be a bare `run_in_executor`: no retry, no record, and no check that a
+    run wasn't writing to the same server at that moment. A Plex outage at the instant of the edit lost
+    the work permanently, and nothing revisits a deleted or switched-off row.
+    """
+
+    def _fake_plex(self, monkeypatch, client, *, collections, explode=False):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.models import EngineConfig
+
+        deleted: list[str] = []
+        plex = MagicMock()
+        plex.sections.return_value = [SimpleNamespace(title="Movies")]
+        plex.find_owned_collections.side_effect = lambda s, label: [
+            SimpleNamespace(title=title) for (title, lbl) in collections if lbl == label
+        ]
+        plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append(c.title)
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig())
+
+        def build(**kw):
+            if explode:
+                raise RuntimeError("Plex is down")
+            return ctx
+
+        monkeypatch.setattr(client.app.state.run_service, "build_context", build)
+        return deleted
+
+    def _jobs(self, client: TestClient) -> list[dict]:
+        return client.get("/api/system/jobs").json()
+
+    def test_switching_a_row_off_takes_its_collections_down(self, client: TestClient, monkeypatch):
+        """Nothing used to fire here. The next run removes a disabled row only for the users it
+        PROCESSES, so anyone paused, disabled or restricted kept it indefinitely — and a row whose
+        schedule is blank has no next run at all."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import User
+
+        created = client.post("/api/collections", json={"name": "Hidden Gems"})
+        cid = created.json()["id"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+        deleted = self._fake_plex(
+            monkeypatch, client, collections=[("Hidden Gems" + row_marker(acct), f"shortlist_{uslug}")]
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Hidden Gems", "enabled": False})
+
+        assert r.status_code == 200
+        assert deleted == ["Hidden Gems" + row_marker(acct)]
+
+    def test_switching_a_row_back_on_removes_nothing(self, client: TestClient, monkeypatch):
+        """The reverse must not fire — it would delete the row it is meant to bring back."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import User
+
+        created = client.post("/api/collections", json={"name": "Hidden Gems", "enabled": False})
+        cid = created.json()["id"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+        deleted = self._fake_plex(
+            monkeypatch, client, collections=[("Hidden Gems" + row_marker(acct), f"shortlist_{uslug}")]
+        )
+
+        client.patch(f"/api/collections/{cid}", json={"name": "Hidden Gems", "enabled": True})
+
+        assert deleted == []
+
+    def test_a_row_edited_twice_off_does_not_re_queue_the_removal(self, client: TestClient, monkeypatch):
+        """A row that is already off has nothing to take down, and the row editor re-sends every field
+        on each save."""
+        created = client.post("/api/collections", json={"name": "Hidden Gems", "enabled": False})
+        cid = created.json()["id"]
+        self._fake_plex(monkeypatch, client, collections=[])
+
+        client.patch(f"/api/collections/{cid}", json={"name": "Hidden Gems", "enabled": False})
+
+        assert [j["kind"] for j in self._jobs(client)] == []
+
+    def test_a_plex_outage_during_a_delete_leaves_a_retryable_job(self, client: TestClient, monkeypatch):
+        """The whole reason these became jobs. Before, this work was simply lost: nothing revisits a
+        deleted row, so its collections stayed on the server for ever."""
+        created = client.post("/api/collections", json={"name": "Hidden Gems"})
+        cid = created.json()["id"]
+        self._fake_plex(monkeypatch, client, collections=[], explode=True)
+
+        assert client.delete(f"/api/collections/{cid}").status_code == 204
+
+        job = next(j for j in self._jobs(client) if j["kind"] == "row.reconcile")
+        assert job["status"] == "queued", "still queued means the worker will retry it"
+        assert job["attempts"] == 1 and "Plex is down" in (job["error"] or "")
+
+    def test_a_deletes_reconcile_can_still_find_the_row_after_the_row_is_gone(self, client: TestClient, monkeypatch):
+        """A retry runs after the DB row has been deleted, so the title its collections were built under
+        can no longer be looked up. It travels in the job payload for exactly that reason."""
+        created = client.post("/api/collections", json={"name": "Hidden Gems"})
+        cid = created.json()["id"]
+        self._fake_plex(monkeypatch, client, collections=[], explode=True)
+        client.delete(f"/api/collections/{cid}")
+
+        job = next(j for j in self._jobs(client) if j["kind"] == "row.reconcile")
+
+        assert job["payload"]["template"] == "Hidden Gems"
+        assert job["payload"]["slug"] == "hidden_gems"
+
+
+class TestNarrowingARowsLibraries:
+    """Narrowing a row is not the same as removing it — but it strands just as much.
+
+    A row whose media goes "both" → movies, or that drops a library from its list, keeps whatever it
+    already built in the libraries it walked away from. Delivery no longer targets them, so those
+    collections are never refreshed, never removed, and re-promoted every run by promotion's no-spec
+    fallback: a row switched to "movies only" kept a stale TV shelf up indefinitely.
+    """
+
+    def _plex(self, monkeypatch, client, *, collections):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.models import EngineConfig
+
+        deleted: list[tuple[str, str]] = []
+        movies = SimpleNamespace(title="Movies", key="1", type="movie")
+        shows = SimpleNamespace(title="TV", key="2", type="show")
+        by_key = {"1": movies, "2": shows}
+        plex = MagicMock()
+        plex.sections.return_value = [movies, shows]
+        plex.find_owned_collections.side_effect = lambda s, label: [
+            SimpleNamespace(title=title, _section=str(s.key))
+            for (title, lbl, key) in collections
+            if lbl == label and key == str(s.key)
+        ]
+        plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append((c.title, c._section))
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig())
+        monkeypatch.setattr(client.app.state.run_service, "build_context", lambda **kw: ctx)
+        assert by_key  # both libraries exist, so the difference below is a real one
+        return deleted
+
+    def _row(self, client: TestClient):
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import User
+
+        created = client.post("/api/collections", json={"name": "Gems", "media": "both"})
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            return created.json()["id"], user.slug, row_marker(user.plex_account_id)
+
+    def test_narrowing_media_removes_only_the_library_it_left(self, client: TestClient, monkeypatch):
+        cid, uslug, marker = self._row(client)
+        deleted = self._plex(
+            monkeypatch,
+            client,
+            collections=[("Gems" + marker, f"shortlist_{uslug}", "1"), ("Gems" + marker, f"shortlist_{uslug}", "2")],
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "movie"})
+
+        assert r.status_code == 200
+        # The TV copy goes; the Movies one is still live and must survive. Removing both would delete
+        # the row the owner just said they wanted.
+        assert deleted == [("Gems" + marker, "2")]
+
+    def test_narrowing_to_named_libraries_removes_the_dropped_one(self, client: TestClient, monkeypatch):
+        cid, uslug, marker = self._row(client)
+        deleted = self._plex(
+            monkeypatch,
+            client,
+            collections=[("Gems" + marker, f"shortlist_{uslug}", "1"), ("Gems" + marker, f"shortlist_{uslug}", "2")],
+        )
+
+        client.patch(f"/api/collections/{cid}", json={"name": "Gems", "library_keys": ["1"]})
+
+        assert deleted == [("Gems" + marker, "2")]
+
+    def test_widening_a_row_removes_nothing(self, client: TestClient, monkeypatch):
+        """The opposite direction adds libraries, which is a build — left to the next run's gated
+        delivery. Removing anything here would delete a row the owner just asked to expand."""
+        cid, uslug, marker = self._row(client)
+        client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "movie"})
+        deleted = self._plex(monkeypatch, client, collections=[("Gems" + marker, f"shortlist_{uslug}", "1")])
+
+        client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "both"})
+
+        assert deleted == []
+
+    def test_an_unreadable_plex_removes_nothing(self, client: TestClient, monkeypatch):
+        """Not knowing which libraries exist must mean "delete nothing", never "delete everything" —
+        this is the one irreversible action on the path."""
+
+        def explode(**kw):
+            raise RuntimeError("Plex is down")
+
+        cid, _uslug, _marker = self._row(client)
+        monkeypatch.setattr(client.app.state.run_service, "build_context", explode)
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Gems", "media": "movie"})
+
+        assert r.status_code == 200
+        assert [j["kind"] for j in client.get("/api/system/jobs").json()] == []
+
+
+class TestDeliveryLedger:
+    """Which Plex collection is which row, for whom, in which library — recorded at delivery time.
+
+    Every reconcile needs that answer, and every other way of asking is a guess. Rendering the row's
+    name template covers a static / `{library_name}` / `{user}` title but CANNOT cover `{top_seed}`,
+    which renders differently every run. The run breakdown that used to fill the gap is scoped to one
+    run and erased outright by `DELETE /api/runs`.
+    """
+
+    def _plex(self, monkeypatch, client, *, collections):
+        """collections: [(title, label, ratingKey)]. Returns the list of deleted (title, ratingKey)."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.models import EngineConfig
+
+        deleted: list[tuple[str, int]] = []
+        section = SimpleNamespace(title="Movies", key="1", type="movie")
+        plex = MagicMock()
+        plex.sections.return_value = [section]
+        plex.find_owned_collections.side_effect = lambda s, label: [
+            SimpleNamespace(title=title, ratingKey=key) for (title, lbl, key) in collections if lbl == label
+        ]
+        plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append((c.title, c.ratingKey))
+        ctx = SimpleNamespace(plex=plex, config=EngineConfig())
+        monkeypatch.setattr(client.app.state.run_service, "build_context", lambda **kw: ctx)
+        return deleted
+
+    def test_a_top_seed_row_is_removed_by_identity_when_no_title_can_be_computed(self, client: TestClient, monkeypatch):
+        """The case nothing else could reach. `{top_seed}` renders to a different title every run, so
+        `_rendered_titles` deliberately returns nothing for it rather than match every row — and with
+        run history cleared there is no recorded title either. The ledger's ratingKey is the only
+        handle left."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Delivery, User
+
+        created = client.post(
+            "/api/collections", json={"name": "Because", "name_template": "Because you watched {top_seed}"}
+        )
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+            session.add(
+                Delivery(collection_slug=slug, user_slug=uslug, library_key="1", rating_key=9001, title="whatever")
+            )
+            session.commit()
+        client.delete("/api/runs")  # the record the old code depended on, gone
+
+        deleted = self._plex(
+            monkeypatch,
+            client,
+            collections=[("Because you watched Dune" + row_marker(acct), f"shortlist_{uslug}", 9001)],
+        )
+        r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        assert r.status_code == 200
+        assert deleted == [("Because you watched Dune" + row_marker(acct), 9001)]
+
+    def test_identity_matching_never_reaches_another_rows_collection(self, client: TestClient, monkeypatch):
+        """A ratingKey narrows the search; it must never widen ownership. Every candidate is still
+        found under the user's own label, and only the keys THIS row recorded are matched."""
+        from shortlist.engine.delivery import row_marker
+        from shortlist.server.db.models import Delivery, User
+
+        keep = client.post("/api/collections", json={"name": "Keep Me"})
+        drop = client.post(
+            "/api/collections", json={"name": "Because", "name_template": "Because you watched {top_seed}"}
+        )
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug, acct = user.slug, user.plex_account_id
+            session.add(
+                Delivery(
+                    collection_slug=drop.json()["slug"], user_slug=uslug, library_key="1", rating_key=9001, title="x"
+                )
+            )
+            session.add(
+                Delivery(
+                    collection_slug=keep.json()["slug"], user_slug=uslug, library_key="1", rating_key=9002, title="y"
+                )
+            )
+            session.commit()
+
+        deleted = self._plex(
+            monkeypatch,
+            client,
+            collections=[
+                ("Because you watched Dune" + row_marker(acct), f"shortlist_{uslug}", 9001),
+                ("Keep Me" + row_marker(acct), f"shortlist_{uslug}", 9002),
+            ],
+        )
+        client.post(f"/api/collections/{drop.json()['id']}/cleanup", json={"dry_run": False})
+
+        assert [key for _title, key in deleted] == [9001]
+
+    def test_removing_a_row_forgets_its_ledger_entries(self, client: TestClient, monkeypatch):
+        """The ledger records collections that EXIST. Left behind, it would grow for ever and its
+        entries would name objects that are gone."""
+        from shortlist.server.db.models import Delivery, User
+
+        created = client.post("/api/collections", json={"name": "Gems"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            uslug = session.query(User).order_by(User.id).first().slug
+            session.add(Delivery(collection_slug=slug, user_slug=uslug, library_key="1", rating_key=9001, title="Gems"))
+            session.commit()
+        self._plex(monkeypatch, client, collections=[("Gems", f"shortlist_{uslug}", 9001)])
+
+        client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": False})
+
+        with client.app.state.sessions() as session:
+            assert session.query(Delivery).filter_by(collection_slug=slug).count() == 0
+
+    def test_a_dry_run_keeps_the_ledger(self, client: TestClient, monkeypatch):
+        """A preview changed nothing on Plex. Forgetting here would leave the next real attempt with
+        no ledger to address by — the exact gap this table exists to close."""
+        from shortlist.server.db.models import Delivery, User
+
+        created = client.post("/api/collections", json={"name": "Gems"})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            uslug = session.query(User).order_by(User.id).first().slug
+            session.add(Delivery(collection_slug=slug, user_slug=uslug, library_key="1", rating_key=9001, title="Gems"))
+            session.commit()
+        deleted = self._plex(monkeypatch, client, collections=[("Gems", f"shortlist_{uslug}", 9001)])
+
+        client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": True})
+
+        assert deleted == []
+        with client.app.state.sessions() as session:
+            assert session.query(Delivery).filter_by(collection_slug=slug).count() == 1
+
+    def test_narrowing_a_row_forgets_only_the_library_it_left(self, client: TestClient, monkeypatch):
+        """The cell where the ledger's lifecycle and the narrowing path meet — and neither test class
+        covered it, which is how the over-delete shipped.
+
+        A narrowed row removes SOME libraries. Forgetting the whole row would drop the entry for a
+        collection that is still live, and for a `{top_seed}` row that entry is the only thing that
+        could ever address it: its title cannot be re-rendered, and a row with a blank schedule has no
+        next run to re-populate the ledger. The collection would be stranded on Plex for good.
+        """
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine.models import EngineConfig
+        from shortlist.server.db.models import Delivery, User
+
+        created = client.post(
+            "/api/collections",
+            json={"name": "Because", "name_template": "Because you watched {top_seed}", "media": "both"},
+        )
+        cid, slug = created.json()["id"], created.json()["slug"]
+        with client.app.state.sessions() as session:
+            user = session.query(User).order_by(User.id).first()
+            uslug = user.slug
+            for library_key, rating_key in (("1", 9001), ("2", 9002)):
+                session.add(
+                    Delivery(
+                        collection_slug=slug,
+                        user_slug=uslug,
+                        library_key=library_key,
+                        rating_key=rating_key,
+                        title="Because you watched Dune",
+                    )
+                )
+            session.commit()
+
+        deleted: list[int] = []
+        movies = SimpleNamespace(title="Movies", key="1", type="movie")
+        shows = SimpleNamespace(title="TV", key="2", type="show")
+        plex = MagicMock()
+        plex.sections.return_value = [movies, shows]
+        plex.find_owned_collections.side_effect = lambda s, label: (
+            [SimpleNamespace(title="Because you watched Dune", ratingKey=9001 if str(s.key) == "1" else 9002)]
+            if label == f"shortlist_{uslug}"
+            else []
+        )
+        plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append(c.ratingKey)
+        monkeypatch.setattr(
+            client.app.state.run_service,
+            "build_context",
+            lambda **kw: SimpleNamespace(plex=plex, config=EngineConfig()),
+        )
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Because", "media": "movie"})
+
+        assert r.status_code == 200
+        assert deleted == [9002], "only the TV copy — the Movies one is still targeted and live"
+        with client.app.state.sessions() as session:
+            left = {d.library_key for d in session.query(Delivery).filter_by(collection_slug=slug)}
+        assert left == {"1"}, "the live Movies collection must stay addressable"
+
+
+class TestBackupRestoreSaysWhatItChanges:
+    """A restore is not a neutral rollback. The database is what decides WHO MAY SEE WHAT, so
+    restoring a copy taken before a shared row's audience was narrowed puts the wider audience back —
+    and the shared-exclude prune, the only un-hiding path Shortlist has, then removes the `label!=`
+    excludes that were hiding it on the next run.
+
+    That is correct for the config being restored, and it is exactly the kind of change nobody expects
+    from a button labelled "Restore". So it is said out loud, and audited.
+    """
+
+    def test_the_response_names_the_visibility_change_and_audits_it(self, client: TestClient):
+        from shortlist.server.db.models import Event
+
+        created = client.post("/api/system/backups", json={})
+        assert created.status_code in (200, 201), created.text
+        name = created.json()["name"]
+
+        r = client.post("/api/system/backups/restore", json={"name": name})
+
+        assert r.status_code == 200
+        note = r.json()["privacy_note"]
+        # Separate from `message` so the UI can render it as a warning rather than a receipt.
+        assert "see" in note.lower() and "row" in note.lower()
+        with client.app.state.sessions() as session:
+            audit = session.query(Event).filter_by(scope="backup.restore").one()
+        assert audit.message["backup"] == name
+        assert audit.level == "warn"
+
+    def test_a_missing_backup_is_a_404_and_audits_nothing(self, client: TestClient):
+        from shortlist.server.db.models import Event
+
+        assert client.post("/api/system/backups/restore", json={"name": "nope.db"}).status_code == 404
+
+        with client.app.state.sessions() as session:
+            assert session.query(Event).filter_by(scope="backup.restore").count() == 0
+
+
+class TestRepointingPlexAtAnotherServer:
+    """Everything Shortlist knows is scoped to ONE machine: which collection is whose (the delivery
+    ledger), whose share filters were snapshotted before we touched them, which account is the owner.
+
+    Silently accepting a `plex.url`/`plex.token` that points somewhere else leaves all of that
+    describing a machine nobody is talking to — and the next reconcile goes looking for those
+    collections on a server that never had them. Switching servers is a re-link, not a settings edit.
+    """
+
+    def _machine(self, client: TestClient, monkeypatch, machine_id: str | None):
+        """Point PlexClient at a fake whose machine_id is `machine_id`; None = unreachable."""
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("plex.token", "owner-token")
+            session.commit()
+
+        class Fake:
+            def __init__(self, url, token, **kw):
+                if machine_id is None:
+                    raise RuntimeError("connection refused")
+                self.machine_id = machine_id
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", Fake)
+
+    def test_a_different_machine_id_is_refused_with_an_explanation(self, client: TestClient, monkeypatch):
+        self._machine(client, monkeypatch, "some-other-server")
+
+        r = client.put("/api/settings", json={"values": {"plex.url": "http://elsewhere:32400"}})
+
+        assert r.status_code == 409
+        assert "different plex server" in r.json()["detail"].lower()
+        # And the value is NOT stored — a rejected save must change nothing.
+        assert client.get("/api/settings").json()["plex.url"] != "http://elsewhere:32400"
+
+    def test_the_same_server_saves_normally(self, client: TestClient, monkeypatch):
+        self._machine(client, monkeypatch, "m1")  # the fixture links machine_id "m1"
+
+        r = client.put("/api/settings", json={"values": {"plex.url": "http://pms:32400/"}})
+
+        assert r.status_code == 200
+        assert client.get("/api/settings").json()["plex.url"] == "http://pms:32400/"
+
+    def test_an_unreachable_server_is_saved_rather_than_refused(self, client: TestClient, monkeypatch):
+        """A box that is merely down, or a URL not routable yet, must still be savable — otherwise a
+        broken connection becomes unfixable through the UI, which is where you go to fix it."""
+        self._machine(client, monkeypatch, None)
+
+        r = client.put("/api/settings", json={"values": {"plex.url": "http://not-up-yet:32400"}})
+
+        assert r.status_code == 200
+        assert client.get("/api/settings").json()["plex.url"] == "http://not-up-yet:32400"
+
+    def test_settings_unrelated_to_plex_never_probe(self, client: TestClient, monkeypatch):
+        """The check costs a PMS round-trip. Every other save on the page must not pay it."""
+        probed: list[str] = []
+
+        class Fake:
+            def __init__(self, url, token, **kw):
+                probed.append(url)
+                self.machine_id = "m1"
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", Fake)
+
+        assert client.put("/api/settings", json={"values": {"row.size": 25}}).status_code == 200
+        assert probed == []
+
+
+class TestDeletingAPosterImage:
+    """ "Delete the image" has to mean gone from Plex too, not just from Shortlist's store.
+
+    Clearing the stored bytes used to be all this did, leaving `mode` as "upload" with nothing to
+    upload — so the row kept the artwork already pushed to Plex, for ever, with nothing able to reach
+    it: the row-editor path only reverts when a row that HAD a mode drops to none, and the mode never
+    dropped.
+    """
+
+    def _reset_spy(self, monkeypatch):
+        from shortlist.server.services import collection_reconcile as rec
+
+        calls: list[tuple[str, str]] = []
+
+        async def spy(state, *, slug, build, scope):
+            calls.append((slug, scope))
+            return [], None
+
+        monkeypatch.setattr(rec, "run_poster_reset", spy)
+        return calls
+
+    def test_it_clears_the_mode_and_reverts_the_artwork_on_plex(self, client: TestClient, monkeypatch):
+        created = client.post("/api/collections", json={"name": "Gems", "poster": {"mode": "text", "title": "Gems"}})
+        cid, slug = created.json()["id"], created.json()["slug"]
+        calls = self._reset_spy(monkeypatch)
+
+        assert client.delete(f"/api/collections/{cid}/poster/image").status_code == 204
+
+        assert client.get("/api/collections").json()
+        row = next(c for c in client.get("/api/collections").json() if c["id"] == cid)
+        assert row["poster"]["mode"] == "", "the mode must drop, or nothing can ever revert the artwork"
+        assert calls == [(slug, "collection.poster")]
+
+    def test_a_row_that_never_had_a_custom_poster_touches_plex_at_all(self, client: TestClient, monkeypatch):
+        """Nothing was ever pushed, so there is nothing to revert — and a PMS round-trip per delete
+        would be pure cost."""
+        created = client.post("/api/collections", json={"name": "Gems"})
+        calls = self._reset_spy(monkeypatch)
+
+        assert client.delete(f"/api/collections/{created.json()['id']}/poster/image").status_code == 204
+
+        assert calls == []
+
+
+class TestEveryJobKindIsExplained:
+    """A job kind with no UI label renders as its raw name — `backup.take` on someone's screen.
+
+    That is precisely what `KIND_LABELS` exists to prevent, and it silently regressed the moment three
+    kinds were added: the map lives in the frontend and nothing tied it to the handler registry. This
+    is the tie.
+    """
+
+    def test_the_frontend_names_every_registered_kind(self):
+        import re
+        from pathlib import Path
+
+        from shortlist.server.services import jobs
+
+        source = (Path(__file__).parent.parent.parent / "web/src/components/jobs-table.tsx").read_text()
+        block = source.split("KIND_LABELS: Record<string, string> = {", 1)[1].split("};", 1)[0]
+        labelled = set(re.findall(r'"([^"]+)":', block))
+
+        missing = sorted(set(jobs._HANDLERS) - labelled)
+        assert not missing, f"job kind(s) with no plain-English label: {missing}"

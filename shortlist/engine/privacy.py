@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
-from shortlist.engine.models import FilterSnapshot, UserProfile, UserType
+from shortlist.engine.models import SHARED_LABEL_PREFIX, FilterSnapshot, UserProfile, UserType
 
 if TYPE_CHECKING:
     from shortlist.engine.clients.plextv import PlexTvClient, PlexTvUser
@@ -201,6 +201,7 @@ def sync_user_restrictions(
     label_prefix: str = "shortlist",
     shared_labels: dict[str, set[int] | None] | None = None,
     hide_all_shared: bool = False,
+    collections_known: bool = False,
     dry_run: bool = False,
 ) -> dict[str, tuple[str, str]] | None:
     """Merge the desired shortlist excludes into one user's share filters.
@@ -213,6 +214,10 @@ def sync_user_restrictions(
     what was written — or would be, in dry-run — and None when nothing needed changing. The diff
     is the audit record: changing someone's Plex share permissions is the most sensitive write
     Shortlist makes (rule 10).
+
+    `collections_known` says whether `stored_labels` is a COMPLETE enumeration of what is on the
+    server. Only then may a dead shared-row exclude be pruned — see the prune block below. It defaults
+    to False so a caller that hasn't thought about it gets the fail-safe behaviour.
 
     The owner is never restricted (Plex limitation — skipped, not an error).
     """
@@ -242,17 +247,54 @@ def sync_user_restrictions(
         hide_all_shared=hide_all_shared,
     )
     # Converge SHARED-row excludes: drop any shortlist SHARED-row exclude the account should no longer
-    # have (re-enabled after a disable, or added to a subset row's audience). This is the ONE safe
-    # place to remove an exclude — un-hiding a *shared* row only ever reveals a public or in-audience
-    # row, never a private one, so it can't leak even if `wanted` is computed from a partial read.
-    # Private-row excludes are NEVER pruned (removing one is the leak direction), so they stay
-    # union-only and fail-safe. Foreign filters are untouched (both primitives byte-preserve them).
+    # have (re-enabled after a disable, or added to a subset row's audience). This is the ONE place an
+    # exclude is ever removed — un-hiding a *shared* row only ever reveals a public or in-audience row,
+    # never a private one. Private-row excludes are NEVER pruned (removing one is the leak direction),
+    # so they stay union-only and fail-safe. Foreign filters are untouched (both primitives
+    # byte-preserve them).
+    #
+    # EVERY removal below is gated on `existing_lower is not None` — a complete, non-empty enumeration
+    # of what is on the server. `wanted` is derived from that same enumeration, so a PMS that answers
+    # 200 with no collections (mid library-index rebuild, or just restarted) makes every shared exclude
+    # look unwanted at once. Without the gate, one such read strips them from every account on the
+    # server in a single pass, and nothing re-adds them until a read succeeds.
     shared_lower = set(shared_labels or {})
     wanted_lower = {w.lower() for w in wanted}
+    # Every label that EXISTS on the server right now, lowercased — but only when the caller could
+    # actually enumerate them. `None` means "we don't know", and not knowing must never license a
+    # removal (see `dead_shared` below).
+    # `collections_known and stored_labels`: an EMPTY enumeration is not evidence of absence. A PMS
+    # mid library-index rebuild answers 200 with no collections, which is indistinguishable from "every
+    # row is gone" — and acting on that reading removes excludes across every account on the server.
+    existing_lower = {v.lower() for v in stored_labels.values()} if (collections_known and stored_labels) else None
     prunable_shared: set[str] = set()
     for fieldname in RESTRICTED_FILTER_FIELDS:
         for lbl in shortlist_labels_in(remote.filters[fieldname], label_prefix):
-            stale_shared = lbl.lower() in shared_lower and lbl.lower() not in wanted_lower
+            stale_shared = (
+                existing_lower is not None and lbl.lower() in shared_lower and lbl.lower() not in wanted_lower
+            )
+            # A `shortlist__shared_*` exclude for a row that no longer EXISTS on the server. Left
+            # alone it accumulated for ever: deleting a shared row, or flipping it to per-person,
+            # takes it out of `shared_labels`, so the prune above stopped considering it and the dead
+            # entry sat in all ~48 accounts' filters permanently.
+            #
+            # Safe because the collection is gone: removing an exclude that matches nothing cannot
+            # reveal anything. That reasoning depends entirely on KNOWING it is gone, which is why
+            # this is gated on a successful enumeration rather than on an empty lookup — a failed or
+            # partial PMS read would otherwise read as "deleted" and un-hide a live row.
+            dead_shared = (
+                existing_lower is not None
+                and lbl.lower().startswith(SHARED_LABEL_PREFIX.lower())
+                # NOT declared shared by the config either. Belt to the enumeration's braces: a row the
+                # config still declares is a LIVE row whose visibility is `stale_shared`'s business, and
+                # only a row that is gone from BOTH the config and the server is provably dead. Without
+                # this, a PMS that answers an empty (but successful) collections read strips the
+                # excludes hiding a configured, restricted-audience shared row from everyone.
+                and lbl.lower() not in shared_lower
+                and lbl.lower() not in existing_lower
+            )
+            if dead_shared:
+                stale_shared = True
             # An account's OWN label must never sit in its own filter — that hides a person from
             # their own row permanently, because private-row excludes are otherwise union-only.
             # Reachable: delete a user's DB row while their collection still exists on Plex, so

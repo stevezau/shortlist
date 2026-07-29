@@ -191,16 +191,20 @@ Payload is data, never a closure, so a job survives the process that queued it.
 3. ✅ `dry_run` recorded in the disable-cleanup audit
 4. ✅ Jobs table + worker + boot recovery + notification on failure (`services/jobs.py`;
    APScheduler drains every 10s and sweeps abandoned jobs every 5m; `BEGIN IMMEDIATE` claim)
-5. ✅ Migrating background work onto jobs — **`user.cleanup` done** (enqueued then drained
-   inline, so it still feels instant but is now retried and survives a restart). `sync.check` and
-   `privacy.sync` handlers exist. Remaining: row reconciles, sync.users, sync.history, backups.
-6. 🔶 Eager filter writes — **new accounts done** (`_hide_existing_rows_from_new_accounts`: a sync
-   that adds anyone fires `engine_run(ctx, [])`, which merges every share filter while creating and
-   promoting nothing). Remaining: disable, and shared-row audience changes.
+5. ✅ Migrating background work onto jobs — `user.cleanup`, `user.hide`, `user.restore`,
+   `row.reconcile` (every automatic reconcile: delete, build flip, audience shrink, row disabled,
+   library narrowing), `sync.users`, `sync.history`, `backup.take`, plus `sync.check` /
+   `privacy.sync`. Each is enqueued then drained inline, so it still feels instant but is retried and
+   survives a restart. APScheduler is now purely the TRIGGER — `_queue_and_drain` is the only thing
+   its cron jobs do.
+6. ✅ Eager filter writes — every path that owes one goes through `jobs.queue_privacy_sync`: new
+   accounts, disable/re-enable, a shared row's audience changing either way, a build flip, a shared
+   row deleted, an account demoted out of `owner`, and the `hide_shared_from_disabled` toggle.
 7. ✅ Pause = hide; unpause = restore (converge takes a paused user's rows off EVERY surface,
    keeping the collection + label so excludes still match and unpausing is a re-promote; `user.hide`
    job fires the moment someone is paused)
-8. ⬜ Confident orphan deletion in the retire phase
+8. ✅ Confident orphan deletion in the retire phase (`may_delete_orphans`, gated on a non-empty
+   roster — an incomplete picture demotes rather than deletes)
 9. ✅ UI: Tools triggers (preview then fix), Runs shows history with a real empty state; job types + status (shape pending research on Sonarr/Jellyfin conventions)
 10. ✅ Run boot recovery: aborts orphaned runs AND queues a `privacy.sync` so a crash does not wait
     for the next schedule. Deliberately not a full rebuild — a crash-loop would re-curate the whole
@@ -341,62 +345,252 @@ job. `Job.result` already holds structured output that nothing renders.
 ## 12. Mutation audit, 2026-07-28 — what still has no follow-up action
 
 A full walk of every state change reachable from the API/UI, asking: does the necessary Plex or
-plex.tv action actually happen, and when? Ranked by EXPOSURE first. Nothing here is fixed yet.
+plex.tv action actually happen, and when? Ranked by EXPOSURE first.
 
-### CRITICAL
+**Status 2026-07-29: the CRITICAL and all thirteen HIGH findings are fixed.** What each was, and what
+closed it, is below — kept rather than deleted because the *shapes* recur, and because several of the
+fixes are load-bearing in ways the code alone doesn't explain.
 
-**C1 — removing someone from a SHARED row's audience does nothing at all.**
-`collections.py:307` gates the audience diff on `touching_audience = build == "per_person" and …`,
-so for a shared row `dropped_user_ids` is always empty. A shared row is ONE collection, so deletion
-cannot hide it — a filter write is the only mechanism — and no filter write is enqueued.
-`_reconcile_row_removal` would no-op anyway (`collection_reconcile.py:78-85` returns early for
-`build=="shared"` with `only_user_ids`). **The dropped accounts keep seeing the row** until the next
-run or a hand-pressed sync. Fix: drop the per-person guard and enqueue a new `filters.apply` job
-taking `{account_ids: [...]}` so it writes only those shares.
+### The three root causes, and what replaced them
 
-### HIGH
+1. **Reconcile addressing was wrong.** Per-person collections were addressed by "the title the latest
+   completed run recorded" (`_delivered_titles_by_user`). Rows have their own crons, so the latest run
+   is routinely scoped to ONE row — delete row B the morning after row A ran and nothing was removed,
+   audited as "removed 0". `DELETE /api/runs` emptied the record outright while claiming to change
+   nothing on Plex.
 
-| # | Mutation | Gap |
-| --- | --- | --- |
-| H1 | Any per-person reconcile (row delete, audience shrink, rename, poster reset) | `_delivered_titles_by_user` (`collection_reconcile.py:42-52`) reads only the LATEST completed run's breakdown. Rows have their own crons, so the latest run is routinely scoped to one row — delete row B the morning after row A ran and **nothing is removed**, audited as "removed 0". For a deleted row there is no second chance. **Root cause of H2/H3/H10.** Fix: enumerate from Plex by label across `plex.sections()`, as `reconcile_row_rename_iter` already does |
-| H2 | `DELETE /api/runs` (clear history) | Deletes every `RunUser`, which silently disarms every reconcile via H1. Its docstring says "Changes nothing on Plex" |
-| H3 | Row `enabled: true→false` | No reconcile fires. Next run removes it only for users processed that run — paused/disabled/restricted users keep it for ever. §6's "Row disabled → E `row.reconcile`" is **false**: that kind exists (`jobs.py:351-382`) with **zero callers** |
-| H4 | `privacy.hide_shared_from_disabled` false→true | Settings PATCH is inert; disabled accounts keep seeing shared rows until the next run |
-| H5/H6 | Disable a user (single or bulk) | Collections are removed (`user.cleanup` ✅) but **their own filter is never written**, so an opted-out account keeps seeing public shared rows |
-| H7 | `row.name_template` changed in **Settings** | The Rows-page rename reconciles; the Settings door does not. A multi-row user gets a duplicate — new collection under the new title, old one left labelled and promoted for ever |
-| H8 | Row `media` narrowed (`both→movie`) | Stranded collections in excluded libraries are never removed, AND are re-promoted every run via the no-spec fallback (the title map's `replace(spec, library_keys=[])` keeps the media filter) |
-| H9 | Row `library_keys` narrowed | Collection in the dropped library is never removed. Flags are right (F6 fix), content is stale for ever |
-| H10 | Row `build` per_person→shared | Inherits H1: users absent from the latest run keep an orphaned per-person collection. Converge won't delete it (known user); `retired_rows` won't see it (row is now shared) |
-| H11 | ALL collection reconciles | Bare `run_in_executor` — no retry, no `Job` row, **no `_plex_busy()` check**. A Plex outage loses the work permanently; a row delete can write mid-delivery. Fixing H3's wiring fixes this for free |
-| H12 | `_sync_owner` demotes a stale OWNER→SHARED | That account had NO excludes while typed owner. `_hide_existing_rows_from_new_accounts` is gated on `added` only, so nothing fires. Rare, pure exposure |
-| H13 | User disappears from the plex.tv roster | Never deleted from the DB → stays in `known_slugs` → converge's orphan test never matches. Collection persists with `promotedToSharedHome` for ever, plus a per-run failure on their dead share token |
+   Now every reconcile addresses collections **from Plex, by label + the title the row's own template
+   renders to** (`_rendered_titles`), unioned with the recorded titles as a fallback. The union is
+   deliberate: rendering covers every static / `{library_name}` / `{user}` template regardless of run
+   history, and the recorded title covers `{top_seed}`, which renders differently every run and so
+   cannot be predicted. The template is read from the DB (`row_template`) so every door gets it; the
+   DELETE path carries it in the job payload instead, because the row is gone by the time a retry runs.
 
-### MED (correct, delayed to the next run) — full list in the audit
+   A rename of the PERSON rather than the row (nickname edit, Tautulli rename) needs the *previous*
+   display name to find the collection — rendering `{user}` from the new name on both sides matches
+   nothing. `old_display_names` carries it.
 
-Un-disable ✅ self-heals · **unpause has NO `user.restore` job** (§8 phase 7 claims otherwise — it is
-next-run-only, and never if the row's schedule is `""` or `paused_all` is on) · adding someone to a
-shared row's audience (blind until the next run) · placement/pin_top changes · mute/unmute · disable
-a shared row (owner keeps seeing it) · every content setting · **`POST /system/backups/restore`** —
-restoring a DB taken before an audience narrowed re-widens `shared_labels`, and the prune is the ONLY
-un-hiding path in the system, so the next run REMOVES the excludes that were hiding it.
+2. **The job catalogue was half-wired.** `row.reconcile` existed with zero callers; `user.restore` did
+   not exist. Every reconcile was a bare `run_in_executor`: no retry, no `Job` row, no `_plex_busy()`
+   check, so a Plex outage lost the work permanently and a row delete could write mid-delivery.
 
-### LOW
+   Now the automatic reconciles (delete, build flip, audience shrink, row disabled, library narrowing)
+   are queued as `row.reconcile` and drained inline, and `user.restore` mirrors `user.hide`. The one
+   still inline is the interactive **cleanup** button, which has to return what it removed.
 
-`DELETE /collections/{id}/poster/image` leaves `mode=="upload"`, so the old image stays on Plex for
-ever · shared→per_person leaves `shortlist__shared_*` excludes in every filter permanently · row
-deletion leaves the same cruft · `plex.url`/`plex.token` repoint has no reconcile at all.
+3. **Settings PATCH was inert.** It stored values and did nothing. It now compares before/after for the
+   two settings that change Plex — `row.name_template` and `privacy.hide_shared_from_disabled` — and
+   fires the rename or the filter pass.
 
-### The three root causes
+### The one entry point for owed filter writes
 
-1. **Reconcile addressing is wrong.** Per-person collections are addressed by "the title the latest
-   run wrote" instead of by label on Plex. Fixing this alone closes H1, H2, H3, H10.
-2. **The job catalogue is half-wired.** `row.reconcile` has no callers; `filters.apply` and
-   `user.restore` don't exist. The only filter writer outside a run is `privacy.sync`, enqueued from
-   exactly two places.
-3. **Settings PATCH is inert** (`settings.py:155-177`).
+`jobs.queue_privacy_sync(state, reason)` — enqueue `privacy.sync` and drain. `privacy.sync` is
+`engine_run(ctx, [])`: it merges every account's filter and creates, promotes and delivers **nothing**,
+so it can only ever make the server more private (rule 1). That is what makes it safe to fire straight
+from a mutation handler, and why a targeted `filters.apply` was not built — it would be a second,
+less-tested implementation of the same merge.
+
+Callers: a shared row's audience changing in either direction (C1), a build flip, a shared row deleted,
+someone turned off (H5/H6) or back on, un-paused, an account demoted out of `owner` (H12), and the
+`hide_shared_from_disabled` toggle (H4).
+
+### Ordering — and why the queue is NOT the mechanism
+
+Rule 1 says a row must never be visible before the exclusion that hides it exists. Outside a run the
+only job that makes something more visible is `user.restore`, so that is the one place the ordering
+has to be enforced.
+
+**It is enforced inside the handler, in straight-line code**: `_user_restore` calls `engine_run(ctx,
+[])` (merge every filter, build nothing) and only then `promote_user_rows`. If the merge raises, the
+handler raises and the whole job is retried — nothing is promoted.
+
+The first attempt at this was two queued jobs, `privacy.sync` then `user.restore`, relying on the queue
+being FIFO. **It is not, once a retry is involved.** `_claim` steps over any job whose backoff has not
+elapsed and takes the next one, so a filter pass that failed against a 503 plex.tv is skipped and the
+promotion behind it lands anyway against a healthy PMS — the single most likely partial outage for this
+app, and the exact leak the ordering exists to prevent. Caught in architecture review, 2026-07-29.
+
+The rule for anything added later: **if job B must not run before job A, they are one job.** The queue
+guarantees durability and retry, never sequence.
+
+Disable is the opposite case and safe either way — every `user.cleanup` is enqueued before the single
+`privacy.sync`, so the filters are computed from what is left on the server, but both directions only
+ever remove visibility. One pass for a bulk disable, not one per user.
+
+### Destructive sweeps need a floor check
+
+`sync_users` switches off anyone missing from the plex.tv roster (H13) and queues deletion of their
+collections — unattended, on the daily sync. It is bounded twice:
+
+- **Empty roster → do nothing.** A 200 with an empty container is a real plex.tv response, and "nobody
+  is on the roster" would have disabled **every user on the server**. `PlexTvClient.list_users` also
+  skips non-`<User>` elements now, so a response-shape change cannot manufacture the same emptiness out
+  of a non-empty body (rule 11).
+- **Half or more departing at once → refuse and report.** A *truncated* read is as indistinguishable
+  from a mass departure as an empty one. One person leaving is routine and still acts immediately; half
+  of them at once is a partial read, so it writes a `user.departed.refused` Event instead of acting.
+
+Both mirror `_converge_phase`, which gates orphan DELETION on `bool(known)` for the same reason. Caught
+in review, 2026-07-29 — the happy-path test passed throughout.
+
+### Safe mode is per call site, not per client
+
+`SHORTLIST_DRY_RUN=1` makes `build_context` OR the flag into `ctx.config.dry_run` — but neither
+`PlexClient.promote` nor `demote_all` has a dry-run branch of its own, so **the guard has to be where
+the call is made**. `_promote_phase` had one; the `promote_user_rows` extraction did not, which stayed
+invisible until `user.restore` became a second caller. Under safe mode an un-pause then previewed the
+hiding (`engine_run` honours the flag) and performed the showing — preview the private half, perform
+the public half, on the one job that increases visibility.
+
+The guard now lives inside `promote_user_rows` and `_user_hide`, so every caller inherits it. **Anything
+added later that calls a `PlexClient` write method directly must check `ctx.config.dry_run` itself**
+(rule 8). Caught in review, 2026-07-29.
+
+### What each finding was
+
+| # | Mutation | Was | Now |
+| --- | --- | --- | --- |
+| C1 | Someone removed from a SHARED row's audience | Gated on `build == "per_person"`, never true for a shared row. A shared row is ONE collection, so deletion cannot hide it — only a filter write can, and none was enqueued. **The dropped accounts kept seeing it.** | Both directions queue `privacy.sync` |
+| H1 | Any per-person reconcile | Addressed by the latest run's breakdown — see root cause 1 | Addressed from Plex by label + rendered title |
+| H2 | `DELETE /api/runs` | Silently disarmed every reconcile | Reconciles no longer read run history as their primary source |
+| H3 | Row `enabled: true→false` | Nothing fired; the next run removed it only for users it processed, and a row with no schedule has no next run | Queues `row.reconcile` |
+| H4 | `privacy.hide_shared_from_disabled` toggled | Settings PATCH inert | Queues `privacy.sync` on a real change |
+| H5/H6 | Disable a user (single or bulk) | Collections removed, but their OWN filter never written — so an opted-out account kept seeing public shared rows | `user.cleanup` per user, then one `privacy.sync` |
+| H7 | `row.name_template` changed in **Settings** | Only the Rows page reconciled; the Settings door did not, so the next run built a SECOND collection and left the old one labelled and promoted for ever | Renames via `run_row_rename_from_plex`, keyed on the previous template |
+| H8/H9 | Row `media` or `library_keys` narrowed | Collections in the dropped libraries were never removed, never refreshed, and re-promoted every run by promotion's no-spec fallback | `_stranded_sections` diffs old vs new `target_sections`; only the libraries it left are swept. An unreadable Plex removes NOTHING |
+| H10 | Row `build` per_person→shared | Inherited H1 | Fixed with H1; also queues `privacy.sync` |
+| H11 | ALL collection reconciles | Bare `run_in_executor` — no retry, no `Job` row, no `_plex_busy()` | Queued as `row.reconcile` |
+| H12 | `_sync_owner` demotes a stale OWNER→SHARED | That account had NO excludes while typed owner (rule 5), and nothing fired | `_sync_owner` reports demotions; the caller queues `privacy.sync` |
+| H13 | User disappears from the plex.tv roster | Stayed enabled: every run tried their dead share token, and their collection sat promoted to Shared Home with no user left to see it | The sync turns them off (keeping their history) and runs the whole tested disable path |
+
+### Still open
+
+- **`{top_seed}` rows are addressed by the delivery ledger** (§13), not by a title. `user.restore`
+  still reads the last run's breakdown to decide which ROW a collection belongs to for placement
+  purposes; if that history is gone, an un-paused `{top_seed}` row falls to `_promote_one`'s no-spec
+  branch and lands on its own audience's Home. Visible rather than hidden, which is the right
+  direction for an un-pause, but not the row's configured placement.
+- **MED, unchanged and by design**: placement / pin_top / mute / content settings are next-run-only —
+  they change what a row IS, not who may see it, so there is nothing to write between runs.
+  (Adding someone to a shared row's audience is no longer in this list: it now fires a filter pass
+  like every other audience change.)
+- **`POST /system/backups/restore`** still re-widens `shared_labels` when the restored copy predates
+  an audience narrowing — correct for the config being restored, and now SAID: the response carries a
+  `privacy_note`, the Jobs page shows it before the confirm as well as after, and a `backup.restore`
+  Event records it (rule 10). What it does not do is re-narrow anything; that is the operator's call,
+  which is why the warning names Rows as the place to check.
+- **LOW — all three closed**: `DELETE /collections/{id}/poster/image` now clears `mode` and reverts
+  the artwork on Plex · a dead `shortlist__shared_*` exclude is pruned once the collections have been
+  successfully enumerated and the label is provably absent (never on a failed read — see below) ·
+  repointing `plex.url`/`plex.token` at a DIFFERENT machine is refused with an explanation rather than
+  silently accepted, because every record Shortlist holds is scoped to one server.
 
 ### Corrections to this document
 
-- §11.A said `notifications.py` doesn't read failed jobs — it does now (`_failed_jobs`).
-- §6's "Row disabled → E `row.reconcile`" is not true; nothing enqueues it.
-- §8 phase 7's "unpause = restore" is next-run-only; there is no restore job.
+- §11.A said `notifications.py` doesn't read failed jobs — it does (`_failed_jobs`).
+- §6's "Row disabled → E `row.reconcile`" was aspirational when written; it is true now.
+- §8 phase 7's "unpause = restore" was next-run-only; `user.restore` now exists.
+
+
+---
+
+## 13. The delivery ledger (2026-07-29)
+
+`deliveries` — `(collection_slug, user_slug, library_key) → rating_key, title, updated_at`, migration
+0045. Written on the run's persist path (`run_service._record_deliveries`) from the per-(row, library)
+breakdown, which the engine now stamps with the collection's ratingKey.
+
+**Why it exists.** Every on-demand reconcile has to answer *which object on the server is this row,
+for this person, in this library?* Three sources were tried, in this order:
+
+1. **The latest run's breakdown.** Scoped to one run — and rows have their own crons, so the latest
+   run is routinely a DIFFERENT row. `DELETE /api/runs` erased it while promising to change nothing
+   on Plex. This was root cause 1 of the whole §12 audit.
+2. **Rendering the row's name template.** Computed from config, so history cannot break it — but a
+   `{top_seed}` title is different every run, so it is unrenderable by construction. `_rendered_titles`
+   deliberately returns nothing for those rather than match every row.
+3. **The ratingKey.** The identity Plex itself writes on. Survives renames, template changes, cleared
+   history, and a title that never repeats.
+
+All three are still used, unioned, because each covers what the others cannot: the ledger is empty for
+a row delivered before 0045 or never delivered at all, and nothing backfills it — there is no source to
+backfill FROM, which is the original problem.
+
+**Scoping.** A ratingKey narrows the search; it never widens ownership. Every candidate is still found
+via `find_owned_collections(section, shortlist_<userslug>)`, and `delete_owned_collection` still refuses
+anything without a `shortlist_` label — so a stale key cannot reach another user's row or a Kometa
+collection (rule 4).
+
+**Lifecycle.** Rows are upserted per delivery and deleted when their collection is removed, and only
+after a REAL removal — a dry run leaves the ledger intact, or the next live attempt would have nothing
+to address by. Keyed by slug rather than foreign key on purpose: the row being described is usually the
+one being deleted, and a cascade would take the answer with it.
+
+
+---
+
+## 14. What the second review round found (2026-07-29)
+
+Three HIGH, all in the work of §13 and the LOW cleanups. Recorded because the *shapes* are the point.
+
+### Removing an exclude needs evidence, not just the absence of an exception
+
+`collections_known` was set from "`owned_collections()` did not raise". A PMS mid library-index rebuild
+answers **200 with no collections** — a successful, empty read, indistinguishable from "every row is
+gone". Since `wanted` is derived from that same empty enumeration, one such read stripped every
+`shortlist__shared_*` exclude from every account on plex.tv, and nothing re-added them.
+
+Tracing it showed the hole was wider than the branch under review: `stale_shared` — the pre-existing
+prune, the one that un-hides a row when someone is added to its audience — has the identical
+dependency. So **every** removal is now gated on `existing_lower is not None`, which means
+`collections_known AND stored_labels`. `dead_shared` additionally requires the config to have stopped
+declaring the row shared, so a live row cannot reach it at all.
+
+The cost is deliberate: on a server whose PMS read fails, an account added to a shared row's audience
+stays hidden from it until a read succeeds. Fail-safe, and it self-heals on the next run.
+
+**The rule:** an empty result is not evidence of absence. This is the third time that shape has
+appeared in two days — the plex.tv roster sweep (§12), converge's orphan deletion, and now the prune.
+Anything that DELETES or UN-HIDES on the strength of "I looked and it wasn't there" needs a floor
+check on the lookup itself.
+
+### "Attempted" is not "removed"
+
+`_forget_deliveries` dropped ledger rows per (row, user), but a NARROWED row only removes the libraries
+it walked away from. So narrowing media to movies deleted the TV collection correctly and forgot the
+*Movies* entry too — and for a `{top_seed}` row that entry is the only thing that could ever address
+it again. It now filters on `in_sections`.
+
+### A patch script that half-applied
+
+`sync.users` shipped reading `state.app`, which nothing sets, so the nightly roster reconcile failed on
+every attempt. Cause: a `python3` edit script asserted its anchor, raised on a LATER assertion, and the
+symptom it printed got fixed while the earlier un-applied edits went unnoticed. **Re-verify the whole
+file after a multi-edit script fails partway**, not just the line it complained about.
+
+It survived a green suite because the scheduler test mocked `enqueue` and `drain_now` — proving the
+scheduler CALLS the queue and nothing about whether the handler works. `test_each_handler_actually_runs`
+now enqueues and drains for real against a live `app.state` and asserts the error carries no
+`AttributeError`/`TypeError`. That is the two-line probe that catches this whole class.
+
+
+### Two more, from verifying the fixes
+
+**A durable job must distinguish "broken" from "not applicable".** Making `sync.users` a job turned
+"Plex is not connected yet" from a silent log line into three retries, a `failed` row and a bell
+notification — nightly, on any install whose wizard is unfinished. `sync_watched` already treated the
+same condition as a skip. A nightly false alarm is precisely how an owner learns to ignore the bell, so
+`_sync_users` now catches the 409 and returns a skipped result. **Anything moved onto the queue needs
+its not-applicable states classified, or durability turns them into noise.**
+
+**A successful-but-empty read is now logged.** It blocks nothing and prunes nothing — both correct —
+but it defers every legitimate un-hide by a cycle with no signal at all. "I added Sarah to the Popular
+row and she still can't see it" has to be answerable from the log.
+
+### Defence in depth on the linked server
+
+`ContextBuilder.build` now refuses to build a context when the PMS reports a different `machine_id`
+than the linked `Server` row. The settings guard only fires when the new server ANSWERS at save time,
+so a box that is down then and up later slipped past — and a stranger's PMS enumerates zero Shortlist
+collections, which is exactly the empty-read input the prune must never act on. Two independent checks
+now, at the door and at the point of use.

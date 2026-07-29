@@ -5,10 +5,14 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.server.auth import require_owner
+from shortlist.server.db.models import DEFAULT_SLUG, Server
+from shortlist.server.services import collection_reconcile as reconcile
+from shortlist.server.services import jobs
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_owner)])
@@ -146,6 +150,52 @@ def _check(key: str, value: object) -> str | None:
     return validator(value) if validator else None
 
 
+async def _reject_a_different_server(state, values: dict[str, object]) -> None:
+    """Refuse a `plex.url`/`plex.token` edit that points at a DIFFERENT Plex server.
+
+    Everything Shortlist knows is scoped to one machine: which collection is whose (the delivery
+    ledger), whose share filters were snapshotted before we touched them, which account is the owner.
+    Silently repointing at another server leaves all of that describing a machine nobody is talking to
+    — and the next reconcile would go looking for those collections on a server that never had them.
+
+    Changing servers is a re-link (setup), not a settings edit, so this says so instead of guessing.
+    A read failure is NOT a rejection: the box may simply be down or the URL not reachable yet, and
+    refusing to save a URL because it does not answer would make a broken connection unfixable.
+    """
+    if not (set(values) & {"plex.url", "plex.token"}):
+        return
+    with state.sessions() as session:
+        server = session.query(Server).first()
+        if server is None:
+            return  # not linked yet — this IS the link, and setup owns that path
+        store = SettingsStore(session, state.secrets)
+        url = str(values.get("plex.url") or store.get("plex.url") or "")
+        token = values.get("plex.token")
+        token = str(store.get("plex.token") or "") if token in (None, "•••••") else str(token)
+    if not url or not token:
+        return
+
+    def probe() -> str | None:
+        from shortlist.engine.clients.plex_pms import PlexClient
+
+        try:
+            return PlexClient(url, token).machine_id
+        except Exception as e:
+            logger.info("could not read the machine id while saving Plex settings ({})", type(e).__name__)
+            return None
+
+    machine_id = await asyncio.get_running_loop().run_in_executor(None, probe)
+    if machine_id and machine_id != server.machine_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "That points at a different Plex server. Shortlist's rows, share-filter snapshots and "
+                "user list all belong to the server it is linked to, so switching is a re-link rather "
+                "than a settings change — uninstall from Settings → Danger Zone first, then set up again."
+            ),
+        )
+
+
 @router.get("")
 async def get_settings(request: Request) -> dict:
     with request.app.state.sessions() as session:
@@ -158,8 +208,14 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     if unknown:
         raise HTTPException(status_code=422, detail=f"unknown settings: {sorted(unknown)}")
     _validate_values(update.values)
+    await _reject_a_different_server(request.app.state, update.values)
     with request.app.state.sessions() as session:
         store = SettingsStore(session, request.app.state.secrets)
+        # Two settings do real work on Plex, so their OLD values are read before the write. Storing
+        # them used to be the whole of it: the toggle flipped, the page said "saved", and nothing on
+        # the server changed until the next nightly run — or, for the row name, ever.
+        was_hiding = bool(store.get("privacy.hide_shared_from_disabled"))
+        old_row_name = (store.get("row.name_template") or "") if "row.name_template" in update.values else ""
         for key, value in update.values.items():
             if key in SECRET_KEYS and value == "•••••":
                 continue  # redacted placeholder round-tripped from the UI — no change
@@ -174,7 +230,29 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
             from shortlist.server.scheduler import rebuild_schedule
 
             rebuild_schedule(request.app)
-        return store.all_public()
+        now_hiding = bool(store.get("privacy.hide_shared_from_disabled"))
+        new_row_name = (store.get("row.name_template") or "") if "row.name_template" in update.values else old_row_name
+        result = store.all_public()
+
+    # Both of these change what is on somebody's Plex server, so they act NOW rather than waiting for
+    # a run. Outside the session block: each queues a job that opens its own.
+    if now_hiding != was_hiding:
+        # This toggle decides whether an opted-out account still sees the public shared rows. Flipping
+        # it on owes every disabled account a `label!=` exclude; flipping it off owes them its removal.
+        await jobs.queue_privacy_sync(request.app.state, "the 'hide shared rows from disabled users' setting changed")
+    if new_row_name != old_row_name:
+        # The default row's title IS this template, so changing it here renames every user's collection
+        # — exactly what the Rows page already does through its own rename dialog. Without it, the next
+        # run built a SECOND collection under the new name and left the old one labelled and promoted
+        # for ever, because nothing addresses a collection by a title no run will write again.
+        await reconcile.run_row_rename_from_plex(
+            request.app.state,
+            slug=DEFAULT_SLUG,
+            new_template=new_row_name,
+            old_template=old_row_name,
+            scope="settings.rename",
+        )
+    return result
 
 
 _TESTABLE_SERVICES = frozenset({"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "llm"})

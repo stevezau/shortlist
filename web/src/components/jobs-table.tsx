@@ -15,7 +15,11 @@ const KIND_LABELS: Record<string, string> = {
   "privacy.sync": "Privacy sync",
   "user.cleanup": "Remove a disabled user's rows",
   "user.hide": "Hide a paused user's rows",
+  "user.restore": "Put an un-paused user's rows back",
   "row.reconcile": "Tidy up after a row change",
+  "sync.users": "Sync people from Plex",
+  "sync.history": "Sync watch history",
+  "backup.take": "Back up the database",
 };
 
 function kindLabel(kind: string): string {

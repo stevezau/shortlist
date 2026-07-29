@@ -103,6 +103,12 @@ class PlexTvClient:
         r.raise_for_status()
         users = []
         for el in ET.fromstring(r.text):
+            if el.tag != "User":
+                # Only `<User>` children are accounts. Without this, any other element plex.tv adds to
+                # the container (a `<Server>` block, an error node) becomes a user with `id=0` and no
+                # filters — and callers that compare their own roster against this list would read that
+                # as "everybody left the share" (rule 11: assume nothing about the response shape).
+                continue
             home = el.get("home") == "1"
             restricted = el.get("restricted") == "1"
             users.append(

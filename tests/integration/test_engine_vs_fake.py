@@ -22,6 +22,7 @@ from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.curator import NullCurator
+from shortlist.engine.delivery import row_marker
 from shortlist.engine.history import ShareTokenWatchSource
 from shortlist.engine.models import EngineConfig, MediaType, RowSpec, UserProfile, UserType
 from shortlist.engine.pipeline import EngineContext
@@ -1451,3 +1452,58 @@ def test_migration_night_rebuilds_every_shared_row_in_one_run(fakes, tmp_path):
             collection = state.collections[rating_key]
             got |= {state.item(k).title for k in state.members(collection) if state.item(k)}
         assert got == expected, f"{user_report.slug}: {sorted(got - expected)} belong to someone else"
+
+
+def test_delivery_records_the_rating_key_of_the_collection_it_built(fakes, tmp_path):
+    """The delivery ledger's whole input, against a real PMS rather than a mock.
+
+    Every on-demand reconcile has to answer "which object on the server is this row, for this person,
+    in this library?". A title cannot: a `{top_seed}` row renders differently every run. The engine
+    therefore reports the collection's ratingKey per (row, library) in the breakdown, and the server
+    persists it — so this asserts the key is real and points at the collection the run actually wrote,
+    not merely that the field is populated.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            max_seeds=12,
+            rows=[RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=12)],
+            rows_defined=True,
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    users = [
+        UserProfile(
+            username=u.username,
+            plex_account_id=u.id,
+            user_type=UserType.MANAGED if u.home else UserType.SHARED,
+        )
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+    report = engine_run(ctx, users)
+
+    account_by_slug = {u.slug: u.plex_account_id for u in users}
+    checked = 0
+    for user_report in report.users:
+        marker = row_marker(account_by_slug[user_report.slug])
+        for entry in user_report.breakdown:
+            key = entry.get("rating_key")
+            assert key, f"{entry['row_title']} in {entry['library_title']} carries no ratingKey"
+            # The key must name the collection the run actually WROTE — a stale or invented one would
+            # send a later reconcile at the wrong object, or at nothing at all.
+            collection = state.collections.get(key)
+            assert collection is not None, f"ratingKey {key} is not a collection on this server"
+            assert collection.title == entry["row_title"] + marker
+            checked += 1
+    assert checked, "nothing was delivered, so there is no ledger input to check"

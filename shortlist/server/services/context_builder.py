@@ -45,6 +45,7 @@ from shortlist.server.db.models import (
     CollectionUserOverride,
     PickRow,
     RequestCandidate,
+    Server,
     User,
     iso_utc,
     utcnow,
@@ -78,6 +79,29 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
     return kwargs
 
 
+def _refuse_a_different_server(session, machine_id: str) -> None:
+    """Abort before touching a Plex server that is not the one this instance is linked to.
+
+    Every record Shortlist holds is scoped to one machine: the delivery ledger says which collection is
+    whose, `restriction_snapshots` holds each account's filters as they were before we touched them,
+    and the user table says who the owner is. Run any of that against a different server and the
+    bookkeeping describes a machine nobody is talking to.
+
+    The concrete danger is the privacy sync: a stranger's PMS enumerates ZERO Shortlist collections,
+    which reads as "every row is gone" — and the merge would then rewrite share filters on plex.tv
+    from that. Settings already refuses a repoint (`api/settings._reject_a_different_server`), but only
+    when the new server ANSWERS at save time; a box that is down then, and up later, slips past. This
+    is the check at the point of use, where it cannot be skipped.
+    """
+    server = session.query(Server).first()
+    if server is None or not server.machine_id or server.machine_id == machine_id:
+        return
+    raise RuntimeError(
+        f"Plex at this URL reports machine {machine_id}, but Shortlist is linked to {server.machine_id}. "
+        "Refusing to run against a different server — re-link from setup if the move is intentional."
+    )
+
+
 class ContextBuilder:
     """Builds an EngineContext and user profiles from DB settings — the engine's server adapter."""
 
@@ -104,6 +128,7 @@ class ContextBuilder:
             # A large TV library's collection rebuild legitimately takes 15-20s+; the configured
             # per-call timeout (default 45s) gives those headroom instead of timing out + retrying.
             plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
+            _refuse_a_different_server(session, plex.machine_id)
             plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             trakt = (

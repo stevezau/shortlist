@@ -14,7 +14,13 @@
   Enable/disable each person or **Enable all / Disable all** at once, pause someone (keeps their
   row, skips them on runs), set a request tag, add per-person row overrides
   (mute a row, resize it, or set its watch-history depth just for them), and see each user's
-  restriction status. Accounts with Plex **parental controls** (age restrictions) are badged
+  restriction status. Turning someone **off** removes their rows from Plex and rewrites the share
+  filters so they stop seeing the shared rows too; turning them back **on** undoes the second half
+  straight away (their own row returns on the next run). **Pause** takes their rows off every shelf
+  and **unpause** puts them straight back — neither waits for a run. If **Sync from Plex** finds
+  somebody who no longer has access to the server, Shortlist turns them off and cleans up their rows;
+  their history is kept, so you can switch them back on if they return. All of this runs as
+  background jobs, visible on the **Jobs** page. Accounts with Plex **parental controls** (age restrictions) are badged
   "Restricted" — Plex hides all collections from them regardless, so no row is built; remove the
   restriction in Plex if you want them to get recommendations. Opening a person shows
   their recent watch history (distinct titles, with season/episode numbers for TV), their picks
@@ -41,11 +47,22 @@
   of the console level in Settings → Advanced.
 - **Requests** — the approval inbox for titles your picks wanted but the library doesn't have
   yet. Approve to send to Radarr/Sonarr, or reject so they never come back (see "Requests" below).
-- **Tools** — on-demand maintenance: **Sync watch history** (re-read everyone's watched set now,
-  with a frequency picker: Daily / 12h / 6h / 4h / custom cron) and **Sync users** (pull the
-  roster from plex.tv + Tautulli). Both show when they last synced and when the next scheduled
-  run fires. Clearing run history is here too — it clears the browsable history but preserves
-  your dashboard metrics (delivered/watched/hit rate survive indefinitely).
+- **Jobs** — on-demand maintenance plus the history of everything Shortlist did on its own:
+  **Sync watch history** (re-read everyone's watched set now, with a frequency picker: Daily / 12h /
+  6h / 4h / custom cron), **Sync users** (pull the roster from plex.tv + Tautulli), and a **Sync
+  check** that previews and then fixes rows left on the wrong shelf. Both syncs show when they last
+  ran and when the next scheduled one fires. Clearing run history is here too — it clears the
+  browsable history but preserves your dashboard metrics (delivered/watched/hit rate survive
+  indefinitely), and no longer affects Shortlist's ability to tidy up rows on Plex.
+
+  Below that, **Background jobs** lists the maintenance Shortlist queued for itself — removing a
+  disabled user's rows, hiding a paused one's, writing share filters, tidying up after a row edit,
+  and the scheduled work too (the roster sync, the watch-history sync and the nightly backup all run
+  as jobs, so a failure shows up here instead of only in the log).
+  Filter by All / Active / Failed, and open any row for what it was asked to do, what came back, how
+  long it took, and the error if it failed. Anything that fails is retried with backoff and survives
+  a container restart; if it finally gives up, it reaches the notification bell.
+
 - **Settings** — one scrolling page, organised into a grouped sidebar sub-nav that jumps to each
   section and tracks where you are: **Connect** (Connections), **Rows** (Finding titles, Row
   defaults, Row placement), **Add-ons** (Requests), and **System** (Advanced, API access, Danger
@@ -64,7 +81,7 @@ together. To skip a person entirely, pause them on their detail page.
 ### Writing a custom schedule
 
 Every **Custom** schedule box in Shortlist — a row's schedule, and the watch-history / user-sync /
-backup pickers on Tools — takes either form:
+backup pickers on Jobs — takes either form:
 
 - **Plain English**: `every 30 minutes`, `every 4 hours`, `every 4 hours at 17 past`, `hourly`,
   `nightly at 3:30am`, `daily at 21:15`, `mondays at 9pm`, `weekdays at 6am`, `weekends at 10am`.
@@ -227,7 +244,7 @@ titles behind the ~1,000 the API reported.)
 
 When it does happen, it's almost always timing: **the read is per-run, so a title you mark watched
 after the last run stays eligible until the next one.** To fix it immediately without waiting for a
-scheduled run, go to **Tools → Sync history** — it re-reads every user's watched set right now,
+scheduled run, go to **Jobs → Sync history** — it re-reads every user's watched set right now,
 writes nothing to Plex, and updates what Shortlist knows (and the "N titles watched" count on the
 Users page). Any run after that leaves the title out.
 
@@ -477,12 +494,18 @@ without asking only if it clears **both** `requests.auto_min_demand` (default 3 
 
 ## Backups
 
-Shortlist copies its whole database to `/config/backups` on a schedule (Tools → Backups; nightly at
+Shortlist copies its whole database to `/config/backups` on a schedule (Jobs → Backups; nightly at
 3 AM by default), before every upgrade, and before any restore. It keeps the newest 10 by default.
 
 A backup holds everything Shortlist knows: settings and connections, your rows and their audiences,
 the people it tracks, run history and each run's picks, the request inbox — and, most importantly,
-the `restriction_snapshots` of each user's original Plex share filters. Those snapshots are the only
+the `restriction_snapshots` of each user's original Plex share filters.
+
+Because a backup holds your rows' **audiences**, restoring one also restores who could see which
+rows at that moment. If you have narrowed a shared row's audience since the backup was taken,
+restoring widens it again and those people will see the row after the next run. Shortlist says so
+before you confirm and again afterwards, but it does not undo it for you — check Rows before
+restarting. Those snapshots are the only
 record of how your server's sharing looked before Shortlist touched it, and **Uninstall restores
 from them**. Everything else is rebuildable by hand; that isn't.
 
@@ -509,7 +532,7 @@ Two things worth knowing:
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
 - **A watched title keeps getting recommended** — the watched set is read per run, so a title you
-  mark watched _after_ the last run stays eligible until the next one. **Tools → Sync history**
+  mark watched _after_ the last run stays eligible until the next one. **Jobs → Sync history**
   re-reads everyone's watched set immediately (writes nothing to Plex); any run after that drops it.
 - **Everything broke, get me out** — Settings → Danger Zone → **Uninstall** restores every
   user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled

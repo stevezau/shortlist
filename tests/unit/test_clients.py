@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -58,6 +59,19 @@ class TestPlexTvClient:
         assert users[0].filters["filterMovies"] == "label!=Shortlist_mike"
         assert users[1].user_type is UserType.MANAGED
         assert users[1].home is True
+
+    @respx.mock
+    def test_only_user_elements_become_users(self):
+        """Any other child of the container — a `<Server>` block, an error node — used to become an
+        account with `id=0` and no filters. That matters beyond a junk row: the user sync compares its
+        own roster against this list to decide who has LEFT the share, so a response-shape change could
+        read as "everybody departed" and switch every account off (rule 11)."""
+        injected = re.sub(r"(<MediaContainer[^>]*>)", r'\1<Server name="something-new" />', USERS_XML, count=1)
+        respx.get("https://plex.tv/api/users").mock(return_value=httpx.Response(200, text=injected))
+
+        users = self._client().list_users()
+
+        assert [u.id for u in users] == [555000100, 555000200]
 
     @respx.mock
     def test_update_filters_sends_only_given_fields_with_token_header(self):

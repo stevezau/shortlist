@@ -522,7 +522,7 @@ export const api = {
 
   restoreBackup: (
     name: string,
-  ): Promise<{ restored: string; message: string }> =>
+  ): Promise<{ restored: string; message: string; privacy_note?: string }> =>
     request("/api/system/backups/restore", {
       method: "POST",
       body: JSON.stringify({ name }),

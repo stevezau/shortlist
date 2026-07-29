@@ -350,6 +350,10 @@ def deliver_rows(
                 {
                     "row_slug": spec.slug,
                     "row_title": one.collection_title,
+                    # The ledger's handle on this collection. Everything else in this entry describes
+                    # what CHANGED; this says WHICH Plex object it changed, which is the one thing a
+                    # later reconcile cannot recompute — a `{top_seed}` title is different every run.
+                    "rating_key": one.rating_key,
                     "library_key": str(section.key),
                     "library_title": getattr(section, "title", str(section.key)),
                     "added": list(one.added),
@@ -433,6 +437,8 @@ def remove_row_collections(
     label: str,
     displays: set[str] | None,
     dry_run: bool,
+    in_sections: set[str] | None = None,
+    rating_keys: set[int] | None = None,
 ) -> list[str]:
     """Delete Shortlist collections carrying ``label`` — an on-demand reconcile OUTSIDE a run (a
     config change, or a manual "remove from Plex").
@@ -442,17 +448,31 @@ def remove_row_collections(
     by title. With ``None``, every collection under the label — a shared row's own label, or a user's
     whole label when the user is removed.
 
+    ``rating_keys`` matches by Plex IDENTITY instead, from the delivery ledger, and is unioned with
+    ``displays`` rather than replacing it. It is the only thing that can find a ``{top_seed}`` row,
+    whose title is different every run and so matches no computed ``displays`` entry. Both are still
+    scoped to ``label``, so neither can reach another user's row or a foreign (Kometa) collection —
+    identity narrows the search, it never widens ownership.
+
+    ``in_sections`` (section keys) limits WHERE: used when a row is narrowed rather than removed —
+    its ``media`` changed from both to movie, or a library was dropped from ``library_keys`` — so only
+    the collections in libraries it no longer targets go, and the ones it still uses stay. ``None``
+    means every library, which is right for a removal.
+
     Removal only — it never creates or promotes, so it can never leak: deleting a row can only make
-    the server more private. Scans EVERY library,
+    the server more private. Scans EVERY library by default,
     so a copy left in a library the row no longer targets is still removed. ``delete_owned_collection``
     refuses anything without a ``shortlist_`` label, so a foreign (Kometa) collection is never touched.
     Returns the display titles removed (or, in a dry run, that would be).
     """
     removed: list[str] = []
     for section in plex.sections():
+        if in_sections is not None and str(section.key) not in in_sections:
+            continue
         for collection in plex.find_owned_collections(section, label):
             display = strip_marker(collection.title)
-            if displays is not None and display not in displays:
+            by_key = bool(rating_keys) and _rating_key(collection) in rating_keys
+            if displays is not None and display not in displays and not by_key:
                 continue
             removed.append(display)
             if dry_run:
@@ -537,6 +557,18 @@ def reset_row_posters(
     return reset
 
 
+def _rating_key(collection) -> int:
+    """A collection's Plex ratingKey as an int, or 0 when the PMS didn't give one.
+
+    Never raises: the ledger is a convenience for later reconciles, and failing a delivery over a
+    missing key would trade a real row for a bookkeeping detail.
+    """
+    try:
+        return int(getattr(collection, "ratingKey", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _create_labelled_collection(
     plex: PlexClient,
     section,
@@ -549,13 +581,14 @@ def _create_labelled_collection(
     poster: PosterSpec | None = None,
     artist: PosterArtist | None = None,
     order_work: list[tuple] | None = None,
-) -> str:
+) -> tuple[str, int]:
     """Create the collection, apply its label, and delete it if the label doesn't stick.
 
     A collection with no shortlist_* label is invisible to every lookup we have — all of them key off
     that prefix — so nothing would ever find it again, no filter could hide it, and it would be
     visible to everyone forever. Create and label must therefore succeed together or not at all.
-    Returns the stored (Plex title-cased) label.
+    Returns the stored (Plex title-cased) label and the new collection's ratingKey — the ledger's
+    handle on it, and the only one that survives a title the next run renders differently.
     """
     items = plex.fetch_items([p.rating_key for p in picks])
     collection = plex.create_collection(section, title, items)
@@ -591,7 +624,7 @@ def _create_labelled_collection(
         len(picks),
         stored,
     )
-    return stored
+    return stored, _rating_key(collection)
 
 
 def _deliver_one(
@@ -659,7 +692,7 @@ def _deliver_one(
             )
             apply_poster(plex, None, poster, profile, picks, library_name=section.title, artist=artist, dry_run=True)
             return diff, label
-        stored = _create_labelled_collection(
+        stored, diff.rating_key = _create_labelled_collection(
             plex,
             section,
             profile,
@@ -726,7 +759,7 @@ def _deliver_one(
             to_remove_count,
         )
         plex.delete_owned_collection(collection, label_prefix)
-        stored = _create_labelled_collection(
+        stored, diff.rating_key = _create_labelled_collection(
             plex,
             section,
             profile,
@@ -752,6 +785,7 @@ def _deliver_one(
             order_work.append((collection, wanted_keys))
         apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
         stored = plex.stored_label(collection, label)
+        diff.rating_key = _rating_key(collection)
         logger.info(
             "{}: '{}' in '{}' unchanged ({} items) — no membership write",
             profile.username,
@@ -771,6 +805,7 @@ def _deliver_one(
     apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
 
     stored = plex.stored_label(collection, label)
+    diff.rating_key = _rating_key(collection)
     # Promotion is deliberately NOT done here: the pipeline promotes only after every user's
     # share filters have been merged, so a new row is never visible before its exclusions exist.
     logger.info(

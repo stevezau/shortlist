@@ -283,6 +283,39 @@ class RestrictionSnapshotRow(Base):
     filters_after: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class Delivery(Base):
+    """Which Plex collection Shortlist built for one (row, user, library) — the delivery ledger.
+
+    Answers the one question nothing else in the schema can: *which object on the server is this
+    row, for this person, in this library?* Every reconcile needs it, and every other way of asking
+    is a guess:
+
+    * **By title from the row's template** — works for a static, `{library_name}` or `{user}` name,
+      and cannot work for `{top_seed}`, which renders differently every single run.
+    * **By the last run's breakdown** — what this replaced. Rows have their own crons, so the latest
+      run is routinely scoped to ONE row; delete row B the morning after row A ran and there was
+      nothing to find. `DELETE /api/runs` erased it outright while claiming to change nothing on Plex.
+
+    Keyed by SLUG, not by foreign key, deliberately: the row it describes is usually being deleted
+    when this is read, and a cascade would take the ledger with it. Rows are upserted per delivery and
+    swept when their collection is removed, so the table stays the size of "collections that exist".
+    """
+
+    __tablename__ = "deliveries"
+
+    # (row, user, library) is the identity — one collection per row per person per library.
+    collection_slug: Mapped[str] = mapped_column(String(255), primary_key=True)
+    user_slug: Mapped[str] = mapped_column(String(255), primary_key=True)
+    library_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    rating_key: Mapped[int] = mapped_column(Integer, index=True)
+    # The title as delivered, marker-stripped. NOT an addressing key — `rating_key` is the only thing
+    # read back — it is here so the ledger is legible in an audit ("which row was this?") without
+    # joining anything. Deliberately not used as a fallback: a title match is exactly the mechanism
+    # this table replaced, and having two answers would hide which one was wrong.
+    title: Mapped[str] = mapped_column(String(512), default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class CacheRow(Base):
     __tablename__ = "caches"
 

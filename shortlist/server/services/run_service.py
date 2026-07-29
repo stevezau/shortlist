@@ -21,12 +21,37 @@ from sqlalchemy.orm import Session, sessionmaker
 from shortlist.engine.models import SHARED_SLUG_PREFIX
 from shortlist.engine.pipeline import EngineContext
 from shortlist.engine.pipeline import run as engine_run
-from shortlist.server.db.models import Event, PickRow, RequestCandidate, Run, RunUser, User
+from shortlist.server.db.models import Delivery, Event, PickRow, RequestCandidate, Run, RunUser, User
 from shortlist.server.safe_mode import force_dry_run
 from shortlist.server.services.context_builder import ContextBuilder
 from shortlist.server.services.sse import EventBus
 
 HIT_WINDOW_DAYS = 30  # a pick counts as a hit if it is watched within 30 days of being recommended
+
+
+def _record_deliveries(session: Session, user_slug: str, breakdown: list[dict]) -> None:
+    """Upsert this user's delivery-ledger rows from a run's per-(row, library) breakdown.
+
+    The ledger is what lets a later reconcile find a collection it cannot re-derive a title for (a
+    `{top_seed}` row renders differently every run). It is written here, on the persist path, so it
+    stays in step with what the run actually delivered.
+
+    Entries with no `rating_key` are skipped: legacy breakdowns predate the field, and a dry run never
+    reaches this function at all. A row without a key is simply not in the ledger, which leaves the
+    reconciles exactly where they were before it existed — the fallback still applies.
+    """
+    for entry in breakdown or []:
+        rating_key = int(entry.get("rating_key") or 0)
+        slug, library_key = entry.get("row_slug") or "", str(entry.get("library_key") or "")
+        if not rating_key or not slug or not library_key:
+            continue
+        row = session.get(Delivery, (slug, user_slug, library_key))
+        if row is None:
+            row = Delivery(collection_slug=slug, user_slug=user_slug, library_key=library_key)
+            session.add(row)
+        row.rating_key = rating_key
+        row.title = entry.get("row_title") or ""
+        row.updated_at = datetime.now(UTC)
 
 
 def _why_json(why) -> list[dict]:
@@ -517,6 +542,7 @@ class RunService:
             )
         )
         if not dry_run:
+            _record_deliveries(session, user.slug, user_report.breakdown)
             for pick in user_report.picks:
                 session.add(
                     PickRow(
