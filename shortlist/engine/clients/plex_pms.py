@@ -772,10 +772,20 @@ class PlexClient:
             media_type: Which type the section holds — selects Plex's ``type`` (1=movie, 2=show).
             token: The server-scoped ``X-Plex-Token`` to read as (this user's, not the owner's) — a
                 live per-user credential, never logged (rule 9).
-            since: Return only titles last viewed at or after this moment (Plex's own
-                ``lastViewedAt>=`` section filter). This is an INCREMENTAL read: it cannot see a title
-                that was un-watched or deleted, so callers must still do a periodic full read.
-                ``None`` (the default) reads everything.
+            since: Return only titles last viewed at or after this moment — an INCREMENTAL read.
+
+                Done by ORDERING, not filtering: the read is sorted ``lastViewedAt:desc`` and stops at
+                the first title older than the cutoff. A `lastViewedAt>=` query filter was tried first
+                and is **silently ignored** by PMS 1.43.3 (live-probed 2026-07-30 against SFLIX:
+                unfiltered, `>=` and `>>=` all returned the same totalSize of 1077 — as did a `year>>=`
+                control, so param filtering on this endpoint does not work at all). Ignoring a filter
+                is the worst failure mode available: it returns everything while looking like it
+                worked. Sorting IS honoured, so the cutoff is applied client-side against an order the
+                server guarantees.
+
+                Still a partial answer by construction — it cannot see a title that was un-watched or
+                deleted — so callers must keep doing a periodic full read. ``None`` (the default) reads
+                everything, unsorted, exactly as before.
 
         Returns:
             One WatchedItem per distinct watched title, newest watch first is NOT guaranteed (callers
@@ -784,18 +794,26 @@ class PlexClient:
         plex_type = 1 if media_type is MediaType.MOVIE else 2
         items: list[WatchedItem] = []
         start = 0
+        reached_cutoff = False
         while True:
             root = self._read_watched_page(section_key, plex_type, token, start, since=since)
             entries = list(root)
             for el in entries:
                 item = self._watched_item(el, media_type)
-                if item is not None:
-                    items.append(item)
+                if item is None:
+                    continue
+                if since is not None and item.watched_at < since:
+                    # Sorted newest-first, so everything from here on is older. Stop reading — this
+                    # is where the saving actually comes from, since the server ignores the filter.
+                    reached_cutoff = True
+                    break
+                items.append(item)
             total = int(root.get("totalSize") or root.get("size") or len(entries))
             start += len(entries)
-            # Stop when this page was short (fewer than we asked for) or we've reached the reported
-            # total. An empty page also stops us — never loop forever on a server that ignores paging.
-            if not entries or start >= total:
+            # Stop when we crossed the cutoff, when this page was short (fewer than we asked for), or
+            # when we've reached the reported total. An empty page also stops us — never loop forever
+            # on a server that ignores paging.
+            if reached_cutoff or not entries or start >= total:
                 break
         logger.debug(
             "watched read: section {} ({}) -> {} titles{}",
@@ -822,9 +840,10 @@ class PlexClient:
         url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
         params: dict[str, object] = {"type": plex_type, "unwatched": 0, "includeGuids": 1}
         if since is not None:
-            # Plex's section-filter syntax: the operator is part of the FIELD name, not the value.
-            # Epoch seconds, matching the `lastViewedAt` the items themselves carry.
-            params["lastViewedAt>="] = int(since.timestamp())
+            # SORT, not filter. `lastViewedAt>=` (and `>>=`) are silently ignored by PMS 1.43.3 —
+            # live-probed 2026-07-30, see `watched_titles`. Sorting newest-first IS honoured, and the
+            # caller stops at the first title older than the cutoff.
+            params["sort"] = "lastViewedAt:desc"
         r = http_retry.get(
             url,
             params=params,

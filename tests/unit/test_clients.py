@@ -873,45 +873,104 @@ class TestWatchedTitles:
         assert request.url.params["unwatched"] == "0"  # Plex's binary watched flag: viewCount>0, marks included
         assert request.url.params["type"] == "1"  # movie
 
-    @respx.mock
-    def test_an_incremental_read_asks_plex_for_only_what_changed(self, mock_plex: PlexClient):
-        """`since` becomes Plex's own section filter, so the PMS does the narrowing rather than us
-        pulling every watched title and discarding most of it.
+    @staticmethod
+    def _watched_xml(*rows: tuple[int, str, int]) -> str:
+        """`(ratingKey, title, lastViewedAt)` rows, in the order the server would return them."""
+        videos = "".join(
+            f'<Video ratingKey="{key}" title="{title}" year="2000" viewCount="1" lastViewedAt="{seen}">'
+            f'<Guid id="tmdb://{key}"/></Video>'
+            for key, title, seen in rows
+        )
+        return f'<MediaContainer size="{len(rows)}" totalSize="{len(rows)}">{videos}</MediaContainer>'
 
-        The operator is part of the FIELD NAME (`lastViewedAt>=`), not the value — Plex's section
-        filter syntax — and the value is epoch seconds, matching the `lastViewedAt` the items carry.
+    @respx.mock
+    def test_an_incremental_read_sorts_newest_first_and_never_sends_a_filter(self, mock_plex: PlexClient):
+        """The saving comes from ORDERING plus an early stop, not from a server-side filter.
+
+        `lastViewedAt>=` (and `>>=`) are SILENTLY IGNORED by PMS 1.43.3 — live-probed 2026-07-30
+        against a real server: unfiltered, `>=` and `>>=` all returned the same totalSize of 1077, as
+        did a `year>>=` control. Ignoring a filter is the worst failure mode available, because the
+        read looks like it worked and quietly returns everything. Sorting IS honoured, so that is what
+        we rely on; sending the dead filter anyway would be cargo cult.
         """
         from datetime import UTC, datetime
 
         self._mock_url(mock_plex)
-        xml = (
-            '<MediaContainer size="1" totalSize="1">'
-            '<Video ratingKey="42" title="Heat" year="1995" viewCount="1" lastViewedAt="1752000000">'
-            '<Guid id="tmdb://949"/>'
-            "</Video>"
-            "</MediaContainer>"
-        )
-        respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
+        # 1785000000 = 2026-07-25, i.e. INSIDE the cutoff below, so it survives the early stop.
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._watched_xml((42, "Heat", 1785000000))))
         since = datetime(2026, 7, 1, tzinfo=UTC)
 
         items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since)
 
         assert [i.title for i in items] == ["Heat"]
         params = respx.calls.last.request.url.params
-        assert params["lastViewedAt>="] == str(int(since.timestamp()))
-        # The other filters still apply — incremental narrows the read, it does not replace it.
+        assert params["sort"] == "lastViewedAt:desc"
+        assert "lastViewedAt>=" not in params, "a filter this PMS ignores must not be sent"
+        # The filters that DO work still apply — incremental narrows the read, it does not replace it.
         assert params["unwatched"] == "0" and params["includeGuids"] == "1"
 
     @respx.mock
-    def test_a_complete_read_sends_no_time_filter_at_all(self, mock_plex: PlexClient):
-        """A full read must ask for everything — a stray filter here would silently cap the set that
-        the already-watched filter and the weekly reconcile both depend on being complete."""
+    def test_an_incremental_read_stops_at_the_first_title_older_than_the_cutoff(self, mock_plex: PlexClient):
+        """This early stop IS the optimisation. Without it the incremental path reads every watched
+        title and throws most away — all of the cost, none of the benefit."""
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        # Newest-first, as the sort guarantees. Only the first two are inside the cutoff.
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(
+                200,
+                text=self._watched_xml(
+                    (1, "Watched today", 1785000000),
+                    (2, "Watched yesterday", 1784900000),
+                    (3, "Watched years ago", 1500000000),
+                    (4, "Older still", 1400000000),
+                ),
+            )
+        )
+        since = datetime.fromtimestamp(1784000000, tz=UTC)
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since)
+
+        assert [i.title for i in items] == ["Watched today", "Watched yesterday"]
+
+    @respx.mock
+    def test_it_parses_the_recorded_sorted_response_from_a_real_server(self, mock_plex: PlexClient):
+        """Replays the recorded PMS 1.43.3 response (plex-safety rule 11).
+
+        The header of `pms_watched_incremental.xml.txt` carries the measurements that decided this
+        design: on a real 9,897-item section, `unwatched=0` and `sort=lastViewedAt:desc` are honoured
+        while every cutoff-filter form is silently ignored. This test pins the PARSE against that
+        exact shape — the ordering, the mark-as-watched with no viewCount, the multiple `<Guid>`
+        children — so a future refactor cannot quietly stop understanding it.
+        """
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        recorded = (FIXTURES / "pms_watched_incremental.xml.txt").read_text()
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=recorded))
+
+        # A cutoff older than all three, so nothing is stopped early and the whole page is parsed.
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=datetime(2025, 1, 1, tzinfo=UTC))
+
+        assert [i.tmdb_id for i in items] == [100001, 100002, 100003]
+        # Newest first, exactly as the recorded response is ordered.
+        assert [i.watched_at.timestamp() for i in items] == [1779572385, 1774305861, 1765677185]
+        assert items[1].watch_count == 3  # viewCount, the frequency signal for a movie
+        assert items[2].watch_count == 1  # a mark-as-watched carries none; it floors at 1
+
+    @respx.mock
+    def test_a_complete_read_asks_for_everything_unsorted(self, mock_plex: PlexClient):
+        """A full read must not narrow OR reorder: it is the only thing that notices an un-watch, and
+        the already-watched filter depends on it being the whole set."""
         self._mock_url(mock_plex)
         respx.get(self._URL).mock(return_value=httpx.Response(200, text='<MediaContainer size="0" totalSize="0"/>'))
 
         mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
 
-        assert "lastViewedAt>=" not in respx.calls.last.request.url.params
+        params = respx.calls.last.request.url.params
+        assert "lastViewedAt>=" not in params
+        assert "sort" not in params
 
     @respx.mock
     def test_a_marked_movie_with_no_playback_still_counts_once(self, mock_plex: PlexClient):

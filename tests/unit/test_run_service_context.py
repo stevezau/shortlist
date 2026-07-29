@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -474,6 +475,31 @@ class TestSyncWatched:
         history = service.refresh_watched(ctx, profile)
 
         assert [i.title for i in history] == ["From the complete read"]
+
+    def test_the_prefill_skips_people_this_run_will_not_build_for(self, service):
+        """Every row carries its own cron, so a SCHEDULED run is always scoped to a subset of rows.
+
+        `_run_user` returns "skipped" before reading any history for anyone with no row in scope, so
+        pre-filling them is a complete per-user PMS read spent on someone the run then skips.
+        """
+        from shortlist.engine.models import EngineConfig, RowSpec, UserProfile, UserType
+
+        included = UserProfile(username="in", plex_account_id=1, user_type=UserType.SHARED, slug="in")
+        excluded = UserProfile(username="out", plex_account_id=2, user_type=UserType.SHARED, slug="out")
+        # One row, whose audience is only `included`'s account, and it IS in this run's scope.
+        config = EngineConfig(
+            rows=[RowSpec(slug="picked", name_template="Picked", size=10, audience={1})],
+            build_only=["picked"],
+        )
+        ctx = SimpleNamespace(config=config)
+
+        assert service._has_a_row_in_scope(ctx, included) is True
+        assert service._has_a_row_in_scope(ctx, excluded) is False
+
+    def test_the_prefill_scope_check_fails_open(self, service):
+        """A context that cannot answer must be treated as in-scope — the worst case is then exactly
+        the behaviour before the narrowing, never a person silently missing their history."""
+        assert service._has_a_row_in_scope(SimpleNamespace(), object()) is True
 
     def test_streams_per_user_progress_and_a_finished_event(self, service, monkeypatch):
         """The Tools page bar is driven by these events — a sync that emits nothing shows no bar."""

@@ -527,14 +527,13 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
             watched = state.watched_keys(account_id) if account_id is not None else set()
             listing = [item for item in _sorted_items(list(items.values()), None) if item.rating_key in watched]
-            # The INCREMENTAL read's own filter (`lastViewedAt>=<epoch>`, Plex's section-filter
-            # syntax — the operator is part of the field name). Honoured here so the cache's
-            # incremental path is genuinely exercised end-to-end: a fake that ignored it would
-            # return the whole set every time and the e2e suite would pass either way.
-            since = query.get("lastViewedAt>=")
-            if since is not None and account_id is not None:
-                cutoff = int(since)
-                listing = [i for i in listing if state.last_viewed_at(account_id, i.rating_key) >= cutoff]
+            # The INCREMENTAL read asks for `sort=lastViewedAt:desc` and stops client-side at the
+            # first title older than its cutoff. It deliberately does NOT send a `lastViewedAt>=`
+            # filter: real PMS 1.43.3 silently ignores that (live-probed 2026-07-30), and a fake that
+            # honoured a filter the real server drops would make the e2e suite prove the opposite of
+            # the truth. So honour the SORT — which the real server does — and nothing else.
+            if query.get("sort") == "lastViewedAt:desc" and account_id is not None:
+                listing = sorted(listing, key=lambda i: state.last_viewed_at(account_id, i.rating_key), reverse=True)
             start, size = _page(request, len(listing))
             page = listing[start : start + size]
             root = _container(size=len(page), totalSize=len(listing), librarySectionID=section_id)

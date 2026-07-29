@@ -93,6 +93,10 @@ page (one place per setting), and jobs are edited in place.
 
 Two jobs are worth knowing about there:
 
+- **Sync watch history** reads only what changed since last night, then does a complete re-read
+  weekly (it is the only thing that can notice a title being un-watched or removed). If a library
+  cannot be read incrementally, that library falls back to a complete read on its own rather than
+  serving a stale watched set.
 - **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
   builds, delivers and promotes nothing — so it can only ever make your server *more* private. It is
   the cheapest safety net against drift.

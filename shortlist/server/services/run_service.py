@@ -366,11 +366,15 @@ class RunService:
         with self._sessions() as session:
             store = SettingsStore(session)
             incremental = bool(store.get("sync.watch_incremental"))
+        # Only people this run will actually build for. `_run_user` returns early — before its own
+        # history read — for anyone with no row in scope, so pre-filling them is a complete per-user
+        # PMS read spent on someone the run then skips.
+        wanted = [p for p in profiles if self._has_a_row_in_scope(ctx, p)]
         # getattr, not attribute access: narration must never be the thing that fails a run, and a
         # caller may hand in a context that has no progress hook at all.
         progress = getattr(ctx, "progress", None)
-        total = len(profiles)
-        for position, profile in enumerate(profiles, start=1):
+        total = len(wanted)
+        for position, profile in enumerate(wanted, start=1):
             if progress is not None:
                 try:
                     progress("Shortlist", "reading_history", {"done": position, "total": total}, None)
@@ -384,6 +388,34 @@ class RunService:
                     profile.slug,
                     type(e).__name__,
                 )
+
+    @staticmethod
+    def _has_a_row_in_scope(ctx, profile) -> bool:
+        """Will this run build anything for this person?
+
+        Mirrors the engine's own gate in `rows._run_user` — a row this person is in the audience for,
+        not muted, and in this run's scope — rather than inventing a second rule. If it is empty the
+        engine returns "skipped" BEFORE reading any history, so pre-filling theirs is a complete
+        per-user PMS read spent on someone the run then skips. Every row carries its own cron, so a
+        scheduled run is always scoped and this is the common case, not the rare one.
+
+        Fails OPEN: any context that does not expose these (a test double, a future refactor) is
+        treated as in-scope, so the worst case is exactly the behaviour before this narrowing.
+        """
+        from shortlist.engine.rows import _in_audience, _is_muted
+
+        config = getattr(ctx, "config", None)
+        per_person = getattr(config, "per_person_rows", None)
+        should_build = getattr(config, "should_build", None)
+        if per_person is None or should_build is None:
+            return True
+        try:
+            return any(
+                _in_audience(profile, spec) and not _is_muted(profile, spec) and should_build(spec)
+                for spec in per_person()
+            )
+        except Exception:
+            return True
 
     def _watch_cache(self):
         """The cache, honouring `sync.watch_full_days`.
@@ -532,7 +564,7 @@ class RunService:
                 # Fill each person's history from the cache BEFORE the engine runs. The run used to
                 # do its own complete per-user read — the same read the nightly sync had already
                 # done hours earlier — which was half the total cost of a night.
-                await loop.run_in_executor(None, self._prefill_history, ctx, profiles, run_id)
+                await loop.run_in_executor(None, self._prefill_history, ctx, profiles, run_id)  # scoped inside
                 # The ONE-WRITER lock, held for the whole engine run (plex-safety rule 3 + design
                 # doc §2 principle 6). Jobs deferring to runs via `_plex_busy` is only half of it:
                 # without this, a writer job already mid-flight kept merging share filters straight
