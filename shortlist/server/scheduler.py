@@ -32,6 +32,26 @@ SYNC_CHECK_JOB_ID = "sync-check"
 _PRIVACY_SYNC_CRON = "15 5 * * *"
 
 
+#: The built-in cron for each schedulable settings key. A BLANK setting means "use this" for every
+#: key here except `sync.check_cron`, whose blank genuinely means off — which is why the Schedule view
+#: must show the EFFECTIVE cron rather than the stored one. Reading the raw setting made a backup that
+#: runs nightly at 03:00 appear under "Not scheduled".
+DEFAULT_CRONS: dict[str, str] = {
+    "sync.watch_cron": _WATCH_SYNC_CRON,
+    "sync.users_cron": _USER_SYNC_CRON,
+    "backup.cron": _BACKUP_CRON,
+    "privacy.sync_cron": _PRIVACY_SYNC_CRON,
+    "sync.check_cron": "",  # opt-in: blank means off, not "use a default"
+}
+
+
+def effective_cron(app, key: str) -> str:
+    """The cron this key ACTUALLY runs on — the stored value, or the built-in default it falls back
+    to, or "" when the schedule is genuinely off. Resolved exactly as the scheduler resolves it, so
+    the UI and the running triggers cannot disagree."""
+    return _resolve_cron(app, key, DEFAULT_CRONS.get(key, ""))
+
+
 def _job_id(cron: str) -> str:
     return f"{_JOB_PREFIX}{cron}"
 

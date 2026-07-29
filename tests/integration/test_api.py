@@ -4412,10 +4412,26 @@ class TestScheduleApi:
         assert privacy["cron"], "privacy sync must ship with a schedule"
         assert privacy["writes_plex"] is True
 
+    def test_a_blank_cron_that_means_a_built_in_default_is_not_reported_as_off(self, client: TestClient):
+        """`backup.cron` ships blank, meaning "use 03:00". Returning the RAW setting filed a backup
+        that runs nightly under "Not scheduled" — a schedule the UI claimed did not exist."""
+        backup = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "backup.take")
+
+        assert backup["cron"], "an inherited default must be reported as the schedule it is"
+        assert backup["using_default"] is True, "and flagged as inherited, not as a choice the owner made"
+
+    def test_an_owner_set_cron_is_not_flagged_as_a_default(self, client: TestClient):
+        client.put("/api/settings", json={"values": {"backup.cron": "0 4 * * *"}})
+
+        backup = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "backup.take")
+        assert backup["cron"] == "0 4 * * *"
+        assert backup["using_default"] is False
+
     def test_the_drift_check_is_off_until_asked_for(self, client: TestClient):
         """Unlike the privacy sync it WRITES corrections to Plex, so running it unattended is a
         choice to make rather than a default to inherit."""
         check = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
+        # The one kind whose blank genuinely means OFF — it has no built-in default to fall back to.
         assert check["cron"] == ""
         assert check["optional"] is True
 

@@ -75,6 +75,11 @@ function EntryRow({
               {describeCron(entry.cron) ||
                 entry.cron ||
                 "Off — runs only when you press it"}
+              {/* Say where the cron came from. Without this an inherited default reads as a choice
+                  the owner made, and they go looking for a setting they never set. */}
+              {entry.using_default && entry.cron && (
+                <span className="text-muted-foreground/70"> · built-in default</span>
+              )}
             </p>
             {isRows && entry.rows && (
               <p className="text-sm text-muted-foreground">

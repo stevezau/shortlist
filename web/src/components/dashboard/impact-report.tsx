@@ -158,7 +158,10 @@ function CountBar({
           the same misleading fraction this rewrite exists to remove. */}
       <span className="w-32 shrink-0 text-right tabular-nums text-muted-foreground">
         <span className="font-medium text-foreground">{watched}</span> watched
-        {delivered > 0 && ` · ${delivered} sent`}
+        {/* "delivered", not "sent" — the Requests card on this same page uses "sent" to mean asked of
+            Sonarr/Radarr, and two meanings of the word side by side is exactly the kind of quiet
+            ambiguity this rewrite is meant to remove. */}
+        {delivered > 0 && ` · ${delivered} delivered`}
       </span>
     </div>
   );

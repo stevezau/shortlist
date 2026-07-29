@@ -1052,7 +1052,10 @@ export interface ScheduleEntry {
   description?: string;
   /** The settings key that holds this job's cron — what the UI writes to change it. */
   setting?: string;
-  /** Blank cron means "off" rather than "use the default". */
+  /** True when `cron` came from the built-in default rather than something the owner set — so the UI
+   *  can say so instead of implying they chose it. */
+  using_default?: boolean;
+  /** Blank cron means "off" rather than "use the default". Only the opt-in kinds. */
   optional?: boolean;
   writes_plex?: boolean;
   /** Row groups only: every enabled row sharing this cron. One trigger builds all of them. */

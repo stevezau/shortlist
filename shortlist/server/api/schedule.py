@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Request
 
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, iso_utc
+from shortlist.server.scheduler import effective_cron
 from shortlist.server.services.jobs import CATALOG
 from shortlist.server.settings_store import SettingsStore
 
@@ -49,7 +50,13 @@ async def schedule(request: Request) -> dict:
                 # The settings key the UI writes to change this cron — so the Schedule view needs no
                 # hard-coded map from kind to key.
                 "setting": entry.schedule_setting,
-                "cron": str(store.get(entry.schedule_setting) or ""),
+                # The cron this job ACTUALLY runs on, not the raw setting. A blank setting means "use
+                # the built-in default" for every kind except the opt-in ones, so returning the raw
+                # value made a backup that runs nightly at 03:00 read as "Not scheduled".
+                "cron": effective_cron(request.app, entry.schedule_setting),
+                # Whether that came from the default rather than something the owner set, so the UI
+                # can say "built-in default" instead of implying they chose it.
+                "using_default": not str(store.get(entry.schedule_setting) or "").strip(),
                 "optional": entry.schedule_optional,
                 "writes_plex": entry.writes_plex,
                 "next_run": next_run(entry.schedule_job_id),

@@ -139,8 +139,9 @@ describe("ImpactReport", () => {
     // delivered-in-window), so a fraction makes "4 of 0" reachable when delivery paused.
     // Counts, labelled — never "3 of 6". Two different sets (watched-in-window vs
     // delivered-in-window), so a fraction makes "4 of 0" reachable when delivery paused.
-    // More than one line reads "· 6 sent" (a person and a row happen to match), so assert on count.
-    expect(screen.getAllByText(/· 6 sent/).length).toBeGreaterThan(0);
+    // "delivered", not "sent": the Requests card uses "sent" for Sonarr asks on this same page.
+    // More than one line matches (a person and a row), so assert on count rather than uniqueness.
+    expect(screen.getAllByText(/· 6 delivered/).length).toBeGreaterThan(0);
     expect(screen.queryByText(/3 of 6/)).toBeNull();
     expect(screen.getAllByText("Dune: Part Two").length).toBeGreaterThan(0); // top titles + recent
     // By row is split per library: a {library_name} row reads its library in the name; a plain-named
