@@ -42,6 +42,24 @@ def _has_shortlist_marker(title: str) -> bool:
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
 
 
+def log_title(title: str) -> str:
+    """A collection title fit for a LOG LINE — never for matching or writing to Plex.
+
+    The per-account marker is 64 zero-width characters, so a raw title renders as
+    `✨ Movies Picked for You` followed by 64 invisible chars. Every delivery, promote and ordering
+    line carried them: the log looked corrupted, wrapped absurdly, and — worst — two users' rows were
+    IMPOSSIBLE to tell apart by eye, because the only thing distinguishing them is invisible.
+
+    Strip the marker and print the account id it encodes instead. Same information, legible, and
+    actually more useful: you can now see whose row a line is about.
+    """
+    if not _has_shortlist_marker(title):
+        return title
+    suffix = title[-64:]
+    account = sum((1 << bit) for bit, c in enumerate(suffix) if c == _MARKER_CHARS[1])
+    return f"{title[:-64]} [acct {account}]"
+
+
 def parse_pms_version(version: str) -> tuple[int, ...]:
     """'1.43.3.10793-cd55560bb' -> (1, 43, 3, 10793)."""
     numbers = version.split("-")[0].split(".")
@@ -416,10 +434,10 @@ class PlexClient:
 
         # Retry the whole promote on a PMS timeout — it's idempotent, and a busy server can time out a
         # single mutation that a retry (with the server given room to breathe) then completes.
-        _retry_idempotent(_apply, label=collection.title)
+        _retry_idempotent(_apply, label=log_title(collection.title))
         logger.info(
             "{}: promoted (home={} library={} pin={}) in {:.1f}s",
-            collection.title,
+            log_title(collection.title),
             home,
             recommended,
             pin_top,
@@ -470,7 +488,7 @@ class PlexClient:
         if not any(claims):
             return False
         hub.updateVisibility(recommended=False, home=False, shared=False)
-        logger.info("{}: taken off every surface{}", collection.title, f" ({reason})" if reason else "")
+        logger.info("{}: taken off every surface{}", log_title(collection.title), f" ({reason})" if reason else "")
         return True
 
     def demote_own_home(self, collection: Collection) -> bool:
@@ -493,7 +511,7 @@ class PlexClient:
             home=False,
             shared=bool(getattr(hub, "promotedToSharedHome", False)),
         )
-        logger.info("{}: demoted off the owner's Home (converge)", collection.title)
+        logger.info("{}: demoted off the owner's Home (converge)", log_title(collection.title))
         return True
 
     def order_owned_hubs(
@@ -613,9 +631,9 @@ class PlexClient:
         # converge, and "items +0 -0" once per collection buried the lines that mattered — a
         # 96-collection server logged ~96 of them a night saying nothing happened.
         if add_items or to_remove:
-            logger.info("{}: items +{} -{}", collection.title, len(add_items), len(to_remove))
+            logger.info("{}: items +{} -{}", log_title(collection.title), len(add_items), len(to_remove))
         else:
-            logger.debug("{}: items unchanged", collection.title)
+            logger.debug("{}: items unchanged", log_title(collection.title))
 
     def order_collection(self, collection: Collection, wanted_keys: list[int]) -> int:
         """Order a collection's visible head to ``wanted_keys`` (ranked) via ``moveItem`` — the expensive
@@ -641,7 +659,11 @@ class PlexClient:
             previous = key
         if moves:
             logger.info(
-                "{}: reordered {}/{} in {:.1f}s", collection.title, moves, len(target), time.monotonic() - start
+                "{}: reordered {}/{} in {:.1f}s",
+                log_title(collection.title),
+                moves,
+                len(target),
+                time.monotonic() - start,
             )
         return moves
 

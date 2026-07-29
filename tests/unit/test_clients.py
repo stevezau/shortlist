@@ -109,6 +109,28 @@ class TestPlexTvClient:
         assert by_id[555000300].restricted is True
         assert by_id[555000300].restriction_profile == ""
 
+    def test_a_log_title_is_legible_and_says_whose_row_it_is(self):
+        """Every delivery/promote/ordering line printed the raw title — which carries a 64-character
+        zero-width per-account marker. The log looked corrupted, wrapped absurdly, and two users'
+        rows were impossible to tell apart by eye, because the ONLY thing distinguishing them is
+        invisible. That is the log an operator reads to debug a user's report."""
+        from shortlist.engine.clients.plex_pms import log_title
+        from shortlist.engine.delivery import row_marker
+
+        marked = "✨ Movies Picked for You" + row_marker(218833834)
+        assert len(marked) == len("✨ Movies Picked for You") + 64
+
+        rendered = log_title(marked)
+        assert rendered == "✨ Movies Picked for You [acct 218833834]"
+        # No invisible characters survive into the log line.
+        assert not any(c in ("\u200b", "\u200c") for c in rendered)
+
+    def test_a_log_title_leaves_an_unmarked_title_alone(self):
+        """Kometa's collections and anything else on the server must pass through untouched."""
+        from shortlist.engine.clients.plex_pms import log_title
+
+        assert log_title("Christmas Favourites") == "Christmas Favourites"
+
     @respx.mock
     def test_an_omitted_account_is_unknown_not_unprofiled(self):
         """A 200 is not the same as a complete answer.

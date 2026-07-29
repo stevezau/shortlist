@@ -531,6 +531,36 @@ class TestUserSync:
 
         assert client.post("/api/users/sync").status_code == 200
 
+    def test_a_home_read_blip_never_wipes_a_stored_restriction_profile(self, client: TestClient, plextv, monkeypatch):
+        """`/api/home/users` is a best-effort enrichment: when it fails, every profile comes back "".
+        Saving that blindly WIPED correct values for everyone — the UI badge vanished and rows got
+        built for parental-controlled kids until the next sync happened to heal it.
+
+        A profile we could not read is unknown, and unknown must not overwrite what we already knew.
+        """
+        import shortlist.engine.clients.plextv as plextv_mod
+        from shortlist.server.db.models import User
+
+        # A healthy Home read: the kid's profile is known and gets stored.
+        monkeypatch.setattr(
+            plextv_mod.PlexTvClient, "home_restriction_profiles", lambda self: {555000200: "little_kid"}
+        )
+        monkeypatch.setattr(plextv_mod.PlexTvClient, "home_profile_known", lambda self, account_id: True)
+        client.post("/api/users/sync")
+        with client.app.state.sessions() as session:
+            kid = session.query(User).filter_by(plex_account_id=555000200).one()
+            assert kid.restriction_profile == "little_kid", "precondition: the profile was stored"
+
+        # Now the Home endpoint goes down. list_users() still returns everyone, profiles all blank.
+        monkeypatch.setattr(plextv_mod.PlexTvClient, "home_restriction_profiles", lambda self: {})
+        monkeypatch.setattr(plextv_mod.PlexTvClient, "home_profile_known", lambda self, account_id: False)
+
+        assert client.post("/api/users/sync").status_code == 200
+
+        with client.app.state.sessions() as session:
+            kid = session.query(User).filter_by(plex_account_id=555000200).one()
+            assert kid.restriction_profile == "little_kid", "a failed read must not erase a known profile"
+
     def test_sync_adds_the_owner_disabled_and_badged(self, client: TestClient, plextv):
         r = client.post("/api/users/sync")
         assert r.status_code == 200

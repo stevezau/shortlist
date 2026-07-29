@@ -18,6 +18,12 @@ export const STAGE_LABELS: Record<string, string> = {
   candidates: "gathering candidates",
   curating: "curating with AI",
   delivering: "writing the row to Plex",
+  // The tail phases, which run once for the whole server rather than per person. Without these
+  // the activity pill froze on the last user's last stage for the duration — minutes of a
+  // healthy run looking wedged.
+  filters: "merging share filters",
+  promoting: "putting rows on Home",
+  ordering: "ordering rows",
   done: "done",
   skipped: "skipped",
   error: "failed",

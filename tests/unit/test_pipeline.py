@@ -303,6 +303,27 @@ class TestRun:
         # sarah's filters were still written — the run carried on rather than aborting on the kid.
         assert 100 in [c.args[0] for c in mock_plextv.update_user_filters.call_args_list]
 
+    def test_the_tail_phases_narrate_themselves(self, ctx: EngineContext, mock_plextv):
+        """Everything after the last user — filters, promotion, ordering — used to emit nothing.
+
+        The sidebar activity pill shows the most recent stage event, so it froze on the last user's
+        last stage for the whole tail. On a real server that was ~25 minutes reading
+        "kateystreet — gathering candidates" while the run was actually ordering collections: a
+        healthy run indistinguishable from a wedged one.
+        """
+        stages: list[tuple[str, str]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: stages.append((slug, stage))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        tail = [stage for slug, stage in stages if slug == "Shortlist"]
+        assert "filters" in tail, "the share-filter merge is invisible"
+        assert "promoting" in tail, "promotion is invisible"
+        assert "ordering" in tail, "the long ordering pass is invisible"
+        # And they come after the per-user work, not before it.
+        assert stages.index(("Shortlist", "ordering")) > stages.index(("Shortlist", "filters"))
+
     def test_a_roster_that_omits_someone_is_not_knowledge_about_them(self, ctx: EngineContext, mock_plextv):
         """A 200 is not the same as a complete answer.
 

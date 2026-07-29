@@ -433,7 +433,14 @@ class ContextBuilder:
             # `restriction_profile` is "" until the next user sync backfills it, so immediately after
             # an upgrade a profiled account is briefly eligible. Harmless — it sees no collections
             # either way, and the next sync settles it.
-            if user.restriction_profile:
+            #
+            # BOTH flags, matching `privacy.py`'s skip exactly. They come from different endpoints
+            # and nothing enforces a relationship between them, so a `restricted=False` account that
+            # somehow reports a profile is a real cell — and privacy.py deliberately keeps writing
+            # its excludes. Keying on the profile alone here denied that same account a row, so it
+            # held excludes for rows it was never given: two modules disagreeing about whether one
+            # person can see anything.
+            if user.restricted and user.restriction_profile:
                 continue
             prefs = user.prefs or {}
             if prefs.get("paused"):

@@ -237,6 +237,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     )
 
     # Merge the excludes into every share filter BEFORE anything is promoted.
+    _emit(ctx, "Shortlist", "filters", {})
     filters_ok = _privacy_sync_phase(ctx, users, stored_labels, report)
     if filters_ok is None:
         # The plex.tv roster could not be read — no filters written, nothing promoted. The sweep
@@ -244,6 +245,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         return report
 
     # Only now, with the exclusions in place, promote rows onto shared Home.
+    _emit(ctx, "Shortlist", "promoting", {})
     promoted = _promote_phase(ctx, to_promote, shared_to_promote, filters_ok, report)
 
     # Converge everything the promote phase could NOT reach. Promotion only ever writes flags for
@@ -255,6 +257,9 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # Order each row's items (the expensive one-move-per-item step) as a best-effort pass AFTER
     # promotion — rows are already delivered, hidden and live, so a slow PMS here degrades only the
     # ordering, never the run. Privacy-neutral (never touches a label, filter, or promotion).
+    # The long one: one PMS round-trip per moved item, minutes on a big server. Silence here is
+    # what made a healthy run look wedged.
+    _emit(ctx, "Shortlist", "ordering", {})
     _collection_order_phase(ctx, order_work)
 
     # Position the just-promoted rows in each library's Recommended shelf (must run after promotion —

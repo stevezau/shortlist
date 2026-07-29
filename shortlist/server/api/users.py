@@ -564,9 +564,15 @@ async def sync_users_from_state(state) -> dict:
         store = SettingsStore(session, state.secrets)
         tautulli_url, tautulli_key = store.get("tautulli.url"), store.get("tautulli.apikey")
 
-    def fetch() -> tuple[list, dict | None, dict[int, str]]:
+    def fetch() -> tuple[list, dict | None, dict[int, str], set[int]]:
         # machine_id comes from the server table — no PMS round-trip needed to talk to plex.tv.
-        users = PlexTvClient(token, machine_id).list_users()
+        plextv = PlexTvClient(token, machine_id)
+        users = plextv.list_users()
+        # Which accounts the `/api/home/users` read actually covered. A blip there leaves every
+        # `restriction_profile` blank, and blindly saving that WIPES correct values for everyone:
+        # the UI badge disappears and rows get built for parental-controlled kids until the next
+        # sync heals it. Absent from this set means "unknown", not "no profile".
+        profiled_known = {u.id for u in users if plextv.home_profile_known(u.id)}
         try:
             account = plextv_account(token, client_id)
         except Exception as e:
@@ -581,10 +587,12 @@ async def sync_users_from_state(state) -> dict:
             except Exception as e:
                 # Nicer row titles are a bonus too — never fail a roster sync for them.
                 logger.warning("could not read friendly names from Tautulli ({})", type(e).__name__)
-        return users, account, friendly
+        return users, account, friendly, profiled_known
 
     emit("sync.progress", {"phase": "fetch"})  # indeterminate: one opaque plex.tv + Tautulli round-trip
-    remote, owner_account, friendly_names = await asyncio.get_running_loop().run_in_executor(None, fetch)
+    remote, owner_account, friendly_names, profiles_known = await asyncio.get_running_loop().run_in_executor(
+        None, fetch
+    )
     added = updated = 0
     # if plex.tv ever does list the owner, `_sync_owner` is the one that writes them — not both
     roster = [r for r in remote if r.id != owner_account_id]
@@ -613,7 +621,9 @@ async def sync_users_from_state(state) -> dict:
                 user.avatar_url = r.avatar_url
                 user.user_type = r.user_type.value
                 user.restricted = r.restricted
-                user.restriction_profile = r.restriction_profile
+                # Only when we actually found out — see `profiled_known` above.
+                if r.id in profiles_known:
+                    user.restriction_profile = r.restriction_profile
                 # Refreshed every sync so a rename in Tautulli follows through — but `nickname`
                 # (the owner's own choice) is never touched, so an override always survives.
                 user.friendly_name = friendly_names.get(r.id, user.friendly_name)
