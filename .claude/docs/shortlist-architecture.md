@@ -115,12 +115,35 @@ server                id · machine_id · name · url · token_enc · version ·
 users                 id · plex_account_id · username · slug · avatar_url · user_type(shared|managed|owner)
                       · enabled BOOL · cold_start BOOL · label ("shortlist_<slug>") · prefs JSON
                       (row_name_tpl, row_size, excluded_genres, max_rating, paused)
+collections           id · slug · name · build(per_person|shared) · audience(everyone|subset) · enabled BOOL
+                      · schedule (this row's OWN 5-field cron; "" = manual only — there is no global one)
+                      · size · media(movie|show|both) · library_keys JSON · name_template · min_watchers
+                      · placement / placement_friends (both|home|library|off) · pin_top BOOL · hub_anchor JSON
+                      · poster JSON · candidate_sources JSON · watched_pct · freshness · recent_count
+collection_audience   collection_id FK · user_id FK          (a `subset` row's members)
+collection_user_overrides  collection_id FK · user_id FK · muted BOOL · row_size · history_depth
+poster_assets         id · collection_id FK · kind(upload|preview) · bytes · created_at
+deliveries            collection_slug · user_slug · library_key  (composite PK) · rating_key · title · updated_at
+                      ← the DELIVERY LEDGER: which Plex collection is which row, for whom, in which
+                        library. Written per delivery, read by every on-demand reconcile. Keyed by SLUG
+                        not FK on purpose — the row it describes is usually the one being deleted.
+                        It exists because a title cannot answer that question: a `{top_seed}` row
+                        renders differently every run. See jobs-and-runs-design.md §13.
+jobs                  id · kind · payload JSON · status(queued|running|done|failed) · attempts · max_attempts
+                      · detail · error · result JSON · created_at · started_at · finished_at
+                      ← the durable queue for maintenance that must not be lost. APScheduler is only
+                        the trigger; this table is what survives a restart. See §5 of that doc.
 runs                  id · trigger(schedule|manual|wizard) · started_at · finished_at · status · dry_run BOOL · stats JSON
-run_users             run_id FK · user_id FK · status · error · duration_ms · llm_tokens · diff JSON (added/removed/kept) · trace JSON (per-user pipeline trace: seeds, per-source queries/returns, web-search+RAG prompts; {} when none)
+run_users             run_id FK · user_id FK · status · error · reason · duration_ms · llm_tokens · exa_searches
+                      · diff JSON (added/removed/kept) · breakdown JSON (per row+library: titles, ratingKey, picks)
+                      · trace JSON (per-user pipeline trace: seeds, per-source queries/returns, web-search+RAG prompts; {} when none)
 picks                 id · run_id FK · user_id FK · tmdb_id · rating_key · rank · reason · seed_tmdb_id · seed_title
+                      · collection_slug · section_key · library · sources · affinity
                       · created_at · watched_at NULL          ← watched_at backfilled nightly = hit-rate
+request_candidates    id · tmdb_id · media_type · title · year · imdb_id · poster_path · rating · demand
+                      · status(waiting|sent|rejected) · why JSON · first_seen_run_id
 restriction_snapshots id · user_id FK · taken_at · reason(initial|sync|uninstall_restore) · filters_before JSON · filters_after JSON
-caches                kind(tmdb|library_index) · key · value JSON · expires_at
+caches                kind(tmdb|trakt|library_index) · key · value JSON · expires_at
 events                id · ts · level · scope · message JSON   ← audit trail surfaced in UI
 ```
 
@@ -131,19 +154,30 @@ done relationally).
 
 ## 4. API surface (FastAPI, all under `/api`, OpenAPI auto-docs)
 
+**[docs/reference.md](../../docs/reference.md) is the authoritative list** — it ships with the app and
+is updated in the same PR as any endpoint change (`.claude/rules/docs.md`). This section is the
+architectural shape only; a second copy of ~60 endpoints in a design doc drifts, and did.
+
 ```
-POST /auth/pin                 create PIN → {id, code}          GET  /auth/pin/{id}    poll → token exchange
-GET  /auth/session · POST /auth/logout                          (owner-only: account.id == server.owner_account_id)
-POST /setup/probe              capability probe (version/pass/libraries/tautulli-detect)
-GET/PUT /setup/state           wizard progress (resumable)
-GET  /users                    list + badges (history depth, cold-start, managed-flag)
-PATCH /users/{id}              enable/prefs
-GET  /runs · GET /runs/{id}    list/detail (diffs, errors)      POST /runs {user_ids?, dry_run?} → run_id
-GET  /events                   SSE stream: run.progress, run.user.stage, version.update
-GET/PUT /settings              typed settings                   POST /settings/test/{plex|tautulli|llm|radarr|sonarr|seerr}
-GET  /system/health · /system/version (+ GitHub release check)
-POST /system/uninstall {confirm} → restore snapshots, delete collections/labels, report
+/auth/*        PIN → token exchange, session, logout   (owner-only: account.id == server.owner_account_id)
+/setup/*       capability probe + resumable wizard state
+/users/*       roster, enable/pause/prefs, per-person row overrides, sync from plex.tv + Tautulli
+/collections/* the multi-row surface: CRUD, audience, placement, posters, rename (SSE), cleanup
+/runs/*        list/detail/trace/cancel, POST to run (optionally scoped to users and/or rows)
+/requests/*    the approval inbox — send to Radarr/Sonarr, reject, restore
+/settings/*    typed settings + per-service connection tests
+/system/*      health · version · logs · libraries · backups · api-token · uninstall
+               · jobs  ← the durable maintenance queue (GET history, POST to trigger the two safe kinds)
+/events        SSE: run.progress, run.user.stage, sync.progress, version.update
 ```
+
+Two rules that are not obvious from the routes:
+
+- **Mutations that change who can SEE what queue a job rather than writing Plex inline** — see
+  `jobs-and-runs-design.md` §12. A handler that returns 200 having only written the database is the
+  bug class that doc exists to close.
+- **`POST /system/jobs` takes an allow-list, not the handler registry.** `user.cleanup` deletes a
+  person's rows and `user.restore` makes rows visible; neither may be reachable from a generic button.
 
 Security: session cookie (signed, httpOnly, SameSite=Lax), CSRF token on mutations, admin Plex
 token encrypted at rest (Fernet, key file `/config/secret.key`, chmod 600), tokens never logged

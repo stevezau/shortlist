@@ -12,6 +12,10 @@ before any feature work:
 
 - [.claude/docs/shortlist-design.md](docs/shortlist-design.md) — product/UX design (wizard, screens, engine, privacy system)
 - [.claude/docs/shortlist-architecture.md](docs/shortlist-architecture.md) — repo layout, DB schema, API surface, testing, CI, phases
+- [.claude/docs/jobs-and-runs-design.md](docs/jobs-and-runs-design.md) — runs vs. jobs, the durable
+  queue, the delivery ledger, and §12's mutation audit: every state change and whether it actually
+  reaches Plex. **Read §12 before touching any handler that changes who can see what** — it is the
+  register of a bug class this codebase has had 15 instances of.
 
 Personal deployment details (Steve's servers) live in `CLAUDE.local.md` — gitignored, never commit
 it, and never leak environment-specific hostnames/IPs/paths into the public repo or docs.

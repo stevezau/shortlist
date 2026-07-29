@@ -342,7 +342,7 @@ job. `Job.result` already holds structured output that nothing renders.
 
 ---
 
-## 12. Mutation audit, 2026-07-28 — what still has no follow-up action
+## 12. Mutation audit, 2026-07-28 — every state change, and whether it reaches Plex
 
 A full walk of every state change reachable from the API/UI, asking: does the necessary Plex or
 plex.tv action actually happen, and when? Ranked by EXPOSURE first.
@@ -465,11 +465,10 @@ added later that calls a `PlexClient` write method directly must check `ctx.conf
 
 ### Still open
 
-- **`{top_seed}` rows are addressed by the delivery ledger** (§13), not by a title. `user.restore`
-  still reads the last run's breakdown to decide which ROW a collection belongs to for placement
-  purposes; if that history is gone, an un-paused `{top_seed}` row falls to `_promote_one`'s no-spec
-  branch and lands on its own audience's Home. Visible rather than hidden, which is the right
-  direction for an un-pause, but not the row's configured placement.
+- ~~`{top_seed}` restore placement~~ **CLOSED.** `promote_user_rows` takes `placement_keys`
+  ({ratingKey -> row slug}) from the ledger and prefers it over any title, so an un-paused
+  `{top_seed}` row gets its configured placement even with run history wiped. Verified live on SFLIX
+  with `DELETE /api/runs` first: the row came back Recommended-only, as configured, not on Home.
 - **MED, unchanged and by design**: placement / pin_top / mute / content settings are next-run-only —
   they change what a row IS, not who may see it, so there is nothing to write between runs.
   (Adding someone to a shared row's audience is no longer in this list: it now fires a filter pass
