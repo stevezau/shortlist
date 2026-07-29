@@ -628,11 +628,14 @@ def _run_user(
     user_report.diff = CollectionDiff()
     _remove_muted_and_retired(ctx, user, cfg, user_report.diff)
 
-    specs = [
-        spec
-        for spec in cfg.per_person_rows()
-        if _in_audience(user, spec) and not _is_muted(user, spec) and cfg.should_build(spec)
-    ]
+    # Every row this user HAS, before tonight's scope narrows it. `sole_row` below is derived from
+    # THIS list, not from `specs`: it licenses delivery to treat a title mismatch as an in-place
+    # rename, which is only safe when there is genuinely one row that could have moved. Deriving it
+    # from the built set made a SCOPED run — which is every run on a server with per-row crons —
+    # claim "this user has one row" and rebuild a DIFFERENT row's collection as this one. Row A's
+    # 3am cron would eat row B's collection, nightly.
+    owned = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec) and not _is_muted(user, spec)]
+    specs = [spec for spec in owned if cfg.should_build(spec)]
     if not specs:
         # Mark the STATUS too, not just the live event: the pipeline's terminal event said "skipped"
         # while the persisted row kept its default "pending", so a reload showed a user stuck
@@ -1012,7 +1015,7 @@ def _run_user(
                     picks,
                     cfg,
                     spec,
-                    sole_row=len(specs) == 1,
+                    sole_row=len(owned) == 1,
                     dry_run=cfg.dry_run,
                     stored_labels=stored_labels,
                     diff=user_report.diff,

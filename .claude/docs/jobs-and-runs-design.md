@@ -633,3 +633,36 @@ sees — so disabling someone left the ledger pointing at ratingKeys that no lon
 (a stale key still has to find a collection under one of OUR labels, and re-enabling overwrites the
 row) but it grew for ever and made the audit lie. `forget_user_deliveries` now runs on the cleanup
 path. **Only a live disable surfaced it**: every unit test exercised the per-row path.
+
+
+---
+
+## 16. The bug live testing found that no test would have (2026-07-29)
+
+**A scoped run rebuilt a DIFFERENT row's collection as itself.** Found by building a second row on
+SFLIX and watching the first row's Movies collection disappear.
+
+`deliver_rows` takes `sole_row`, which licenses it to treat a title mismatch as an in-place RENAME —
+safe only when there is genuinely one row that could have moved. It was derived from the rows the run
+BUILDS (`specs`, already filtered by `cfg.should_build`), not the rows the user HAS.
+
+Every row has its own cron. So **every scheduled run is scoped**, and on a multi-row server row A's
+3am cron announced "this user has one row", found row B's collection alone in that library (all of a
+user's rows share one label — only the title tells them apart), and rebuilt it as row A. Row B was
+destroyed, and the run reported a normal delivery.
+
+Now derived from `owned` — audience-and-mute filtered, but NOT scope filtered.
+
+### Why nothing caught it
+
+- The unit tests build with `build_only=None`, so `specs == owned` and the two are indistinguishable.
+- The full-stack test built both rows in one run, which leaves TWO collections per library — and the
+  rename path additionally requires exactly ONE, so it never fired.
+- The failing shape needs three things at once: two rows configured, only one built so far, and a
+  scoped run for the other. That is not an exotic state — it is what happens the first night after
+  anyone adds a second row.
+
+The regression test now reproduces exactly that sequence, and fails on the old code.
+
+**The lesson for this codebase:** `should_build` is a *scope* filter, and anything that reasons about
+what a user HAS must not read through it. Worth grepping for other uses before adding more.

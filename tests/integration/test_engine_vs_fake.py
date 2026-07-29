@@ -1507,3 +1507,62 @@ def test_delivery_records_the_rating_key_of_the_collection_it_built(fakes, tmp_p
             assert collection.title == entry["row_title"] + marker
             checked += 1
     assert checked, "nothing was delivered, so there is no ledger input to check"
+
+
+def test_a_scoped_run_never_rebuilds_another_row_as_itself(fakes, tmp_path):
+    """Rows have their own crons, so EVERY scheduled run is scoped to a subset — and delivery is
+    allowed to treat a title mismatch as an in-place rename when a user has only one row.
+
+    Deriving "only one row" from the rows this run BUILDS rather than the rows the user HAS made row
+    A's 3am cron claim to be the user's sole row, grab row B's collection (they share one label; only
+    the title tells them apart) and rebuild it as row A. Row B was destroyed nightly, and the run
+    reported it as a normal delivery.
+
+    Found by running a scoped build against a real PMS, where the second row's collection vanished.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    rows = [
+        RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=8),
+        RowSpec(slug="gems", name_template="Hidden Gems", size=8),
+    ]
+
+    def ctx_for(build_only):
+        return EngineContext(
+            config=EngineConfig(
+                row_size=8,
+                min_history=5,
+                candidates_pre_rank=40,
+                max_seeds=12,
+                rows=rows,
+                rows_defined=True,
+                build_only=build_only,
+            ),
+            plex=plex,
+            plextv=plextv,
+            tmdb=TmdbClient("test-key"),
+            history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+            curator=NullCurator(),
+            snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        )
+
+    users = [
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+    # Row A's own cron fires first — the ordinary state of a server with per-row schedules, where a
+    # newly added row has not been built yet.
+    assert engine_run(ctx_for(frozenset({"picked"})), users).ok
+    label = f"shortlist_{users[0].slug}"
+    before = {c.ratingKey for s in plex.sections() for c in plex.find_owned_collections(s, label)}
+    assert before, "row A built nothing, so there is nothing for row B to clobber"
+
+    # Now row B's cron fires. In each library it finds exactly ONE collection under this user's label
+    # — row A's — which is the shape that used to license the in-place-rename guess.
+    assert engine_run(ctx_for(frozenset({"gems"})), users).ok
+
+    after = {c.ratingKey for s in plex.sections() for c in plex.find_owned_collections(s, label)}
+    assert before <= after, f"row B's scoped run destroyed row A's collection(s): {sorted(before - after)}"
+    assert len(after) > len(before), "row B should have built its own collection alongside row A's"
