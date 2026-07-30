@@ -66,9 +66,11 @@ export function jobTransitions(
     const before = previous.get(job.id);
     if (before === job.status) continue;
     // A job seen for the first time ALREADY done (the poll landed after it finished) is not worth
-    // two toasts — announce the outcome only.
+    // two toasts — announce the outcome only. It must still be announced: the idle poll is 30s and
+    // most jobs finish in under a second, so requiring a prior sighting made the common case silent
+    // and left the enqueue with no feedback at all — the exact gap the toasts exist to close.
     if (before === undefined && isInFlight(job)) started.push(job);
-    else if (before !== undefined && job.status === "done") finished.push(job);
+    else if (job.status === "done") finished.push(job);
     else if (job.status === "failed") failed.push(job);
   }
   return { started, finished, failed };
