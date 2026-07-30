@@ -771,6 +771,219 @@ class TestPerRowOverrides:
         # One suggestions() call per seed: 4 + 1 across two pools. A shared pool would be 4.
         assert ctx.tmdb.suggestions.call_count == 5
 
+    def test_a_rewatch_row_keeps_finished_titles_that_a_normal_row_drops(self, ctx: EngineContext, mock_plextv):
+        """The OUTCOME test for `excludes_finished` in `pool_key`.
+
+        A normal row at watched_pct 0 has finished titles removed from its POOL; a rewatch row must
+        keep them. If the two rows shared one pool — whichever built it first would win — the rewatch
+        row could never deliver a rewatch, and the flag would look implemented while doing nothing.
+        """
+        # Seeds come from the default Fargo watches (tmdb 900, via the library index). Candidate 10 is
+        # ALSO something they have watched, but is not a seed — seeds are excluded from every pool, so a
+        # title cannot be both the seed and the rewatch under test.
+        ctx.history_source.fetch.return_value = [
+            *[make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)],
+            make_watched("Candidate Ten", days_ago=6, tmdb_id=10),
+        ]
+        # max_seeds 1: seeds are excluded from every pool, so the watched title under test must NOT be
+        # one. Only the most recent watch (the Fargo/Seed row) seeds; the older one stays a candidate.
+        ctx.config.max_seeds = 1
+        ctx.config.rows = [
+            RowSpec(slug="fresh", name_template="Fresh", size=2),
+            RowSpec(slug="again", name_template="Again", size=2, rewatch=True),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        by_row: dict[str, set[int]] = {}
+        for pick in report.users[0].picks:
+            by_row.setdefault(pick.collection_slug, set()).add(pick.tmdb_id)
+        assert by_row, "the run produced no picks at all — the test fixture, not the feature"
+        assert 10 not in by_row.get("fresh", set()), "a normal row must not deliver a finished title"
+        assert 10 in by_row.get("again", set()), "the rewatch row must be able to deliver one"
+
+    def test_a_rewatch_row_leads_with_the_rewatch(self, ctx: EngineContext, mock_plextv):
+        """Not just present — FIRST. `watched_pct` alone could admit it at the bottom of the row."""
+        ctx.history_source.fetch.return_value = [
+            *[make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)],
+            # 20 is the lower-rated candidate, so ranking puts it AFTER 10 only if rewatch reorders.
+            make_watched("Candidate Twenty", days_ago=6, tmdb_id=20),
+        ]
+        # max_seeds 1: seeds are excluded from every pool, so the watched title under test must NOT be
+        # one. Only the most recent watch (the Fargo/Seed row) seeds; the older one stays a candidate.
+        ctx.config.max_seeds = 1
+        ctx.config.rows = [RowSpec(slug="again", name_template="Again", size=2, rewatch=True)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        assert delivered[0] == 20, f"the already-watched title must lead the row, got {delivered}"
+
+    def test_an_unstarted_only_row_drops_a_barely_started_show(self, ctx: EngineContext, mock_plextv):
+        """Stricter than the finished filter, and its own pool.
+
+        A show 1 episode into 40 is NOT finished, so every other row may still offer it. An
+        "unstarted only" row must not — that is the whole claim of "a series to start".
+        """
+        show_section = MagicMock()
+        show_section.type = "show"
+        show_section.title = "TV Shows"
+        show_section.collections.return_value = []
+        ctx.plex.sections.return_value = [show_section]
+        ctx.plex.sections_by_type.return_value = {MediaType.SHOW: show_section}
+        ctx.plex.build_library_index.return_value = {900: 999, 30: 1030, 40: 1040}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 30, "name": "Started Show", "genre_ids": [], "vote_average": 8.0},
+                {"id": 40, "name": "Never Opened", "genre_ids": [], "vote_average": 7.0},
+            ]
+        )
+        # The seed show (900) plus show 30 at ONE episode of forty: started, nowhere near finished.
+        ctx.history_source.fetch.return_value = [
+            *[
+                make_watched("Seed Show", days_ago=i, rating_key=999, media_type=MediaType.SHOW, leaf_count=10)
+                for i in range(1, 5)
+            ],
+            make_watched(
+                "Started Show",
+                days_ago=6,
+                media_type=MediaType.SHOW,
+                tmdb_id=30,
+                viewed_leaf_count=1,
+                leaf_count=40,
+            ),
+        ]
+        # max_seeds 1: seeds are excluded from every pool, so the watched title under test must NOT be
+        # one. Only the most recent watch (the Fargo/Seed row) seeds; the older one stays a candidate.
+        ctx.config.max_seeds = 1
+        ctx.config.rows = [
+            RowSpec(slug="anything", name_template="Anything", size=2, media=MediaType.SHOW),
+            RowSpec(slug="tostart", name_template="To start", size=2, media=MediaType.SHOW, unstarted_only=True),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        by_row: dict[str, set[int]] = {}
+        for pick in report.users[0].picks:
+            by_row.setdefault(pick.collection_slug, set()).add(pick.tmdb_id)
+        assert by_row, "the run produced no picks at all — the test fixture, not the feature"
+        assert 30 in by_row.get("anything", set()), "a part-watched show is fair game for a normal row"
+        assert 30 not in by_row.get("tostart", set()), "a started series must never reach an unstarted row"
+        assert 40 in by_row.get("tostart", set()), "the never-opened one is exactly what it wants"
+
+    def test_a_rewatch_row_shares_the_pool_of_a_watched_pct_row(self, ctx: EngineContext, mock_plextv):
+        """The OTHER direction of `excludes_finished`, which no membership assertion can catch.
+
+        Both rows want finished titles kept in the pool, so they must share ONE gather. Without this,
+        `excludes_finished` could regress to keying on the raw percentage — splitting the pool and
+        paying a second time for every rate-limited/LLM source — and every other test still passes.
+        """
+        ctx.config.max_seeds = 1
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)]
+        ctx.config.rows = [
+            RowSpec(slug="again", name_template="Again", size=2, rewatch=True),
+            RowSpec(slug="capped", name_template="Capped", size=2, watched_pct=0.5),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        # One suggestions() call per seed per pool. One seed, one shared pool = exactly one call.
+        assert ctx.tmdb.suggestions.call_count == 1, "a rewatch row and a >0 row must share one pool"
+
+    def test_rewatch_works_for_shows_where_finished_is_a_different_predicate(self, ctx: EngineContext, mock_plextv):
+        """For movies "finished" is any watch; for shows it is the `watched_show_pct` fraction plus a
+        length-scaled floor (`_watched_titles`) — a different predicate, so a different cell."""
+        show_section = MagicMock()
+        show_section.type = "show"
+        show_section.title = "TV Shows"
+        show_section.collections.return_value = []
+        ctx.plex.sections.return_value = [show_section]
+        ctx.plex.sections_by_type.return_value = {MediaType.SHOW: show_section}
+        ctx.plex.build_library_index.return_value = {900: 999, 30: 1030, 40: 1040}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 30, "name": "Finished Show", "genre_ids": [], "vote_average": 6.0},
+                {"id": 40, "name": "Never Opened", "genre_ids": [], "vote_average": 9.0},
+            ]
+        )
+        ctx.config.max_seeds = 1
+        ctx.history_source.fetch.return_value = [
+            *[
+                make_watched("Seed Show", days_ago=i, rating_key=999, media_type=MediaType.SHOW, leaf_count=10)
+                for i in range(1, 5)
+            ],
+            # 10 of 10 episodes: finished by any measure, so it belongs in a rewatch row.
+            make_watched(
+                "Finished Show",
+                days_ago=6,
+                media_type=MediaType.SHOW,
+                tmdb_id=30,
+                viewed_leaf_count=10,
+                leaf_count=10,
+            ),
+        ]
+        ctx.config.rows = [
+            RowSpec(slug="again", name_template="Again", size=2, media=MediaType.SHOW, rewatch=True),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        # 40 is rated higher, so only the rewatch preference can put the finished show first.
+        assert delivered and delivered[0] == 30, f"the finished SHOW must lead the row, got {delivered}"
+
+    def test_unstarted_only_applies_on_a_both_media_row_not_just_a_shows_row(self, ctx: EngineContext, mock_plextv):
+        """`media="both"` is its own cell: the filter must not be gated on the row being shows-only.
+
+        Movie immunity is asserted at the unit level instead (`TestStartedShows` — `_started_shows`
+        yields only SHOW keys, so nothing it returns can match a movie candidate). Doing it here would
+        need a second seed of the other type, because candidates inherit their SEED's media type — so
+        a movie-seeded gather types even a TV title as a movie and the test would pass for the wrong
+        reason.
+        """
+        show_section, movie_section = MagicMock(), MagicMock()
+        show_section.type, show_section.title = "show", "TV Shows"
+        movie_section.type, movie_section.title = "movie", "Movies"
+        for sec in (show_section, movie_section):
+            sec.collections.return_value = []
+        ctx.plex.sections.return_value = [movie_section, show_section]
+        ctx.plex.sections_by_type.return_value = {
+            MediaType.MOVIE: movie_section,
+            MediaType.SHOW: show_section,
+        }
+        ctx.plex.build_library_index.return_value = {900: 999, 30: 1030, 40: 1040}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 30, "name": "Started Show", "genre_ids": [], "vote_average": 9.0},
+                {"id": 40, "name": "Never Opened", "genre_ids": [], "vote_average": 7.0},
+            ]
+        )
+        ctx.config.max_seeds = 1
+        ctx.history_source.fetch.return_value = [
+            *[
+                make_watched("Seed Show", days_ago=i, rating_key=999, media_type=MediaType.SHOW, leaf_count=10)
+                for i in range(1, 5)
+            ],
+            make_watched(
+                "Started Show", days_ago=6, media_type=MediaType.SHOW, tmdb_id=30, viewed_leaf_count=1, leaf_count=40
+            ),
+        ]
+        # media defaults to "both" — deliberately NOT narrowed to shows.
+        ctx.config.rows = [RowSpec(slug="mixed", name_template="Mixed", size=3, unstarted_only=True)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = {p.tmdb_id for p in report.users[0].picks}
+        assert delivered, "no picks at all — the fixture, not the feature"
+        assert 30 not in delivered, "the started series must be excluded on a both-media row too"
+        assert 40 in delivered
+
     def test_pools_that_differ_only_in_seed_count_are_labelled_apart(self, ctx: EngineContext, mock_plextv):
         # The trace labels a gather by media + sources. Two rows differing only in max_seeds share
         # both, so without the seed count they record under two IDENTICAL names and the trace cannot

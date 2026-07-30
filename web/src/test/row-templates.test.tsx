@@ -82,10 +82,22 @@ describe("ROW_TEMPLATES", () => {
     }
   });
 
-  it("gives every template a name and a template string, so nothing saves blank", () => {
+  it("gives every template a name, so nothing saves blank", () => {
     for (const template of ROW_TEMPLATES) {
       expect(template.values.name, template.id).toBeTruthy();
-      expect(template.values.name_template, template.id).toBeTruthy();
+    }
+  });
+
+  it("puts the delivered title in `name`, not a parallel `name_template`", () => {
+    // Two fields for one idea is what hid the emoji: the editor's Name box binds to `name`, so a
+    // template filling `name_template` instead showed a plain title while delivering an emoji one.
+    // Worse, `name_template || name` means the hidden field WINS — so editing the visible Name box
+    // had no effect on what Plex actually showed.
+    for (const template of ROW_TEMPLATES) {
+      expect(
+        template.values.name_template,
+        `${template.id} still sets name_template`,
+      ).toBeUndefined();
     }
   });
 
@@ -95,7 +107,7 @@ describe("ROW_TEMPLATES", () => {
     const SUPPORTED = ["{user}", "{library_name}", "{top_seed}"];
 
     for (const template of ROW_TEMPLATES) {
-      const title = template.values.name_template ?? "";
+      const title = template.values.name ?? "";
       const used = [...title.matchAll(/\{[^}]+\}/g)].map((m) => m[0]);
 
       // A row builds one collection PER LIBRARY, so a title with no variable gives a `show` row two
@@ -107,11 +119,23 @@ describe("ROW_TEMPLATES", () => {
     }
   });
 
+  it("means what it says about cadence", () => {
+    // Freshness is a cadence of `round(1 + (1 - f) * 13)` days (engine `_refresh_period_days`), not a
+    // 0..1 mood. A template whose blurb promises "weekly" has to carry the value that IS weekly —
+    // 0.5 gives 8 days, which is how "refreshed weekly" was a day out.
+    const periodDays = (f: number) => (f >= 1 ? 1 : Math.max(1, Math.round(1 + (1 - f) * 13)));
+
+    expect(periodDays(findRowTemplate("movie-night")!.values.freshness!)).toBe(7);
+    // "Rebuilds nightly" and "Never rebuilds on its own" are the two ends, and both are exact.
+    expect(findRowTemplate("fresh-finds")!.values.freshness).toBe(1);
+    expect(findRowTemplate("from-the-vault")!.values.freshness).toBe(0);
+  });
+
   it("keeps a {top_seed} row down to the one watch it names", () => {
     // The whole point of the template: at the default budget the row names one watch and fills
     // itself from the other 29, so the title claims something the contents don't honour.
     const template = findRowTemplate("because-you-watched");
-    expect(template?.values.name_template).toContain("{top_seed}");
+    expect(template?.values.name).toContain("{top_seed}");
     expect(template?.values.max_seeds).toBe(1);
     // A single watch is a movie OR a show, so a "both" row at 1 seed leaves half of it empty.
     expect(template?.values.media).not.toBe("both");
@@ -167,13 +191,24 @@ describe("RowEditor seeded from a template", () => {
   it("prefills the fields the template sets", () => {
     renderEditor("seen-it-already");
 
-    expect(screen.getByLabelText(/^Name$/i)).toHaveValue("Happy to see again");
+    // The emoji and the variable land in the box the owner actually edits — the original complaint.
+    expect(screen.getByLabelText(/^Name$/i)).toHaveValue(
+      "☕ {library_name} you've already seen",
+    );
     // watched_pct 1 → the slider is shown (not inheriting) and reads 100%.
     expect(
       screen.getByRole("slider", {
         name: /Maximum share of the row that may be already-watched/i,
       }),
     ).toHaveValue("100");
+  });
+
+  it("turns on the engine setting each template's promise depends on", () => {
+    // Both were hollow before: "Happy to see again" needed `rewatch` (watched_pct is only a ceiling,
+    // so it never PROMOTES a finished title) and "More TV to watch" needed `unstarted_only` (the
+    // normal filter only drops FINISHED shows).
+    expect(findRowTemplate("seen-it-already")?.values.rewatch).toBe(true);
+    expect(findRowTemplate("more-tv")?.values.unstarted_only).toBe(true);
   });
 
   it("says which template it started from, so prefilled fields aren't a mystery", () => {
@@ -197,5 +232,36 @@ describe("RowEditor seeded from a template", () => {
 
     expect(screen.queryByText(/Started from/)).toBeNull();
     expect(screen.getByLabelText(/^Name$/i)).toHaveValue("");
+  });
+});
+
+describe("what the row list says about a template's row", () => {
+  it("badges a rewatch row by what it IS, not by the cap that enables it", async () => {
+    // "Watched: no filter" describes plumbing — on a rewatch row watched_pct only stops the pool
+    // dropping finished titles. Showing both would read as two competing settings.
+    const { rowOverrides } = await import("@/lib/collections");
+    const base = {
+      ...blankInput(),
+      rewatch: true,
+      watched_pct: 1,
+    };
+    const parts = rowOverrides(
+      base as unknown as Parameters<typeof rowOverrides>[0],
+      null,
+    );
+
+    expect(parts).toContain("Rewatches first");
+    expect(parts.some((p) => /Watched:/.test(p))).toBe(false);
+  });
+
+  it("badges an unstarted-only row", async () => {
+    const { rowOverrides } = await import("@/lib/collections");
+    const parts = rowOverrides(
+      { ...blankInput(), unstarted_only: true } as unknown as Parameters<
+        typeof rowOverrides
+      >[0],
+      null,
+    );
+    expect(parts).toContain("Never started only");
   });
 });

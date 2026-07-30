@@ -26,6 +26,8 @@ export function blankInput(): CollectionInput {
     candidate_sources: [],
     library_keys: [],
     watched_pct: null,
+    rewatch: false,
+    unstarted_only: false,
     freshness: null,
     recent_count: null,
     max_seeds: null,
@@ -55,6 +57,8 @@ export function toInput(collection: Collection): CollectionInput {
     candidate_sources: collection.candidate_sources,
     library_keys: collection.library_keys,
     watched_pct: collection.watched_pct ?? null,
+    rewatch: collection.rewatch ?? false,
+    unstarted_only: collection.unstarted_only ?? false,
     freshness: collection.freshness ?? null,
     recent_count: collection.recent_count ?? null,
     max_seeds: collection.max_seeds ?? null,
@@ -137,10 +141,22 @@ export function rowOverrides(
     parts.push(`Libraries: ${titles.join(", ")}`);
   }
 
-  // null inherits the global recommendations.watched_pct, so there's nothing to badge. Unlike the
-  // prompt, this override IS honoured on the default row, so it isn't gated on the slug.
-  if (collection.watched_pct !== null && collection.watched_pct !== undefined) {
+  // Badged BEFORE the watched cap, and instead of it: on a rewatch row the cap is plumbing (it only
+  // stops the pool dropping finished titles), so "Watched: no filter" describes the mechanism while
+  // "Rewatches first" describes the row. Showing both would read as two competing settings.
+  if (collection.rewatch) {
+    parts.push("Rewatches first");
+  } else if (
+    // null inherits the global recommendations.watched_pct, so there's nothing to badge. Unlike the
+    // prompt, this override IS honoured on the default row, so it isn't gated on the slug.
+    collection.watched_pct !== null &&
+    collection.watched_pct !== undefined
+  ) {
     parts.push(watchedBadgeLabel(collection.watched_pct));
+  }
+
+  if (collection.unstarted_only) {
+    parts.push("Never started only");
   }
 
   // null inherits the global freshness, so only badge a per-row override.

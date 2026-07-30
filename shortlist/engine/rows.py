@@ -203,6 +203,53 @@ def _apply_watched_cap(
     return [replace(p, rank=i + 1) for i, p in enumerate(kept)]
 
 
+def _prefer_watched(
+    picks: list[Pick],
+    candidates: list[Candidate],
+    watched: set[tuple[int, MediaType]],
+    k: int,
+) -> list[Pick]:
+    """Order already-finished picks FIRST, then fill the rest with unwatched ones — a rewatch row.
+
+    The inverse of ``_apply_watched_cap``, which treats finished titles as a regrettable ceiling. Here
+    they are the point, so a thin rewatch pool degrades by topping up with fresh titles rather than
+    returning a short row: a half-full shelf reads as broken, and every title still came from this
+    person's own candidates.
+    """
+    seen = [p for p in picks if (p.tmdb_id, p.media_type) in watched]
+    fresh = [p for p in picks if (p.tmdb_id, p.media_type) not in watched]
+    kept = [*seen, *fresh][:k]
+    if len(kept) < k:
+        # TWO passes, not one combined list. `_pad_picks` -> `build_picks` -> `diversify_by_seed`
+        # round-robins one candidate per seed queue, so concatenating [watched, fresh] and padding once
+        # does NOT prefer the watched ones: rewatches tend to share a seed while fresh titles spread
+        # across many, and the interleave then fills most slots with fresh titles. Exhausting the
+        # watched spares in their own call is the only way the preference survives.
+        chosen = {(p.tmdb_id, p.media_type) for p in kept}
+        spare_watched = [
+            c for c in candidates if (c.tmdb_id, c.media_type) in watched and (c.tmdb_id, c.media_type) not in chosen
+        ]
+        kept = _pad_picks(kept, spare_watched, k)
+        if len(kept) < k:
+            chosen = {(p.tmdb_id, p.media_type) for p in kept}
+            spare_fresh = [
+                c
+                for c in candidates
+                if (c.tmdb_id, c.media_type) not in watched and (c.tmdb_id, c.media_type) not in chosen
+            ]
+            kept = _pad_picks(kept, spare_fresh, k)
+    return [replace(p, rank=i + 1) for i, p in enumerate(kept)]
+
+
+def _started_shows(watched_shows: dict[int, tuple[int, int | None]]) -> set[tuple[int, MediaType]]:
+    """Shows this person has watched ANY episode of — what an "unstarted only" row must exclude.
+
+    Deliberately not ``_watched_titles``: that one asks "have they finished it", so a show they are
+    three episodes into passes. Here a single viewed episode disqualifies it.
+    """
+    return {(tid, MediaType.SHOW) for tid, (viewed, _total) in watched_shows.items() if viewed and viewed > 0}
+
+
 _MAX_REFRESH_PERIOD_DAYS = 14  # freshness just above 0 → refresh about fortnightly
 _KEEP_FRACTION = 2 / 3  # on a refresh night, keep the strongest ~two-thirds; swap the weakest third
 
@@ -237,15 +284,28 @@ def _is_refresh_night(row_slug: str, owner_slug: str, run_day: int, freshness: f
 
 
 def _reusable_prior(
-    prior: list[Pick], kind: MediaType, sec_idx: dict[int, int], watched: set[tuple[int, MediaType]], pct: float
+    prior: list[Pick],
+    kind: MediaType,
+    sec_idx: dict[int, int],
+    watched: set[tuple[int, MediaType]],
+    pct: float,
+    *,
+    keep_watched: bool = False,
 ) -> list[Pick]:
     """Last run's picks for this library still valid to redeliver, in their original rank order: right
-    media type, still in the library, and — for a 0%-watched row — not since finished."""
+    media type, still in the library, and — for a 0%-watched row — not since finished.
+
+    ``keep_watched`` exempts a REWATCH row from that last rule. Its picks are already-finished titles
+    by design, so the 0%-row filter discarded every one of them — and since a rewatch row inherits the
+    default `watched_pct` of 0.0, that was the normal case, not an edge one. The row then never took a
+    carry-forward branch at all: its `freshness` was inoperative, the anti-immediate-repeat guard never
+    ran, and it re-wrote to Plex on nights nothing had changed.
+    """
     out: list[Pick] = []
     for p in prior:
         if p.media_type is not kind or p.tmdb_id not in sec_idx:
             continue
-        if pct <= 0 and (p.tmdb_id, p.media_type) in watched:
+        if pct <= 0 and not keep_watched and (p.tmdb_id, p.media_type) in watched:
             continue
         out.append(p)
     return out
@@ -685,6 +745,35 @@ def _run_user(
     def effective_watched_pct(spec: RowSpec) -> float:
         return spec.watched_pct if spec.watched_pct is not None else cfg.watched_pct
 
+    def excludes_finished(spec: RowSpec) -> bool:
+        """Whether this row's POOL drops finished titles outright (rather than capping at delivery).
+
+        A rewatch row must never exclude them — they are what it is built from — so it keeps the pool
+        that includes them even at watched_pct 0.
+        """
+        return effective_watched_pct(spec) == 0 and not spec.rewatch
+
+    def pool_exclusions(spec: RowSpec) -> set[tuple[int, MediaType]] | None:
+        """Titles this row's pool must not contain, or None when this row has no exclusion rule.
+
+        The None sentinel is NOT "nothing to exclude" — `_candidate_pool` reads it as "this caller
+        didn't compute a watched breakdown, so fall back to excluding the seeds". An EMPTY SET is the
+        meaningful other thing: "I did compute it, and there is nothing finished." So a row with a rule
+        returns its set even when empty, and only a row with no rule at all returns None. Collapsing
+        the two (`return excluded or None`) quietly changed every 0% row belonging to someone with no
+        finished titles — a TV-only viewer part-way through everything — from excluding nothing to
+        excluding their seeds.
+        """
+        rule = False
+        excluded: set[tuple[int, MediaType]] = set()
+        if excludes_finished(spec):
+            excluded |= watched_titles
+            rule = True
+        if spec.unstarted_only:
+            excluded |= _started_shows(watched_shows)
+            rule = True
+        return excluded if rule else None
+
     def effective_freshness(spec: RowSpec) -> float:
         return spec.freshness if spec.freshness is not None else cfg.freshness
 
@@ -715,7 +804,15 @@ def _run_user(
             # Only whether the pool hard-excludes finished titles changes the CANDIDATES: a 0% row
             # drops them from the pool; any >0 row keeps them and caps at delivery. Two >0 rows (20%
             # and 50%) share one pool and differ only in their cap, so they must not key apart.
-            effective_watched_pct(spec) == 0,
+            # A rewatch row keeps finished titles even at 0%, so it must key with the >0 rows — hence
+            # `excludes_finished`, not the raw percentage.
+            excludes_finished(spec),
+            # An "unstarted shows only" row removes every started series from the POOL, so it cannot
+            # share one with a row that keeps them — it would be handed candidates it must not use.
+            # Excluded for a movies-only row: `_started_shows` yields only SHOW keys, which can never
+            # match anything in that pool, so keying on it there splits one gather into two for no
+            # difference in candidates. Over-eager separation is only ever a cost, never a leak.
+            spec.unstarted_only and spec.media != "movie",
             # recent_count changes how many titles the WEB-SEARCH source searches, so its candidates
             # differ — but only for rows that actually use llm_web. Key on it only then, so two non-web
             # rows differing solely in recent_count still share one pool (no wasted TMDB/curate gather).
@@ -751,9 +848,9 @@ def _run_user(
                     sources=list(key[0]),
                     recent_count=effective_recent_count(spec),
                     media=spec.media,
-                    # A 0% row drops finished titles from the pool entirely; a >0 row keeps them (the
-                    # per-library cap trims the surplus at delivery). None -> exclude only the seeds.
-                    watched_exclusions=watched_titles if effective_watched_pct(spec) == 0 else None,
+                    # See `pool_exclusions` for the full rules (0% vs >0, rewatch, unstarted-only) and
+                    # for what the None sentinel means here.
+                    watched_exclusions=pool_exclusions(spec),
                 )
             except Exception as e:
                 pool_failures[key] = f"{type(e).__name__}: {e}"
@@ -965,7 +1062,12 @@ def _run_user(
             # str(section.key): previous_picks is keyed by the PickRow.section_key STRING column, so the
             # live section key (which may not be a str) must be coerced or carry-forward silently misses.
             prior_valid = _reusable_prior(
-                ctx.previous_picks.get((user.slug, spec.slug, str(section.key)), []), kind, sec_idx, watched_titles, pct
+                ctx.previous_picks.get((user.slug, spec.slug, str(section.key)), []),
+                kind,
+                sec_idx,
+                watched_titles,
+                pct,
+                keep_watched=spec.rewatch,
             )
             refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, fresh)
 
@@ -1009,7 +1111,12 @@ def _run_user(
                 if len(sec_picks) < k:
                     sec_picks = _pad_picks(sec_picks, sub, k)
 
-            if pct > 0:
+            if spec.rewatch:
+                # A rewatch row wants the opposite of the cap: finished titles FIRST. Checked before
+                # `pct` because a rewatch row left at the default 0% would otherwise skip both branches
+                # and deliver whatever order the ranking happened to produce.
+                sec_picks = _prefer_watched(sec_picks, sub, watched_titles, k)
+            elif pct > 0:
                 # Let at most `pct` of this library's row be already-finished titles; backfill the
                 # rest from its fresh candidates. (At pct == 0 the pool already dropped finished ones.)
                 sec_picks = _apply_watched_cap(sec_picks, sub, watched_titles, k, pct)

@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import type { ScheduleResponse } from "@/lib/types";
-import { SchedulePage } from "@/pages/schedule";
+import { ScheduleTimeline } from "@/components/jobs/schedule-timeline";
 
 const { getSchedule, putSettings } = vi.hoisted(() => ({
   getSchedule: vi.fn(),
@@ -83,13 +83,13 @@ function renderSchedule() {
   render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <SchedulePage />
+        <ScheduleTimeline />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-describe("SchedulePage", () => {
+describe("ScheduleTimeline", () => {
   beforeEach(() => {
     getSchedule.mockReset();
     putSettings.mockClear();

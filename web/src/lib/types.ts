@@ -68,6 +68,10 @@ export interface Collection {
   library_keys: string[];
   /** Max fraction of the row that may be already-watched (0..1); null inherits the global cap. */
   watched_pct: number | null;
+  /** Lead the row with already-finished titles — a rewatch shelf. */
+  rewatch: boolean;
+  /** Shows only: drop every series this person has started, not just the finished ones. */
+  unstarted_only: boolean;
   /** Day-to-day variability (0..1); null inherits the global freshness. */
   freshness: number | null;
   /** Recent watches the web-search source searches (1..25); null inherits the global recent_count. */
@@ -167,6 +171,10 @@ export interface CollectionInput {
   candidate_sources: string[];
   library_keys: string[];
   watched_pct: number | null;
+  /** Lead the row with already-finished titles — a rewatch shelf. */
+  rewatch: boolean;
+  /** Shows only: drop every series this person has started, not just the finished ones. */
+  unstarted_only: boolean;
   freshness: number | null;
   recent_count: number | null;
   max_seeds: number | null;

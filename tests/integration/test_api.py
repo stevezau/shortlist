@@ -2640,6 +2640,77 @@ class TestCollectionsApi:
         assert client.delete(f"/api/collections/{cid}").status_code == 204
         assert [c["slug"] for c in client.get("/api/collections").json()] == ["picked"]
 
+    def test_rewatch_and_unstarted_only_round_trip(self, client: TestClient):
+        created = client.post(
+            "/api/collections",
+            json={"name": "Again", "size": 10, "rewatch": True, "watched_pct": 1.0},
+        )
+        assert created.status_code == 201
+        assert created.json()["rewatch"] is True
+        assert created.json()["unstarted_only"] is False
+
+        cid = created.json()["id"]
+        patched = client.patch(f"/api/collections/{cid}", json={"name": "Again", "rewatch": False})
+        assert patched.status_code == 200 and patched.json()["rewatch"] is False
+
+    def test_a_rewatch_row_cannot_also_exclude_everything_started(self, client: TestClient):
+        """They ask for opposite things, and the failure is SILENT: `unstarted_only` leaves only
+        never-opened series in the pool, so the rewatch ordering finds nothing finished to lead with
+        and the row fills with unseen titles under a "you've already seen" name."""
+        r = client.post(
+            "/api/collections",
+            json={"name": "Nonsense", "media": "show", "rewatch": True, "unstarted_only": True},
+        )
+        assert r.status_code == 422
+        assert "opposite" in r.json()["detail"]
+
+    def test_unstarted_only_is_refused_on_a_movies_row(self, client: TestClient):
+        """A movie is finished the moment it is watched, so there is no "started" state. The flag is
+        structurally inert there (`_started_shows` yields only SHOW keys) and the editor hides it — so
+        storing it would leave a row behaving unlike what its settings say."""
+        r = client.post(
+            "/api/collections",
+            json={"name": "Films", "media": "movie", "unstarted_only": True},
+        )
+        assert r.status_code == 422
+        assert "shows" in r.json()["detail"]
+
+        # A shows row and a both-media row are both fine.
+        for media in ("show", "both"):
+            ok = client.post(
+                "/api/collections",
+                json={"name": f"Start {media}", "media": media, "unstarted_only": True},
+            )
+            assert ok.status_code == 201, f"{media}: {ok.text}"
+
+    def test_patching_into_the_contradiction_is_refused_too(self, client: TestClient):
+        """The PATCH path merges onto stored values, so validating only the POST body would let the
+        same invalid pair in one field at a time."""
+        cid = client.post(
+            "/api/collections",
+            json={"name": "Again", "media": "show", "rewatch": True, "watched_pct": 1.0},
+        ).json()["id"]
+
+        # `name` is required on PATCH, so it must be sent — without it the request 422s on the missing
+        # field and the test would pass without ever exercising the contradiction check.
+        ok_shape = client.patch(f"/api/collections/{cid}", json={"name": "Again", "size": 12})
+        assert ok_shape.status_code == 200, f"the patch shape itself must be valid: {ok_shape.text}"
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "Again", "unstarted_only": True})
+        assert r.status_code == 422, "a row must not be able to reach the contradiction in two steps"
+        assert "opposite" in r.json()["detail"]
+
+    def test_narrowing_a_row_to_movies_cannot_strand_unstarted_only(self, client: TestClient):
+        """The other one-field-at-a-time route into an invalid row."""
+        cid = client.post(
+            "/api/collections",
+            json={"name": "To start", "media": "show", "unstarted_only": True},
+        ).json()["id"]
+
+        r = client.patch(f"/api/collections/{cid}", json={"name": "To start", "media": "movie"})
+        assert r.status_code == 422
+        assert "shows" in r.json()["detail"]
+
     def _fake_plex_ctx(self, monkeypatch, client, *, collections):
         """Point run_service.build_context at a fake Plex that records deletions."""
         from types import SimpleNamespace

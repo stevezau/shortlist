@@ -543,7 +543,15 @@ export function RowEditor({
 
           <LibraryPicker
             libraryKeys={input.library_keys}
-            onChange={(next) => set(next)}
+            onChange={(next) =>
+              set({
+                ...next,
+                // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
+                // without anyone touching the flag. Its control is hidden then, and the API refuses
+                // the combination — which would be a save failing with no visible cause.
+                ...(next.media !== "show" ? { unstarted_only: false } : {}),
+              })
+            }
           />
 
           {input.build === "shared" && (
@@ -603,6 +611,65 @@ export function RowEditor({
                 value={Math.round(input.watched_pct * 100)}
                 onChange={(pct) => set({ watched_pct: pct / 100 })}
               />
+            )}
+
+            {/* The setting above is a CEILING — it permits finished titles, it never prefers them, so
+                on a library with plenty of unwatched candidates even 100% yields an unwatched row.
+                This is the switch that actually makes a rewatch shelf. */}
+            <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+              <div className="space-y-1">
+                <Label htmlFor="row-rewatch">Lead with things they&rsquo;ve seen</Label>
+                <p className="text-sm text-muted-foreground">
+                  A rewatch shelf: titles they&rsquo;ve finished come first, and
+                  new ones only fill what&rsquo;s left. Without this, the setting
+                  above merely <em>allows</em> rewatches &mdash; it never puts
+                  them first.
+                </p>
+              </div>
+              <Switch
+                id="row-rewatch"
+                aria-label="Lead with things they have already seen"
+                checked={input.rewatch}
+                onCheckedChange={(rewatch) =>
+                  set({
+                    rewatch,
+                    // A rewatch row needs finished titles in its pool at all, so lift a 0% cap off the
+                    // global default in the same click — otherwise the switch silently does nothing.
+                    ...(rewatch && input.watched_pct === 0 ? { watched_pct: 1 } : {}),
+                    // Mutually exclusive: the two ask for opposite things, and the API refuses the
+                    // pair. Clearing it here means the owner never meets that error.
+                    ...(rewatch ? { unstarted_only: false } : {}),
+                  })
+                }
+              />
+            </div>
+
+            {/* Shown for shows only, and cleared when the row stops being a shows row: an invisible
+                setting the API then refuses is a save that fails for no visible reason. */}
+            {input.media === "show" && (
+              <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                <div className="space-y-1">
+                  <Label htmlFor="row-unstarted">
+                    Only series they haven&rsquo;t started
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Drops any show they&rsquo;ve watched even one episode of.
+                    Normally only <em>finished</em> shows are skipped, so one
+                    they&rsquo;re three episodes into still turns up.
+                  </p>
+                </div>
+                <Switch
+                  id="row-unstarted"
+                  aria-label="Only series they have not started"
+                  checked={input.unstarted_only}
+                  onCheckedChange={(unstarted_only) =>
+                    set({
+                      unstarted_only,
+                      ...(unstarted_only ? { rewatch: false } : {}),
+                    })
+                  }
+                />
+              </div>
             )}
           </div>
 
@@ -666,11 +733,11 @@ export function RowEditor({
               number makes the row about one or two specific things they
               watched.
             </p>
-            {input.name_template.includes("{top_seed}") && (
+            {(input.name_template || input.name).includes("{top_seed}") && (
               <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
                 This row is named{" "}
                 <span className="font-mono">
-                  &ldquo;{input.name_template}&rdquo;
+                  &ldquo;{input.name_template || input.name}&rdquo;
                 </span>
                 , so it names one title. Set this to{" "}
                 <strong>{namedRowSeeds(input.media)}</strong> and the row really

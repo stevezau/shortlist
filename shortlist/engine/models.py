@@ -260,6 +260,19 @@ class RowSpec:
     # Per-row cap on already-watched titles, as a fraction of the row (0.0 = all fresh, 1.0 = no
     # filtering). None -> inherit EngineConfig.watched_pct.
     watched_pct: float | None = None
+    # Build a REWATCH row: already-finished titles are what the row is FOR, so they are ordered first
+    # and unwatched ones only fill what's left.
+    #
+    # `watched_pct` cannot express this. It is a CEILING — `_apply_watched_cap` shows unwatched titles
+    # first and merely PERMITS up to that fraction of finished ones — so on a library with plenty of
+    # unwatched candidates even 1.0 yields a mostly-unwatched row. A row named "Happy to see again"
+    # needs the opposite preference, which is this flag.
+    rewatch: bool = False
+    # Shows only: drop any series this person has STARTED, however little of it. Stricter than the
+    # normal watched filter, which only drops shows they have FINISHED (>= watched_show_pct) — one they
+    # are three episodes into is otherwise still eligible. This is what makes "a series to start" true.
+    # Meaningless for movies (a movie with any view is already finished), so it applies to shows only.
+    unstarted_only: bool = False
     # How much this row varies day to day, as a fraction: 0.0 = stable (same strong picks daily,
     # best quality), 1.0 = fresh (rotate the whole row + reach deep for novelty). None -> inherit
     # EngineConfig.freshness.

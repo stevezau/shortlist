@@ -1,6 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  CalendarClock,
   CircleAlert,
   CircleCheck,
   Loader2,
@@ -44,7 +43,6 @@ const NAV_ITEMS = [
   { to: "/logs", label: "Logs", icon: ScrollText, end: false },
   { to: "/requests", label: "Requests", icon: Inbox, end: false },
   { to: "/jobs", label: "Jobs", icon: Wrench, end: false },
-  { to: "/schedule", label: "Schedule", icon: CalendarClock, end: false },
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },
 ];
 

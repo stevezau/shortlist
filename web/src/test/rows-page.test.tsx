@@ -45,6 +45,8 @@ const SUBSET_ROW: Collection = {
   candidate_sources: [],
   library_keys: [],
   watched_pct: null,
+  rewatch: false,
+  unstarted_only: false,
   freshness: null,
   recent_count: null,
   max_seeds: null,

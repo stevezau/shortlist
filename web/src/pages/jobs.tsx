@@ -17,6 +17,7 @@ import { ActivityFeed } from "@/components/jobs/activity-feed";
 import { JobRow } from "@/components/jobs/job-row";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
+import { ScheduleTimeline } from "@/components/jobs/schedule-timeline";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { ProgressBar } from "@/components/ui/progress-bar";
@@ -346,11 +347,14 @@ function Succeeded({ children }: { children: React.ReactNode }) {
  * screen: nine of those was ~1800px of scrolling, four of them jobs you can never start, and no
  * cross-job feed at all.
  */
+type JobsView = "jobs" | "timeline" | "activity";
+
 export function JobsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const view: "jobs" | "activity" =
-    searchParams.get("tab") === "activity" ? "activity" : "jobs";
+  const tab = searchParams.get("tab");
+  const view: JobsView =
+    tab === "activity" || tab === "timeline" ? tab : "jobs";
 
   const catalog = useQuery({
     queryKey: ["jobs", "catalog"],
@@ -475,16 +479,20 @@ export function JobsPage() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Segmented<"jobs" | "activity">
+        {/* Three views of one subject: what background work exists, when it runs, and what it did.
+            "Timeline" was its own top-level Schedule page, which listed every job a second time and
+            left each view unable to answer a whole question on its own. */}
+        <Segmented<JobsView>
           ariaLabel="Jobs view"
           value={view}
           onChange={(next) =>
-            setSearchParams(next === "activity" ? { tab: "activity" } : {}, {
+            setSearchParams(next === "jobs" ? {} : { tab: next }, {
               replace: true,
             })
           }
           options={[
             { value: "jobs", label: "Jobs" },
+            { value: "timeline", label: "Timeline" },
             { value: "activity", label: "Activity" },
           ]}
         />
@@ -520,6 +528,8 @@ export function JobsPage() {
 
       {view === "activity" ? (
         <ActivityFeed catalog={entries} />
+      ) : view === "timeline" ? (
+        <ScheduleTimeline />
       ) : catalog.isPending ? (
         <Skeleton className="h-72 w-full" />
       ) : (

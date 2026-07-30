@@ -239,6 +239,117 @@ class TestWatchedCap:
         out = _apply_watched_cap(picks, [make_candidate(i, f"c{i}") for i in (1, 2, 3)], watched, k=3, pct=1.0)
         assert {p.tmdb_id for p in out} == {1, 2, 3}  # no filtering at 100%
 
+    def test_full_pct_still_shows_unwatched_first_which_is_why_rewatch_exists(self):
+        """The distinction the "Happy to see again" template turned on: even at 100% the cap is a
+        CEILING, so a library with unwatched candidates yields an unwatched-led row."""
+        from shortlist.engine.rows import _apply_watched_cap
+
+        watched = {(1, MediaType.MOVIE)}
+        picks = [self._pick(i) for i in (2, 3, 1)]  # ranking happened to put the rewatch last
+        out = _apply_watched_cap(picks, [make_candidate(i, f"c{i}") for i in (1, 2, 3)], watched, k=3, pct=1.0)
+        assert [p.tmdb_id for p in out] == [2, 3, 1], "the cap never PROMOTES a finished title"
+
+
+class TestPreferWatched:
+    """The rewatch ordering: finished titles first, unwatched only to fill. The inverse of the cap."""
+
+    def _pick(self, tmdb_id: int):
+        from shortlist.engine.models import Pick
+
+        return Pick(
+            tmdb_id=tmdb_id, rating_key=tmdb_id * 10, title=f"t{tmdb_id}", rank=1, reason="", media_type=MediaType.MOVIE
+        )
+
+    def test_finished_titles_come_first(self):
+        from shortlist.engine.rows import _prefer_watched
+
+        watched = {(3, MediaType.MOVIE), (4, MediaType.MOVIE)}
+        picks = [self._pick(i) for i in (1, 2, 3, 4)]
+        out = _prefer_watched(picks, [make_candidate(i, f"c{i}") for i in (1, 2, 3, 4)], watched, k=4)
+
+        assert [p.tmdb_id for p in out[:2]] == [3, 4], "the rewatches lead the row"
+        assert [p.rank for p in out] == [1, 2, 3, 4], "ranks are restamped in the delivered order"
+
+    def test_a_thin_rewatch_pool_is_topped_up_rather_than_left_short(self):
+        """A half-empty shelf reads as broken. Filling it with fresh titles is the honest degradation —
+        the row still leads with every rewatch it could find."""
+        from shortlist.engine.rows import _prefer_watched
+
+        watched = {(3, MediaType.MOVIE)}
+        picks = [self._pick(3)]
+        candidates = [make_candidate(i, f"c{i}") for i in (3, 7, 8)]
+        out = _prefer_watched(picks, candidates, watched, k=3)
+
+        assert len(out) == 3
+        assert out[0].tmdb_id == 3
+        assert {7, 8} == {p.tmdb_id for p in out[1:]}
+
+    def test_it_never_repeats_a_title_it_already_kept(self):
+        from shortlist.engine.rows import _prefer_watched
+
+        watched = {(3, MediaType.MOVIE)}
+        # `3` is both a pick and a candidate: padding must not re-admit what is already in the row.
+        out = _prefer_watched([self._pick(3)], [make_candidate(i, f"c{i}") for i in (3, 7)], watched, k=2)
+        assert [p.tmdb_id for p in out] == [3, 7]
+
+
+class TestStartedShows:
+    """ "A series to start" — stricter than the finished filter, which lets a part-watched show through."""
+
+    def test_one_viewed_episode_disqualifies_a_show(self):
+        from shortlist.engine.rows import _started_shows, _watched_titles
+
+        watched_shows = {10: (1, 40), 11: (0, 12), 12: (40, 40)}
+
+        started = _started_shows(watched_shows)
+
+        assert (10, MediaType.SHOW) in started, "1 of 40 episodes is still STARTED"
+        assert (11, MediaType.SHOW) not in started, "never opened — the only kind this row wants"
+        assert (12, MediaType.SHOW) in started
+        # The point of the flag: the normal filter lets the barely-started show straight through.
+        assert (10, MediaType.SHOW) not in _watched_titles(set(), watched_shows, 0.8)
+
+    def test_a_show_with_an_unknown_episode_count_still_counts_as_started(self):
+        from shortlist.engine.rows import _started_shows
+
+        assert (10, MediaType.SHOW) in _started_shows({10: (3, None)})
+
+
+class TestPreferWatchedPadding:
+    """Padding must genuinely prefer rewatches — which one combined candidate list cannot express."""
+
+    def _pick(self, tmdb_id: int):
+        from shortlist.engine.models import Pick
+
+        return Pick(
+            tmdb_id=tmdb_id, rating_key=tmdb_id * 10, title=f"t{tmdb_id}", rank=1, reason="", media_type=MediaType.MOVIE
+        )
+
+    def test_watched_spares_win_the_slots_even_when_fresh_ones_spread_across_more_seeds(self):
+        """`_pad_picks` -> `build_picks` -> `diversify_by_seed` round-robins one candidate per SEED.
+
+        Rewatches tend to share a seed (same taste); fresh titles spread across many. So a single
+        [watched, fresh] list gets interleaved and most slots go to fresh titles — the preference the
+        comment claims is silently lost. Seedless candidates (as the other tests use) cannot catch it:
+        one queue preserves order.
+        """
+        from shortlist.engine.rows import _prefer_watched
+
+        watched_ids = set(range(200, 210))
+        watched = {(i, MediaType.MOVIE) for i in watched_ids}
+        one_seed = [seed(1, 1.0)]
+        spare_watched = [make_candidate(i, f"w{i}", seeds=one_seed) for i in watched_ids]
+        # Fresh titles across five different seeds — five queues to the rewatches' one.
+        spare_fresh = [make_candidate(300 + i, f"f{i}", seeds=[seed(10 + (i % 5), 1.0)]) for i in range(20)]
+
+        out = _prefer_watched(
+            [self._pick(200)], [*spare_watched, *spare_fresh], watched | {(200, MediaType.MOVIE)}, k=10
+        )
+
+        rewatches = [p for p in out if (p.tmdb_id, p.media_type) in watched or p.tmdb_id == 200]
+        assert len(out) == 10
+        assert len(rewatches) == 10, f"every slot had a rewatch available, got {[p.tmdb_id for p in out]}"
+
 
 class TestReusablePrior:
     """Which carried-forward picks may be redelivered on a reuse night — the privacy-adjacent filter
@@ -281,6 +392,34 @@ class TestReusablePrior:
         assert [p.tmdb_id for p in _reusable_prior(prior, MediaType.MOVIE, sec_idx, watched, 0.0)] == [10]
         # A >0 row keeps it — the delivery-time watched cap trims the surplus instead.
         assert [p.tmdb_id for p in _reusable_prior(prior, MediaType.MOVIE, sec_idx, watched, 0.3)] == [10, 11]
+
+    def test_a_rewatch_row_keeps_its_finished_picks_at_the_default_zero_pct(self):
+        """A rewatch row's picks are finished titles BY DESIGN, so the 0%-row filter discarded all of
+        them — and since `watched_pct` defaults to 0.0, that was the normal case.
+
+        The row then never took a carry-forward branch at all: its freshness setting was inoperative,
+        the anti-immediate-repeat guard never ran, and it re-wrote to Plex on nights nothing changed.
+        """
+        from shortlist.engine.rows import _reusable_prior
+
+        prior = [self._pick(10, 1), self._pick(11, 2)]
+        sec_idx = {10: 100, 11: 110}
+        watched = {(10, MediaType.MOVIE), (11, MediaType.MOVIE)}  # every pick already finished
+
+        assert _reusable_prior(prior, MediaType.MOVIE, sec_idx, watched, 0.0) == [], "the old behaviour"
+        kept = _reusable_prior(prior, MediaType.MOVIE, sec_idx, watched, 0.0, keep_watched=True)
+        assert [p.tmdb_id for p in kept] == [10, 11]
+
+    def test_a_rewatch_row_still_drops_a_title_that_left_the_library(self):
+        """`keep_watched` exempts ONE rule. A title Plex no longer has cannot be redelivered whatever
+        the row is for."""
+        from shortlist.engine.rows import _reusable_prior
+
+        prior = [self._pick(10, 1), self._pick(11, 2)]
+        kept = _reusable_prior(
+            prior, MediaType.MOVIE, {10: 100}, {(10, MediaType.MOVIE), (11, MediaType.MOVIE)}, 0.0, keep_watched=True
+        )
+        assert [p.tmdb_id for p in kept] == [10]
 
 
 class TestFreshnessCadence:

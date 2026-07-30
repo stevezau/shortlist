@@ -87,9 +87,13 @@
 
 ## Schedules
 
-The **Schedule** page lists everything on a timer — rows and background jobs together, in the order
-they actually fire, each with its next run and an inline editor. Row schedules are edited on the Rows
-page (one place per setting), and jobs are edited in place.
+**Jobs → Timeline** lists everything on a timer — rows and background jobs together, in the order they
+actually fire, each with its next run and an inline editor. Row schedules are edited on the Rows page
+(one place per setting), and jobs are edited in place.
+
+It sits with Jobs rather than in its own nav entry because "what background work exists" and "when
+does it run" are two views of one thing — as separate pages, every job was listed twice and neither
+page could answer a whole question. `/schedule` still redirects here.
 
 Two jobs are worth knowing about there:
 

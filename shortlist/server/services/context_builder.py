@@ -551,6 +551,8 @@ class ContextBuilder:
                     request_tag=(collection.request_tag or "").strip(),
                     candidate_sources=list(collection.candidate_sources or []),
                     watched_pct=collection.watched_pct,  # None -> inherit the global watched cap
+                    rewatch=bool(collection.rewatch),
+                    unstarted_only=bool(collection.unstarted_only),
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds

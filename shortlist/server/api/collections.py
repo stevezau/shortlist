@@ -81,6 +81,10 @@ class CollectionIn(BaseModel):
     request_tag: str = Field(default="", max_length=64)  # tag added to titles requested via this row
     candidate_sources: list[str] = Field(default_factory=list)  # [] -> inherit global candidates.sources
     watched_pct: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global watched cap
+    # Lead the row with already-finished titles (a rewatch shelf) rather than merely permitting them.
+    rewatch: bool = False
+    # Shows only: exclude every series this person has started, not just the ones they finished.
+    unstarted_only: bool = False
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
@@ -118,6 +122,25 @@ def _validate(body: CollectionIn) -> None:
     for lib, anchor in body.hub_anchor.items():
         if not anchor.top and not anchor.anchor.strip():
             raise HTTPException(422, f"hub_anchor[{lib}]: needs 'top' or a non-empty 'anchor'")
+    # Contradictory, and it fails SILENTLY rather than loudly: `unstarted_only` leaves the pool holding
+    # only never-opened series, so the rewatch ordering finds nothing finished to lead with and the row
+    # fills entirely with new titles — a shelf of unseen shows under a "things you've already seen"
+    # title. Refusing is the only outcome that can't mislead.
+    if body.rewatch and body.unstarted_only:
+        raise HTTPException(
+            422,
+            "a rewatch row can't also exclude everything already started — "
+            "they ask for opposite things, so the row would fill with titles nobody has seen",
+        )
+    # "Shows only" in the field's own docs, and structurally: `_started_shows` yields only show keys, so
+    # on a movies row the flag is inert. Storing an inert setting the editor won't even show is how a
+    # row ends up behaving unlike what its settings say.
+    if body.unstarted_only and body.media == "movie":
+        raise HTTPException(
+            422,
+            "unstarted_only applies to shows — a movie is finished the moment it is watched, "
+            "so there is no 'started' state to exclude",
+        )
 
 
 def _poster_view(session, collection: Collection) -> dict:
@@ -181,6 +204,8 @@ def _serialize(session, collection: Collection) -> dict:
         "request_tag": collection.request_tag or "",
         "candidate_sources": list(collection.candidate_sources or []),
         "watched_pct": collection.watched_pct,
+        "rewatch": bool(collection.rewatch),
+        "unstarted_only": bool(collection.unstarted_only),
         "freshness": collection.freshness,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
@@ -246,6 +271,8 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             request_tag=body.request_tag.strip(),
             candidate_sources=body.candidate_sources,
             watched_pct=body.watched_pct,
+            rewatch=body.rewatch,
+            unstarted_only=body.unstarted_only,
             freshness=body.freshness,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
@@ -280,6 +307,8 @@ _PATCHABLE_COLUMNS = (
     "request_tag",
     "candidate_sources",
     "watched_pct",
+    "rewatch",
+    "unstarted_only",
     "freshness",
     "recent_count",
     "max_seeds",
@@ -411,6 +440,26 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         elif "name" in sent:
             _reject_duplicate_name(session, body.name, exclude_id=collection_id)
             collection.name = body.name
+        # These three interact, so they must be validated against the MERGED row, not the request body.
+        # `_validate` sees CollectionIn's DEFAULTS for anything the PATCH omitted, so a row already set
+        # to rewatch could be sent `unstarted_only: true` alone — body.rewatch reads as its default
+        # False, no contradiction is seen, and the invalid pair lands in the database one field at a
+        # time. Same for `unstarted_only` surviving a narrowing to a movies-only row.
+        merged_rewatch = body.rewatch if "rewatch" in sent else bool(collection.rewatch)
+        merged_unstarted = body.unstarted_only if "unstarted_only" in sent else bool(collection.unstarted_only)
+        merged_media = body.media if "media" in sent else collection.media
+        if merged_rewatch and merged_unstarted:
+            raise HTTPException(
+                422,
+                "a rewatch row can't also exclude everything already started — "
+                "they ask for opposite things, so the row would fill with titles nobody has seen",
+            )
+        if merged_unstarted and merged_media == "movie":
+            raise HTTPException(
+                422,
+                "unstarted_only applies to shows — a movie is finished the moment it is watched, "
+                "so there is no 'started' state to exclude",
+            )
         for column in _PATCHABLE_COLUMNS:
             if column in sent:
                 setattr(collection, column, getattr(body, column))

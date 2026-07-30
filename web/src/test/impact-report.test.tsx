@@ -273,7 +273,12 @@ describe("ImpactReport", () => {
 
     // The count is the point of the confirm: "5 picks" is what makes the totals dropping expected
     // rather than a bug the owner reports later.
-    expect(screen.getByRole("alert")).toHaveTextContent(/5 picks/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/5 picks in total/);
+    // Clearing is never windowed, so the all-time total can exceed the lines above. Unexplained, that
+    // difference reads as a bug — on the real server it was "20 picks" over a visible 5 + 5 + 5.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /lines above show only the last 30 days/i,
+    );
     expect(screen.getByRole("alert")).toHaveTextContent(/can.t be undone/i);
     // The warning has to name the other places these picks are counted, not just this page.
     expect(screen.getByRole("alert")).toHaveTextContent(/each person.s page/i);

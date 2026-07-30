@@ -151,24 +151,29 @@ function CountBar({
   max: number;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-primary"
-          style={{ width: `${max > 0 ? (watched / max) * 100 : 0}%` }}
-        />
-      </div>
+    // Label FIRST, bar last. The label sizes itself and never wraps; the bar is the fixed-width
+    // element, so it is the bars' right edges that line up down the list. Sizing the label instead
+    // meant picking a width — and any width is wrong for some count: w-32 wrapped "3 watched · 103
+    // delivered" onto two lines, and even w-44 overflows once a row passes 999 watched or 9999
+    // delivered. This way no count can break the layout.
+    <div className="flex min-w-0 items-center gap-2">
       {/* Two labelled numbers, NOT "{watched} of {delivered}". They are counts over two different
           sets — watched-in-window and delivered-in-window — so presenting them as a fraction makes
           "4 of 0" reachable whenever delivery paused (a weekly row cron on a 7-day window). That is
           the same misleading fraction this rewrite exists to remove. */}
-      <span className="w-32 shrink-0 text-right tabular-nums text-muted-foreground">
+      <span className="shrink-0 whitespace-nowrap text-right tabular-nums text-muted-foreground">
         <span className="font-medium text-foreground">{watched}</span> watched
         {/* "delivered", not "sent" — the Requests card on this same page uses "sent" to mean asked of
             Sonarr/Radarr, and two meanings of the word side by side is exactly the kind of quiet
             ambiguity this rewrite is meant to remove. */}
         {delivered > 0 && ` · ${delivered} delivered`}
       </span>
+      <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary"
+          style={{ width: `${max > 0 ? (watched / max) * 100 : 0}%` }}
+        />
+      </div>
     </div>
   );
 }
@@ -322,7 +327,12 @@ function ByRow({
         <>
           <div className="space-y-1.5">{live.map(line)}</div>
           {gone.length > 0 && (
-            <DeletedRows count={gone.length}>{gone.map(line)}</DeletedRows>
+            <DeletedRows
+              count={gone.length}
+              windowLabel={window === "all" ? "" : WINDOW_PHRASE[window]}
+            >
+              {gone.map(line)}
+            </DeletedRows>
           )}
         </>
       )}
@@ -337,9 +347,12 @@ function ByRow({
  *  dashboard permanently, so clearing is offered too — explicitly, with what it costs stated. */
 function DeletedRows({
   count,
+  windowLabel,
   children,
 }: {
   count: number;
+  /** The window the lines above cover, or "" when they already cover all time. */
+  windowLabel: string;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -371,10 +384,21 @@ function DeletedRows({
               className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
             >
               <p className="text-foreground">
-                Permanently delete the history of {count} deleted{" "}
-                {count === 1 ? "row" : "rows"}
-                {totalPicks > 0 && <> &mdash; {totalPicks} picks</>}?
+                Permanently delete the pick history of{" "}
+                {count === 1 ? "this deleted row" : "these deleted rows"}?
               </p>
+              {/* Name the all-time total, and why it exceeds the lines above. Clearing is never
+                  windowed, so on a 30-day view "20 picks" sits next to a visible 5 + 5 + 5 and reads
+                  as a bug unless the difference is said out loud. */}
+              {totalPicks > 0 && (
+                <p className="text-foreground">
+                  {totalPicks} picks in total
+                  {windowLabel && (
+                    <> &mdash; the lines above show only {windowLabel}</>
+                  )}
+                  .
+                </p>
+              )}
               {/* Say what it costs BEFORE asking. "The totals above" would under-warn: the same picks
                   back each person's lifetime stats and their own pick history, so those drop too. */}
               <p className="text-muted-foreground">

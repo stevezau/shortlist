@@ -132,6 +132,12 @@ class Collection(Base):
     # Per-row cap on already-finished titles, as a fraction (0.0 all fresh .. 1.0 no filtering).
     # NULL -> inherit the global recommendations.watched_pct.
     watched_pct: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # A REWATCH row: already-finished titles lead it, unwatched ones only fill what's left. Not
+    # expressible with `watched_pct`, which is a ceiling that never PROMOTES a finished title.
+    rewatch: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
+    # Shows only: drop any series this person has STARTED, however little. Stricter than the normal
+    # filter, which only drops FINISHED ones — so this is what makes "a series to start" true.
+    unstarted_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
     # Per-row day-to-day variability, as a fraction (0.0 stable .. 1.0 fresh). NULL -> inherit the
     # global recommendations.freshness.
     freshness: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)

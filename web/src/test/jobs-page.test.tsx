@@ -7,15 +7,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ApiModule from "@/lib/api";
 import { JobsPage } from "@/pages/jobs";
 
-const { syncWatched, syncUsers, getJobs, getJobCatalog, runJob } = vi.hoisted(
-  () => ({
+const { syncWatched, syncUsers, getJobs, getJobCatalog, runJob, getSchedule } =
+  vi.hoisted(() => ({
     syncWatched: vi.fn(),
     syncUsers: vi.fn(),
     getJobs: vi.fn(),
     getJobCatalog: vi.fn(),
     runJob: vi.fn(),
-  }),
-);
+    getSchedule: vi.fn(),
+  }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -27,6 +27,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getJobs,
       getJobCatalog,
       runJob,
+      getSchedule,
     },
   };
 });
@@ -95,13 +96,13 @@ function emitSse(name: string, data: unknown): void {
   act(() => source.emit(name, data));
 }
 
-function renderPage() {
+function renderPage(path = "/jobs") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
         <JobsPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -596,5 +597,64 @@ describe("JobsPage — sync check", () => {
     ).toBeInTheDocument();
     // Switching areas swaps the content rather than adding to the scroll.
     expect(screen.queryByTestId("job-sync.users")).not.toBeInTheDocument();
+  });
+});
+
+describe("JobsPage — the three views of background work", () => {
+  beforeEach(() => {
+    getJobs.mockReset();
+    getJobs.mockResolvedValue([]);
+    getJobCatalog.mockReset();
+    getJobCatalog.mockResolvedValue(CATALOG);
+    getSchedule.mockReset();
+    getSchedule.mockResolvedValue({
+      jobs: [
+        {
+          type: "job",
+          kind: "backup.take",
+          label: "Back up the database",
+          description: "Copy the database to /config/backups.",
+          setting: "backup.cron",
+          cron: "0 3 * * *",
+          optional: false,
+          writes_plex: false,
+          using_default: true,
+          next_run: "2026-07-31T03:00:00Z",
+        },
+      ],
+      rows: [],
+    });
+    FakeEventSource.latest = null;
+  });
+
+  it("offers Jobs, Timeline and Activity — the schedule is not its own page", async () => {
+    renderPage();
+
+    for (const label of ["Jobs", "Timeline", "Activity"]) {
+      expect(
+        await screen.findByRole("button", { name: label }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("shows the schedule on the Timeline tab", async () => {
+    // "What background work exists" and "when does it run" were two pages that each listed every job,
+    // so neither could answer a whole question on its own.
+    renderPage("/jobs?tab=timeline");
+
+    expect(await screen.findByText(/Back up the database/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/in the order they fire/i),
+    ).toBeInTheDocument();
+  });
+
+  it("switching to Timeline loads the schedule, not the job catalogue alone", async () => {
+    renderPage();
+    await screen.findByRole("button", { name: "Timeline" });
+    expect(getSchedule).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Timeline" }));
+
+    expect(await screen.findByText(/Back up the database/)).toBeInTheDocument();
   });
 });
