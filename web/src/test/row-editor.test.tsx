@@ -234,7 +234,11 @@ describe("RowEditor — placement", () => {
 
     // It must SPAN both columns. Without that it sits under one header and reads as applying to that
     // audience alone — which is what it looked like when the columns were auto-width.
-    expect(recommended[0]?.closest(".col-span-2")).not.toBeNull();
+    const span = recommended[0]?.closest(".col-span-2");
+    expect(span).not.toBeNull();
+    // …and say WHICH audience at the control itself. Centred and unlabelled it reads as "under
+    // neither column" just as easily as "under both".
+    expect(span).toHaveTextContent(/everyone/i);
 
     // Home stays split, because Plex really does allow that.
     expect(screen.getByRole("switch", { name: /Owner Home/i })).toBeTruthy();

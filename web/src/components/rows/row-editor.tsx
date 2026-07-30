@@ -275,12 +275,16 @@ function PlacementToggles({
 
         <p className="text-sm">Library Recommended</p>
         {isShared ? (
-          <div className="col-span-2 flex justify-center">
+          // Centred alone, this reads as "under NEITHER column" as easily as "under both". The tinted
+          // span plus the word "everyone" says which, at the control itself — the caption below the
+          // grid explains the why, but you shouldn't have to read it to parse the switch.
+          <div className="col-span-2 flex items-center justify-center gap-2 rounded-md bg-muted/40 py-1.5">
             <Switch
               aria-label="Library Recommended"
               checked={sharedLibrary}
               onCheckedChange={setSharedLibrary}
             />
+            <span className="text-xs text-muted-foreground">everyone</span>
           </div>
         ) : (
           <>
