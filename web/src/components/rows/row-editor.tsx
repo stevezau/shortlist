@@ -245,7 +245,12 @@ function PlacementToggles({
 
   return (
     <div className="space-y-3 rounded-md border p-4">
-      <div className="grid grid-cols-[1fr_auto_auto] items-center gap-x-6 gap-y-3">
+      {/* The two audience columns are EQUAL fixed widths, not `auto`. On a shared row the Recommended
+          control is one switch spanning both (Plex has a single promotedToRecommended flag per
+          collection, so it cannot differ by audience) — and with auto columns "Everyone else · 49
+          other people" is far wider than "Just me · S_FLIX", so the centred switch drifted under the
+          right-hand header and read as applying to everyone-but-you. */}
+      <div className="grid grid-cols-[minmax(0,1fr)_7.5rem_7.5rem] items-center gap-x-6 gap-y-3">
         <span />
         <div className="text-center">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

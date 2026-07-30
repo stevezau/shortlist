@@ -215,6 +215,32 @@ describe("RowEditor — placement", () => {
     updateCollection.mockClear();
   });
 
+  it("gives a SHARED row one Recommended switch spanning both audiences, not two", () => {
+    // Deliberately 3 controls, not 4. A shared row is ONE Plex collection with a single
+    // `promotedToRecommended` flag, so its Recommended setting cannot differ by audience the way the
+    // two Home flags can — drawing two switches would imply a split Plex does not offer.
+    renderEditor(row({ build: "shared" }));
+
+    const recommended = screen.getAllByRole("switch", {
+      name: /Library Recommended/i,
+    });
+    expect(recommended).toHaveLength(1);
+    expect(
+      screen.queryByRole("switch", { name: /Owner Library Recommended/i }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("switch", { name: /Friends Library Recommended/i }),
+    ).toBeNull();
+
+    // It must SPAN both columns. Without that it sits under one header and reads as applying to that
+    // audience alone — which is what it looked like when the columns were auto-width.
+    expect(recommended[0]?.closest(".col-span-2")).not.toBeNull();
+
+    // Home stays split, because Plex really does allow that.
+    expect(screen.getByRole("switch", { name: /Owner Home/i })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: /Friends' Home/i })).toBeTruthy();
+  });
+
   it("reflects the saved placement as switch states", () => {
     renderEditor(row({ placement: "library", placement_friends: "library" }));
     expect(
