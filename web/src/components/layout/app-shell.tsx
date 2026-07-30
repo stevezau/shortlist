@@ -266,7 +266,7 @@ export function AppShell() {
       <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-card/80 px-4 py-3 backdrop-blur md:hidden">
         <HomeWordmark />
         <div className="flex items-center gap-1">
-          <ActivityIndicator />
+          <ActivityIndicator align="right" />
           <NotificationBell align="right" />
           <Button
             variant="ghost"
@@ -327,7 +327,7 @@ export function AppShell() {
       <aside className="sticky top-0 z-30 hidden h-screen w-60 shrink-0 flex-col border-r bg-card/40 backdrop-blur md:flex">
         <div className="flex items-center justify-between px-5 py-5">
           <HomeWordmark />
-          <ActivityIndicator />
+          <ActivityIndicator align="left" />
           <NotificationBell align="left" />
         </div>
         <NavBody />

@@ -511,6 +511,10 @@ async def effectiveness(
         "window": window,
         "window_days": days,
         "since": iso_utc(since) if since else None,
+        # The oldest pick on record. Without it the window selector looks broken on a young install:
+        # every window covers all of the data, so the numbers are identical whichever you press, and
+        # a control that visibly does nothing reads as a bug. The UI uses this to say why.
+        "first_pick": iso_utc(session.query(func.min(PickRow.created_at)).scalar()),
         "overall": {
             "delivered": delivered_now,
             "watched": watched_now,

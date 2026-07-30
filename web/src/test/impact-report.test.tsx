@@ -66,6 +66,7 @@ const EMPTY = {
   window: "30" as ReportWindow,
   window_days: 30,
   since: "2026-06-29T00:00:00Z",
+  first_pick: "2026-01-01T00:00:00Z",
   watch_sync: { last: null, next: null },
   coverage: {
     users_enabled: 2,
@@ -391,5 +392,54 @@ describe("ImpactReport", () => {
         /Nothing delivered or watched in the last 30 days/i,
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("the window selector on a young install", () => {
+  beforeEach(() => {
+    getReport.mockReset();
+    getDeletedRows.mockReset();
+    getDeletedRows.mockResolvedValue([]);
+  });
+
+  it("explains why the numbers don't move when every window covers all the data", async () => {
+    // 3 runs' worth of picks a few days old: 7 / 30 / 90 / all return identical figures, so pressing
+    // a button changes nothing on screen and reads as a broken control. This line is the difference
+    // between "it's broken" and "there isn't older data yet".
+    getReport.mockResolvedValue({
+      ...REPORT,
+      since: "2026-06-29T00:00:00Z",
+      first_pick: "2026-07-28T00:00:00Z", // newer than the window start
+    });
+    renderReport();
+
+    expect(
+      await screen.findByText(/only been recording since/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing once there IS history older than the window", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      since: "2026-06-29T00:00:00Z",
+      first_pick: "2026-01-01T00:00:00Z", // older than the window start
+    });
+    renderReport();
+
+    await screen.findByText("Watched");
+    expect(screen.queryByText(/only been recording since/i)).toBeNull();
+  });
+
+  it("says nothing on the all-time window, which cannot be narrower than the data", async () => {
+    getReport.mockResolvedValue({
+      ...REPORT,
+      window: "all" as ReportWindow,
+      since: null,
+      first_pick: "2026-07-28T00:00:00Z",
+    });
+    renderReport();
+
+    await screen.findByText("Watched");
+    expect(screen.queryByText(/only been recording since/i)).toBeNull();
   });
 });

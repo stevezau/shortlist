@@ -119,11 +119,13 @@ GET  /api/notifications -> {items[]} · POST /api/notifications/dismiss {id} (di
 GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm|radarr|sonarr|mdblist|trakt|exa}
 GET  /api/settings/arr/{radarr|sonarr}/options -> {quality_profiles, root_folders}
 POST /api/settings/curator/models {provider?, api_key?, ollama_url?} -> {provider, models[]} (models the provider offers; the body lets the picker list the provider being edited before it is saved — blank fields fall back to saved settings, a redacted key means "use the saved key"; [] = free-text fallback)
-GET  /api/report?window=7|30|90|all -> {window, since, overall, trend[], per_user[], per_row[], recent[], watch_sync, coverage, runs, requests, top_titles} (what got watched, from picks.watched_at)
+GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, trend[], per_user[], per_row[], recent[], watch_sync, coverage, runs, requests, top_titles} (what got watched, from picks.watched_at)
      Windowed, default 30 days, with each headline figure carried alongside its previous equal period so the UI can show a change.
      `requests.watched_after_sent` compares a watch against `request_candidates.sent_at`, stamped once when the status flips
      to "sent" (rows predating that column fall back to `updated_at`). It used to be an unordered set intersection, which
      counted a title watched BEFORE it was ever requested.
+     `first_pick` is the oldest pick on record (null when there are none). On a young install every window already covers all the data, so 7/30/90/all
+     return identical numbers and the selector looks broken; the UI compares `first_pick` against `since` to say why rather than leaving it a mystery.
      `overall.landing` is the one RATIO, and it is computed over a MATURED cohort: picks delivered in the window AND at least 30 days
      old. That matters — a pick can only ever be credited as watched within 30 days of delivery, so counting a pick delivered
      yesterday in the denominator drags the rate toward zero for no reason. `per_user`/`per_row` return COUNTS, not rates, sorted by

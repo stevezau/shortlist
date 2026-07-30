@@ -71,7 +71,15 @@ function JobLine({ job, label }: { job: Job; label: string }) {
  * hide when you pause them, the reconcile when you change a row — had NO enqueue-time feedback at
  * all. You did a thing, and nothing visibly happened until you thought to open the Jobs page.
  */
-export function ActivityIndicator() {
+/** `align` is which EDGE of the panel is pinned to the button — the same convention as
+ *  {@link NotificationBell}. In the w-60 sidebar a w-80 panel pinned right runs off the left of the
+ *  screen and its labels are cut in half, so the rail passes "left" to open it rightward into
+ *  <main>; the mobile header, where the button sits at the right edge, passes "right". */
+export function ActivityIndicator({
+  align = "left",
+}: {
+  align?: "left" | "right";
+}) {
   const query = useJobActivity();
   const labelFor = useJobLabels();
   const [open, setOpen] = useState(false);
@@ -150,7 +158,10 @@ export function ActivityIndicator() {
 
       {open && (
         <div
-          className="absolute right-0 z-50 mt-2 w-80 rounded-lg border bg-elevated p-3 shadow-lg"
+          className={cn(
+            "absolute z-50 mt-2 w-80 rounded-lg border bg-elevated p-3 shadow-lg",
+            align === "left" ? "left-0" : "right-0",
+          )}
           role="dialog"
           aria-label="Background work"
         >

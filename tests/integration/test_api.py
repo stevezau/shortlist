@@ -1348,6 +1348,19 @@ class TestRunsApi:
         assert lifetime["window_days"] is None
         assert lifetime["overall"]["watched_delta"] is None  # "all" has no previous period
 
+    def test_report_reports_the_oldest_pick_so_the_ui_can_explain_a_flat_selector(self, client: TestClient):
+        """On a young install every window covers all the data, so 7/30/90/all return identical
+        numbers and the selector looks broken. `first_pick` is what lets the UI say why."""
+        empty = client.get("/api/report?window=30").json()
+        assert empty["first_pick"] is None, "no picks yet — nothing to date the history from"
+
+        self._seed_picks(client, [(1, 2, 1), (2, 200, 199)])
+
+        report = client.get("/api/report?window=30").json()
+        # The OLDEST pick, not the oldest one inside the window — the point is to compare the two.
+        assert report["first_pick"] is not None
+        assert report["first_pick"] < report["since"], "200 days old, so older than a 30-day window"
+
     def test_report_landing_rate_only_counts_picks_that_had_their_full_chance(self, client: TestClient):
         """The matured cohort. A pick delivered yesterday cannot have been 'watched within 30 days'
         yet, so counting it in the denominator drags the rate toward zero for no reason at all."""

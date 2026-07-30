@@ -806,6 +806,9 @@ export interface EffectivenessReport {
   window_days: number | null;
   /** Start of the window (ISO), null for "all". */
   since: string | null;
+  /** Oldest pick on record (ISO), null when there are none. Lets the UI explain a window selector
+   *  that appears to do nothing because every window already covers all of the data. */
+  first_pick: string | null;
   overall: {
     /** Picks DELIVERED in the window. */
     delivered: number;

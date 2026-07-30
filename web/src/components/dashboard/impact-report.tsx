@@ -457,15 +457,33 @@ function ReportBody({
   const { overall, coverage, runs, requests } = report;
   const { landing } = overall;
 
+  // On a young install every window already covers all the data, so the numbers are identical
+  // whichever button you press — a control that visibly does nothing reads as broken. Say why.
+  // `since === null` is the "all time" window, which by definition can't be narrower than the data.
+  const coversEverything =
+    report.first_pick !== null &&
+    report.since !== null &&
+    new Date(report.first_pick) >= new Date(report.since);
+
   const selector = (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <h1 className="text-sm font-medium text-muted-foreground">Impact</h1>
-      <Segmented
-        value={window}
-        onChange={onWindowChange}
-        options={WINDOW_OPTIONS}
-        ariaLabel="Report window"
-      />
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-sm font-medium text-muted-foreground">Impact</h1>
+        <Segmented
+          value={window}
+          onChange={onWindowChange}
+          options={WINDOW_OPTIONS}
+          ariaLabel="Report window"
+        />
+      </div>
+      {coversEverything && (
+        <p className="text-xs text-muted-foreground/80">
+          Shortlist has only been recording since{" "}
+          {formatDate(report.first_pick as string)}, so every window covers all
+          of it — the numbers won&rsquo;t change until there&rsquo;s older
+          history to leave out.
+        </p>
+      )}
     </div>
   );
 
