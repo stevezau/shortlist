@@ -215,34 +215,42 @@ describe("RowEditor — placement", () => {
     updateCollection.mockClear();
   });
 
-  it("gives a SHARED row one Recommended switch spanning both audiences, not two", () => {
-    // Deliberately 3 controls, not 4. A shared row is ONE Plex collection with a single
-    // `promotedToRecommended` flag, so its Recommended setting cannot differ by audience the way the
-    // two Home flags can — drawing two switches would imply a split Plex does not offer.
-    renderEditor(row({ build: "shared" }));
+  it("keeps the same grid on a SHARED row, dimming the cell Plex cannot express", () => {
+    // The grid does not change shape between row types. A shared row is ONE Plex collection with a
+    // single `promotedToRecommended` flag, so "on for me, off for them" is not expressible — that
+    // cell is shown at its true value but disabled, with the reason on hover, rather than the row
+    // quietly becoming a different control.
+    renderEditor(row({ build: "shared", placement: "both" }));
 
-    const recommended = screen.getAllByRole("switch", {
-      name: /Library Recommended/i,
+    const owner = screen.getByRole("switch", {
+      name: /Owner Library Recommended/i,
     });
-    expect(recommended).toHaveLength(1);
-    expect(
-      screen.queryByRole("switch", { name: /Owner Library Recommended/i }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("switch", { name: /Friends Library Recommended/i }),
-    ).toBeNull();
+    const friends = screen.getByRole("switch", {
+      name: /Friends Library Recommended/i,
+    });
 
-    // It must SPAN both columns. Without that it sits under one header and reads as applying to that
-    // audience alone — which is what it looked like when the columns were auto-width.
-    const span = recommended[0]?.closest(".col-span-2");
-    expect(span).not.toBeNull();
-    // …and say WHICH audience at the control itself. Centred and unlabelled it reads as "under
-    // neither column" just as easily as "under both".
-    expect(span).toHaveTextContent(/everyone/i);
+    expect(owner).toBeDisabled();
+    expect(friends).toBeEnabled();
+    // Disabled, but still showing the TRUE state — the row really is on their Recommended shelf.
+    expect(owner).toBeChecked();
+    expect(owner).toHaveAttribute("title", expect.stringMatching(/single collection/i));
 
-    // Home stays split, because Plex really does allow that.
-    expect(screen.getByRole("switch", { name: /Owner Home/i })).toBeTruthy();
-    expect(screen.getByRole("switch", { name: /Friends' Home/i })).toBeTruthy();
+    // Home stays split and fully editable, because Home visibility really is per-share.
+    expect(screen.getByRole("switch", { name: /Owner Home/i })).toBeEnabled();
+    expect(screen.getByRole("switch", { name: /Friends' Home/i })).toBeEnabled();
+  });
+
+  it("a per-person row leaves all four editable — the asymmetry is Plex's, not ours", () => {
+    renderEditor(row({ build: "per_person" }));
+
+    for (const name of [
+      /Owner Library Recommended/i,
+      /Friends Library Recommended/i,
+      /Owner Home/i,
+      /Friends' Home/i,
+    ]) {
+      expect(screen.getByRole("switch", { name })).toBeEnabled();
+    }
   });
 
   it("reflects the saved placement as switch states", () => {
@@ -420,19 +428,20 @@ describe("RowEditor — placement on a shared row", () => {
   const sharedRow = (patch: Partial<Collection> = {}) =>
     row({ build: "shared", ...patch });
 
-  it("collapses the Recommended pair into one control", () => {
-    // One collection for everyone means one `promotedToRecommended` — two switches would be a lie.
+  it("shows both Recommended cells, with the un-expressible one disabled", () => {
+    // One collection for everyone means one `promotedToRecommended`. Rather than the grid changing
+    // shape between row types, the cell Plex cannot express is shown at its true value but disabled —
+    // a control that stays put and explains itself is easier to learn than one that moves or vanishes.
     renderEditor(sharedRow({ placement: "both", placement_friends: "both" }));
 
+    const owner = screen.getByRole("switch", {
+      name: /Owner Library Recommended/i,
+    });
+    expect(owner).toBeDisabled();
+    expect(owner).toBeChecked(); // disabled, but still telling the truth about the shelf
     expect(
-      screen.queryByRole("switch", { name: /Owner Library Recommended/i }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("switch", { name: /Friends Library Recommended/i }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("switch", { name: /^Library Recommended$/i }),
-    ).toBeChecked();
+      screen.getByRole("switch", { name: /Friends Library Recommended/i }),
+    ).toBeEnabled();
     // Home still splits by audience — those are two real Plex flags on the one collection.
     expect(screen.getByRole("switch", { name: /Owner Home/i })).toBeChecked();
     expect(
@@ -444,7 +453,7 @@ describe("RowEditor — placement on a shared row", () => {
     renderEditor(sharedRow({ placement: "both", placement_friends: "both" }));
 
     await userEvent.click(
-      screen.getByRole("switch", { name: /^Library Recommended$/i }),
+      screen.getByRole("switch", { name: /Friends Library Recommended/i }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),

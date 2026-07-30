@@ -237,9 +237,26 @@ function PlacementToggles({
     checked: boolean,
     label: string,
     onToggle: (v: boolean) => void,
+    /** Why this cell can't be set. Dims it and explains on hover, instead of the grid changing shape
+     *  between row types — a control that moves or vanishes is harder to learn than one that stays
+     *  put and says why it's unavailable. */
+    unavailable?: string,
   ) => (
     <div className="flex justify-center">
-      <Switch aria-label={label} checked={checked} onCheckedChange={onToggle} />
+      <Switch
+        aria-label={label}
+        checked={checked}
+        onCheckedChange={onToggle}
+        disabled={Boolean(unavailable)}
+        title={unavailable}
+        aria-describedby={unavailable ? `${label}-why` : undefined}
+        className={unavailable ? "cursor-not-allowed opacity-40" : undefined}
+      />
+      {unavailable && (
+        <span id={`${label}-why`} className="sr-only">
+          {unavailable}
+        </span>
+      )}
     </div>
   );
 
@@ -275,17 +292,19 @@ function PlacementToggles({
 
         <p className="text-sm">Library Recommended</p>
         {isShared ? (
-          // Centred alone, this reads as "under NEITHER column" as easily as "under both". The tinted
-          // span plus the word "everyone" says which, at the control itself — the caption below the
-          // grid explains the why, but you shouldn't have to read it to parse the switch.
-          <div className="col-span-2 flex items-center justify-center gap-2 rounded-md bg-muted/40 py-1.5">
-            <Switch
-              aria-label="Library Recommended"
-              checked={sharedLibrary}
-              onCheckedChange={setSharedLibrary}
-            />
-            <span className="text-xs text-muted-foreground">everyone</span>
-          </div>
+          // The grid keeps its shape for every row type. A shared row is ONE Plex collection with a
+          // single `promotedToRecommended` flag, so "on for me, off for them" cannot be expressed —
+          // the per-person cell is shown at its true value but dimmed, with the reason on hover,
+          // rather than the row silently becoming a different control.
+          <>
+            {cell(
+              sharedLibrary,
+              "Owner Library Recommended",
+              () => {},
+              "A shared row is a single collection on Plex, so its Recommended shelf setting can't differ per person — it follows Everyone else.",
+            )}
+            {cell(friendsLibrary, "Friends Library Recommended", setSharedLibrary)}
+          </>
         ) : (
           <>
             {cell(ownerLibrary, "Owner Library Recommended", (v) =>
