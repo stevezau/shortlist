@@ -98,9 +98,9 @@ Two jobs are worth knowing about there:
   cannot be read incrementally, that library falls back to a complete read on its own rather than
   serving a stale watched set.
 - **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
-  builds, delivers and promotes nothing — so it can only ever make your server *more* private. It is
+  builds, delivers and promotes nothing — so it can only ever make your server _more_ private. It is
   the cheapest safety net against drift.
-- **Sync check** is **off** by default. Unlike the privacy sync it *writes corrections* to Plex, so
+- **Sync check** is **off** by default. Unlike the privacy sync it _writes corrections_ to Plex, so
   turning it on unattended is a choice to make rather than a default to inherit.
 
 **Every row runs on its own schedule** — there is no single server-wide one. Open a row (Rows → edit)
@@ -133,16 +133,16 @@ The natural place to do it is a run's **How we picked** page, on the seeds list,
 usually what you noticed in the first place. There's also a search box on a person's detail page
 (**Users → someone → Settings → Blocked seeds**) for a title you remember but can't find a run for.
 
-Blocks are personal. A **shared** row is public, so one person's block deliberately does *not*
+Blocks are personal. A **shared** row is public, so one person's block deliberately does _not_
 reshape what everyone else sees — otherwise an individual preference would become a server-wide edit
 nobody else can see or undo. Shared rows use their own server-wide list
 (`recommendations.blocked_shared_seeds`).
 
 ## Starting from a template
 
-**Rows → Add a row** opens a gallery rather than a blank form: *Picked for You*, *Because you
-watched…*, *Comfort rewatch*, *Fresh finds*, *From the vault*, *Popular on this server*, *Movie
-night*, *Your next series*, and *Start from scratch*. Each tile names the two or three settings it
+**Rows → Add a row** opens a gallery rather than a blank form: _Picked for You_, _Because you
+watched…_, _Happy to see again_, _Fresh finds_, _From the vault_, _Popular on this server_, _Movie
+night_, _More TV to watch_, and _Start from scratch_. Each tile names the two or three settings it
 changes, so picking one also shows you which knobs matter. Nothing is locked in — every field is
 editable afterwards, and the template is not stored on the row.
 
@@ -277,7 +277,7 @@ titles first watched in the window. Lower is better, and the change arrow is col
 
 **Landing rate** — the one percentage, and the only one computed carefully enough to trust. It is the
 share of picks watched within 30 days of delivery, measured over a **matured cohort**: picks
-delivered in the window *and* at least 30 days ago. A pick delivered yesterday cannot have been
+delivered in the window _and_ at least 30 days ago. A pick delivered yesterday cannot have been
 "watched within 30 days" yet, so counting it would drag the rate toward zero for no reason. On a
 7-day window there is usually no matured cohort at all, and the card says so instead of showing a
 misleading number.
@@ -287,6 +287,12 @@ sample sizes a percentage is noise: ranking by one put a person with `1/31` abov
 `3/103`. People and rows with nothing in the window fold away behind a disclosure rather than filling
 the list with empty bars, and rows you have since deleted are hidden the same way — their picks still
 count in the totals above.
+
+Hiding a deleted row is the default because its picks are real history. If you want it actually gone —
+a throwaway test row, say — expand the disclosure and choose **Delete their history**. That permanently
+removes those picks from every total that counts them, here and on each person's page, and cannot be
+undone. Rows that still exist are never affected, whichever slug is named: Shortlist recomputes what is
+eligible on the server rather than trusting the request.
 
 **Watches per week** is deliberately the long view: always the last 16 weeks, whatever window is
 selected.

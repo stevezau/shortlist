@@ -1086,3 +1086,11 @@ export function blockedSeeds(
       : entry,
   );
 }
+
+/** GET /api/report/deleted-rows — pick history left behind by a row that no longer exists. */
+export interface DeletedRowHistory {
+  slug: string;
+  picks: number;
+  first_seen: string | null;
+  last_seen: string | null;
+}

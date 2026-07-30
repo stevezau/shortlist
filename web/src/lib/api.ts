@@ -8,6 +8,7 @@ import type {
   ArrOptions,
   Backup,
   BlockedSeed,
+  DeletedRowHistory,
   EffectivenessReport,
   OwnedCollectionsAudit,
   PlexLibrary,
@@ -413,6 +414,21 @@ export const api = {
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
   getReport: (window: ReportWindow = "30"): Promise<EffectivenessReport> =>
     request(`/api/report?window=${window}`),
+
+  /** Pick history belonging to rows that no longer exist, and how much of it there is. */
+  getDeletedRows: (): Promise<DeletedRowHistory[]> =>
+    request("/api/report/deleted-rows"),
+
+  /** Permanently delete that history. Omit `slug` to clear every deleted row at once. */
+  clearDeletedRows: (
+    slug?: string,
+  ): Promise<{ cleared: number; picks: number; slugs: string[] }> =>
+    request(
+      slug
+        ? `/api/report/deleted-rows?slug=${encodeURIComponent(slug)}`
+        : "/api/report/deleted-rows",
+      { method: "DELETE" },
+    ),
 
   /** Run the daily watch-status sync on demand (fires in the background). */
   syncWatched: (): Promise<{ started: boolean }> =>

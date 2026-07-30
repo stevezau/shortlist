@@ -23,11 +23,23 @@ import re
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import String, cast, func
+from loguru import logger
+from sqlalchemy import String, cast, func, select
+from sqlalchemy.orm import Session
 
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
 from shortlist.server.auth import require_owner
-from shortlist.server.db.models import DEFAULT_SLUG, Collection, PickRow, RequestCandidate, Run, RunUser, User, iso_utc
+from shortlist.server.db.models import (
+    DEFAULT_SLUG,
+    Collection,
+    Event,
+    PickRow,
+    RequestCandidate,
+    Run,
+    RunUser,
+    User,
+    iso_utc,
+)
 from shortlist.server.scheduler import WATCH_SYNC_JOB_ID
 from shortlist.server.services.run_service import HIT_WINDOW_DAYS
 from shortlist.server.settings_store import SettingsStore
@@ -63,6 +75,102 @@ def _delta(current: int | float | None, previous: int | float | None) -> float |
     if current is None or previous is None:
         return None
     return round(current - previous, 1)
+
+
+def _orphaned_slugs(session: Session) -> set[str]:
+    """Row slugs that appear in `picks` but have no live Collection behind them.
+
+    Computed server-side, the same way the report labels a line "deleted", so a client cannot ask us
+    to purge a row that still exists by passing its slug.
+    """
+    live = {c.slug for c in session.query(Collection.slug).all()} | {"", DEFAULT_SLUG}
+    used = {slug for (slug,) in session.query(PickRow.collection_slug).distinct().all()}
+    return {slug for slug in used if slug not in live}
+
+
+@router.get("/deleted-rows")
+async def deleted_rows(request: Request) -> list[dict]:
+    """Pick history belonging to rows that no longer exist, with how much of it there is.
+
+    Its own endpoint rather than a field on the report: the report is windowed, and "what can I clear"
+    is a question about ALL of a deleted row's history, not the last 30 days of it.
+    """
+    with request.app.state.sessions() as session:
+        orphans = _orphaned_slugs(session)
+        if not orphans:
+            return []
+        rows = (
+            session.query(
+                PickRow.collection_slug,
+                func.count(PickRow.id),
+                func.min(PickRow.created_at),
+                func.max(PickRow.created_at),
+            )
+            .filter(PickRow.collection_slug.in_(orphans))
+            .group_by(PickRow.collection_slug)
+            .all()
+        )
+        return [
+            {
+                "slug": slug,
+                "picks": count,
+                "first_seen": iso_utc(first),
+                "last_seen": iso_utc(last),
+            }
+            for slug, count, first, last in sorted(rows, key=lambda r: -r[1])
+        ]
+
+
+@router.delete("/deleted-rows")
+async def clear_deleted_rows(request: Request, slug: str | None = None) -> dict:
+    """Permanently delete the pick history of rows that no longer exist. `slug` clears just one.
+
+    This is the one destructive action on the dashboard, so it is deliberately narrow:
+
+    * Only slugs with no live Collection are eligible — the eligible set is recomputed here rather
+      than trusted from the request, so naming a live row's slug deletes nothing.
+    * Only `picks` rows are touched. `deliveries` is left alone: it is the ledger of what still
+      exists on Plex, and clearing it would strand a real collection with nothing left to clean it up.
+    * These picks disappear from everywhere they are counted — not just this dashboard. The per-user
+      lifetime stats and a person's pick history on their own page are read from the same rows, so the
+      UI has to say "history", not "the numbers above".
+    """
+    with request.app.state.sessions() as session:
+        eligible = _orphaned_slugs(session)
+        targets = (eligible & {slug}) if slug is not None else eligible
+        if not targets:
+            # Nothing eligible is not an error: the row may have been cleared in another tab, or the
+            # slug may belong to a row that still exists (in which case refusing is the whole point).
+            return {"cleared": 0, "picks": 0, "slugs": []}
+        # Per-slug counts, so the audit can answer "which row's 400 picks went" and not just a total.
+        per_slug = dict(
+            session.query(PickRow.collection_slug, func.count(PickRow.id))
+            .filter(PickRow.collection_slug.in_(targets))
+            .group_by(PickRow.collection_slug)
+            .all()
+        )
+        # The `NOT EXISTS` is not redundant with `_orphaned_slugs` above — it closes the gap between
+        # them. pysqlite opens the write transaction at this DELETE, so the eligibility read was an
+        # autocommit snapshot: a row created in between (and `_unique_slug` hands a re-created row the
+        # same slug back) would otherwise have its picks deleted as an orphan.
+        live_slug = select(Collection.id).where(Collection.slug == PickRow.collection_slug)
+        deleted = (
+            session.query(PickRow)
+            .filter(PickRow.collection_slug.in_(targets), ~live_slug.exists())
+            .delete(synchronize_session=False)
+        )
+        # Audited like every other destructive action (plex-safety rule 10): "where did those numbers
+        # go" must be answerable afterwards.
+        session.add(
+            Event(
+                scope="report.clear_deleted_rows",
+                level="info",
+                message={"rows": per_slug, "picks": deleted},
+            )
+        )
+        session.commit()
+    logger.info("cleared pick history for {} deleted row(s): {} picks", len(targets), deleted)
+    return {"cleared": len(targets), "picks": deleted, "slugs": sorted(targets)}
 
 
 @router.get("")

@@ -67,8 +67,8 @@ account is told to hide that label, so only its owner ever sees it.
 
 - 🎞️ **Multiple rows per person + shared rows** — e.g. a personal row, a "New this week" shared
   row, per-library rows — each with its own sources, size, libraries, freshness, and audience.
-  **Start from a template** — *Because you watched…*, *Comfort rewatch*, *Fresh finds*, *Popular on
-  this server* and more — rather than a blank form, then change anything you like.
+  **Start from a template** — _Because you watched…_, _Happy to see again_, _Fresh finds_, _Popular on
+  this server_ and more — rather than a blank form, then change anything you like.
 - 🚫 **Block a bad seed** — a film someone put on for a friend shouldn't shape their picks. Block it
   from a run's "How we picked" page; the watch stays in their history, it just stops seeding.
 - 🗓️ **Freshness you control** — rows stay stable and refresh on a cadence you set (nightly →

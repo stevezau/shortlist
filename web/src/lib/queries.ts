@@ -126,6 +126,24 @@ export function useUnblockSeed(userId: number) {
   });
 }
 
+export function useDeletedRows() {
+  return useQuery({
+    queryKey: ["report", "deleted-rows"],
+    queryFn: api.getDeletedRows,
+  });
+}
+
+export function useClearDeletedRows() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (slug?: string) => api.clearDeletedRows(slug),
+    // The dashboard totals change, so the report has to refetch — not just this list.
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["report"] });
+    },
+  });
+}
+
 export function useSchedule() {
   return useQuery({ queryKey: ["schedule"], queryFn: api.getSchedule });
 }

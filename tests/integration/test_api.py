@@ -4525,3 +4525,170 @@ class TestBlockedSeedsApi:
 
     def test_title_search_of_nothing_is_an_empty_list_not_an_error(self, client: TestClient):
         assert client.get("/api/users/search/titles?q=%20").json() == []
+
+
+class TestClearDeletedRows:
+    """Removing the pick history of rows that no longer exist.
+
+    Hiding them was the default (their numbers still count in the totals), but there was no way to
+    actually be rid of them — so a throwaway test row lingered in the dashboard for ever.
+    """
+
+    def _seed(self, client: TestClient, slug: str, n: int = 3) -> int:
+        from shortlist.server.db.models import PickRow, Run, User
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            for i in range(n):
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=1000 + i,
+                        media_type="movie",
+                        rating_key=1000 + i,
+                        rank=i + 1,
+                        collection_slug=slug,
+                        title=f"T{i}",
+                    )
+                )
+            session.commit()
+            return uid
+
+    def _live_row(self, client: TestClient, slug: str) -> None:
+        """Create a row that genuinely EXISTS, so the Collection lookup is what protects it.
+
+        Not DEFAULT_SLUG: that slug is protected by a hardcoded literal, so a test that uses it as its
+        "live row" passes even if the `Collection` query is deleted outright — which is exactly the
+        hole an earlier version of this class had.
+        """
+        from shortlist.server.db.models import Collection
+
+        with client.app.state.sessions() as session:
+            session.add(Collection(slug=slug, name=slug, enabled=True))
+            session.commit()
+
+    def test_it_lists_only_rows_that_no_longer_exist(self, client: TestClient):
+        from shortlist.server.db.models import DEFAULT_SLUG
+
+        self._seed(client, "zz_throwaway", n=4)
+        self._live_row(client, "zz_live")
+        self._seed(client, "zz_live", n=7)  # a row that really exists
+        self._seed(client, DEFAULT_SLUG, n=2)  # the default row's slug
+        self._seed(client, "", n=1)  # legacy picks recorded before rows had slugs
+
+        listed = client.get("/api/report/deleted-rows").json()
+
+        assert [r["slug"] for r in listed] == ["zz_throwaway"]
+        assert listed[0]["picks"] == 4
+        assert listed[0]["first_seen"] and listed[0]["last_seen"]
+
+    def test_it_lists_the_biggest_first_and_says_nothing_when_there_is_nothing(self, client: TestClient):
+        """The order is what the UI presents, so it is part of the contract."""
+        assert client.get("/api/report/deleted-rows").json() == []
+
+        self._seed(client, "zz_small", n=2)
+        self._seed(client, "zz_big", n=9)
+
+        assert [r["slug"] for r in client.get("/api/report/deleted-rows").json()] == ["zz_big", "zz_small"]
+
+    def test_clearing_removes_that_history_and_nothing_else(self, client: TestClient):
+        from shortlist.server.db.models import DEFAULT_SLUG, PickRow
+
+        self._seed(client, "zz_throwaway", n=4)
+        self._live_row(client, "zz_live")
+        self._seed(client, "zz_live", n=7)
+        self._seed(client, DEFAULT_SLUG, n=2)
+
+        result = client.delete("/api/report/deleted-rows").json()
+
+        assert result["cleared"] == 1 and result["picks"] == 4
+        with client.app.state.sessions() as session:
+            remaining = {slug for (slug,) in session.query(PickRow.collection_slug).distinct()}
+        assert remaining == {"zz_live", DEFAULT_SLUG}, "the live rows' history must survive"
+
+    def test_naming_a_live_rows_slug_deletes_nothing(self, client: TestClient):
+        """The eligible set is recomputed server-side, so a client cannot ask us to purge a row that
+        still exists — by accident or otherwise.
+
+        Asserted against a REAL Collection: the whole guard is the `Collection` lookup, and a test
+        that names DEFAULT_SLUG instead would pass with that lookup removed.
+        """
+        from shortlist.server.db.models import PickRow
+
+        self._live_row(client, "zz_live")
+        self._seed(client, "zz_live", n=3)
+
+        result = client.delete("/api/report/deleted-rows?slug=zz_live").json()
+
+        assert result == {"cleared": 0, "picks": 0, "slugs": []}
+        with client.app.state.sessions() as session:
+            assert session.query(PickRow).count() == 3
+
+    def test_clear_all_spares_every_row_that_still_exists(self, client: TestClient):
+        """`slug=` omitted means "clear the lot" — the branch with the most to lose if the eligible
+        set is ever computed wrongly."""
+        from shortlist.server.db.models import PickRow
+
+        for slug in ("zz_live_a", "zz_live_b"):
+            self._live_row(client, slug)
+            self._seed(client, slug, n=4)
+        self._seed(client, "zz_gone", n=2)
+
+        result = client.delete("/api/report/deleted-rows").json()
+
+        assert result["slugs"] == ["zz_gone"]
+        with client.app.state.sessions() as session:
+            assert session.query(PickRow).count() == 8, "both live rows keep their history"
+
+    def test_one_slug_can_be_cleared_without_the_others(self, client: TestClient):
+        from shortlist.server.db.models import PickRow
+
+        self._seed(client, "zz_one", n=2)
+        self._seed(client, "zz_two", n=5)
+
+        client.delete("/api/report/deleted-rows?slug=zz_one")
+
+        with client.app.state.sessions() as session:
+            remaining = {slug for (slug,) in session.query(PickRow.collection_slug).distinct()}
+        assert remaining == {"zz_two"}
+
+    def test_it_never_touches_the_delivery_ledger(self, client: TestClient):
+        """`deliveries` is what tells a cleanup which Plex collection is which row. Clearing it would
+        strand a real collection on a real user's server with nothing left to remove it."""
+        from shortlist.server.db.models import Delivery
+
+        self._seed(client, "zz_throwaway", n=2)
+        with client.app.state.sessions() as session:
+            session.add(Delivery(collection_slug="zz_throwaway", user_slug="sarah", library_key="1", rating_key=99))
+            session.commit()
+
+        client.delete("/api/report/deleted-rows")
+
+        with client.app.state.sessions() as session:
+            assert session.query(Delivery).count() == 1
+
+    def test_clearing_is_audited(self, client: TestClient):
+        """ "Where did those numbers go" must be answerable afterwards (plex-safety rule 10)."""
+        from shortlist.server.db.models import Event
+
+        self._seed(client, "zz_throwaway", n=2)
+
+        client.delete("/api/report/deleted-rows")
+
+        with client.app.state.sessions() as session:
+            event = session.query(Event).filter_by(scope="report.clear_deleted_rows").one()
+        # Per-slug, not just a total: a "clear all" over six rows has to say which one's history went.
+        assert event.message["rows"] == {"zz_throwaway": 2}
+        assert event.message["picks"] == 2
+
+    def test_nothing_to_clear_is_not_an_error(self, client: TestClient):
+        assert client.delete("/api/report/deleted-rows").json()["cleared"] == 0
+
+    def test_it_is_owner_only(self, client: TestClient):
+        client.cookies.delete(SESSION_COOKIE)
+        assert client.get("/api/report/deleted-rows").status_code == 401
+        assert client.delete("/api/report/deleted-rows").status_code == 401

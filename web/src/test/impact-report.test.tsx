@@ -6,12 +6,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ImpactReport } from "@/components/dashboard/impact-report";
 import type * as ApiModule from "@/lib/api";
-import type { EffectivenessReport, ReportWindow } from "@/lib/types";
+import type {
+  DeletedRowHistory,
+  EffectivenessReport,
+  ReportWindow,
+} from "@/lib/types";
 
-const { getReport, syncWatched } = vi.hoisted(() => ({
-  getReport: vi.fn(),
-  syncWatched: vi.fn(() => Promise.resolve({ started: true })),
-}));
+type ClearedRows = { cleared: number; picks: number; slugs: string[] };
+
+const { getReport, syncWatched, getDeletedRows, clearDeletedRows } = vi.hoisted(
+  () => ({
+    getReport: vi.fn(),
+    syncWatched: vi.fn(() => Promise.resolve({ started: true })),
+    getDeletedRows: vi.fn<() => Promise<DeletedRowHistory[]>>(() =>
+      Promise.resolve([]),
+    ),
+    clearDeletedRows: vi.fn<(slug?: string) => Promise<ClearedRows>>(() =>
+      Promise.resolve({ cleared: 1, picks: 5, slugs: ["zz-claude-test"] }),
+    ),
+  }),
+);
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -20,6 +34,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       getReport: (window: ReportWindow) => getReport(window),
       syncWatched: () => syncWatched(),
+      getDeletedRows: () => getDeletedRows(),
+      clearDeletedRows: (slug?: string) => clearDeletedRows(slug),
     },
   };
 });
@@ -122,6 +138,9 @@ describe("ImpactReport", () => {
   beforeEach(() => {
     getReport.mockReset();
     getReport.mockResolvedValue(REPORT);
+    getDeletedRows.mockReset();
+    getDeletedRows.mockResolvedValue([]);
+    clearDeletedRows.mockClear();
   });
 
   it("shows the headline metrics, breakdowns, requests, and recent-watches feed", async () => {
@@ -217,6 +236,87 @@ describe("ImpactReport", () => {
 
     expect(screen.getByText("zz-claude-test")).toBeTruthy();
     expect(screen.getByText(/still count in the totals above/i)).toBeTruthy();
+  });
+
+  it("can delete a deleted row's history for good, and says what that costs", async () => {
+    getDeletedRows.mockResolvedValue([
+      {
+        slug: "zz-claude-test",
+        picks: 5,
+        first_seen: "2026-07-01T00:00:00Z",
+        last_seen: "2026-07-02T00:00:00Z",
+      },
+    ]);
+    getReport.mockResolvedValue({
+      ...REPORT,
+      per_row: [
+        ...REPORT.per_row,
+        {
+          slug: "zz-claude-test",
+          section_key: "10",
+          library: "Movies",
+          name: "zz-claude-test",
+          deleted: true,
+          delivered: 5,
+          watched: 0,
+        },
+      ],
+    });
+    renderReport();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Show 1 deleted row/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Delete their history/i }),
+    );
+
+    // The count is the point of the confirm: "5 picks" is what makes the totals dropping expected
+    // rather than a bug the owner reports later.
+    expect(screen.getByRole("alert")).toHaveTextContent(/5 picks/);
+    expect(screen.getByRole("alert")).toHaveTextContent(/can.t be undone/i);
+    // The warning has to name the other places these picks are counted, not just this page.
+    expect(screen.getByRole("alert")).toHaveTextContent(/each person.s page/i);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Delete the history/i }),
+    );
+
+    // No slug: the server recomputes which rows are gone, so a stale list can't purge a live row.
+    expect(clearDeletedRows).toHaveBeenCalledWith(undefined);
+  });
+
+  it("deletes nothing when the confirm is dismissed", async () => {
+    getDeletedRows.mockResolvedValue([
+      { slug: "zz-claude-test", picks: 5, first_seen: null, last_seen: null },
+    ]);
+    getReport.mockResolvedValue({
+      ...REPORT,
+      per_row: [
+        ...REPORT.per_row,
+        {
+          slug: "zz-claude-test",
+          section_key: "10",
+          library: "Movies",
+          name: "zz-claude-test",
+          deleted: true,
+          delivered: 5,
+          watched: 0,
+        },
+      ],
+    });
+    renderReport();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Show 1 deleted row/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Delete their history/i }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Keep it/i }));
+
+    expect(clearDeletedRows).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("folds away people with nothing watched in the window", async () => {

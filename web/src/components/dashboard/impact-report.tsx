@@ -3,6 +3,7 @@ import {
   Clock,
   RefreshCw,
   Send,
+  Trash2,
   TrendingUp,
   Users as UsersIcon,
 } from "lucide-react";
@@ -17,7 +18,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatDate, timeAgo } from "@/lib/format";
-import { useReport, useSyncWatched } from "@/lib/queries";
+import {
+  useClearDeletedRows,
+  useDeletedRows,
+  useReport,
+  useSyncWatched,
+} from "@/lib/queries";
 import type { EffectivenessReport, ReportWindow } from "@/lib/types";
 
 const WINDOW_OPTIONS: { value: ReportWindow; label: string }[] = [
@@ -324,8 +330,11 @@ function ByRow({
   );
 }
 
-/** Deleted rows, folded away. Their picks still count in every total above — nothing is destroyed,
- *  it just stops being the noise you scroll past to reach the rows you can still change. */
+/** Deleted rows, folded away — with a way to actually be rid of them.
+ *
+ *  Hiding is the default because their picks are real history that still counts in every total above.
+ *  But "hidden for ever" is not the same as "gone", and a throwaway test row should not haunt the
+ *  dashboard permanently, so clearing is offered too — explicitly, with what it costs stated. */
 function DeletedRows({
   count,
   children,
@@ -334,6 +343,11 @@ function DeletedRows({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const history = useDeletedRows();
+  const clear = useClearDeletedRows();
+  const totalPicks = (history.data ?? []).reduce((n, r) => n + r.picks, 0);
+
   return (
     <div className="space-y-1.5 border-t pt-2">
       <button
@@ -351,6 +365,56 @@ function DeletedRows({
             the totals above.
           </p>
           {children}
+          {confirming ? (
+            <div
+              role="alert"
+              className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
+            >
+              <p className="text-foreground">
+                Permanently delete the history of {count} deleted{" "}
+                {count === 1 ? "row" : "rows"}
+                {totalPicks > 0 && <> &mdash; {totalPicks} picks</>}?
+              </p>
+              {/* Say what it costs BEFORE asking. "The totals above" would under-warn: the same picks
+                  back each person's lifetime stats and their own pick history, so those drop too. */}
+              <p className="text-muted-foreground">
+                Their picks disappear from every total that counts them &mdash;
+                here and on each person&rsquo;s page. This can&rsquo;t be
+                undone. Rows that still exist are never touched.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  loading={clear.isPending}
+                  onClick={() =>
+                    clear.mutate(undefined, {
+                      onSuccess: () => setConfirming(false),
+                    })
+                  }
+                >
+                  Delete the history
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setConfirming(false)}
+                >
+                  Keep it
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+              onClick={() => setConfirming(true)}
+            >
+              <Trash2 className="h-3 w-3" aria-hidden />
+              Delete their history
+            </Button>
+          )}
         </>
       )}
     </div>
