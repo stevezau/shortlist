@@ -189,8 +189,13 @@ jobs:
           platforms: linux/amd64
           load: true
           tags: shortlist:smoke
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # SCOPED, and separate from the publish job's. Both used to share the default `type=gha`
+          # key, so this amd64-only build wrote `mode=max` over a cache holding amd64 AND arm64 —
+          # and the publish job then rebuilt arm64 from scratch under QEMU. Measured: publish went
+          # 1m04s to 4m51s the moment this job was added. Sharing a cache with a build of a
+          # different platform set costs far more than it saves.
+          cache-from: type=gha,scope=smoke
+          cache-to: type=gha,mode=max,scope=smoke
       - name: Boot the image and wait for it to report healthy
         run: |
           set -euo pipefail
@@ -293,5 +298,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Its own scope — see docker-smoke's note. This one holds both platforms.
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=publish
