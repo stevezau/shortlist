@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -665,7 +666,14 @@ class RunService:
                 user = session.query(User).filter_by(slug=profile.slug).first()
                 if user is None:
                     continue
-                user.prefs = {**(user.prefs or {}), "history_depth": len(profile.history)}
+                # Only when this pass actually READ their history. A scoped run — "the common case,
+                # not the rare one" per `_has_a_row_in_scope` — leaves every out-of-scope profile
+                # with an empty list, and writing that reintroduced the exact bug the docstring above
+                # says this line fixed: "every user read 0 titles watched", now for the majority of
+                # people on most nights. An empty history with no prior value still writes 0, which
+                # is the truth for someone who genuinely has none.
+                if profile.history or "history_depth" not in (user.prefs or {}):
+                    user.prefs = {**(user.prefs or {}), "history_depth": len(profile.history)}
 
                 latest_watch: dict[tuple[int, str], datetime] = {}
                 for item in profile.history:
@@ -767,7 +775,23 @@ class RunService:
             self._prune_runs(session, months if 0 < months <= 24 else 0)
             event_months = int(store.get("events.retention") or 0)
             self._prune_events(session, event_months if 0 < event_months <= 24 else 0)
+            self._prune_expired_cache(session)
             session.commit()
+
+    @staticmethod
+    def _prune_expired_cache(session: Session) -> None:
+        """Drop cache rows whose TTL has passed.
+
+        `DbCache.get` filters on `expires_at`, but nothing ever DELETED an expired row, so the table
+        only grew. `library_index` is the worst of them: its key deliberately changes whenever the
+        library changes, so every library edit stranded a whole-library JSON blob that could never be
+        read again — in the same file the nightly backup copies in full and keeps ten of.
+        """
+        from shortlist.server.db.models import CacheRow
+
+        removed = session.query(CacheRow).filter(CacheRow.expires_at < time.time()).delete(synchronize_session=False)
+        if removed:
+            logger.info("pruned {} expired cache row(s)", removed)
 
     @staticmethod
     def _prune_runs(session: Session, retention_months: int) -> None:

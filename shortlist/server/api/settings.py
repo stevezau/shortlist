@@ -175,6 +175,9 @@ _FETCHED_URL_KEYS = (
     "requests.sonarr.url",
     "curator.ollama_url",
     "curator.openai_base_url",
+    # NB: `curator_models` fetches an ollama_url WITHOUT saving it, so it checks the URL itself.
+    # Anything else that fetches a caller-supplied URL without going through `PUT /settings` must
+    # do the same — this tuple is not the only door.
 )
 
 
@@ -428,6 +431,14 @@ async def curator_models(request: Request, body: CuratorModelsRequest | None = N
     from shortlist.server.services.context_builder import curator_kwargs
 
     body = body or CuratorModelsRequest()
+    # The SSRF guard runs when these URLs are SAVED, and this endpoint fetches one WITHOUT saving it
+    # — so the "one place to keep right" that `_FETCHED_URL_KEYS` documents had a second door. Owner
+    # -gated, so not a drive-by, but it defeated a control this codebase deliberately built.
+    if body.ollama_url:
+        try:
+            check_url(body.ollama_url, what="The AI server URL")
+        except BlockedUrl as e:
+            raise HTTPException(422, str(e)) from e
     overrides = {
         "curator.provider": body.provider,
         "curator.api_key": body.api_key,

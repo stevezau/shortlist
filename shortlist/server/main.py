@@ -46,12 +46,31 @@ from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
 WEB_DIST = Path(__file__).parent.parent.parent / "web" / "dist"
 
 
+#: Shortest secret we will trust. `token_urlsafe(48)` yields 64 chars, so anything materially shorter
+#: was not written by us — a truncated write, a disk-full first boot, or a `touch`.
+_MIN_SECRET_LEN = 32
+
+
 def _instance_secret(config_dir: Path, name: str) -> str:
+    """The instance's signing secret, regenerating it if what's on disk is unusable.
+
+    A blank or truncated file used to be returned as-is, and `itsdangerous` will happily sign AND
+    verify with an empty key — so a zero-byte `session.secret` meant anyone could forge an owner
+    cookie, with nothing logged. Treat too-short as absent: regenerating invalidates live sessions,
+    which is the correct trade against accepting a forgeable one.
+    """
     path = config_dir / name
-    if not path.exists():
-        path.write_text(pysecrets.token_urlsafe(48))
-        os.chmod(path, 0o600)
-    return path.read_text().strip()
+    existing = path.read_text().strip() if path.exists() else ""
+    if len(existing) < _MIN_SECRET_LEN:
+        if path.exists():
+            logger.warning("{} was empty or truncated — generating a new one (existing sessions end)", name)
+        # Create with the mode already set, rather than write-then-chmod: between those two calls the
+        # file is world-readable at whatever the umask allows.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(pysecrets.token_urlsafe(48))
+        return path.read_text().strip()
+    return existing
 
 
 # Baseline response headers. Deliberately NOT a locked-down CSP: Shortlist renders Plex avatars and

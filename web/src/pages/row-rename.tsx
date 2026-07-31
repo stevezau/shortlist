@@ -133,6 +133,10 @@ export function RowRenamePage() {
       await api.updateCollection(collection.id, {
         name: newName,
         name_template: newName,
+        // This page streams the rename itself below. Without this the PATCH also renamed everything
+        // inline, so the stream found nothing left to do and told the owner "renamed 0 collections"
+        // straight after a rename that had in fact rewritten every one.
+        defer_rename: true,
       } as never);
       setOldTemplate(prev);
       setConfirmed(true);

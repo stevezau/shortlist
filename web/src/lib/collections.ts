@@ -6,6 +6,7 @@ import type {
   PlexLibrary,
   Settings,
   User,
+  Placement,
 } from "@/lib/types";
 
 /** A fresh row definition with sensible defaults, for the "Add a row" editor. */
@@ -104,6 +105,22 @@ export function audienceSummary(collection: Collection, users: User[]): string {
  * `libraries` is null while the library list is still loading or unavailable: a raw section key is
  * not a name an owner recognises, so the libraries part is withheld rather than guessed at.
  */
+/** Where a row shows, in words. `Placement` has FOUR values — the "off" arm was missing, so a row
+ *  hidden from every shelf was badged "Shows on: Home & Library": a confident, specific, false claim
+ *  about who can see it. */
+export function placementLabel(placement: Placement): string {
+  switch (placement) {
+    case "home":
+      return "Home";
+    case "library":
+      return "Library";
+    case "off":
+      return "Nowhere";
+    default:
+      return "Home & Library";
+  }
+}
+
 export function rowOverrides(
   collection: Collection,
   libraries: PlexLibrary[] | null,
@@ -184,18 +201,8 @@ export function rowOverrides(
     collection.placement !== "both" ||
     collection.placement_friends !== "both"
   ) {
-    const owner =
-      collection.placement === "home"
-        ? "Home"
-        : collection.placement === "library"
-          ? "Library"
-          : "Home & Library";
-    const friends =
-      collection.placement_friends === "home"
-        ? "Home"
-        : collection.placement_friends === "library"
-          ? "Library"
-          : "Home & Library";
+    const owner = placementLabel(collection.placement);
+    const friends = placementLabel(collection.placement_friends);
     if (collection.placement === collection.placement_friends) {
       if (collection.placement !== "both") parts.push(`Shows on: ${owner}`);
     } else {

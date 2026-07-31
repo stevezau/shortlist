@@ -7,6 +7,7 @@ ones, and hooks into startup (pre-migration) and APScheduler (daily). The backup
 
 from __future__ import annotations
 
+import re
 import shutil
 import sqlite3
 from datetime import UTC, datetime
@@ -37,20 +38,30 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
 
     backup_dir = _backup_dir(config_dir)
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    backup_path = backup_dir / f"shortlist_{ts}_{label}.db"
+    # The label lands in a filename, and `POST /api/system/jobs` takes an unvalidated payload — so
+    # `{"label": "../../../../tmp/x"}` wrote a complete copy of the database, encrypted Plex tokens
+    # included, outside /config. The restore path has always validated its filename; this one didn't.
+    safe_label = re.sub(r"[^a-z0-9_-]", "-", (label or "backup").strip().lower())[:32] or "backup"
+    backup_path = backup_dir / f"shortlist_{ts}_{safe_label}.db"
 
+    src = dst = None
     try:
         src = sqlite3.connect(str(db_path))
         dst = sqlite3.connect(str(backup_path))
         src.backup(dst)
-        dst.close()
-        src.close()
         logger.info("backup created: {} ({:.1f} KB)", backup_path.name, backup_path.stat().st_size / 1024)
     except Exception as e:
         logger.error("backup failed: {}", e)
         if backup_path.exists():
             backup_path.unlink()
         return None
+    finally:
+        # Both handles, always. They used to be closed only on the success path, so a failure
+        # mid-`backup()` leaked two SQLite connections and then unlinked a file `dst` still held —
+        # and this runs on every boot.
+        for conn in (dst, src):
+            if conn is not None:
+                conn.close()
 
     _rotate(backup_dir, max_keep)
     return backup_path

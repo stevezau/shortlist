@@ -984,9 +984,16 @@ def _converge_phase(
                             demoted.append(label)
                     continue
 
-                # ORPHAN: a per-person label whose user Shortlist no longer knows. Deleting is the
-                # only thing that actually removes it — demoting leaves it in the Collections tab and
-                # keeps its exclude in all ~47 share filters for ever.
+                # ORPHAN: a per-person label whose user Shortlist no longer knows. Deleting is what
+                # clears it out of the Collections tab; demoting only takes it off the shelves and
+                # leaves it there.
+                #
+                # It does NOT clear the exclude. `privacy.prune` only ever removes shared labels and a
+                # person's own label from their own filter — private-row excludes are union-only by
+                # design — so `label!=shortlist_ghost` survives in every account's filter whether the
+                # collection is deleted or not. An earlier version of this comment claimed deleting
+                # was the only way to clear the filters, which was the stated reason for taking the
+                # irreversible option.
                 #
                 # Gated on `may_delete_orphans` AND a non-empty roster, both deliberately. Deleting is
                 # the one irreversible action here, and "I could not read the users" is

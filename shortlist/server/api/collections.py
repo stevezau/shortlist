@@ -81,6 +81,10 @@ class CollectionIn(BaseModel):
     request_tag: str = Field(default="", max_length=64)  # tag added to titles requested via this row
     candidate_sources: list[str] = Field(default_factory=list)  # [] -> inherit global candidates.sources
     watched_pct: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global watched cap
+    # Set by a caller that is about to stream the rename itself (the rename page). The PATCH then
+    # saves the template but leaves the Plex work alone, instead of renaming everything inline and
+    # leaving the stream to report "renamed 0 collections" for a rename that did happen.
+    defer_rename: bool = False
     # Lead the row with already-finished titles (a rewatch shelf) rather than merely permitting them.
     rewatch: bool = False
     # Shows only: exclude every series this person has started, not just the ones they finished.
@@ -551,14 +555,14 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         await jobs.queue_privacy_sync(state, f"the audience for row '{slug}' changed")
     # A rename updates each user's collection title IN PLACE (multi-row users would otherwise keep the
     # old-named copy until the next run rebuilt it). Privacy-neutral, so gate-exempt. Best-effort + audited.
-    if new_row_template is not None:
+    if new_row_template is not None and not body.defer_rename:
         await reconcile.run_row_rename_from_plex(
             state, slug=slug, new_template=new_row_template, old_template=old_template or "", scope="collection.rename"
         )
     # Renaming the DEFAULT row changed the global template, so reconcile it onto Plex now (same in-place
     # rename path, keyed on the new global template). run_row_rename re-renders per user and skips anyone
     # whose title didn't actually change — so a user with their own `row_name_tpl` override is left alone.
-    if default_template_change is not None:
+    if default_template_change is not None and not body.defer_rename:
         await reconcile.run_row_rename_from_plex(
             state,
             slug=slug,
@@ -612,7 +616,12 @@ async def delete_collection(collection_id: int, request: Request) -> None:
 
 class RenameRequest(BaseModel):
     name_template: str = ""
+    # The title this row rendered as BEFORE the rename. It is the only thing that tells this row's
+    # collection apart from the person's other rows (they all share one label), so without it the
+    # reconcile skips the user rather than renaming whatever it finds.
     old_template: str = ""
+    #: Preview only — report what would be renamed and write nothing (plex-safety rule 8).
+    dry_run: bool = False
 
 
 @router.post("/{collection_id}/rename")
@@ -628,6 +637,7 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
         if collection is None:
             raise HTTPException(status_code=404, detail="row not found")
         slug = collection.slug
+        build = collection.build
         # If a new template is provided, save it now (standalone use without the dialog PATCH).
         # If called from the dialog flow, the PATCH already saved it — this is idempotent.
         new_template = body.name_template.strip()
@@ -649,7 +659,14 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
     def _run():
         try:
             for event in reconcile.reconcile_row_rename_iter(
-                state, slug=slug, new_template=new_template, old_template=old_template
+                state,
+                slug=slug,
+                new_template=new_template,
+                old_template=old_template,
+                # A shared row is ONE collection under a different label; walking the per-user labels
+                # found nothing and reported success.
+                build=build,
+                dry_run=body.dry_run,
             ):
                 q.put(event)
         except Exception as e:

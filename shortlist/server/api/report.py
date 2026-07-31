@@ -229,6 +229,10 @@ async def effectiveness(
             watched = scan(*watched_in(start))
             return {k: (delivered.get(k, 0), watched.get(k, 0)) for k in set(delivered) | set(watched)}
 
+        # Read INSIDE the session. Computed in the return dict below it ran after the `with` block
+        # closed, and a closed SQLAlchemy session silently re-opens a transaction nothing then
+        # closes — one leaked connection per dashboard load, against a pool of 5 + 10.
+        first_pick = iso_utc(session.query(func.min(PickRow.created_at)).scalar())
         per_user_raw = counts(PickRow.user_id, title, since)
         # A row that targets >1 library is one Plex collection PER library, so it's tracked per
         # (row, library) — each library gets its own delivered/watched line, keyed (slug, section, library).
@@ -514,7 +518,7 @@ async def effectiveness(
         # The oldest pick on record. Without it the window selector looks broken on a young install:
         # every window covers all of the data, so the numbers are identical whichever you press, and
         # a control that visibly does nothing reads as a bug. The UI uses this to say why.
-        "first_pick": iso_utc(session.query(func.min(PickRow.created_at)).scalar()),
+        "first_pick": first_pick,
         "overall": {
             "delivered": delivered_now,
             "watched": watched_now,

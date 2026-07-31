@@ -1336,3 +1336,48 @@ class TestTimingHTTPAdapter:
         joined = "\n".join(lines)
         assert "ERR" in joined  # the failed attempt is still timed and logged
         assert "SECRETTOKEN" not in joined
+
+
+class TestWatchedPagingWithoutTotalSize:
+    """`size` on a paged Plex response is the PAGE size, not the library total."""
+
+    _URL = "http://plex.local:32400/library/sections/1/all"
+
+    def _mock_url(self, mock_plex: PlexClient) -> None:
+        mock_plex._server.url.return_value = self._URL
+
+    @staticmethod
+    def _page(start: int, count: int, *, total_size: bool) -> str:
+        videos = "".join(
+            f'<Video ratingKey="{start + i}" title="T{start + i}" year="2000" viewCount="1" '
+            f'lastViewedAt="{1785000000 - start - i}"><Guid id="tmdb://{start + i}"/></Video>'
+            for i in range(count)
+        )
+        attrs = f'size="{count}"'
+        if total_size:
+            attrs += ' totalSize="1200"'
+        return f"<MediaContainer {attrs}>{videos}</MediaContainer>"
+
+    @respx.mock
+    def test_a_response_without_totalSize_still_reads_every_page(self, mock_plex: PlexClient):
+        """Falling back to `size` made the total equal the page length, so the walk stopped after one
+        page and returned 500 of 1200 titles with no warning — a partial watched set reported as
+        complete, which is how already-watched titles get recommended."""
+        self._mock_url(mock_plex)
+        pages = [
+            self._page(0, 500, total_size=False),
+            self._page(500, 500, total_size=False),
+            self._page(1000, 200, total_size=False),  # short page = the end
+        ]
+        calls = {"n": 0}
+
+        def respond(request):
+            body = pages[min(calls["n"], len(pages) - 1)]
+            calls["n"] += 1
+            return httpx.Response(200, text=body)
+
+        respx.get(self._URL).mock(side_effect=respond)
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, token="TOK")
+
+        assert len(items) == 1200, f"read stopped early: {len(items)} of 1200"

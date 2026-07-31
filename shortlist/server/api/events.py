@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from starlette.responses import StreamingResponse
 
 from shortlist.server.auth import require_owner
@@ -24,7 +24,7 @@ async def stream(request: Request) -> StreamingResponse:
 async def audit_log(
     request: Request,
     scope: str | None = None,
-    limit: int = 200,
+    limit: int = Query(200, ge=1, le=1000),
     before_id: int | None = None,
 ) -> list[dict]:
     """The audit trail, newest first. `before_id` pages backwards — pass the id of the oldest entry

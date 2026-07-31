@@ -139,6 +139,17 @@ def _profile_of(udata: dict) -> UserProfile:
     )
 
 
+def _shared_profile() -> UserProfile:
+    """The synthetic profile a SHARED row's title renders from — the same one the engine uses, so a
+    `{user}` placeholder resolves identically here and at delivery."""
+    return UserProfile(
+        username="Everyone",
+        plex_account_id=0,
+        user_type=UserType.SHARED,
+        slug="everyone",
+    )
+
+
 def _users_data(session) -> list[dict]:
     """Every user as a plain dict, so the Plex walk below runs outside the session.
 
@@ -431,6 +442,8 @@ def reconcile_row_rename_iter(
     new_template: str,
     old_template: str | None = None,
     old_display_names: dict[str, str] | None = None,
+    build: str = "per_person",
+    dry_run: bool = False,
 ):
     """Rename a row's collections on Plex, yielding one event per user renamed (for SSE streaming).
 
@@ -455,9 +468,40 @@ def reconcile_row_rename_iter(
     """
     with state.sessions() as session:
         users_data = _users_data(session)
-    dry_run = force_dry_run()
+    dry_run = force_dry_run() or dry_run  # honour SHORTLIST_DRY_RUN safe-mode
     ctx = state.run_service.build_context(dry_run=dry_run)
     total = 0
+
+    if build == "shared":
+        # A shared row is ONE collection carrying `shortlist__shared_<row>`, not one per person under
+        # `shortlist_<slug>`. Walking the per-user labels found nothing and reported "renamed 0" —
+        # a success message for work that never happened, while the collection on Plex kept its old
+        # title and the database said otherwise.
+        label = f"{SHARED_LABEL_PREFIX}{slug}"
+        for section in ctx.plex.sections():
+            lib_name = getattr(section, "title", "") or ""
+            new_display = render_row_name(new_template, _shared_profile(), [], library_name=lib_name)
+            if new_display == DEFAULT_ROW_NAME:
+                continue
+            for collection in ctx.plex.find_owned_collections(section, label):
+                if collection.title == new_display:
+                    continue
+                try:
+                    if not dry_run:
+                        collection.editTitle(new_display)
+                    total += 1
+                    yield {
+                        "user": slug,
+                        "display_name": "Everyone",
+                        "old": collection.title,
+                        "new": new_display,
+                        "libraries": [lib_name],
+                    }
+                except Exception as e:  # pragma: no cover - PMS failure shape
+                    yield {"user": slug, "library": lib_name, "error": redact(str(e))}
+        yield {"done": True, "total": total}
+        return
+
     for udata in users_data:
         override = udata["prefs"].get("row_name_tpl") if slug == DEFAULT_SLUG else None
         effective_template = override or new_template

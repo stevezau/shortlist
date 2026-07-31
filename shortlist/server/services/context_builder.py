@@ -201,50 +201,56 @@ class ContextBuilder:
             # rows down. Read from the DB rather than this run's profiles for exactly that reason.
             paused_slugs = {u.slug for u in session.query(User).all() if (u.prefs or {}).get("paused")}
 
-        def progress(slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
-            # Runs in the engine's executor thread. One entry both STREAMS (SSE, live) and, via
-            # log_sink, lands in the run's in-memory activity log so a page reload can replay it.
-            # `reason` is kept OUT of `counts`, which is a map of numbers the UI renders as a
-            # "113 history · 40 seeds" tally — a sentence in there would render as garbage.
-            entry = {"ts": iso_utc(utcnow()), "run_id": run_id, "user": slug, "stage": stage, "counts": counts}
-            if reason:
-                entry["reason"] = reason
-            if log_sink is not None:
-                log_sink(entry)
-            if loop is not None:
-                loop.call_soon_threadsafe(self._bus.publish, "run.user.stage", entry)
+            # INSIDE the `with`, deliberately. Two of the arguments below still touch `session`
+            # (`_handled_requests`, and `_build_mdblist` via `SettingsStore.get`). Built after the
+            # block closed, SQLAlchemy silently re-opened a transaction that nothing ever closed, so
+            # every `build_context()` checked a connection out of the pool and kept it until GC —
+            # and `build_context` is on the path of every run, job and reconcile. The pool is 5 + 10,
+            # so the eleventh build blocked for 30s and surfaced as "Plex is unreachable".
+            def progress(slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
+                # Runs in the engine's executor thread. One entry both STREAMS (SSE, live) and, via
+                # log_sink, lands in the run's in-memory activity log so a page reload can replay it.
+                # `reason` is kept OUT of `counts`, which is a map of numbers the UI renders as a
+                # "113 history · 40 seeds" tally — a sentence in there would render as garbage.
+                entry = {"ts": iso_utc(utcnow()), "run_id": run_id, "user": slug, "stage": stage, "counts": counts}
+                if reason:
+                    entry["reason"] = reason
+                if log_sink is not None:
+                    log_sink(entry)
+                if loop is not None:
+                    loop.call_soon_threadsafe(self._bus.publish, "run.user.stage", entry)
 
-        return EngineContext(
-            config=config,
-            plex=plex,
-            plextv=plextv,
-            tmdb=tmdb,
-            trakt=trakt,
-            search=search,
-            poster_artist=poster_artist,
-            # The engine reads each user's COMPLETE watched set by reading the PMS AS them, with the
-            # per-user server token plex.tv mints for every share. That set carries their own
-            # viewCount/viewedLeafCount — so a mark-as-watched (which the playback-history API never
-            # returns, and which capped at ~200 plays) is seen, with no PMS database mount.
-            history_source=history,
-            curator=curator,
-            snapshots=DbSnapshotStore(self._sessions),
-            index_cache=DbCache(self._sessions, kind="library_index"),
-            web_search_cache=DbCache(self._sessions, kind="websearch"),
-            mdblist=self._build_mdblist(store),
-            concurrency=concurrency,
-            previous_picks=previous,
-            delivered_keys=delivered_keys,
-            disabled_account_ids=disabled_account_ids,
-            known_slugs=known_slugs,
-            owner_slug=owner_slug,
-            paused_slugs=paused_slugs,
-            # The DB read above succeeded, so `known_slugs` lists every user Shortlist has — the
-            # complete picture converge needs before it may DELETE an unattributable collection.
-            may_delete_orphans=True,
-            handled_requests=self._handled_requests(session),
-            progress=progress,
-        )
+            return EngineContext(
+                config=config,
+                plex=plex,
+                plextv=plextv,
+                tmdb=tmdb,
+                trakt=trakt,
+                search=search,
+                poster_artist=poster_artist,
+                # The engine reads each user's COMPLETE watched set by reading the PMS AS them, with the
+                # per-user server token plex.tv mints for every share. That set carries their own
+                # viewCount/viewedLeafCount — so a mark-as-watched (which the playback-history API never
+                # returns, and which capped at ~200 plays) is seen, with no PMS database mount.
+                history_source=history,
+                curator=curator,
+                snapshots=DbSnapshotStore(self._sessions),
+                index_cache=DbCache(self._sessions, kind="library_index"),
+                web_search_cache=DbCache(self._sessions, kind="websearch"),
+                mdblist=self._build_mdblist(store),
+                concurrency=concurrency,
+                previous_picks=previous,
+                delivered_keys=delivered_keys,
+                disabled_account_ids=disabled_account_ids,
+                known_slugs=known_slugs,
+                owner_slug=owner_slug,
+                paused_slugs=paused_slugs,
+                # The DB read above succeeded, so `known_slugs` lists every user Shortlist has — the
+                # complete picture converge needs before it may DELETE an unattributable collection.
+                may_delete_orphans=True,
+                handled_requests=self._handled_requests(session),
+                progress=progress,
+            )
 
     def _build_mdblist(self, store: SettingsStore) -> MdbListClient | None:
         """A cache-backed MDBList client when the chosen rating source needs it (any non-TMDB source

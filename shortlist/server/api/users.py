@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import String, cast, func
@@ -424,7 +424,7 @@ async def search_titles(request: Request, q: str, media_type: str = "movie") -> 
 
 
 @router.get("/{user_id}/runs")
-async def user_runs(user_id: int, request: Request, limit: int = 15) -> list[dict]:
+async def user_runs(user_id: int, request: Request, limit: int = Query(15, ge=1, le=50)) -> list[dict]:
     """This user's recent run results — status, what changed, and the picks with their reasons."""
     with request.app.state.sessions() as session:
         if session.get(User, user_id) is None:
@@ -477,7 +477,7 @@ async def user_runs_summary(user_id: int, request: Request) -> dict:
 
 
 @router.get("/{user_id}/history")
-async def user_history(user_id: int, request: Request, limit: int = 25) -> list[dict]:
+async def user_history(user_id: int, request: Request, limit: int = Query(25, ge=1, le=100)) -> list[dict]:
     """Recent watch history for this user, from Tautulli/Plex — the same source recommendations use."""
 
     def fetch():

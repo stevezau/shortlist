@@ -172,6 +172,21 @@ def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: in
             time.sleep(delay)
 
 
+def _forbid_redirects(session) -> None:
+    """Make every request on this session refuse to follow redirects.
+
+    Wraps `request` rather than setting an attribute: `requests` decides per call, so a library that
+    issues its own requests (plexapi does) would otherwise silently follow them.
+    """
+    original = session.request
+
+    def request(method, url, **kwargs):
+        kwargs["allow_redirects"] = False
+        return original(method, url, **kwargs)
+
+    session.request = request
+
+
 def _is_newest_first(entries: list) -> bool:
     """Are this page's `lastViewedAt` stamps in non-increasing order?
 
@@ -193,7 +208,7 @@ def _is_newest_first(entries: list) -> bool:
 class PlexClient:
     """PMS operations, restricted to collections Shortlist owns (label-gated)."""
 
-    def __init__(self, base_url: str, token: str, *, timeout: int = 20):
+    def __init__(self, base_url: str, token: str, *, timeout: int = 20, follow_redirects: bool = True):
         # This 20s default is for the fast-fail connection probes (setup/test-connection/section list).
         # The RUN's client is built by context_builder with the configurable `plex.timeout_s` (default
         # 45), because a large TV library's collection rebuild legitimately takes 15-20s and 20s timed
@@ -203,7 +218,14 @@ class PlexClient:
         # 4x = ~240s, serialized behind the write-lock; SFLIX run 3, 2026-07-19). The retrying session's
         # backoff still covers real transients, and the reorder no longer holds the write-lock (deferred,
         # best-effort) so the old "keep the ceiling high for the busy reorder" reason is gone.
-        self._server = PlexServer(base_url, token, session=_retrying_session(), timeout=timeout)
+        session = _retrying_session()
+        if not follow_redirects:
+            # `net_guard.check_url` validates the ADDRESS, and its own docstring says the check is
+            # worthless unless the caller also refuses redirects — a permitted host can answer 302 and
+            # bounce the fetch to a blocked one. Enforced at the session, not per call, because
+            # plexapi issues the requests and would otherwise have to be trusted to pass the flag.
+            _forbid_redirects(session)
+        self._server = PlexServer(base_url, token, session=session, timeout=timeout)
         # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
         # constructs one per run), so these live exactly one run — no cross-run staleness. Library
         # sections don't change mid-run; a section's collection LIST changes only when WE create or
@@ -847,13 +869,32 @@ class PlexClient:
                     reached_cutoff = True
                     break
                 items.append(item)
-            total = int(root.get("totalSize") or root.get("size") or len(entries))
+            # NEVER fall back to `size`: on a paged response that is the size of THIS PAGE, so a
+            # server omitting `totalSize` made `total` equal the page length and the walk stopped
+            # after one page — a partial watched set reported as complete, which is exactly the
+            # already-watched-titles-recommended bug this paging exists to prevent. `totalSize` is
+            # now an upper bound only; a SHORT page is what proves the end.
+            reported_total = root.get("totalSize")
+            total = int(reported_total) if reported_total is not None else None
             start += len(entries)
-            # Stop when we crossed the cutoff, when this page was short (fewer than we asked for), or
-            # when we've reached the reported total. An empty page also stops us — never loop forever
-            # on a server that ignores paging.
-            if reached_cutoff or not entries or start >= total:
+            # Two ways to know we are done, and which one applies depends on whether the server told
+            # us a total:
+            #
+            # * `totalSize` present -> trust it. A server may legitimately return fewer rows per page
+            #   than we asked for, so a short page does NOT mean the end when a bigger total is known.
+            # * `totalSize` absent  -> a short page is the only end-signal available. Falling back to
+            #   `size` (the PAGE size) made `total` equal the page length and stopped the walk after
+            #   one page — a partial watched set reported as complete.
+            #
+            # An empty page always stops us, so a server ignoring the paging headers cannot loop.
+            done = start >= total if total is not None else len(entries) < self._WATCHED_PAGE
+            if reached_cutoff or not entries or done:
                 break
+            if total is None:
+                logger.warning(
+                    "PMS gave no totalSize for section {} — paging on short-page detection alone",
+                    section_key,
+                )
         logger.debug(
             "watched read: section {} ({}) -> {} titles{}",
             section_key,

@@ -557,6 +557,7 @@ async def _drain(state, sessions) -> int:
     # gathering that set would only ever inspect the SLOW ones, and quietly skip the results of
     # everything that finished first.
     started: list[asyncio.Task] = []
+    writers: list[tuple[int, str]] = []
     sem = asyncio.Semaphore(_max_parallel_readonly(state))
     try:
         while True:
@@ -565,17 +566,32 @@ async def _drain(state, sessions) -> int:
             if claimed is None:
                 break
             job_id, kind = claimed
-            runner = (
-                _run_writer(state, sessions, job_id, kind)
-                if writes_plex(kind)
-                else _run_reader(sem, state, sessions, job_id, kind)
-            )
-            task = asyncio.create_task(runner)
+            if writes_plex(kind):
+                # Writers are SERIALISED by the Plex lock anyway, so dispatching them as N concurrent
+                # tasks just puts N-1 of them in a 60s `wait_for` on that lock. Disable forty people
+                # and the tail stands down on timeout and is re-claimed next tick — the same work,
+                # done repeatedly. Queue them for one sequential runner instead: identical ordering,
+                # no contention, and a run can still interleave because the lock is taken per job.
+                writers.append((job_id, kind))
+                ran += 1
+                continue
+            task = asyncio.create_task(_run_reader(sem, state, sessions, job_id, kind))
             dispatched.add(task)
             started.append(task)
             task.add_done_callback(dispatched.discard)
             ran += 1
     finally:
+        # The writers, in claim order, one at a time.
+        if writers:
+
+            async def _run_writers_in_order() -> None:
+                for job_id, kind in writers:
+                    await _run_writer(state, sessions, job_id, kind)
+
+            task = asyncio.create_task(_run_writers_in_order())
+            dispatched.add(task)
+            started.append(task)
+            task.add_done_callback(dispatched.discard)
         # Await everything dispatched before returning: callers (and tests) treat a completed
         # `run_pending` as "the queue was drained", and a detached task outliving it would make
         # "did that job run?" unanswerable.

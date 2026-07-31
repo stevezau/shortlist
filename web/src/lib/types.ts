@@ -68,6 +68,8 @@ export interface Collection {
   library_keys: string[];
   /** Max fraction of the row that may be already-watched (0..1); null inherits the global cap. */
   watched_pct: number | null;
+  /** Caller will stream the rename itself, so the PATCH should not also do it inline. */
+  defer_rename?: boolean;
   /** Lead the row with already-finished titles — a rewatch shelf. */
   rewatch: boolean;
   /** Shows only: drop every series this person has started, not just the finished ones. */

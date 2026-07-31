@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -41,7 +41,7 @@ def _run_summary(run: Run) -> dict:
 @router.get("")
 async def list_runs(
     request: Request,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     collection: str | None = None,
     before_id: int | None = None,
 ) -> list[dict]:

@@ -45,7 +45,9 @@ def run_capability_probe(
     if tautulli_url:
         check_url(tautulli_url, what="The Tautulli URL")
     result: dict = {"checks": {}}
-    plex = PlexClient(plex_url, token)
+    # No redirects on this path: it is the one server-side fetch an UNAUTHENTICATED caller can aim,
+    # so a permitted host answering 302 must not be able to bounce it onto a blocked address.
+    plex = PlexClient(plex_url, token, follow_redirects=False)
     version = plex.version
     version_ok = parse_pms_version(version) >= MIN_PMS_VERSION
     result["checks"]["pms_version"] = {

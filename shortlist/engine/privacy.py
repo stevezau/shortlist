@@ -398,8 +398,16 @@ def restore_user_restrictions(
 ) -> bool:
     """Restore a user's filters byte-identical from their pre-Shortlist snapshot (uninstall path)."""
     remote = plextv.get_user(snapshot.plex_account_id)
+    # `.get` on BOTH sides. `snapshot.filters` is a JSON column holding whatever was persisted at
+    # snapshot time, not a validated five-field dict — so a snapshot missing a field the remote now
+    # has raised KeyError here. The caller has no per-user guard, so one such snapshot aborted the
+    # whole restore loop and left every remaining account carrying Shortlist's excludes for ever,
+    # after the operator had already typed UNINSTALL. A missing field restores as empty, which is
+    # what "this user had no filter here" means.
     changed = {
-        k: snapshot.filters[k] for k in FILTER_FIELDS if remote.filters.get(k, "") != snapshot.filters.get(k, "")
+        k: snapshot.filters.get(k, "")
+        for k in FILTER_FIELDS
+        if remote.filters.get(k, "") != snapshot.filters.get(k, "")
     }
     if not changed:
         return False

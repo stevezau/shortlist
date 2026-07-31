@@ -8,7 +8,7 @@ import platform
 import secrets as pysecrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from loguru import logger
 from pydantic import BaseModel
@@ -533,7 +533,7 @@ def _job_dict(job) -> dict:
 
 @router.get("/jobs", dependencies=[Depends(require_owner)])
 async def list_jobs(
-    request: Request, limit: int = 25, kind: str | None = None, before_id: int | None = None
+    request: Request, limit: int = Query(25, ge=1, le=200), kind: str | None = None, before_id: int | None = None
 ) -> list[dict]:
     """Recent background jobs, newest first — the "did that actually happen?" answer.
 

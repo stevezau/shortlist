@@ -2811,8 +2811,12 @@ class TestOrphanDeletion:
     """Converge may DELETE a collection whose user Shortlist no longer knows — the one irreversible
     action it takes, so it is gated on having a complete picture.
 
-    Demoting an orphan is not enough: it stays in the Collections tab and keeps its `label!=` exclude
-    in every other account's share filter for ever.
+    Demoting an orphan leaves it in the Collections tab; deleting is what clears it from there.
+
+    Neither clears the `label!=` exclude — `privacy.prune` removes only shared labels and a person's
+    own label from their own filter, so a private-row exclude survives either way. This docstring used
+    to claim deleting was the only way to clear the filters, which was the stated justification for
+    choosing the irreversible option.
     """
 
     def _collection(self, rating_key: int, label: str):
