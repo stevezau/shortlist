@@ -1,5 +1,7 @@
 import { Activity, Check, CircleAlert, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+
+import { useDismissable } from "@/lib/use-dismissable";
 import { Link } from "react-router";
 import { toast } from "sonner";
 
@@ -106,10 +108,14 @@ export function ActivityIndicator({
   const query = useJobActivity();
   const labelFor = useJobLabels();
   const [open, setOpen] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   // What we announced last poll. A ref, not state: it must not itself trigger a render, and the
   // very first poll seeds it silently — announcing a server's entire recent history on page load
   // would be a wall of toasts for work that finished yesterday.
   const seen = useRef<Map<number, Job["status"]> | null>(null);
+
+  // Same behaviour as the notification bell beside it, which had this and this one did not.
+  useDismissable(open, panelRef, () => setOpen(false));
 
   const jobs = query.data ?? [];
   const writesPlexFor = useWritesPlex();
@@ -158,7 +164,7 @@ export function ActivityIndicator({
   const runActive = useRunActive(queued.length > 0);
 
   return (
-    <div className="relative">
+    <div className="relative" ref={panelRef}>
       <Button
         variant="ghost"
         size="icon"

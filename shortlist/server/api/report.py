@@ -62,13 +62,15 @@ async def trigger_sync(request: Request) -> dict:
 
     Going through the queue also means it is durable and retried, which fire-and-forget never was.
     """
-    from shortlist.server.services.jobs import drain_now, enqueue
+    from shortlist.server.services.jobs import drain_in_background, enqueue
 
     state = request.app.state
     job_id = enqueue(state.sessions, "sync.history")
-    # Drained inline so pressing the button still feels instant; if it cannot run right now (a run
-    # holds the lock) the row stays queued and the worker picks it up.
-    await drain_now(state, "watch sync requested from the dashboard")
+    # NOT awaited. `drain_now` waits for the job it dispatches, and this job reads watch history for
+    # every user — so awaiting it held the response for 10+ seconds and the "Syncing…" toast could
+    # only appear once the sync was already done. The job shows as running in the activity popover
+    # the moment this returns, which is the feedback the button owes.
+    drain_in_background(state, "watch sync requested from the dashboard")
     return {"started": True, "job_id": job_id}
 
 

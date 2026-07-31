@@ -484,23 +484,6 @@ def _stranded_sections(state, *, old_media: str, old_keys: list[str], new_media:
     return targeted(old_media, old_keys) - targeted(new_media, new_keys)
 
 
-#: Strong refs to in-flight background drains — a bare `create_task` can be garbage-collected
-#: mid-flight, which would abandon the drain (the JOBS survive; the attempt would not).
-_BACKGROUND_DRAINS: set[asyncio.Task] = set()
-
-
-def _drain_in_background(state, reason: str) -> None:
-    """Run the queue now, without making the caller wait for it.
-
-    For mutations whose Plex work is a per-user walk: the DB change is done and that is what the
-    response reports, so holding the request open for the Plex side only freezes the UI. The jobs are
-    durable, so the worst case of not waiting is that they land a moment later.
-    """
-    task = asyncio.create_task(jobs.drain_now(state, reason))
-    _BACKGROUND_DRAINS.add(task)
-    task.add_done_callback(_BACKGROUND_DRAINS.discard)
-
-
 def _queue_reconcile(
     state,
     *,
@@ -706,6 +689,10 @@ async def _apply_plan(state, plan: list[PlannedWork], *, slug: str, build: str) 
         elif work.kind == POSTER_RESET:
             await reconcile.run_poster_reset(state, slug=slug, build=build, scope=work.scope)
     # Anything queued above happens NOW when Plex is reachable; when it isn't, the worker retries it.
+    # AWAITED, unlike the delete below. An edit's Plex work IS the request: narrowing a row's
+    # libraries means "take it off those libraries", so returning 200 before that happened would
+    # report a change that has not been made. A delete is different — the row is gone from the DB,
+    # which is what the page is waiting to hear, and the cleanup is bookkeeping after the fact.
     await jobs.drain_now(state, f"row '{slug}' was edited")
 
 
@@ -750,7 +737,7 @@ async def delete_collection(collection_id: int, request: Request) -> None:
     # Nothing is lost by not waiting: the jobs are committed rows, the worker retries them with
     # backoff, and they are visible in the header's activity popover and on the Jobs page while they
     # run. A restart mid-drain re-queues them.
-    _drain_in_background(state, f"row '{slug}' was deleted")
+    jobs.drain_in_background(state, f"row '{slug}' was deleted")
 
 
 class RenameRequest(BaseModel):
@@ -767,7 +754,6 @@ class RenameRequest(BaseModel):
 async def rename_collection_stream(collection_id: int, body: RenameRequest, request: Request) -> StreamingResponse:
     """Rename this row's collections on Plex, streaming SSE events as each user's collection is
     renamed. Returns a text/event-stream: one 'rename' event per user, then a 'done' event."""
-    import asyncio
     import json
     from queue import Queue
 

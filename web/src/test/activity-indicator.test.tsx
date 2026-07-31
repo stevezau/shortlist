@@ -335,4 +335,36 @@ describe("ActivityIndicator — queued vs running", () => {
       screen.queryByText(/waiting for the run to finish/i),
     ).not.toBeInTheDocument();
   });
+
+  it("closes when you click away, like the bell beside it", async () => {
+    // It stayed open until you clicked its own button again, which reads as a stuck panel. The
+    // notification bell next to it always had this; only this one was missing it.
+    await renderIndicator([job({ id: 1, status: "running" })]);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Background work/ }),
+    );
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    await userEvent.click(document.body);
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("closes on Escape", async () => {
+    await renderIndicator([job({ id: 1, status: "running" })]);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Background work/ }),
+    );
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
 });

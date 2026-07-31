@@ -255,6 +255,27 @@ async def drain_now(state, reason: str) -> None:
         )
 
 
+#: Strong refs to in-flight background drains. A bare `create_task` can be garbage-collected
+#: mid-flight; the JOBS survive that (they are committed rows) but the attempt would not.
+_BACKGROUND_DRAINS: set[asyncio.Task] = set()
+
+
+def drain_in_background(state, reason: str) -> None:
+    """Run the queue now, without making the caller wait for it.
+
+    For a mutation whose Plex work is a per-user walk: the DB change is done, and that is what the
+    response reports. `drain_now` AWAITS every job it dispatches, so calling it from a handler holds
+    the request open for the full sync/cleanup — seconds to minutes — while the page sits on a
+    spinner and the toast that says "started" cannot appear until the thing has already finished.
+
+    Nothing is lost by not waiting: the jobs are committed rows, the worker retries them with
+    backoff, and they are visible in the header's activity popover while they run.
+    """
+    task = asyncio.create_task(drain_now(state, reason))
+    _BACKGROUND_DRAINS.add(task)
+    task.add_done_callback(_BACKGROUND_DRAINS.discard)
+
+
 async def queue_privacy_sync(state, reason: str) -> None:
     """Queue a share-filter pass because `reason` left a filter write owed, and drain it now.
 

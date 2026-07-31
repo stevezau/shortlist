@@ -1,5 +1,7 @@
 import { Bell, CircleAlert, Info, TriangleAlert, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+
+import { useDismissable } from "@/lib/use-dismissable";
 import { Link } from "react-router";
 
 import { Button } from "@/components/ui/button";
@@ -84,23 +86,7 @@ export function NotificationBell({
   const count = items.length;
   const hasError = items.some((n) => n.severity === "error");
 
-  // Close on an outside click or Escape — the expected behaviour for a dropdown.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node))
-        setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismissable(open, ref, () => setOpen(false));
 
   return (
     <div ref={ref} className="relative">
