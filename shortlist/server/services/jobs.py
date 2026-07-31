@@ -698,6 +698,30 @@ def _sync_check(state, payload: dict) -> dict:
     return {"fixed": report.converged, "orphans": removed, "detail": detail}
 
 
+def _require_filters_merged(report, what: str) -> None:
+    """Raise unless every account's excludes were actually merged.
+
+    `engine_run(ctx, [])` does NOT raise when the privacy pass fails — it reports by RETURN VALUE
+    (`_privacy_sync_phase` gives back None for an unreadable roster, False for a failed write, and
+    `run()` returns the report early). Two handlers here were written against a docstring that
+    claimed otherwise, so they read a failed pass as a success:
+
+    * `user.restore` promoted a row onto shared Home with no exclude hiding it from anyone else —
+      the leak direction, on the one job whose whole purpose is making something MORE visible.
+    * `privacy.sync` marked itself `done` with "Share filters merged for every account", retiring an
+      owed HIDE from the durable queue so nothing ever retried it.
+
+    Raising puts both back on the queue's retry-with-backoff, and on exhaustion into the `job.failed`
+    audit that reaches the notification bell — which is what their own docstrings already promise.
+
+    A plex.tv 422 for a restricted/managed account is NOT a blocker (`pipeline.py:561` skips it as
+    expected), so this cannot fire nightly over an account Plex will never accept filters for.
+    """
+    if report.error or report.promotion_blockers:
+        why = report.error or "; ".join(report.promotion_blockers)
+        raise RuntimeError(f"share filters were not merged, so {what} is unsafe: {why}")
+
+
 @handler("privacy.sync")
 def _privacy_sync(state, payload: dict) -> dict:
     """Merge every account's share filter without building anything.
@@ -717,6 +741,7 @@ def _privacy_sync(state, payload: dict) -> dict:
     ctx = state.run_service.build_context(dry_run=requested)
     dry_run = ctx.config.dry_run or requested
     report = engine_run(ctx, [])
+    _require_filters_merged(report, "reporting the filters as merged")
     swept = sum(len(titles) for titles in report.swept_rows.values())
     # The reason is carried through to the detail line so the Jobs page answers "why did this fire?"
     # — "someone was removed from a shared row" reads very differently from a nightly housekeeping
@@ -915,8 +940,9 @@ def _user_restore(state, payload: dict) -> dict:
     stepped over and this handler would promote onto a healthy PMS with the excludes unmerged. That is
     exactly the leak the ordering exists to prevent, and nothing downstream would have caught it.
 
-    `engine_run(ctx, [])` merges every account's filter and delivers, creates and promotes nothing, so
-    if it raises, this raises with it and the whole job is retried — no promotion happens.
+    `engine_run(ctx, [])` merges every account's filter and delivers, creates and promotes nothing. It
+    does NOT raise on failure — it reports by RETURN VALUE — so `_require_filters_merged` checks the
+    report and raises. The whole job is then retried, and nothing is promoted meanwhile.
     """
     from shortlist.engine.models import UserProfile, UserType
     from shortlist.engine.pipeline import promote_user_rows
@@ -977,8 +1003,12 @@ def _user_restore(state, payload: dict) -> dict:
                 len(ledger) - len(keys),
             )
 
-    # Rule 1's ordering: every account's excludes are merged BEFORE anything is promoted.
-    engine_run(ctx, [])
+    # Rule 1's ordering: every account's excludes are merged BEFORE anything is promoted — and the
+    # merge is CHECKED, not assumed. `promote_user_rows` has no `filters_ok` guard of its own (only
+    # `_promote_phase` does), so an unchecked failure here promotes a private row with nothing
+    # hiding it.
+    report = engine_run(ctx, [])
+    _require_filters_merged(report, f"promoting {slug}'s rows")
     restored = promote_user_rows(ctx, profile, placements, placement_keys=keys)
     # `dry_run` recorded, not assumed False: `promote_user_rows` carries its own safe-mode guard, so
     # under SHORTLIST_DRY_RUN it returns the keys it WOULD have promoted and nothing on Plex moved.

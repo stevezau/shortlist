@@ -8,6 +8,7 @@ because no run revisits a disabled user, so those rows stayed on Plex for ever.
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -555,9 +556,15 @@ class TestRestoreAfterUnpause:
 
         def fake_engine_run(_ctx, users):
             merged.append(users)
-            if merge_fails:
-                raise RuntimeError("plex.tv 503")
-            return None
+            # Shaped like the REAL return. `pipeline.run` never raises on a privacy failure — it
+            # reports one on the returned report — and this stub used to raise, which is the same
+            # false premise that let `user.restore` promote a row nobody's filter was hiding.
+            return SimpleNamespace(
+                error="could not read the plex.tv user list: RuntimeError: plex.tv 503" if merge_fails else None,
+                promotion_blockers=[],
+                swept_rows={},
+                converged=0,
+            )
 
         import shortlist.engine.pipeline as pipeline_mod
 
@@ -615,6 +622,50 @@ class TestRestoreAfterUnpause:
             jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
 
         assert promoted == []
+
+    def test_one_account_refusing_its_filter_stops_the_promotion_for_everyone(self, sessions):
+        """The likelier real shape, and the one the old stub could not produce.
+
+        A privacy failure is reported on the RETURNED report, not raised — `_privacy_sync_phase`
+        appends to `promotion_blockers` and `run()` returns normally. This handler discarded that
+        return, so a plex.tv 503 for ONE account still promoted the row onto shared Home with nothing
+        hiding it from the others. That is the leak direction, on the one job whose purpose is making
+        something more visible.
+        """
+        promoted: list = []
+        merged: list = []
+        self._add_user(sessions)
+        state = self._state(sessions, promoted=promoted, merged=merged)
+        import shortlist.engine.pipeline as pipeline_mod
+
+        pipeline_mod.run = lambda ctx, users: SimpleNamespace(
+            error=None,
+            promotion_blockers=["dave (plex account 300): plex.tv 503"],
+            swept_rows={},
+            converged=0,
+        )
+
+        with pytest.raises(RuntimeError, match="dave"):
+            jobs._HANDLERS["user.restore"](state, {"slug": "sarah"})
+
+        assert promoted == [], "nothing may be promoted while any account's excludes are unwritten"
+
+    def test_privacy_sync_does_not_report_success_when_no_filter_was_written(self, sessions):
+        """It read only `swept_rows`/`converged` and returned a result dict, so `_finish` marked the
+        job `done` — "Share filters merged for every account" — and retired an owed HIDE from the
+        durable queue. Nothing retried it, and the Jobs page said it had worked."""
+        state = self._state(sessions, promoted=[], merged=[])
+        import shortlist.engine.pipeline as pipeline_mod
+
+        pipeline_mod.run = lambda ctx, users: SimpleNamespace(
+            error="could not read the plex.tv user list: RuntimeError: plex.tv 503",
+            promotion_blockers=[],
+            swept_rows={},
+            converged=0,
+        )
+
+        with pytest.raises(RuntimeError, match=re.escape("plex.tv 503")):
+            jobs._HANDLERS["privacy.sync"](state, {"reason": "someone left a shared row"})
 
     @pytest.mark.parametrize(
         ("user_type", "expected"),
@@ -856,7 +907,12 @@ class TestSafeMode:
         self._add_sarah(sessions)
         import shortlist.engine.pipeline as pipeline_mod
 
-        monkeypatch.setattr(pipeline_mod, "run", lambda ctx, users: None)
+        # A clean report — the real shape. `run()` returns one; it does not return None.
+        monkeypatch.setattr(
+            pipeline_mod,
+            "run",
+            lambda ctx, users: SimpleNamespace(error=None, promotion_blockers=[], swept_rows={}, converged=0),
+        )
 
         result = jobs._HANDLERS["user.restore"](self._state(sessions, self._ctx(wrote=wrote)), {"slug": "sarah"})
 
