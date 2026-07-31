@@ -28,7 +28,9 @@ vi.mock("@/lib/api", () => ({
 
 function job(patch: Partial<Job> & { id: number }): Job {
   return {
-    kind: "user.cleanup",
+    // NOT a per-user kind: those are deliberately silent on success (the page announces them), so
+    // using one here would make these tests about the suppression rather than the mechanism.
+    kind: "backup.take",
     status: "done",
     attempts: 0,
     max_attempts: 3,
@@ -85,7 +87,7 @@ describe("ActivityIndicator toasts", () => {
     getJobs.mockReset();
     getJobCatalog.mockReset();
     getJobCatalog.mockResolvedValue([
-      { kind: "user.cleanup", label: "Remove someone's rows" },
+      { kind: "backup.take", label: "Remove someone's rows" },
     ]);
     toastLoading.mockClear();
     toastSuccess.mockClear();
@@ -148,5 +150,41 @@ describe("ActivityIndicator toasts", () => {
     // Same toast id, so the spinner is REPLACED rather than stacking a second card.
     expect(toastSuccess.mock.calls[0]?.[1]).toMatchObject({ id: "job-9" });
     expect(toastLoading).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ActivityIndicator — not announcing the same decision twice", () => {
+  beforeEach(() => {
+    getJobs.mockReset();
+    getJobs.mockResolvedValue([]);
+    getJobCatalog.mockReset();
+    getJobCatalog.mockResolvedValue([
+      { kind: "user.cleanup", label: "Remove a disabled person's rows" },
+    ]);
+    toastLoading.mockClear();
+    toastSuccess.mockClear();
+    toastError.mockClear();
+  });
+
+  it("stays quiet when a per-user job SUCCEEDS — the page already said so by name", async () => {
+    // Turning someone off already toasts "Turning off sarah…" then "sarah is off". Adding "Remove a
+    // disabled person's rows · Removed 0 row(s) for s_flix" is a second, vaguer toast for one
+    // decision, naming the machinery instead of the person.
+    const { poll } = await renderIndicator();
+
+    await poll([job({ id: 5, kind: "user.cleanup", status: "done", detail: "Removed 0 row(s)" })]);
+
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("still announces a per-user job that FAILS", async () => {
+    // Nothing else would ever tell you the cleanup didn't work.
+    const { poll } = await renderIndicator();
+
+    await poll([
+      job({ id: 6, kind: "user.cleanup", status: "failed", error: "Plex is down" }),
+    ]);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
   });
 });

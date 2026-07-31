@@ -600,7 +600,10 @@ async def jobs_catalog(request: Request) -> list[dict]:
                     "description": entry.description,
                     "manual": entry.manual,
                     "trigger": entry.trigger,
+                    # "can run on a timer", NOT "currently does" — `next_run` answers that. A job with
+                    # an optional schedule left blank has a job_id but no trigger.
                     "scheduled": bool(entry.schedule_job_id),
+                    "schedule_optional": entry.schedule_optional,
                     "next_run": next_run(entry.schedule_job_id),
                     "last": _job_dict(last) if last else None,
                     "total": sum(counts.values()),

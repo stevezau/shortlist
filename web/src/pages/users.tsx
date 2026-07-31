@@ -1,7 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
+
+import { toast } from "sonner";
+
+import { apiErrorMessage } from "@/lib/api";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { OwnerNote } from "@/components/owner-note";
@@ -34,6 +38,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import type { User } from "@/lib/types";
 import { formatHitRate, timeAgo } from "@/lib/format";
 import {
   queryKeys,
@@ -54,7 +59,49 @@ function UsersSkeleton() {
 
 export function UsersPage() {
   const usersQuery = useUsers();
+  const navigate = useNavigate();
   const patchUser = usePatchUser();
+
+  /**
+   * Toggle one person, and say so immediately.
+   *
+   * Turning someone OFF removes their rows from Plex and re-merges every account's share filter
+   * before the request returns — seconds of real work on a shared server. Waiting for the response
+   * to give feedback made the click look ignored, and the only thing that eventually appeared was a
+   * generic job toast ("Remove a disabled person's rows") that named the machinery rather than the
+   * decision. This names the person and the consequence, up front, and resolves in place.
+   */
+  const toggleUser = (user: User, enabled: boolean) => {
+    const who = user.display_name || user.username;
+    const id = `user-toggle-${user.id}`;
+    toast.loading(enabled ? `Turning on ${who}…` : `Turning off ${who}…`, {
+      id,
+      description: enabled
+        ? "They get a row on the next run. Restoring their access to the shared rows now."
+        : "Removing their rows from Plex and updating everyone's share filters.",
+    });
+    patchUser.mutate(
+      { id: user.id, patch: { enabled } },
+      {
+        onSuccess: () =>
+          toast.success(enabled ? `${who} is on` : `${who} is off`, {
+            id,
+            description: enabled
+              ? "Their row is rebuilt on the next run."
+              : "Their rows are off Plex and everyone else's filters are updated.",
+            action: {
+              label: "Jobs",
+              onClick: () => navigate("/jobs"),
+            },
+          }),
+        onError: (error) =>
+          toast.error(`Couldn't turn ${enabled ? "on" : "off"} ${who}`, {
+            id,
+            description: apiErrorMessage(error, "The change was not saved."),
+          }),
+      },
+    );
+  };
   const setAll = useSetAllUsersEnabled();
   const queryClient = useQueryClient();
   const [confirmDisableOpen, setConfirmDisableOpen] = useState(false);
@@ -273,10 +320,7 @@ export function UsersPage() {
                               : undefined
                           }
                           onCheckedChange={(enabled) =>
-                            patchUser.mutate({
-                              id: user.id,
-                              patch: { enabled },
-                            })
+                            toggleUser(user, enabled)
                           }
                           aria-label={`Shortlist row for ${user.username}`}
                         />

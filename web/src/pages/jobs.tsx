@@ -90,6 +90,7 @@ function pendingEntry(kind: string): JobCatalogEntry {
     label: PENDING_LABELS[kind] ?? kind,
     description: "",
     manual: true,
+    schedule_optional: false,
     trigger: "",
     scheduled: false,
     next_run: null,

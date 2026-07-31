@@ -15,6 +15,14 @@ import {
 import type { Job } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+/** Job kinds whose SUCCESS is already announced by the page that triggers them, naming the person
+ *  and the decision rather than the machinery. Failures are never suppressed. */
+const ANNOUNCED_BY_THE_PAGE = new Set([
+  "user.cleanup",
+  "user.hide",
+  "user.restore",
+]);
+
 /** Who or what a job is acting on, when its payload says. Undefined rather than a filler string:
  *  sonner omits the second line entirely, which reads better than a line that says nothing. */
 function jobTarget(job: Job): string | undefined {
@@ -106,6 +114,11 @@ export function ActivityIndicator({
       });
     }
     for (const job of finished) {
+      // The page that caused these already said what was happening, by name — "Turning off sarah…"
+      // then "sarah is off". Announcing the machinery behind it as well ("Remove a disabled person's
+      // rows · Removed 0 row(s) for s_flix") is a second, vaguer toast for one decision. Failures
+      // still speak: nothing else would say the cleanup didn't work.
+      if (ANNOUNCED_BY_THE_PAGE.has(job.kind)) continue;
       toast.success(labelFor(job.kind), {
         id: `job-${job.id}`,
         description: job.detail || undefined,

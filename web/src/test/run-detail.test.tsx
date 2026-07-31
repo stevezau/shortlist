@@ -660,6 +660,13 @@ describe("RunDetail — where the phase breakdown lives", () => {
       },
       {
         seq: 2,
+        ts: "2026-07-30T03:30:30Z",
+        level: "info",
+        message: "run · Shortlist · ordering",
+        stage: "ordering",
+      },
+      {
+        seq: 3,
         ts: "2026-07-30T03:32:00Z",
         level: "info",
         message: "run · Shortlist · finished",
@@ -679,11 +686,35 @@ describe("RunDetail — where the phase breakdown lives", () => {
     expect(screen.queryByText(/Where the time went/i)).toBeNull();
   });
 
-  it("shows the phase breakdown on the Log tab", async () => {
+  it("shows the phase breakdown on the Log tab, collapsed behind its headline", async () => {
     getRun.mockResolvedValue(run([]));
 
     renderDetail("?tab=log");
 
-    expect(await screen.findByText(/Where the time went/i)).toBeInTheDocument();
+    // The headline answers "why did it take so long after everyone finished" on its own — 03:30:00
+    // to 03:32:00 is two minutes. The bars are for the one time in ten that number is surprising.
+    const headline = await screen.findByText(/After everyone finished: 2m/i);
+    // Scoped to the card: the log panel below renders the same stage labels for its own lines, so an
+    // unscoped query matches those and proves nothing about this card.
+    const card = headline.closest("div[class*='rounded']") as HTMLElement;
+    expect(within(card).queryByText(/ordering rows/i)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /time went/i }));
+    expect(within(card).getByText(/ordering rows/i)).toBeInTheDocument();
+  });
+
+  it("never shows a marker as a phase — 'all users done' has no duration", async () => {
+    // It is a MOMENT, not work: its "duration" is the gap to the next stage, which is ~0 by
+    // definition, so it rendered an empty bar labelled "0s" that looked like a bug.
+    getRun.mockResolvedValue(run([]));
+
+    renderDetail("?tab=log");
+
+    const headline = await screen.findByText(/After everyone finished/i);
+    const card = headline.closest("div[class*='rounded']") as HTMLElement;
+    await userEvent.click(screen.getByRole("button", { name: /time went/i }));
+
+    expect(within(card).queryByText(/all users done/i)).toBeNull();
+    expect(within(card).queryByText(/run finished/i)).toBeNull();
   });
 });

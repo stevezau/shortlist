@@ -1029,7 +1029,10 @@ export interface JobCatalogEntry {
   manual: boolean;
   /** For an automatic job, what causes it to be queued. */
   trigger: string;
+  /** Whether this kind CAN run on a timer — not whether it currently does. `next_run` answers that. */
   scheduled: boolean;
+  /** True when the schedule is opt-in, so a blank cron means "off by choice" rather than "broken". */
+  schedule_optional: boolean;
   /** ISO time of the next scheduled firing, when this kind runs on a timer. */
   next_run: string | null;
   /** The most recent job of this kind, or null if it has never run. */
