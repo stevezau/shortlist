@@ -265,8 +265,17 @@ def recover_stale(sessions, *, boot: bool = False) -> int:
             started = job.started_at
             if started is not None and started.tzinfo is None:
                 started = started.replace(tzinfo=UTC)
-            if not boot and started is not None and now - started < STALE_AFTER:
-                continue  # genuinely still running in this process
+            # `started_at is None` means CLAIMED BUT NOT YET STARTED — `_claim` leaves it unset on
+            # purpose and `_execute` stamps it. A writer can sit there for up to WRITER_LOCK_WAIT_S
+            # waiting for the Plex lock, and a reader waits on the semaphore unbounded. Requeuing
+            # those is not recovery, it is duplication: the original coroutine is still alive and
+            # about to run the job, and the requeued copy gets claimed by the next drain, so one
+            # "disable everyone" batch could execute the same cleanup twice.
+            #
+            # At BOOT the same state means the opposite — no coroutine survived the restart — which
+            # is exactly what `boot=True` is for, and why it still reclaims them.
+            if not boot and (started is None or now - started < STALE_AFTER):
+                continue  # genuinely still running (or still waiting to) in this process
             job.status = "queued"
             job.started_at = None
             requeued += 1

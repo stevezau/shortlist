@@ -769,7 +769,14 @@ def _run_user(
         if excludes_finished(spec):
             excluded |= watched_titles
             rule = True
-        if spec.unstarted_only:
+        # `and spec.media != "movie"` mirrors `pool_key` EXACTLY. `_started_shows` only ever yields
+        # SHOW keys, so on a movies row this contributes nothing — but setting `rule` anyway returned
+        # an empty SET where an identical sibling row returns None, and `_candidate_pool` reads None
+        # as "exclude the seeds" and a set as "exclude exactly this". Same key, two different pools:
+        # whichever row computed first would win, and the other could be handed back its own seeds.
+        # Today the API refuses that combination, but a guard in another module is not what should be
+        # keeping this correct.
+        if spec.unstarted_only and spec.media != "movie":
             excluded |= _started_shows(watched_shows)
             rule = True
         return excluded if rule else None

@@ -914,3 +914,56 @@ class TestCleanupForgetsTheLedger:
         jobs._HANDLERS["user.cleanup"](self._state(sessions, removed=["✨ Picked for You"]), {"slug": "sarah"})
 
         assert sorted(self._ledger(sessions)) == [("mike", "1"), ("sarah", "1")]
+
+
+class TestStaleSweepDoesNotDuplicate:
+    """The periodic sweep exists to reclaim work a DEAD process abandoned. It must not touch work
+    this process is still holding."""
+
+    def _job(self, sessions, **kw):
+        from shortlist.server.db.models import Job
+
+        with sessions() as session:
+            job = Job(kind="user.cleanup", status="running", payload={}, **kw)
+            session.add(job)
+            session.commit()
+            return job.id
+
+    def test_a_job_waiting_on_the_writer_lock_is_not_requeued(self, sessions):
+        """`_claim` leaves `started_at` unset until `_execute` stamps it, so a writer waiting up to
+        WRITER_LOCK_WAIT_S for the Plex lock sits at running/None. Requeuing that is not recovery,
+        it is duplication — the original coroutine is alive and about to run it, and the requeued
+        copy gets picked up by the next drain, so one job executes twice against Plex.
+        """
+        from shortlist.server.db.models import Job
+        from shortlist.server.services.jobs import recover_stale
+
+        job_id = self._job(sessions, started_at=None, attempts=1)
+
+        assert recover_stale(sessions, boot=False) == 0
+        with sessions() as session:
+            assert session.get(Job, job_id).status == "running"
+
+    def test_boot_DOES_reclaim_one_because_no_coroutine_survived_the_restart(self, sessions):
+        """Same state, opposite meaning: after a restart nothing is holding it."""
+        from shortlist.server.db.models import Job
+        from shortlist.server.services.jobs import recover_stale
+
+        job_id = self._job(sessions, started_at=None, attempts=1)
+
+        assert recover_stale(sessions, boot=True) == 1
+        with sessions() as session:
+            assert session.get(Job, job_id).status == "queued"
+
+    def test_a_genuinely_stuck_job_is_still_reclaimed(self, sessions):
+        """The sweep must keep doing its actual job for work that started and then died."""
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import Job
+        from shortlist.server.services.jobs import STALE_AFTER, recover_stale
+
+        job_id = self._job(sessions, started_at=datetime.now(UTC) - STALE_AFTER - timedelta(minutes=1))
+
+        assert recover_stale(sessions, boot=False) == 1
+        with sessions() as session:
+            assert session.get(Job, job_id).status == "queued"

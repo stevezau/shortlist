@@ -478,13 +478,31 @@ def reconcile_row_rename_iter(
             old_display = (
                 render_row_name(effective_old, old_profile, [], library_name=lib_name) if effective_old else None
             )
+            # MANDATORY scoping. Every one of a person's rows shares the single label
+            # `shortlist_<slug>`, so without the old title there is nothing distinguishing this row's
+            # collection from their others — and renaming "whatever we find" would retitle a DIFFERENT
+            # row's collection to this row's name. That row is then addressable by nothing: its ledger
+            # entry points at a collection wearing another row's title, so the next run builds a
+            # duplicate beside it and the original stays labelled and promoted for ever.
+            #
+            # `old_display` was allowed to be None whenever `effective_old` was falsy — and "" is
+            # falsy, which both `RenameRequest.old_template`'s default and the PATCH's
+            # `old_template or ""` produce. Skip instead: renaming nothing is recoverable, renaming
+            # the wrong row is not.
+            if not old_display:
+                logger.warning(
+                    "rename: skipping {} — no previous title to match on, so this row's collections "
+                    "cannot be told apart from their other rows'",
+                    udata["slug"],
+                )
+                continue
             for collection in ctx.plex.find_owned_collections(section, label):
                 current_title = collection.title
                 if current_title == new_with_marker:
                     continue
-                # Scope to THIS row: if we know the old template, only rename collections whose
-                # stripped title matches what this row USED to render as.
-                if old_display and strip_marker(current_title) != old_display:
+                # Scope to THIS row: only rename collections whose stripped title matches what this
+                # row USED to render as.
+                if strip_marker(current_title) != old_display:
                     continue
                 try:
                     if not dry_run:
