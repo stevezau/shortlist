@@ -9,6 +9,7 @@ import shortlist
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.notifications import DISMISSED_KEY, build_notifications
+from shortlist.server.services.audit import Level
 from shortlist.server.settings_store import SettingsStore
 
 router = APIRouter(prefix="/notifications", tags=["notifications"], dependencies=[Depends(require_owner)])
@@ -23,7 +24,9 @@ class NotificationOut(PassthroughModel):
     """
 
     id: str  # encodes the state it reports (run id, version), so a NEW occurrence re-surfaces
-    severity: str  # info | warning | error
+    #: `audit.Level`, not a Literal repeated here: the audit levels and these severities are the same
+    #: three words on purpose (see that module), and two copies could disagree.
+    severity: Level
     title: str
     body: str
     action_url: str

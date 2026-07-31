@@ -436,6 +436,17 @@ class TestUserSync:
         assert finished["ok"] is True
         assert {k: finished[k] for k in ("added", "updated", "total")} == body
 
+        # These payloads are declared in `api/schemas_events.py` so the SPA can generate them rather
+        # than hand-write them — and nothing validates an SSE frame at runtime, so the declaration is
+        # only as honest as this. Validating the REAL frames catches a shape that drifted; comparing
+        # the key sets catches a model that describes a field the publisher does not send (or misses
+        # one it does).
+        from shortlist.server.api.schemas_events import SyncFinishedEvent, SyncProgressEvent
+
+        for event, data in events:
+            model = SyncProgressEvent if event == "sync.progress" else SyncFinishedEvent
+            assert set(model.model_validate(data).model_dump(exclude_unset=True)) == set(data), (event, data)
+
     def test_a_sync_that_changes_no_name_does_no_plex_work(self, client: TestClient, plextv, monkeypatch):
         """The reconcile does Plex I/O — it must not fire on every routine sync."""
         from shortlist.server.services import user_sync
@@ -811,3 +822,35 @@ class TestUserRowsApi:
 
         assert client.get(f"/api/users/{uid}/runs/summary").json() == {"included": 1, "total": 3}
         assert client.get("/api/users/9999/runs/summary").status_code == 404
+
+
+class TestUserTypeIsTheEnginesOwnEnum:
+    """`user_type` is typed on the response as the engine's `UserType`, not a bare `str`.
+
+    That closes the set in the OpenAPI schema (so the SPA stops re-declaring it), but it also means
+    the value is validated on the way OUT: a `users.user_type` outside the enum would raise rather
+    than degrade, and 500 the whole users list. Every member therefore gets pushed through the real
+    endpoint here, and the set is taken from `UserType` itself so a new member cannot be forgotten.
+    """
+
+    def test_every_user_type_the_engine_defines_serializes_as_its_plain_word(self, client: TestClient):
+        from shortlist.engine.models import UserType
+
+        with client.app.state.sessions() as session:
+            for i, member in enumerate(UserType):
+                session.add(
+                    User(
+                        plex_account_id=555009000 + i,
+                        username=f"u{member.value}",
+                        slug=f"u-{member.value}",
+                        user_type=member.value,
+                    )
+                )
+            session.commit()
+
+        by_slug = {u["slug"]: u for u in client.get("/api/users").json()}
+
+        for member in UserType:
+            # The plain word, not "UserType.SHARED": a StrEnum must not change the payload the SPA
+            # already reads, only the schema that describes it.
+            assert by_slug[f"u-{member.value}"]["user_type"] == member.value

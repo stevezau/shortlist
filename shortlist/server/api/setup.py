@@ -14,6 +14,7 @@ server becomes the owner; afterwards, owner-only.
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -21,6 +22,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.plextv import PLEXTV
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import owned_machine_ids, require_setup_access
 from shortlist.server.db.models import Server
 from shortlist.server.net_guard import BlockedUrl
@@ -60,7 +62,28 @@ def _plex_token(request: Request, session: dict) -> str:
     return token
 
 
-@router.get("/servers")
+class ServerConnectionOut(PassthroughModel):
+    """One advertised address, with the answer to "does it work from inside the container?"."""
+
+    uri: str
+    local: bool
+    relay: bool
+    ok: bool
+
+
+class PlexServerOut(PassthroughModel):
+    """A server plex.tv says this account can reach, with every advertised address already tried."""
+
+    name: str
+    #: `clientIdentifier` straight off the plex.tv resource, with no fallback — null only if plex.tv
+    #: ever omits it, which would leave an entry the picker cannot link.
+    machine_id: str | None
+    owned: bool
+    version: str
+    connections: list[ServerConnectionOut]
+
+
+@router.get("/servers", response_model=list[PlexServerOut])
 async def list_servers(request: Request) -> list[dict]:
     """Every Plex server this account can reach, with each advertised address tested.
 
@@ -133,7 +156,62 @@ class ProbeRequest(BaseModel):
     tautulli_apikey: str | None = None
 
 
-@router.post("/probe")
+class ProbeCheckOut(PassthroughModel):
+    """One line of the wizard's step-1 checklist: did it pass, and what to say about it.
+
+    This is the one shape here with an OPTIONAL field, which is why its route sets
+    ``response_model_exclude_unset``. `extra="allow"` stops a model dropping a key, but nothing stops
+    it INVENTING one: without that flag every check the probe sends without a `value` — and the whole
+    `tautulli` entry on a server that has none — would arrive as an explicit `null` the handler never
+    wrote. The flag makes the payload byte-identical to the dict, which is the entire contract these
+    models are meant to keep.
+    """
+
+    ok: bool
+    message: str
+    value: str | None = None  # only the version check carries one
+
+
+class LibrarySectionOut(PassthroughModel):
+    """One movie/show library the probe found."""
+
+    #: plexapi casts a section's key to an INT (`utils.cast(int, …)`), and this handler passes it
+    #: through unchanged — unlike `/system/libraries`, which stringifies it. Documented as what is
+    #: actually sent rather than normalised here, because the wire shape is what the wizard reads.
+    key: int
+    title: str
+    #: Closed by the same read that closes `/system/libraries`: `PlexClient.sections()` filters to
+    #: `("movie", "show")`, so a music or photo library is never in this list.
+    type: Literal["movie", "show"]
+    #: `LibrarySection.totalSize` — one live count query per section, which Plex always answers.
+    count: int
+
+
+class ProbeChecksOut(PassthroughModel):
+    """The checklist itself.
+
+    `tautulli` runs only when the form supplied a Tautulli URL, so it is the one check that can be
+    absent — and it therefore needs the default. Without one it would be REQUIRED, and every probe of
+    a server with no Tautulli would fail response validation with a 500 instead of rendering.
+    """
+
+    pms_version: ProbeCheckOut
+    plex_pass: ProbeCheckOut
+    libraries: ProbeCheckOut
+    tautulli: ProbeCheckOut | None = None
+
+
+class ProbeResultOut(PassthroughModel):
+    """What `POST /setup/probe` answers: the checklist plus what it learned about the server."""
+
+    checks: ProbeChecksOut
+    machine_id: str
+    server_name: str
+    owner_account_id: int
+    libraries: list[LibrarySectionOut]
+
+
+@router.post("/probe", response_model=ProbeResultOut, response_model_exclude_unset=True)
 async def probe(body: ProbeRequest, request: Request) -> dict:
     """Capability checklist for wizard step 1: version gate, Plex Pass, libraries, Tautulli."""
     session = require_setup_access(request)
@@ -167,7 +245,12 @@ class LinkRequest(BaseModel):
     plex_pass: bool = False
 
 
-@router.post("/link")
+class LinkedOut(PassthroughModel):
+    linked: bool
+    server_name: str
+
+
+@router.post("/link", response_model=LinkedOut)
 async def link_server(body: LinkRequest, request: Request) -> dict:
     """Persist the chosen server; the authenticated account must be its owner."""
     session_data = require_setup_access(request)
@@ -228,7 +311,23 @@ class WizardState(BaseModel):
     completed: bool = False
 
 
-@router.get("/state")
+class WizardStateOut(PassthroughModel):
+    """Resumable wizard progress. Every field has a settings-store default (step 0, {}, False), so a
+    never-started instance answers with those rather than nulls."""
+
+    step: int
+    state: dict
+    completed: bool
+
+
+class WizardStateSavedOut(PassthroughModel):
+    """The receipt for `PUT /state` — an echo, not a re-read: `state` is deliberately not returned."""
+
+    step: int
+    completed: bool
+
+
+@router.get("/state", response_model=WizardStateOut)
 async def get_state(request: Request) -> dict:
     require_setup_access(request)
     with request.app.state.sessions() as db:
@@ -240,7 +339,7 @@ async def get_state(request: Request) -> dict:
         }
 
 
-@router.put("/state")
+@router.put("/state", response_model=WizardStateSavedOut)
 async def put_state(body: WizardState, request: Request) -> dict:
     session = require_setup_access(request)
     if "account_id" not in session:

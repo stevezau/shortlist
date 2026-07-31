@@ -8,6 +8,7 @@ render belongs here.
 
 from __future__ import annotations
 
+from shortlist.engine.models import UserType
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.db.models import DEFAULT_SLUG, PickRow, User, iso_utc
 
@@ -49,7 +50,10 @@ class UserOut(PassthroughModel):
     friendly_name: str
     display_name: str
     avatar_url: str
-    user_type: str
+    #: The engine's own enum rather than a Literal repeated here: `users.user_type` is only ever
+    #: written from `UserType`, so the two can never drift apart. It is a `StrEnum`, so the payload is
+    #: still the plain word ("shared") the SPA already reads.
+    user_type: UserType
     restricted: bool
     restriction_profile: str
     enabled: bool

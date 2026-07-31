@@ -123,14 +123,20 @@ function SyncBar({
   label,
   line,
 }: {
-  done?: number;
-  total?: number;
+  // SSE fields are optional AND nullable (Pydantic `int | None`, not just "absent"): normalise
+  // before handing off to ProgressBar, which only knows "omit for indeterminate".
+  done?: number | null;
+  total?: number | null;
   label: string;
   line: string;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <ProgressBar done={done} total={total} label={label} />
+      <ProgressBar
+        done={done ?? undefined}
+        total={total ?? undefined}
+        label={label}
+      />
       <p role="status" className="text-xs text-muted-foreground">
         {line}
       </p>

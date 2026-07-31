@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PlexServer } from "@/lib/types";
+import type { PlexServer, ProbeResult } from "@/lib/types";
 import { StepConnect } from "@/pages/setup/step-connect";
 
 const UNREACHABLE = "https://172-16-10-240.hash.plex.direct:32400";
@@ -14,10 +14,11 @@ const { getSession, getServers, setupProbe, setupLink } = vi.hoisted(() => ({
     Promise.resolve({ authenticated: true, login_required: true }),
   ),
   getServers: vi.fn(),
-  // Never resolves: the mutation stays "pending", so the test can assert it fired without
-  // the component trying to render a full ProbeResult.
+  // Never resolves by default: the mutation stays "pending", so a test that doesn't care about the
+  // result can assert it fired without the component trying to render a full ProbeResult. Typed
+  // Promise<ProbeResult> (not <never>) so a test that DOES care can `mockResolvedValue` a real one.
   setupProbe: vi.fn(
-    (_body: { plex_url: string }) => new Promise<never>(() => {}),
+    (_body: { plex_url: string }) => new Promise<ProbeResult>(() => {}),
   ),
   setupLink: vi.fn((_body: unknown) => Promise.resolve()),
 }));
@@ -111,5 +112,55 @@ describe("StepConnect", () => {
     );
 
     expect(setupProbe).not.toHaveBeenCalled(); // typed addresses wait for the Run checks button
+  });
+
+  it("renders a probe result's libraries (numeric keys) and links using its fields", async () => {
+    // plexapi casts a Plex section's key to an int, and the probe passes it through unstringified —
+    // `key: 1`, not `key: "1"`. Nothing rendered a resolved ProbeResult before this test; it's the
+    // regression guard for that shape (types.ts's LibrarySection used to claim `key: string`).
+    const probeResult: ProbeResult = {
+      checks: {
+        pms_version: {
+          ok: true,
+          message: "1.43.3 (≥ required)",
+          value: "1.43.3",
+        },
+        plex_pass: { ok: true, message: "Plex Pass is active" },
+        libraries: { ok: true, message: "2 libraries found" },
+      },
+      machine_id: "m1",
+      server_name: "SFlix",
+      owner_account_id: 42,
+      libraries: [
+        { key: 1, title: "Movies", type: "movie", count: 120 },
+        { key: 2, title: "TV Shows", type: "show", count: 30 },
+      ],
+    };
+    getServers.mockResolvedValue([
+      serverWith([{ uri: UNREACHABLE, local: true, relay: false, ok: true }]),
+    ]);
+    setupProbe.mockResolvedValue(probeResult);
+    renderStep();
+
+    // The discovered address is reachable, so the deep check auto-runs.
+    await waitFor(() => expect(setupProbe).toHaveBeenCalledTimes(1));
+    expect(
+      await screen.findByText(
+        /2 libraries: Movies \(120 movies\), TV Shows \(30 shows\)/i,
+      ),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Link this server/i }),
+    );
+
+    expect(setupLink).toHaveBeenCalledWith({
+      plex_url: UNREACHABLE,
+      machine_id: "m1",
+      server_name: "SFlix",
+      version: "1.43.3",
+      owner_account_id: 42,
+      plex_pass: true,
+    });
   });
 });

@@ -614,3 +614,49 @@ class TestScheduleApi:
     def test_it_is_owner_only(self, client: TestClient):
         client.cookies.delete(SESSION_COOKIE)
         assert client.get("/api/schedule").status_code == 401
+
+
+class TestJobStatusIsAClosedSet:
+    """`status` is `Literal["queued", "running", "done", "failed"]` on both job shapes.
+
+    A response Literal is validated on the way out, so a fifth word in `jobs.status` would raise —
+    500ing the Jobs page rather than rendering an unknown badge. This pushes each of the four
+    through the real endpoints, and checks the set still matches everything `services/jobs.py`
+    assigns, so a new state has to be added to the type at the same time.
+    """
+
+    def test_the_four_statuses_are_exactly_what_the_job_runner_assigns(self):
+        """Read off the runner itself: every `job.status = "..."` in `services/jobs.py`."""
+        import ast
+        import inspect
+
+        from shortlist.server.api.system import JobStatus
+        from shortlist.server.services import jobs as jobs_module
+
+        tree = ast.parse(inspect.getsource(jobs_module))
+        assigned = {
+            node.value.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+            and any(isinstance(t, ast.Attribute) and t.attr == "status" for t in node.targets)
+        }
+
+        assert assigned == set(JobStatus.__args__), "services/jobs.py writes a status the Literal does not carry"
+
+    def test_every_status_survives_the_jobs_list_and_the_catalogue(self, client: TestClient):
+        from shortlist.server.api.system import JobStatus
+        from shortlist.server.db.models import Job
+
+        with client.app.state.sessions() as session:
+            for status in JobStatus.__args__:
+                session.add(Job(kind="sync.check", status=status, payload={}, result={}))
+            session.commit()
+
+        listed = client.get("/api/system/jobs").json()
+
+        assert {j["status"] for j in listed} == set(JobStatus.__args__)
+        # `/jobs/catalog` renders the newest row per kind through the SAME model, so it validates too.
+        card = next(c for c in client.get("/api/system/jobs/catalog").json() if c["kind"] == "sync.check")
+        assert card["last"]["status"] in set(JobStatus.__args__)

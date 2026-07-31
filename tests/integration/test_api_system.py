@@ -292,3 +292,150 @@ class TestSystemResponseShapes:
 
         assert body == [{"title": "New Series (Unwatched)"}]  # you don't anchor a row to itself
         assert set(body[0]) == {"title"}
+
+
+class TestClosedSetFieldsMatchWhatTheCodeWrites:
+    """`LibraryOut.type` and `NotificationOut.severity` are `Literal`s now, not bare `str`.
+
+    Both are validated on the way OUT, so a value outside the set raises instead of degrading — the
+    libraries picker or the notification bell would 500 rather than show something unfamiliar. Each
+    is therefore driven through its real handler for every value its producer can emit.
+    """
+
+    def test_both_library_types_reach_the_picker(self, client: TestClient, monkeypatch):
+        """`PlexClient.sections()` filters to `("movie", "show")`, which is what closes this set — a
+        music or photo library never gets this far. Both surviving cells are asserted; a third would
+        mean the read stopped filtering."""
+        from types import SimpleNamespace
+
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            store.set("plex.url", "http://pms:32400")
+            store.set("plex.token", "tok")
+            session.commit()
+
+        class FakePlex:
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                return [
+                    SimpleNamespace(key=1, title="Movies", type="movie"),
+                    SimpleNamespace(key=2, title="TV Shows", type="show"),
+                ]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+
+        body = client.get("/api/system/libraries").json()
+
+        assert [(x["key"], x["type"]) for x in body] == [("1", "movie"), ("2", "show")]
+
+    def test_every_notification_severity_the_builders_emit_reaches_the_bell(self, client: TestClient, monkeypatch):
+        """All three at once: `info` (an update is out), `warning` (runs paused) and `error` (the
+        last run failed). The severities are typed as `audit.Level` rather than a Literal repeated in
+        the router, so the audit levels and these can never drift into two vocabularies."""
+        import shortlist.server.notifications as notif
+        from shortlist.server.db.models import Run
+        from shortlist.server.services.audit import LEVELS
+
+        monkeypatch.setattr(notif, "check_for_update", lambda _v: {"latest": "9.9.9", "url": "https://example/rel"})
+        with client.app.state.sessions() as session:
+            SettingsStore(session).set("paused_all", True)
+            session.add(Run(trigger="manual", status="error"))
+            session.commit()
+
+        items = client.get("/api/notifications").json()["notifications"]
+
+        assert {n["severity"] for n in items} == LEVELS
+
+
+class TestSseEventPayloadsAreDocumented:
+    """`GET /api/events` is `text/event-stream`, so it has no response model — but the payload SHAPES
+    are still declared (`api/schemas_events.py`) and hung off the route's OpenAPI `responses`, which
+    is the one hook FastAPI offers for registering a schema no handler returns. Without that the SPA
+    is left hand-writing all five, which is what `.claude/rules/frontend.md` forbids.
+
+    Nothing validates an SSE frame at runtime, so these models are only as true as what asserts them.
+    Both tests below therefore drive REAL publishers and validate what actually went on the bus.
+    """
+
+    def test_every_event_shape_reaches_the_openapi_components(self, client: TestClient):
+        schemas = client.app.openapi()["components"]["schemas"]
+
+        assert {
+            "RunProgressEvent",
+            "RunFinishedEvent",
+            "UninstallProgressEvent",
+            "SyncProgressEvent",
+            "SyncFinishedEvent",
+        } <= set(schemas)
+        # The stream is labelled honestly too — an `application/json` body would be a lie about an
+        # endpoint that never sends one.
+        assert list(client.app.openapi()["paths"]["/api/events"]["get"]["responses"]["200"]["content"]) == [
+            "text/event-stream"
+        ]
+
+    def test_a_real_run_publishes_the_progress_and_finished_shapes(self, client: TestClient, monkeypatch):
+        """The run fails fast (no Plex configured here), which is the point: `run.finished` has to
+        carry the `error` branch, and `status` is a Literal now — a fourth word would fail here."""
+        import time
+
+        from shortlist.server.api.schemas_events import RunFinishedEvent, RunProgressEvent
+
+        published: list[tuple[str, dict]] = []
+        real_publish = client.app.state.bus.publish
+        monkeypatch.setattr(
+            client.app.state.bus,
+            "publish",
+            lambda event, data: (published.append((event, data)), real_publish(event, data))[0],
+        )
+
+        client.post("/api/runs", json={"dry_run": True})
+        for _ in range(100):
+            if any(e == "run.finished" for e, _ in published):
+                break
+            time.sleep(0.05)
+
+        by_event = {"run.progress": RunProgressEvent, "run.finished": RunFinishedEvent}
+        seen = {event for event, _ in published if event in by_event}
+        assert seen == set(by_event), "both run events must fire, or half the shape is untested"
+        for event, data in published:
+            if event in by_event:
+                assert set(by_event[event].model_validate(data).model_dump(exclude_unset=True)) == set(data), data
+
+    def test_a_real_uninstall_publishes_the_progress_shape(self, client: TestClient, monkeypatch):
+        """Only a REAL uninstall streams — the dry-run preview is instant and emits nothing. The
+        per-user restore lines are the ones carrying `done`/`total`, so the run needs a snapshot."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from shortlist.engine import privacy
+        from shortlist.server.api.schemas_events import UninstallProgressEvent
+        from shortlist.server.db.models import RestrictionSnapshotRow, User
+
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+            session.add(RestrictionSnapshotRow(user_id=user_id, reason="initial", filters_before={"filterMovies": ""}))
+            session.commit()
+
+        monkeypatch.setattr(privacy, "restore_user_restrictions", lambda *a, **k: True)
+        plex = MagicMock()
+        plex.sections.return_value = []
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_context", lambda **kw: SimpleNamespace(plex=plex, plextv=MagicMock())
+        )
+        published: list[tuple[str, dict]] = []
+        real_publish = client.app.state.bus.publish
+        monkeypatch.setattr(
+            client.app.state.bus,
+            "publish",
+            lambda event, data: (published.append((event, data)), real_publish(event, data))[0],
+        )
+
+        assert client.post("/api/system/uninstall", json={"confirm": "UNINSTALL"}).status_code == 200
+
+        frames = [d for e, d in published if e == "uninstall.progress"]
+        assert frames, "a real uninstall narrates itself"
+        assert any("done" in f for f in frames), "the per-user restore line carries the progress count"
+        for data in frames:
+            assert set(UninstallProgressEvent.model_validate(data).model_dump(exclude_unset=True)) == set(data), data

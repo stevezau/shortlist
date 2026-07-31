@@ -1152,6 +1152,12 @@
             "$ref": "#/components/schemas/WatchSyncOut"
           },
           "window": {
+            "enum": [
+              "7",
+              "30",
+              "90",
+              "all"
+            ],
             "title": "Window",
             "type": "string"
           },
@@ -1448,6 +1454,12 @@
             "title": "Started At"
           },
           "status": {
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -1511,6 +1523,12 @@
             "type": "array"
           },
           "status": {
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -1615,6 +1633,10 @@
             "type": "string"
           },
           "type": {
+            "enum": [
+              "movie",
+              "show"
+            ],
             "title": "Type",
             "type": "string"
           }
@@ -1625,6 +1647,40 @@
           "type"
         ],
         "title": "LibraryOut",
+        "type": "object"
+      },
+      "LibrarySectionOut": {
+        "additionalProperties": true,
+        "description": "One movie/show library the probe found.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "movie",
+              "show"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "type",
+          "count"
+        ],
+        "title": "LibrarySectionOut",
         "type": "object"
       },
       "LinkRequest": {
@@ -1663,6 +1719,25 @@
           "owner_account_id"
         ],
         "title": "LinkRequest",
+        "type": "object"
+      },
+      "LinkedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "server_name": {
+            "title": "Server Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "linked",
+          "server_name"
+        ],
+        "title": "LinkedOut",
         "type": "object"
       },
       "LogLineOut": {
@@ -1780,6 +1855,11 @@
             "type": "string"
           },
           "severity": {
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ],
             "title": "Severity",
             "type": "string"
           },
@@ -1899,6 +1979,10 @@
         "additionalProperties": true,
         "properties": {
           "kind": {
+            "enum": [
+              "user",
+              "shared"
+            ],
             "title": "Kind",
             "type": "string"
           },
@@ -2164,6 +2248,51 @@
         "title": "PinStatusOut",
         "type": "object"
       },
+      "PlexServerOut": {
+        "additionalProperties": true,
+        "description": "A server plex.tv says this account can reach, with every advertised address already tried.",
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ServerConnectionOut"
+            },
+            "title": "Connections",
+            "type": "array"
+          },
+          "machine_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owned": {
+            "title": "Owned",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "machine_id",
+          "owned",
+          "version",
+          "connections"
+        ],
+        "title": "PlexServerOut",
+        "type": "object"
+      },
       "PosterIn": {
         "description": "A row's custom-poster config. ``mode`` \"\" leaves Plex artwork alone; \"upload\" uses the image\nstored via the upload endpoint; \"text\" renders ``title``/``subtitle`` with the built-in Pillow\nengine (no AI); \"ai\" renders them with the curator provider's image model. The text fields share\nthe row-name placeholders ({user}/{library_name}/{top_seed}).",
         "properties": {
@@ -2264,6 +2393,69 @@
         "title": "PosterUploadOut",
         "type": "object"
       },
+      "ProbeCheckOut": {
+        "additionalProperties": true,
+        "description": "One line of the wizard's step-1 checklist: did it pass, and what to say about it.\n\nThis is the one shape here with an OPTIONAL field, which is why its route sets\n``response_model_exclude_unset``. `extra=\"allow\"` stops a model dropping a key, but nothing stops\nit INVENTING one: without that flag every check the probe sends without a `value` \u2014 and the whole\n`tautulli` entry on a server that has none \u2014 would arrive as an explicit `null` the handler never\nwrote. The flag makes the payload byte-identical to the dict, which is the entire contract these\nmodels are meant to keep.",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "ProbeCheckOut",
+        "type": "object"
+      },
+      "ProbeChecksOut": {
+        "additionalProperties": true,
+        "description": "The checklist itself.\n\n`tautulli` runs only when the form supplied a Tautulli URL, so it is the one check that can be\nabsent \u2014 and it therefore needs the default. Without one it would be REQUIRED, and every probe of\na server with no Tautulli would fail response validation with a 500 instead of rendering.",
+        "properties": {
+          "libraries": {
+            "$ref": "#/components/schemas/ProbeCheckOut"
+          },
+          "plex_pass": {
+            "$ref": "#/components/schemas/ProbeCheckOut"
+          },
+          "pms_version": {
+            "$ref": "#/components/schemas/ProbeCheckOut"
+          },
+          "tautulli": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProbeCheckOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "pms_version",
+          "plex_pass",
+          "libraries"
+        ],
+        "title": "ProbeChecksOut",
+        "type": "object"
+      },
       "ProbeRequest": {
         "properties": {
           "plex_url": {
@@ -2297,6 +2489,43 @@
           "plex_url"
         ],
         "title": "ProbeRequest",
+        "type": "object"
+      },
+      "ProbeResultOut": {
+        "additionalProperties": true,
+        "description": "What `POST /setup/probe` answers: the checklist plus what it learned about the server.",
+        "properties": {
+          "checks": {
+            "$ref": "#/components/schemas/ProbeChecksOut"
+          },
+          "libraries": {
+            "items": {
+              "$ref": "#/components/schemas/LibrarySectionOut"
+            },
+            "title": "Libraries",
+            "type": "array"
+          },
+          "machine_id": {
+            "title": "Machine Id",
+            "type": "string"
+          },
+          "owner_account_id": {
+            "title": "Owner Account Id",
+            "type": "integer"
+          },
+          "server_name": {
+            "title": "Server Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "checks",
+          "machine_id",
+          "server_name",
+          "owner_account_id",
+          "libraries"
+        ],
+        "title": "ProbeResultOut",
         "type": "object"
       },
       "QualityProfileOut": {
@@ -2913,15 +3142,8 @@
             "type": "array"
           },
           "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
+            "title": "Started At",
+            "type": "string"
           },
           "stats": {
             "additionalProperties": true,
@@ -2933,6 +3155,11 @@
             "type": "string"
           },
           "trigger": {
+            "enum": [
+              "schedule",
+              "manual",
+              "wizard"
+            ],
             "title": "Trigger",
             "type": "string"
           },
@@ -2957,6 +3184,42 @@
           "users"
         ],
         "title": "RunDetailOut",
+        "type": "object"
+      },
+      "RunFinishedEvent": {
+        "additionalProperties": true,
+        "description": "Event ``run.finished`` \u2014 a run reached a terminal state.\n\n`aborted` is a cancel that still completed its privacy merge and promotion, so it is an outcome\nrather than a failure; the UI distinguishes the three.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "error",
+              "aborted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "RunFinishedEvent",
         "type": "object"
       },
       "RunJobRequest": {
@@ -3046,6 +3309,30 @@
         "title": "RunLogLineOut",
         "type": "object"
       },
+      "RunProgressEvent": {
+        "additionalProperties": true,
+        "description": "Event ``run.progress`` \u2014 a run entered a non-terminal state. `cancelling` is published the\nmoment /cancel is accepted; the run keeps going until the person it is on finishes.",
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "cancelling"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "RunProgressEvent",
+        "type": "object"
+      },
       "RunRequest": {
         "properties": {
           "collection_ids": {
@@ -3127,15 +3414,8 @@
             "type": "array"
           },
           "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
+            "title": "Started At",
+            "type": "string"
           },
           "stats": {
             "additionalProperties": true,
@@ -3147,6 +3427,11 @@
             "type": "string"
           },
           "trigger": {
+            "enum": [
+              "schedule",
+              "manual",
+              "wizard"
+            ],
             "title": "Trigger",
             "type": "string"
           }
@@ -3625,6 +3910,36 @@
         "title": "SendOutcomeOut",
         "type": "object"
       },
+      "ServerConnectionOut": {
+        "additionalProperties": true,
+        "description": "One advertised address, with the answer to \"does it work from inside the container?\".",
+        "properties": {
+          "local": {
+            "title": "Local",
+            "type": "boolean"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "relay": {
+            "title": "Relay",
+            "type": "boolean"
+          },
+          "uri": {
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri",
+          "local",
+          "relay",
+          "ok"
+        ],
+        "title": "ServerConnectionOut",
+        "type": "object"
+      },
       "SessionOut": {
         "additionalProperties": true,
         "description": "Who the caller is, and whether this instance demands a sign-in at all.\n\nThe signed cookie's contents are spread into the response, so `account_id`/`username` are\npresent only once signed in \u2014 they are declared optional rather than left to `extra`, so the\nSPA gets real types for the two fields it actually reads.",
@@ -3686,6 +4001,141 @@
           "values"
         ],
         "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "SyncFinishedEvent": {
+        "additionalProperties": true,
+        "description": "Event ``sync.finished`` \u2014 a Tools-page sync ended.\n\nThe two syncs report different things because they did different work, so most fields belong to\none of them: `count` to the watched sync, `added`/`updated`/`total` to the users sync.",
+        "properties": {
+          "added": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Added"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "kind": {
+            "enum": [
+              "watched",
+              "users"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          },
+          "updated": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated"
+          }
+        },
+        "required": [
+          "kind",
+          "ok"
+        ],
+        "title": "SyncFinishedEvent",
+        "type": "object"
+      },
+      "SyncProgressEvent": {
+        "additionalProperties": true,
+        "description": "Event ``sync.progress`` \u2014 a Tools-page sync moved.\n\nThe watched sync is one determinate `done`/`total` loop over users. The users sync has two\nphases: an indeterminate `fetch` (one opaque plex.tv + Tautulli round-trip), then a determinate\n`save` bar over the roster upsert.",
+        "properties": {
+          "done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done"
+          },
+          "kind": {
+            "enum": [
+              "watched",
+              "users"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fetch",
+                  "save"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "SyncProgressEvent",
         "type": "object"
       },
       "SyncStartedOut": {
@@ -3859,6 +4309,11 @@
             "type": "boolean"
           },
           "status": {
+            "enum": [
+              "pending",
+              "sent",
+              "rejected"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -3926,6 +4381,43 @@
           "message"
         ],
         "title": "UninstallOut",
+        "type": "object"
+      },
+      "UninstallProgressEvent": {
+        "additionalProperties": true,
+        "description": "Event ``uninstall.progress`` \u2014 one live step of a REAL uninstall (the dry-run preview is\ninstant and streams nothing).",
+        "properties": {
+          "done": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Done"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "UninstallProgressEvent",
         "type": "object"
       },
       "UninstallRequest": {
@@ -4035,8 +4527,7 @@
             "type": "string"
           },
           "user_type": {
-            "title": "User Type",
-            "type": "string"
+            "$ref": "#/components/schemas/UserType"
           },
           "username": {
             "title": "Username",
@@ -4463,6 +4954,15 @@
         "title": "UserSyncOut",
         "type": "object"
       },
+      "UserType": {
+        "enum": [
+          "owner",
+          "shared",
+          "managed"
+        ],
+        "title": "UserType",
+        "type": "string"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -4680,6 +5180,52 @@
           "step"
         ],
         "title": "WizardState",
+        "type": "object"
+      },
+      "WizardStateOut": {
+        "additionalProperties": true,
+        "description": "Resumable wizard progress. Every field has a settings-store default (step 0, {}, False), so a\nnever-started instance answers with those rather than nulls.",
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "state": {
+            "additionalProperties": true,
+            "title": "State",
+            "type": "object"
+          },
+          "step": {
+            "title": "Step",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "step",
+          "state",
+          "completed"
+        ],
+        "title": "WizardStateOut",
+        "type": "object"
+      },
+      "WizardStateSavedOut": {
+        "additionalProperties": true,
+        "description": "The receipt for `PUT /state` \u2014 an echo, not a re-read: `state` is deliberately not returned.",
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "step": {
+            "title": "Step",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "step",
+          "completed"
+        ],
+        "title": "WizardStateSavedOut",
         "type": "object"
       }
     }
@@ -5235,11 +5781,34 @@
         "responses": {
           "200": {
             "content": {
-              "application/json": {
-                "schema": {}
+              "text/event-stream": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RunLogLineOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RunProgressEvent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RunFinishedEvent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/UninstallProgressEvent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SyncProgressEvent"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SyncFinishedEvent"
+                    }
+                  ],
+                  "title": "Response 200 Stream Api Events Get",
+                  "type": "string"
+                }
               }
             },
-            "description": "Successful Response"
+            "description": "An endless `text/event-stream`. Each frame names its event (`run.user.stage`, `run.progress`, `run.finished`, `uninstall.progress`, `sync.progress`, `sync.finished`) and carries one of these payloads as JSON in `data:`."
           }
         },
         "summary": "Stream",
@@ -6415,9 +6984,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Link Server Api Setup Link Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LinkedOut"
                 }
               }
             },
@@ -6459,9 +7026,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Probe Api Setup Probe Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProbeResultOut"
                 }
               }
             },
@@ -6494,8 +7059,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/PlexServerOut"
                   },
                   "title": "Response List Servers Api Setup Servers Get",
                   "type": "array"
@@ -6519,9 +7083,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get State Api Setup State Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/WizardStateOut"
                 }
               }
             },
@@ -6550,9 +7112,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Put State Api Setup State Put",
-                  "type": "object"
+                  "$ref": "#/components/schemas/WizardStateSavedOut"
                 }
               }
             },

@@ -10,7 +10,7 @@ Every model here therefore inherits :class:`PassthroughModel`; read its docstrin
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -69,8 +69,15 @@ class RunSummaryOut(PassthroughModel):
     """One run, as the Runs list shows it."""
 
     id: int
-    trigger: str
-    started_at: str | None
+    #: What started it. Only `schedule` (the APScheduler tick) and `manual` (POST /runs, which the
+    #: wizard's first run also goes through) are ever written; `wizard` is carried because the column
+    #: has always documented it, and a Literal that is a strict SUPERSET of what the code emits can
+    #: only over-describe the schema, while one that is too narrow 500s the whole Runs page.
+    trigger: Literal["schedule", "manual", "wizard"]
+    #: Not optional: `runs.started_at` is NOT NULL (migration 0001) and carries an ORM-side `utcnow`
+    #: default, so every run row has one. It read `str | None` only because `iso_utc` is typed that
+    #: way — the serializer's signature, not this column's.
+    started_at: str
     finished_at: str | None
     status: str
     dry_run: bool
@@ -99,7 +106,7 @@ class RunsSummaryOut(PassthroughModel):
 class TraceRequestOut(PassthroughModel):
     """What became of one wanted-but-missing title, keyed `"<tmdb_id>:<media_type>"` on the trace."""
 
-    status: str  # pending | sent | rejected
+    status: Literal["pending", "sent", "rejected"]
     detail: str
     arr_slug: str | None
     excluded: bool  # on the arr's import-exclusion list — approving is a no-op
@@ -256,7 +263,9 @@ class RecentWatchOut(PassthroughModel):
 class EffectivenessReportOut(PassthroughModel):
     """The dashboard tracking report for one window."""
 
-    window: str
+    #: Echoed back NORMALISED: `report_service.effectiveness` falls back to the default for anything
+    #: outside this set, so an unknown `?window=` never reaches the payload.
+    window: Literal["7", "30", "90", "all"]
     window_days: int | None  # null on the `all` window
     since: str | None
     first_pick: str | None  # the oldest pick on record — lets the UI explain a flat window selector

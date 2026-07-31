@@ -2,19 +2,24 @@
  * The seam between the generated OpenAPI types and the UI.
  *
  * `.claude/rules/frontend.md`: request/response types are GENERATED, never hand-written. The API now
- * declares a Pydantic model on 65 of its routes (115 schemas), so that rule finally holds for nearly
+ * declares a Pydantic model on 65 of its routes (130 schemas), so that rule finally holds for nearly
  * everything here — "Generated" below derives every request body AND every declared response from
  * `api-schema.d.ts` (built by `pnpm -C web gen:api` from `openapi.snapshot.json`, itself guarded
- * against drift by `tests/unit/test_openapi_snapshot.py`).
+ * against drift by `tests/unit/test_openapi_snapshot.py`). That includes the SSE event payloads
+ * (`RunFinishedEvent`, `RunProgressEvent`, `UninstallProgressEvent`, `SyncProgressEvent`,
+ * `SyncFinishedEvent`) and the four `/api/setup` shapes that used to be the handlers' bare `dict`
+ * returns (`ProbeResult`, `LibrarySection`, `ProbeCheck`, `PlexServer`) — both families now have
+ * real response models, even though `text/event-stream` itself has no OpenAPI content type.
  *
- * What is left hand-written is a short, principled list, under "Hand-written":
+ * What is left hand-written is down to one kind, under "Hand-written":
  *
  *   - Engine-owned JSON blobs the server deliberately declares as an open map (`Run.stats`, a run
  *     user's `diff`/`breakdown`, the whole trace). Their keys vary by DATA, not by branch, they have
  *     changed repeatedly, and they are thinner on legacy rows — so a model would either invent the
  *     absent keys or go stale, and the UI's own account of them is the more useful one.
- *   - The four `/api/setup` shapes whose handlers still return a bare `dict`.
- *   - The SSE payloads, which OpenAPI cannot describe at all (`text/event-stream` has no schema).
+ *
+ *   `RunUserStageEvent` sits in the same block but isn't really an exception: it's `RunLogEntry`
+ *   (already generated) under its SSE-facing name, not a second declaration of it.
  *
  * Each carries a one-line reason. Treat every one as an ASSUMPTION about the API, not a guarantee
  * from it; a Pydantic response model on the Python side is what retires it.
@@ -154,12 +159,14 @@ export type BlockedSeed = Schemas["BlockedSeedOut"];
  *  TMDB can answer without an id, so `tmdb_id` is nullable and such a match cannot be blocked. */
 export type TitleMatch = Schemas["TitleMatchOut"];
 
+/** Owner / shared / managed — `UserOut.user_type`, a named schema component. */
+export type UserType = Schemas["UserType"];
+
 /** GET /api/users — one row per Plex user Shortlist knows about.
  *
  *  `prefs` is narrowed to what a client may WRITE; what is STORED is an open map, so read
  *  `blocked_seeds` through {@link blockedSeeds} rather than trusting its declared shape. */
 export type User = {
-  user_type: UserType;
   prefs: UserPrefs;
 } & Schemas["UserOut"];
 
@@ -205,10 +212,12 @@ export type Pick = Schemas["PickOut"] & {
 /** POST /api/runs body — every field is optional (`RunRequest` has no `required` list). */
 export type RunRequest = Partial<Schemas["RunRequest"]>;
 
+/** How a run started — schedule fired it, an operator clicked Run, or the wizard's first-run step. */
+export type RunTrigger = Schemas["RunSummaryOut"]["trigger"];
+
 /** GET /api/runs — one row per pipeline run. */
 export type Run = {
   stats: RunStats;
-  trigger: RunTrigger;
 } & Schemas["RunSummaryOut"];
 
 /** Per-user slice of GET /api/runs/{id}. `duration_ms` is null while a user is still pending. */
@@ -220,7 +229,6 @@ export type RunUserResult = {
 /** GET /api/runs/{id} — the run plus its per-user results. */
 export type RunDetail = {
   stats: RunStats;
-  trigger: RunTrigger;
   users: RunUserResult[];
 } & Schemas["RunDetailOut"];
 
@@ -248,9 +256,7 @@ export type RunLogEntry = {
 /** What the request subsystem did with a wanted-but-missing title (Sonarr/Radarr). Overlaid onto a
  *  "not in your libraries" fate so a drop reads "→ requested from Radarr" instead of a dead end.
  *  pending = queued for the owner's approval; sent = asked of Sonarr/Radarr; rejected = dismissed. */
-export type TraceRequestOutcome = {
-  status: "pending" | "sent" | "rejected";
-} & Schemas["TraceRequestOut"];
+export type TraceRequestOutcome = Schemas["TraceRequestOut"];
 
 /** GET /api/runs/{id}/users/{uid}/trace response. */
 export type RunUserTraceResponse = {
@@ -276,8 +282,25 @@ export type RequestSendResult = Schemas["SendOut"];
 
 // --- Setup wizard / auth ---
 
+/** GET /api/setup/servers — a server plex.tv says this account can reach, with every advertised
+ *  address already tried from where Shortlist actually runs — only the owner's network knows which
+ *  one works. `machine_id` is null only if plex.tv ever omits `clientIdentifier` on the resource. */
+export type PlexServer = Schemas["PlexServerOut"];
+
 /** POST /api/setup/probe body. */
 export type ProbeRequest = Schemas["ProbeRequest"];
+
+/** One line of the wizard's step-1 checklist (`ProbeResult.checks`): did it pass, and what to say
+ *  about it. */
+export type ProbeCheck = Schemas["ProbeCheckOut"];
+
+/** One movie/show library the probe found (`ProbeResult.libraries`). `key` is a genuine number —
+ *  plexapi casts a Plex section's key to an int, and the probe passes it through unstringified,
+ *  unlike {@link PlexLibrary} (`/api/system/libraries`), which calls `str()` on its own. */
+export type LibrarySection = Schemas["LibrarySectionOut"];
+
+/** POST /api/setup/probe response. */
+export type ProbeResult = Schemas["ProbeResultOut"];
 
 /** POST /api/setup/link body. */
 export type LinkRequest = Schemas["LinkRequest"];
@@ -308,9 +331,10 @@ export type ApiTokenCreated = Schemas["ApiTokenCreatedOut"];
 // --- Dashboard / report ---
 
 /** One alert in the bell menu (GET /api/notifications). */
-export type AppNotification = {
-  severity: "info" | "warning" | "error";
-} & Schemas["NotificationOut"];
+export type AppNotification = Schemas["NotificationOut"];
+
+/** Report windows, in days. "all" is lifetime. */
+export type ReportWindow = Schemas["EffectivenessReportOut"]["window"];
 
 /**
  * The dashboard effectiveness report — did delivered picks get watched?
@@ -321,9 +345,7 @@ export type AppNotification = {
  * denominator describe the same picks. `per_user` carries counts and no rate — at these sample sizes
  * a percentage is noise dressed as precision, and sorting by it put 1/31 above 3/103.
  */
-export type EffectivenessReport = {
-  window: ReportWindow;
-} & Schemas["EffectivenessReportOut"];
+export type EffectivenessReport = Schemas["EffectivenessReportOut"];
 
 /** GET /api/report/deleted-rows — pick history left behind by a row that no longer exists. */
 export type DeletedRowHistory = Schemas["DeletedRowOut"];
@@ -343,11 +365,14 @@ export type Backup = Schemas["BackupOut"];
 
 export type VersionInfo = Schemas["VersionOut"];
 
+/** A job's lifecycle state, shared by `JobOut` and `JobRunOut` (`JobStatus` on the server — a
+ *  Python-side `Literal` alias, not itself a named schema component, so this derives from whichever
+ *  of the two fields it happens to read). */
+export type JobStatus = Schemas["JobOut"]["status"];
+
 /** One background maintenance job (GET /api/system/jobs). Runs are NOT jobs — they have their own
  *  page. `queued` after a failure means it will be retried. */
-export type Job = {
-  status: "queued" | "running" | "done" | "failed";
-} & Schemas["JobOut"];
+export type Job = Schemas["JobOut"];
 
 /** GET /api/system/jobs/catalog — one entry per job kind Shortlist knows how to run.
  *
@@ -360,7 +385,7 @@ export type JobCatalogEntry = {
 /** POST /api/system/jobs — the job as it stood after the inline drain. `fixed`/`orphans` are the
  *  sync.check preview lists (and empty for every other kind); `orphans` is kept apart from `fixed`
  *  because deleting a departed user's collection is the one action that cannot be undone. */
-export type JobResult = { status: Job["status"] } & Schemas["JobRunOut"];
+export type JobResult = Schemas["JobRunOut"];
 
 /** GET /api/schedule — one recurring thing, discriminated by `type`: a job, or the group of rows
  *  sharing one cron (ONE trigger builds all of them, not one entry each). */
@@ -373,12 +398,43 @@ export type ScheduleResponse = Schemas["ScheduleOut"];
  *  rows switched off so the next scheduled run can't rebuild what uninstall removed. */
 export type UninstallResult = Schemas["UninstallOut"];
 
+// --- Live events (GET /api/events, text/event-stream) ---
+//
+// The stream itself has no OpenAPI content type, but each event's payload is still a modelled
+// schema (`RunUserStageEvent` aside — see the file header — it reuses RunLogEntry/RunLogLineOut).
+
+/** Which Tools-page sync a `sync.*` event belongs to. */
+export type SyncKind = Schemas["SyncProgressEvent"]["kind"];
+
+/** Event `run.finished` — a run reached a terminal state. `aborted` is a cancel that still completed
+ *  its privacy merge and promotion, so it is an outcome, not a failure — a consumer that folds it
+ *  into "failed" (as `status !== "ok"`) is telling the owner their cancelled run broke. */
+export type RunFinishedEvent = Schemas["RunFinishedEvent"];
+
+/** Event `run.progress` — a run entered a non-terminal state. `cancelling` publishes the moment
+ *  POST /api/runs/{id}/cancel is accepted; the run keeps going until the person it's on finishes. */
+export type RunProgressEvent = Schemas["RunProgressEvent"];
+
+/** One live step streamed while a real uninstall runs (SSE `uninstall.progress`). */
+export type UninstallProgressEvent = Schemas["UninstallProgressEvent"];
+
+/**
+ * Live progress for a Tools-page sync (SSE `sync.progress`).
+ *
+ * The watched sync is one determinate loop (`done`/`total` users). The users sync has two phases:
+ * an indeterminate `fetch` (the opaque plex.tv round-trip), then a determinate `save` bar.
+ */
+export type SyncProgressEvent = Schemas["SyncProgressEvent"];
+
+/** A Tools-page sync finished (SSE `sync.finished`). */
+export type SyncFinishedEvent = Schemas["SyncFinishedEvent"];
+
 // ---------------------------------------------------------------------------
 // Hand-written — the shapes the schema genuinely cannot describe.
 //
-// Three kinds only, each noted below: engine-owned JSON blobs the server declares as an open map,
-// the `/api/setup` handlers that still return a bare `dict`, and the SSE payloads (`text/event-stream`
-// has no OpenAPI schema at all). Everything else is generated above.
+// One kind only: engine-owned JSON blobs the server deliberately declares as an open map (see the
+// file header). `RunUserStageEvent` below is not a second kind — it's an alias to a Generated type
+// under its SSE-facing name. Everything else is generated above.
 // ---------------------------------------------------------------------------
 
 // --- Engine-owned blobs (declared `dict` server-side, on purpose) ---
@@ -551,106 +607,12 @@ export interface RunUserTrace {
   gathers?: TraceGather[];
 }
 
-// --- Setup probe (POST /api/setup/probe, GET /api/setup/servers still return bare `dict`) ---
-
-export interface ProbeCheck {
-  ok: boolean;
-  message: string;
-  value?: string;
-}
-
-export interface LibrarySection {
-  key: string;
-  title: string;
-  type: string;
-  count: number;
-}
-
-/** POST /api/setup/probe response. */
-export interface ProbeResult {
-  checks: {
-    pms_version: ProbeCheck;
-    plex_pass: ProbeCheck;
-    libraries: ProbeCheck;
-    tautulli?: ProbeCheck;
-  };
-  machine_id: string;
-  server_name: string;
-  owner_account_id: number;
-  libraries: LibrarySection[];
-}
-
-/**
- * A server plex.tv says this account can reach, with every advertised address already tried
- * from where Shortlist actually runs — only the owner's network knows which one works.
- */
-export interface PlexServer {
-  name: string;
-  machine_id: string;
-  owned: boolean;
-  version: string;
-  connections: {
-    uri: string;
-    local: boolean;
-    relay: boolean;
-    ok: boolean;
-  }[];
-}
-
 // --- SSE payloads (GET /api/events) ---
-//
-// The event stream is `text/event-stream`, so OpenAPI describes none of it: these are the only
-// account of the payload shapes anywhere on the client side.
 
 /** Event `run.user.stage` — the SAME object the activity log carries. The buffer's sink stamps `seq`
  *  on the entry in place before the bus publishes it, so this is that type rather than a second,
  *  drifting declaration of it. */
 export type RunUserStageEvent = RunLogEntry;
-
-/** Event `run.finished`. */
-export interface RunFinishedEvent {
-  run_id: number;
-  status: string;
-  /** On failure, the reason so the UI can show it inline. */
-  error?: string | null;
-}
-
-/** One live step streamed while a real uninstall runs (SSE `uninstall.progress`). */
-export interface UninstallProgressEvent {
-  /** Human-readable line for the live log, e.g. "Restored Sarah's share filter". */
-  label: string;
-  /** For filter-restore steps: how many done out of the total. */
-  done?: number;
-  total?: number;
-}
-
-/**
- * Live progress for a Tools-page sync (SSE `sync.progress`).
- *
- * The watched sync is one determinate loop (`done`/`total` users). The users sync has two phases:
- * an indeterminate `fetch` (the opaque plex.tv round-trip), then a determinate `save` bar.
- */
-export interface SyncProgressEvent {
-  kind: SyncKind;
-  /** Only the users sync sends phases; the watched sync is a single implicit "save" loop. */
-  phase?: "fetch" | "save";
-  done?: number;
-  total?: number;
-}
-
-/** A Tools-page sync finished (SSE `sync.finished`). */
-export interface SyncFinishedEvent {
-  kind: SyncKind;
-  ok: boolean;
-  /** watched sync: how many users were refreshed. */
-  count?: number;
-  /** users sync: the same counts the POST returns, echoed so the bar can settle on them. */
-  added?: number;
-  updated?: number;
-  total?: number;
-  /** On failure (watched sync), the exception class name — never a tokened message (rule 9). */
-  error?: string | null;
-}
 
 // ---------------------------------------------------------------------------
 // Frontend-only — unions and aliases the UI invents.
@@ -658,13 +620,8 @@ export interface SyncFinishedEvent {
 // The server types every one of these fields as a bare `str`, so the schema cannot narrow them:
 // these are the UI's own vocabulary for the values it knows the engine produces, and a value
 // outside a union here is a UI bug, not an API change. Each could be retired by a `Literal[...]`
-// on the Python side. (The same applies to the unions written inline above, on `Job.status`,
-// `AppNotification.severity` and `TraceRequestOutcome.status`.)
+// on the Python side.
 // ---------------------------------------------------------------------------
-
-export type UserType = "owner" | "shared" | "managed";
-
-export type RunTrigger = "schedule" | "manual" | "wizard";
 
 /** What happened to a candidate a source returned: kept into the pool, or dropped and why. */
 export type TraceFate =
@@ -674,12 +631,6 @@ export type TraceFate =
   | "excluded_genre"
   | "lost_ranking_cutoff"
   | "not_returned";
-
-/** Which Tools-page sync a `sync.*` event belongs to. */
-export type SyncKind = "watched" | "users";
-
-/** Report windows, in days. "all" is lifetime. */
-export type ReportWindow = "7" | "30" | "90" | "all";
 
 /** The services POST /api/settings/test/{service} accepts (a path parameter typed `str`). */
 export type TestableService =

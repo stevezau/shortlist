@@ -24,6 +24,7 @@ import os
 import platform
 import secrets as pysecrets
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -336,7 +337,9 @@ async def debug_bundle(request: Request) -> str:
 class LibraryOut(PassthroughModel):
     key: str
     title: str
-    type: str  # Plex section type: "movie" | "show" | anything else the server has
+    #: Closed by the READ, not by Plex: `PlexClient.sections()` defaults to `("movie", "show")` and
+    #: filters everything else out, so a music or photo library never reaches this response.
+    type: Literal["movie", "show"]
 
 
 @_authed.get("/libraries", response_model=list[LibraryOut])
@@ -402,7 +405,7 @@ class OwnedCollectionOut(PassthroughModel):
     title: str
     label: str
     rating_key: int
-    kind: str  # "user" (a per-person row's label) | "shared" (a shared row's own slug)
+    kind: Literal["user", "shared"]  # a per-person row's label, or a shared row's own slug
     slug: str
     orphan: bool  # its user or shared row is gone from the app — safe to remove
 
@@ -674,12 +677,18 @@ async def restore_backup_endpoint(body: RestoreRequest, request: Request) -> dic
 _BACKGROUND_DRAINS: set[asyncio.Task] = set()
 
 
+#: A job's whole lifecycle: queued -> running -> done | failed, plus the boot recovery that puts a
+#: `running` row left by a dead process back to `queued`. `services/jobs.py` writes all four and
+#: nothing else, so both job shapes below share this one declaration.
+JobStatus = Literal["queued", "running", "done", "failed"]
+
+
 class JobOut(PassthroughModel):
     """One background job row — the shape `_job_dict` builds, on both `/jobs` and `/jobs/catalog`."""
 
     id: int
     kind: str
-    status: str  # queued | running | done | failed
+    status: JobStatus
     attempts: int
     max_attempts: int
     detail: str
@@ -834,7 +843,7 @@ class JobRunOut(PassthroughModel):
 
     id: int
     kind: str
-    status: str
+    status: JobStatus
     detail: str
     error: str | None
     fixed: list[str]  # labels the check corrected (or, on a dry run, would correct)

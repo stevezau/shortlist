@@ -440,7 +440,9 @@ class TestRunsApi:
             session.add_all(
                 [
                     Run(trigger="manual", status="ok"),
-                    Run(trigger="scheduled", status="ok"),
+                    # "schedule", not "scheduled" — the scheduler writes the former, and `trigger` is
+                    # now a Literal, so a made-up value here would 500 any endpoint that lists it.
+                    Run(trigger="schedule", status="ok"),
                     Run(trigger="manual", status="error"),
                 ]
             )
@@ -1434,3 +1436,114 @@ class TestRunsApi:
         assert [set(line) for line in lines] == [RUN_LOG_KEYS, RUN_LOG_KEYS]
         assert lines[0]["counts"] == {"titles": 7} and lines[0]["ts"] is not None
         assert lines[0]["reason"] is None and lines[1]["reason"] == "paused"
+
+
+class TestClosedSetFieldsMatchWhatTheCodeWrites:
+    """Every value the producing code can write must survive its response model.
+
+    `trigger`, `window` and a trace request's `status` are now `Literal[...]` rather than `str`, so
+    the OpenAPI schema carries the enum and the SPA stops re-declaring it by hand. That is only safe
+    while the set is a superset of what the writers emit: a Literal is validated on the way OUT, and
+    a value outside it does not degrade — it raises, and the endpoint 500s with real data in the
+    database. So each of these drives the value through the real handler rather than asserting the
+    annotation.
+    """
+
+    def test_every_trigger_the_producers_write_survives_the_runs_endpoints(self, client: TestClient, monkeypatch):
+        """Captured from the producers, not hand-listed — that is the whole point.
+
+        Exactly two code paths start a run: `POST /api/runs` and the scheduler's cron job, and both
+        insert through `RunService.start_run`. This intercepts that one seam to record what each
+        really passes, then pushes every captured word back through the real response model. Add a
+        third producer with a new word and this fails here, instead of 500ing the Runs page.
+
+        (`wizard` is in the Literal because `runs.trigger` has documented it since 0001, but no
+        producer writes it — the wizard's first run is a `POST /api/runs` like any other.)
+        """
+        import asyncio
+
+        from shortlist.server.db.models import Run
+        from shortlist.server.scheduler import _make_job
+
+        captured: list[str] = []
+
+        async def fake_start_run(*, trigger, dry_run, user_ids=None, collection_ids=None):
+            captured.append(trigger)
+            return 1
+
+        monkeypatch.setattr(client.app.state.run_service, "start_run", fake_start_run)
+        client.post("/api/runs", json={"dry_run": True})
+        # The scheduler's job body, called directly: it is the only place "schedule" is written, and
+        # waiting for a cron to fire is not a test. `start_run` is stubbed, so nothing is scheduled.
+        asyncio.run(_make_job(client.app, "30 3 * * *", [])())
+
+        assert set(captured) == {"manual", "schedule"}, "a new producer must be added to the Literal"
+
+        with client.app.state.sessions() as session:
+            wanted = {}
+            for trigger in sorted(set(captured)):
+                run = Run(trigger=trigger, status="ok")
+                session.add(run)
+                session.flush()
+                wanted[run.id] = trigger
+            session.commit()
+
+        listed = {r["id"]: r["trigger"] for r in client.get("/api/runs").json()}
+        for run_id, trigger in wanted.items():
+            assert listed[run_id] == trigger
+            assert client.get(f"/api/runs/{run_id}").json()["trigger"] == trigger
+
+    def test_started_at_is_always_a_timestamp_never_null(self, client: TestClient):
+        """`runs.started_at` is NOT NULL with an ORM-side default, so the model declares `str`, not
+        `str | None` — it only ever read optional because `iso_utc` is typed that way. A row inserted
+        WITHOUT naming the column is the case that proves the default fires."""
+        from shortlist.server.db.models import Run
+
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok")  # no started_at: the default must supply one
+            session.add(run)
+            session.commit()
+            run_id = run.id
+
+        listed = next(r for r in client.get("/api/runs").json() if r["id"] == run_id)
+
+        assert isinstance(listed["started_at"], str) and listed["started_at"]
+        assert client.get(f"/api/runs/{run_id}").json()["started_at"] == listed["started_at"]
+
+    @pytest.mark.parametrize("window", ["7", "30", "90", "all"])
+    def test_every_selectable_report_window_is_echoed_back(self, client: TestClient, window: str):
+        body = client.get(f"/api/report?window={window}").json()
+
+        assert body["window"] == window
+
+    def test_an_unknown_window_is_normalised_before_it_reaches_the_payload(self, client: TestClient):
+        """Why the Literal is safe despite `window` coming straight off the query string:
+        `report_service.effectiveness` falls back to the default for anything it does not know."""
+        assert client.get("/api/report?window=nonsense").json()["window"] == "30"
+
+    @pytest.mark.parametrize("status", ["pending", "sent", "rejected"])
+    def test_every_request_status_survives_the_trace_overlay(self, client: TestClient, status: str):
+        """The three `request_candidates.status` values, written by `api/requests.py` (rejected,
+        pending, sent) and `run_persistence` (pending, sent)."""
+        from shortlist.server.db.models import RequestCandidate, Run, RunUser
+
+        with client.app.state.sessions() as session:
+            user_id = session.query(User).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(
+                RunUser(
+                    run_id=run.id,
+                    user_id=user_id,
+                    status="ok",
+                    trace={"candidates": {"tmdb_similar": {"returns": [{"tmdb_id": 4242, "title": "Wanted"}]}}},
+                )
+            )
+            session.add(RequestCandidate(tmdb_id=4242, media_type="movie", title="Wanted", status=status))
+            session.commit()
+            run_id = run.id
+
+        payload = client.get(f"/api/runs/{run_id}/users/{user_id}/trace").json()
+
+        assert payload["requests"]["4242:movie"]["status"] == status

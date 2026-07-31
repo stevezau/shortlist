@@ -2076,8 +2076,11 @@ export interface components {
             /** Trend */
             trend: components["schemas"]["TrendPointOut"][];
             watch_sync: components["schemas"]["WatchSyncOut"];
-            /** Window */
-            window: string;
+            /**
+             * Window
+             * @enum {string}
+             */
+            window: "7" | "30" | "90" | "all";
             /** Window Days */
             window_days: number | null;
         } & {
@@ -2219,8 +2222,11 @@ export interface components {
             };
             /** Started At */
             started_at: string | null;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "done" | "failed";
         } & {
             [key: string]: unknown;
         };
@@ -2241,8 +2247,11 @@ export interface components {
             kind: string;
             /** Orphans */
             orphans: string[];
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "done" | "failed";
         } & {
             [key: string]: unknown;
         };
@@ -2282,8 +2291,30 @@ export interface components {
             key: string;
             /** Title */
             title: string;
-            /** Type */
-            type: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "movie" | "show";
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * LibrarySectionOut
+         * @description One movie/show library the probe found.
+         */
+        LibrarySectionOut: {
+            /** Count */
+            count: number;
+            /** Key */
+            key: number;
+            /** Title */
+            title: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "movie" | "show";
         } & {
             [key: string]: unknown;
         };
@@ -2310,6 +2341,15 @@ export interface components {
              * @default
              */
             version: string;
+        };
+        /** LinkedOut */
+        LinkedOut: {
+            /** Linked */
+            linked: boolean;
+            /** Server Name */
+            server_name: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * LogLineOut
@@ -2366,8 +2406,11 @@ export interface components {
             dismissable: boolean;
             /** Id */
             id: string;
-            /** Severity */
-            severity: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "info" | "warning" | "error";
             /** Title */
             title: string;
         } & {
@@ -2403,8 +2446,11 @@ export interface components {
         };
         /** OwnedCollectionOut */
         OwnedCollectionOut: {
-            /** Kind */
-            kind: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "user" | "shared";
             /** Label */
             label: string;
             /** Library */
@@ -2524,6 +2570,24 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * PlexServerOut
+         * @description A server plex.tv says this account can reach, with every advertised address already tried.
+         */
+        PlexServerOut: {
+            /** Connections */
+            connections: components["schemas"]["ServerConnectionOut"][];
+            /** Machine Id */
+            machine_id: string | null;
+            /** Name */
+            name: string;
+            /** Owned */
+            owned: boolean;
+            /** Version */
+            version: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * PosterIn
          * @description A row's custom-poster config. ``mode`` "" leaves Plex artwork alone; "upload" uses the image
          *     stored via the upload endpoint; "text" renders ``title``/``subtitle`` with the built-in Pillow
@@ -2585,6 +2649,43 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * ProbeCheckOut
+         * @description One line of the wizard's step-1 checklist: did it pass, and what to say about it.
+         *
+         *     This is the one shape here with an OPTIONAL field, which is why its route sets
+         *     ``response_model_exclude_unset``. `extra="allow"` stops a model dropping a key, but nothing stops
+         *     it INVENTING one: without that flag every check the probe sends without a `value` — and the whole
+         *     `tautulli` entry on a server that has none — would arrive as an explicit `null` the handler never
+         *     wrote. The flag makes the payload byte-identical to the dict, which is the entire contract these
+         *     models are meant to keep.
+         */
+        ProbeCheckOut: {
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
+            /** Value */
+            value?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ProbeChecksOut
+         * @description The checklist itself.
+         *
+         *     `tautulli` runs only when the form supplied a Tautulli URL, so it is the one check that can be
+         *     absent — and it therefore needs the default. Without one it would be REQUIRED, and every probe of
+         *     a server with no Tautulli would fail response validation with a 500 instead of rendering.
+         */
+        ProbeChecksOut: {
+            libraries: components["schemas"]["ProbeCheckOut"];
+            plex_pass: components["schemas"]["ProbeCheckOut"];
+            pms_version: components["schemas"]["ProbeCheckOut"];
+            tautulli?: components["schemas"]["ProbeCheckOut"] | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** ProbeRequest */
         ProbeRequest: {
             /** Plex Url */
@@ -2593,6 +2694,23 @@ export interface components {
             tautulli_apikey?: string | null;
             /** Tautulli Url */
             tautulli_url?: string | null;
+        };
+        /**
+         * ProbeResultOut
+         * @description What `POST /setup/probe` answers: the checklist plus what it learned about the server.
+         */
+        ProbeResultOut: {
+            checks: components["schemas"]["ProbeChecksOut"];
+            /** Libraries */
+            libraries: components["schemas"]["LibrarySectionOut"][];
+            /** Machine Id */
+            machine_id: string;
+            /** Owner Account Id */
+            owner_account_id: number;
+            /** Server Name */
+            server_name: string;
+        } & {
+            [key: string]: unknown;
         };
         /** QualityProfileOut */
         QualityProfileOut: {
@@ -2846,17 +2964,40 @@ export interface components {
             /** Promotion Blockers */
             promotion_blockers: string[];
             /** Started At */
-            started_at: string | null;
+            started_at: string;
             /** Stats */
             stats: {
                 [key: string]: unknown;
             };
             /** Status */
             status: string;
-            /** Trigger */
-            trigger: string;
+            /**
+             * Trigger
+             * @enum {string}
+             */
+            trigger: "schedule" | "manual" | "wizard";
             /** Users */
             users: components["schemas"]["RunUserOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RunFinishedEvent
+         * @description Event ``run.finished`` — a run reached a terminal state.
+         *
+         *     `aborted` is a cancel that still completed its privacy merge and promotion, so it is an outcome
+         *     rather than a failure; the UI distinguishes the three.
+         */
+        RunFinishedEvent: {
+            /** Error */
+            error?: string | null;
+            /** Run Id */
+            run_id: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "error" | "aborted";
         } & {
             [key: string]: unknown;
         };
@@ -2911,6 +3052,22 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * RunProgressEvent
+         * @description Event ``run.progress`` — a run entered a non-terminal state. `cancelling` is published the
+         *     moment /cancel is accepted; the run keeps going until the person it is on finishes.
+         */
+        RunProgressEvent: {
+            /** Run Id */
+            run_id: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "cancelling";
+        } & {
+            [key: string]: unknown;
+        };
         /** RunRequest */
         RunRequest: {
             /** Collection Ids */
@@ -2939,15 +3096,18 @@ export interface components {
             /** Promotion Blockers */
             promotion_blockers: string[];
             /** Started At */
-            started_at: string | null;
+            started_at: string;
             /** Stats */
             stats: {
                 [key: string]: unknown;
             };
             /** Status */
             status: string;
-            /** Trigger */
-            trigger: string;
+            /**
+             * Trigger
+             * @enum {string}
+             */
+            trigger: "schedule" | "manual" | "wizard";
         } & {
             [key: string]: unknown;
         };
@@ -3146,6 +3306,22 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * ServerConnectionOut
+         * @description One advertised address, with the answer to "does it work from inside the container?".
+         */
+        ServerConnectionOut: {
+            /** Local */
+            local: boolean;
+            /** Ok */
+            ok: boolean;
+            /** Relay */
+            relay: boolean;
+            /** Uri */
+            uri: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * SessionOut
          * @description Who the caller is, and whether this instance demands a sign-in at all.
          *
@@ -3185,6 +3361,57 @@ export interface components {
             values: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * SyncFinishedEvent
+         * @description Event ``sync.finished`` — a Tools-page sync ended.
+         *
+         *     The two syncs report different things because they did different work, so most fields belong to
+         *     one of them: `count` to the watched sync, `added`/`updated`/`total` to the users sync.
+         */
+        SyncFinishedEvent: {
+            /** Added */
+            added?: number | null;
+            /** Count */
+            count?: number | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "watched" | "users";
+            /** Ok */
+            ok: boolean;
+            /** Total */
+            total?: number | null;
+            /** Updated */
+            updated?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SyncProgressEvent
+         * @description Event ``sync.progress`` — a Tools-page sync moved.
+         *
+         *     The watched sync is one determinate `done`/`total` loop over users. The users sync has two
+         *     phases: an indeterminate `fetch` (one opaque plex.tv + Tautulli round-trip), then a determinate
+         *     `save` bar over the roster upsert.
+         */
+        SyncProgressEvent: {
+            /** Done */
+            done?: number | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "watched" | "users";
+            /** Phase */
+            phase?: ("fetch" | "save") | null;
+            /** Total */
+            total?: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /** SyncStartedOut */
         SyncStartedOut: {
@@ -3255,8 +3482,11 @@ export interface components {
             detail: string;
             /** Excluded */
             excluded: boolean;
-            /** Status */
-            status: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "sent" | "rejected";
         } & {
             [key: string]: unknown;
         };
@@ -3281,6 +3511,21 @@ export interface components {
             message: string;
             /** Rows Disabled */
             rows_disabled: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * UninstallProgressEvent
+         * @description Event ``uninstall.progress`` — one live step of a REAL uninstall (the dry-run preview is
+         *     instant and streams nothing).
+         */
+        UninstallProgressEvent: {
+            /** Done */
+            done?: number | null;
+            /** Label */
+            label: string;
+            /** Total */
+            total?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -3338,8 +3583,7 @@ export interface components {
             restriction_profile: string;
             /** Slug */
             slug: string;
-            /** User Type */
-            user_type: string;
+            user_type: components["schemas"]["UserType"];
             /** Username */
             username: string;
         } & {
@@ -3482,6 +3726,11 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * UserType
+         * @enum {string}
+         */
+        UserType: "owner" | "shared" | "managed";
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -3566,6 +3815,35 @@ export interface components {
             };
             /** Step */
             step: number;
+        };
+        /**
+         * WizardStateOut
+         * @description Resumable wizard progress. Every field has a settings-store default (step 0, {}, False), so a
+         *     never-started instance answers with those rather than nulls.
+         */
+        WizardStateOut: {
+            /** Completed */
+            completed: boolean;
+            /** State */
+            state: {
+                [key: string]: unknown;
+            };
+            /** Step */
+            step: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WizardStateSavedOut
+         * @description The receipt for `PUT /state` — an echo, not a re-read: `state` is deliberately not returned.
+         */
+        WizardStateSavedOut: {
+            /** Completed */
+            completed: boolean;
+            /** Step */
+            step: number;
+        } & {
+            [key: string]: unknown;
         };
     };
     responses: never;
@@ -3993,13 +4271,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description An endless `text/event-stream`. Each frame names its event (`run.user.stage`, `run.progress`, `run.finished`, `uninstall.progress`, `sync.progress`, `sync.finished`) and carries one of these payloads as JSON in `data:`. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "text/event-stream": string | components["schemas"]["RunLogLineOut"] | components["schemas"]["RunProgressEvent"] | components["schemas"]["RunFinishedEvent"] | components["schemas"]["UninstallProgressEvent"] | components["schemas"]["SyncProgressEvent"] | components["schemas"]["SyncFinishedEvent"];
                 };
             };
         };
@@ -4823,9 +5101,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["LinkedOut"];
                 };
             };
             /** @description Validation Error */
@@ -4858,9 +5134,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProbeResultOut"];
                 };
             };
             /** @description Validation Error */
@@ -4889,9 +5163,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["PlexServerOut"][];
                 };
             };
         };
@@ -4911,9 +5183,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WizardStateOut"];
                 };
             };
         };
@@ -4937,9 +5207,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WizardStateSavedOut"];
                 };
             };
             /** @description Validation Error */

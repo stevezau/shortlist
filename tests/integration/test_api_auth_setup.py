@@ -246,13 +246,161 @@ class TestApiToken:
 
 
 class TestSetupApi:
+    """The wizard's endpoints, which were the last handlers in the package returning a bare `dict`.
+
+    They now declare response models like everything else — and a response model FILTERS, so every
+    assertion below names the whole key set rather than the field it cares about. A model that forgot
+    `machine_id` or `owner_account_id` would leave the wizard unable to link a server at all, with
+    nothing failing anywhere else.
+    """
+
+    def _sign_in_with_a_plex_token(self, client: TestClient) -> None:
+        """The owner's stored token is what `_plex_token` hands the token-bearing endpoints."""
+        with client.app.state.sessions() as session:
+            SettingsStore(session, client.app.state.secrets).set("plex.token", "owner-token")
+            session.commit()
+
     def test_wizard_state_round_trip(self, client: TestClient):
         r = client.get("/api/setup/state").json()
         assert r["completed"] is False
-        client.put("/api/setup/state", json={"step": 3, "state": {"picked": [1, 2]}, "completed": False})
+        assert set(r) == {"step", "state", "completed"}
+        saved = client.put("/api/setup/state", json={"step": 3, "state": {"picked": [1, 2]}, "completed": False})
+        # The PUT is an echo, not a re-read: it deliberately does not return `state`.
+        assert set(saved.json()) == {"step", "completed"}
         r = client.get("/api/setup/state").json()
         assert r["step"] == 3
         assert r["state"] == {"picked": [1, 2]}
+
+    def test_a_never_started_instance_answers_with_defaults_not_nulls(self, client: TestClient):
+        """`step`/`state`/`completed` are non-optional on the model because the settings store has a
+        default for each — an instance nobody has touched still answers 0/{}/False."""
+        body = client.get("/api/setup/state").json()
+
+        assert body == {"step": 0, "state": {}, "completed": False}
+
+    def test_plexapi_hands_a_library_section_key_back_as_an_int(self):
+        """The assumption behind `LibrarySectionOut.key: int`, asserted rather than believed.
+
+        plexapi casts a section's `key` (`utils.cast(int, …)`), and `/setup/probe` passes it through
+        untouched — unlike `/system/libraries`, which stringifies it. The SPA's hand-written
+        `LibrarySection.key: string` has been wrong about this all along.
+        """
+        from unittest.mock import MagicMock
+        from xml.etree import ElementTree
+
+        from plexapi.library import LibrarySection
+
+        section = LibrarySection(MagicMock(), ElementTree.fromstring('<Directory key="1" type="movie" title="M"/>'))
+
+        assert section.key == 1 and isinstance(section.key, int)
+
+    def test_the_probe_returns_the_whole_checklist_for_a_server_with_tautulli(self, client: TestClient, monkeypatch):
+        from types import SimpleNamespace
+
+        from shortlist.server.services import setup_probe
+
+        self._sign_in_with_a_plex_token(client)
+        monkeypatch.setattr(setup_probe, "plextv_account", lambda *a, **k: dict(OWNER_JSON))
+        monkeypatch.setattr(
+            setup_probe,
+            "PlexClient",
+            lambda *a, **k: SimpleNamespace(
+                version="1.43.3.10793",
+                machine_id="m1",
+                server_name="SFLIX",
+                # `key` is an int here for the same reason it is on a real PMS — see the test above.
+                sections=lambda: [SimpleNamespace(key=1, title="Movies", type="movie", totalSize=1200)],
+            ),
+        )
+        monkeypatch.setattr(
+            "shortlist.engine.clients.tautulli.TautulliClient",
+            lambda *a, **k: SimpleNamespace(ping=lambda: None),
+        )
+
+        body = client.post(
+            "/api/setup/probe",
+            json={"plex_url": "http://pms:32400", "tautulli_url": "http://tautulli:8181", "tautulli_apikey": "k"},
+        ).json()
+
+        assert set(body) == {"checks", "machine_id", "server_name", "owner_account_id", "libraries"}
+        assert set(body["checks"]) == {"pms_version", "plex_pass", "libraries", "tautulli"}
+        assert set(body["checks"]["pms_version"]) == {"ok", "message", "value"}
+        # Only the version check carries a `value`; the model must not invent one on the others.
+        assert set(body["checks"]["plex_pass"]) == {"ok", "message"}
+        assert body["checks"]["tautulli"] == {"ok": True, "message": "Tautulli connected"}
+        assert body["libraries"] == [{"key": 1, "title": "Movies", "type": "movie", "count": 1200}]
+        assert body["owner_account_id"] == OWNER_ID
+
+    def test_the_probe_still_answers_when_there_is_no_tautulli(self, client: TestClient, monkeypatch):
+        """`checks.tautulli` is the one check that can be absent, which is why it carries a default —
+        without one it would be REQUIRED, and every Tautulli-less server would get a 500 here instead
+        of a checklist. It must still be ABSENT, not an invented `null`: the route sets
+        `response_model_exclude_unset`, so the model documents the payload without adding to it."""
+        from types import SimpleNamespace
+
+        from shortlist.server.services import setup_probe
+
+        self._sign_in_with_a_plex_token(client)
+        monkeypatch.setattr(setup_probe, "plextv_account", lambda *a, **k: dict(OWNER_JSON))
+        monkeypatch.setattr(
+            setup_probe,
+            "PlexClient",
+            lambda *a, **k: SimpleNamespace(
+                version="1.43.3.10793", machine_id="m1", server_name="SFLIX", sections=lambda: []
+            ),
+        )
+
+        r = client.post("/api/setup/probe", json={"plex_url": "http://pms:32400"})
+
+        assert r.status_code == 200
+        assert "tautulli" not in r.json()["checks"]
+        assert r.json()["checks"]["libraries"] == {"ok": False, "message": "No movie/show libraries found"}
+
+    def test_the_server_picker_reports_every_advertised_address_it_tried(self, client: TestClient):
+        self._sign_in_with_a_plex_token(client)
+        resources = [
+            {
+                "name": "SFLIX",
+                "clientIdentifier": "m1",
+                "provides": "server",
+                "owned": True,
+                "productVersion": "1.43.3.10793",
+                "connections": [{"uri": "http://10.0.0.5:32400", "local": True, "relay": False}],
+            },
+            {"name": "Someone's phone", "clientIdentifier": "p1", "provides": "player", "connections": []},
+        ]
+        with respx.mock:
+            respx.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(200, json=resources))
+            # The reachability probe is a real (unauthenticated) GET per address — refuse it, and the
+            # address comes back `ok: False` rather than the request escaping the test.
+            respx.get("http://10.0.0.5:32400/identity").mock(side_effect=httpx.ConnectError("refused"))
+
+            body = client.get("/api/setup/servers").json()
+
+        assert [set(s) for s in body] == [{"name", "machine_id", "owned", "version", "connections"}]
+        assert body[0]["machine_id"] == "m1"  # the player is filtered out: it doesn't "provide" a server
+        assert body[0]["connections"] == [{"uri": "http://10.0.0.5:32400", "local": True, "relay": False, "ok": False}]
+
+    def test_linking_a_server_answers_with_the_receipt_the_wizard_reads(self, client: TestClient):
+        """The happy path, which only the rejection cases were covered for. plex.tv is asked whether
+        the account really OWNS the machine id — a share on someone else's server is not enough."""
+        self._sign_in_with_a_plex_token(client)
+        owned = [{"clientIdentifier": "m1", "provides": "server", "owned": True}]
+        with respx.mock:
+            respx.get("https://plex.tv/api/v2/resources").mock(return_value=httpx.Response(200, json=owned))
+
+            body = client.post(
+                "/api/setup/link",
+                json={
+                    "plex_url": "http://pms:32400",
+                    "machine_id": "m1",
+                    "server_name": "SFLIX",
+                    "version": "1.43.3.10793",
+                    "owner_account_id": OWNER_ID,
+                },
+            ).json()
+
+        assert body == {"linked": True, "server_name": "SFLIX"}
 
 
 class TestUninstall:
