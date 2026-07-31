@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from alembic import command
@@ -113,6 +114,36 @@ def _migration_pending(cfg: AlembicConfig, config_dir: Path) -> bool:
     return current != ScriptDirectory.from_config(cfg).get_current_head()
 
 
+def _sweep_batch_leftovers(config_dir: Path) -> None:
+    """Drop any `_alembic_tmp_*` table a previous crashed migration left behind.
+
+    SQLite cannot ALTER a constraint, so Alembic's `batch_alter_table` rebuilds: CREATE
+    `_alembic_tmp_X`, copy, DROP, RENAME. Under pysqlite the CREATE runs before any DML has opened a
+    transaction, so it AUTOCOMMITS while the copy/drop/rename roll back together. A crash or a power
+    cut in that window therefore leaves the temp table committed and the migration unapplied — and
+    every later boot then dies on "table _alembic_tmp_X already exists", for ever, until someone runs
+    SQL by hand. The data is safe (the rebuild rolls back, and a pre-migration backup exists); the
+    container simply cannot start.
+
+    Swept before `upgrade` rather than inside any one migration so it also covers 0040, which used
+    batch mode long before this. A leftover is by definition an artifact of a rebuild that did NOT
+    complete — the real table is untouched — so dropping it is always safe.
+    """
+    db_path = config_dir / "shortlist.db"
+    if not db_path.exists():
+        return
+    with sqlite3.connect(db_path) as conn:
+        leftovers = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '_alembic_tmp_%'"
+            )
+        ]
+        for table in leftovers:
+            logger.warning("dropping {} left by an interrupted migration — retrying the rebuild", table)
+            conn.execute(f'DROP TABLE "{table}"')
+
+
 def run_migrations(config_dir: Path) -> None:
     """Apply Alembic migrations to head (every schema change ships one — project rule).
 
@@ -132,5 +163,6 @@ def run_migrations(config_dir: Path) -> None:
         take_backup(config_dir, label="pre-migration")
 
     _heal_squashed_revision(cfg, config_dir)
+    _sweep_batch_leftovers(config_dir)
     command.upgrade(cfg, "head")
     logger.info("database migrated to head at {}", config_dir / "shortlist.db")

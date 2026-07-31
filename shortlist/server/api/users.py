@@ -504,12 +504,17 @@ async def sync_users(request: Request) -> dict:
     with state.sessions() as session:
         job = session.get(Job, job_id)
         result = dict(job.result or {})
+        # Read INSIDE the session. It worked outside only because the factory is
+        # `expire_on_commit=False` and `close()` detaches without expiring — a property of the
+        # factory, not of this code, and one that would turn into a DetachedInstanceError the day it
+        # changed. `job` is never None (we just enqueued it), but reading it here says so.
+        status = job.status if job is not None else "queued"
     # Still queued means a run holds the writer lock. The row stays, the worker retries — say so
     # rather than reporting a sync that has not happened yet.
     result.setdefault("added", 0)
     result.setdefault("updated", 0)
     result.setdefault("total", 0)
-    result["queued"] = job.status in ("queued", "running")
+    result["queued"] = status in ("queued", "running")
     return result
 
 

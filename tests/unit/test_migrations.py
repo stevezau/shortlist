@@ -80,6 +80,39 @@ class TestTheMigratedSchemaMatchesTheORM:
         assert {column: flags[column] for column in columns} == dict.fromkeys(columns, True)
 
 
+class TestAnInterruptedRebuildDoesNotBrickTheContainer:
+    """A crash mid-`batch_alter_table` used to make every later boot fail, for ever.
+
+    SQLite cannot ALTER a constraint, so Alembic rebuilds: CREATE `_alembic_tmp_X`, copy, DROP,
+    RENAME. Under pysqlite the CREATE autocommits (no transaction is open yet) while the rest rolls
+    back — so a crash leaves the temp table committed and the migration unapplied, and the next boot
+    dies on "table _alembic_tmp_X already exists". No data is lost; the app simply cannot start.
+
+    This release rebuilds six tables where earlier ones rebuilt one, so the window is wider.
+    """
+
+    def test_a_leftover_temp_table_is_swept_instead_of_blocking_the_upgrade(self, tmp_path: Path):
+        import sqlite3
+
+        run_migrations(tmp_path)  # get to head normally
+        db = tmp_path / "shortlist.db"
+
+        # Exactly what an interrupted rebuild leaves behind.
+        with sqlite3.connect(db) as conn:
+            conn.execute("CREATE TABLE _alembic_tmp_picks (id INTEGER PRIMARY KEY, marker TEXT)")
+            conn.execute("INSERT INTO _alembic_tmp_picks (marker) VALUES ('half-copied')")
+
+        run_migrations(tmp_path)  # must not raise "table _alembic_tmp_picks already exists"
+
+        with sqlite3.connect(db) as conn:
+            left = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '_alembic_tmp_%'"
+            ).fetchall()
+            real = conn.execute("SELECT COUNT(*) FROM picks").fetchone()[0]
+        assert left == [], "the leftover must be swept, not left to block the next boot"
+        assert real == 0, "the REAL table is untouched — only the abandoned copy is dropped"
+
+
 class TestMigration0053BackfillsBeforeItTightens:
     """0053 rebuilds three tables. An ALTER that fails halfway through boot is worse than a
     defensive UPDATE, and the backfilled values have to be the honest ones — a `viewed_at` set to
