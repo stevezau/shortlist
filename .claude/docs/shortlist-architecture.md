@@ -238,6 +238,12 @@ someone picks one, which is how `549631f` shipped.
 
 `docker` (buildx, linux/amd64 + linux/arm64) waits on all five and is the publish gate.
 
+The two image builds use **separate** `type=gha` cache scopes (`scope=smoke` / `scope=publish`), and
+that is load-bearing rather than tidiness. Sharing the default key made the amd64-only smoke build
+write `mode=max` over a cache holding both platforms, so every publish rebuilt arm64 from scratch
+under QEMU — measured at 1m04s → 4m51s the day the smoke job landed. Note a scope change costs one
+cold run before the saving shows up.
+
 What runs, by event:
 
 | Event         | Jobs                | Publishes                         |
