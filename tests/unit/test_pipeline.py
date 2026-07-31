@@ -2841,6 +2841,32 @@ class TestOrphanDeletion:
         _converge_phase(ctx, set(), report)
         return report
 
+    def test_a_user_less_run_never_deletes_however_complete_the_picture(self, ctx: EngineContext):
+        """`engine_run(ctx, [])` is the privacy-sync shape, and it fires from routine mutations —
+        disabling one person, narrowing a shared row's audience. It documents itself as creating and
+        deleting nothing, but it inherited delete authority from the CONTEXT and quietly had it: the
+        audit row said "share filters merged" while a collection was destroyed.
+        """
+        from shortlist.engine.models import RunReport
+        from shortlist.engine.pipeline import _converge_phase
+
+        orphan = self._collection(1, "Shortlist_ghost")
+        ctx.owner_slug = "steve"
+        ctx.known_slugs = {100: "steve", 200: "sarah"}
+        ctx.may_delete_orphans = True  # the picture IS complete — that is not the question
+        ctx.config.dry_run = False
+        ctx.plex.sections.return_value[0].collections.return_value = [orphan]
+        ctx.plex.claims_any_surface.return_value = True
+        ctx.plex.demote_all.return_value = True
+
+        report = RunReport(started_at=datetime.now(UTC))
+        _converge_phase(ctx, set(), report, may_delete=False)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == [], "a pass with no users must not destroy anyone's row"
+        # Still demoted — monotonically private, which is what such a pass IS for.
+        assert report.converged == ["Shortlist_ghost"]
+
     def test_a_collection_whose_user_is_gone_is_deleted(self, ctx: EngineContext):
         orphan = self._collection(1, "Shortlist_ghost")
         report = self._run(ctx, [orphan], known={100: "steve", 200: "sarah"}, may_delete=True)

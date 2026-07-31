@@ -20,16 +20,22 @@ export function OwnerNote({ className }: { className?: string }) {
       />
       <div className="space-y-1">
         <p className="font-medium">
-          You&rsquo;re on this list too &mdash; but Plex can&rsquo;t hide rows
-          from the server owner.
+          You&rsquo;re on this list too &mdash; and your Home screen shows only
+          your own row.
         </p>
         <p className="text-muted-foreground">
           Turn yourself on and you get a Picked-for-You row like anyone else.
-          What Shortlist can&rsquo;t do is hide <em>other</em> people&rsquo;s
-          rows from you: the admin account sees every row on the server. If you
-          share this server with others and want a Home screen with only your
-          own row, watch on a Plex Home user and keep the admin account for
-          administration.
+          Your Home screen is safe: Plex tracks &ldquo;on the owner&rsquo;s
+          Home&rdquo; separately from &ldquo;on a friend&rsquo;s Home&rdquo;, so
+          nobody else&rsquo;s row lands there.
+        </p>
+        <p className="text-muted-foreground">
+          Where you <em>do</em> see everyone&rsquo;s rows is the{" "}
+          <strong>Collections tab</strong>, and the{" "}
+          <strong>Recommended shelf</strong> if you leave{" "}
+          <em>Everyone else &rarr; Library Recommended</em> on for a row. You own
+          the server, so there is no share filter to hide them behind &mdash;
+          turn that toggle off to clear the shelf.
         </p>
       </div>
     </div>

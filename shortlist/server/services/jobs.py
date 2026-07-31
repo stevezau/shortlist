@@ -599,8 +599,14 @@ def _sync_check(state, payload: dict) -> dict:
     from shortlist.engine.pipeline import _converge_phase
 
     report = RunReport(started_at=datetime.now(UTC))
-    ctx = state.run_service.build_context(dry_run=bool(payload.get("dry_run")))
-    _converge_phase(ctx, set(), report)
+    dry_run = bool(payload.get("dry_run"))
+    ctx = state.run_service.build_context(dry_run=dry_run)
+    # Deleting is only ever a DELIBERATE act. This job now has a nightly schedule, so an unattended
+    # pass must not be able to destroy a collection on its own — it demotes, and reports what it
+    # WOULD remove. The owner sees that in the preview and presses Fix, which arrives here with
+    # `confirmed`. Without this split, upgrading turned on a job that silently deleted from Plex.
+    confirmed = bool(payload.get("confirmed"))
+    _converge_phase(ctx, set(), report, may_delete=confirmed and not dry_run)
     # Deletions are reported SEPARATELY and named first. Folding them into `fixed` would hide the one
     # irreversible thing this does behind a number, in the very preview an operator reads to decide
     # whether to run it for real.
@@ -608,9 +614,9 @@ def _sync_check(state, payload: dict) -> dict:
     detail = f"Checked every row; corrected {len(report.converged)}"
     if removed:
         detail += (
-            f"; {len(removed)} orphaned collection(s) to remove"
-            if ctx.config.dry_run
-            else (f"; removed {len(removed)} orphaned collection(s)")
+            f"; removed {len(removed)} orphaned collection(s)"
+            if confirmed and not dry_run
+            else f"; {len(removed)} orphaned collection(s) to remove"
         )
     return {"fixed": report.converged, "orphans": removed, "detail": detail}
 
@@ -620,8 +626,12 @@ def _privacy_sync(state, payload: dict) -> dict:
     """Merge every account's share filter without building anything.
 
     `engine_run(ctx, [])` with no users sweeps unhidable rows and writes every share filter, but
-    delivers, creates and promotes NOTHING (plex-safety rule 1) — so it can only ever make the
-    server more private. That is what makes it safe to fire from a mutation (a user disabled, a
+    delivers, creates, promotes and DELETES nothing (plex-safety rule 1) — so it can only ever make
+    the server more private. The delete half is enforced, not merely intended: `run()` passes
+    `may_delete=bool(users)` to converge, so a run with nobody in it has no authority to destroy
+    anyone's collection. It used to inherit that authority from the context and quietly had it.
+
+    That is what makes it safe to fire from a mutation (a user disabled, a
     shared row's audience narrowed) rather than waiting for the nightly run.
     """
     from shortlist.engine.pipeline import run as engine_run

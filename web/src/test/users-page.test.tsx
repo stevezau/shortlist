@@ -69,14 +69,12 @@ describe("UsersPage", () => {
     setAllUsersEnabled.mockClear();
   });
 
-  it("warns the owner that their own Home shows everyone's rows — but only once they're in the list", async () => {
+  it("tells the owner where they DO see everyone's rows — but only once they're in the list", async () => {
     getUsers.mockResolvedValue([SARAH]);
     const { unmount } = renderPage();
     // A server with no owner row yet (pre-sync) shouldn't explain a caveat nobody has hit.
     expect(await screen.findByText("sarah")).toBeInTheDocument();
-    expect(
-      screen.queryByText(/can’t hide rows from the server owner/i),
-    ).toBeNull();
+    expect(screen.queryByText(/Home screen shows only/i)).toBeNull();
     unmount();
 
     getUsers.mockResolvedValue([
@@ -85,10 +83,14 @@ describe("UsersPage", () => {
     ]);
     renderPage();
 
+    // `promotedToOwnHome` and `promotedToSharedHome` are separate Plex flags, so a friend's row
+    // never reaches the owner's Home. The note used to claim otherwise and send them off to make a
+    // Home user for nothing.
     expect(
-      await screen.findByText(/can’t hide rows from the server owner/i),
+      await screen.findByText(/Home screen shows only/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/watch on a Plex Home user/i)).toBeInTheDocument();
+    expect(screen.getByText(/Collections tab/i)).toBeInTheDocument();
+    expect(screen.queryByText(/watch on a Plex Home user/i)).toBeNull();
   });
 
   it("only enables everyone after confirming", async () => {

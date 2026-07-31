@@ -476,7 +476,10 @@ export function JobsPage() {
     onSettled: invalidateJobs,
   });
   const driftFix = useMutation({
-    mutationFn: () => api.runJob("sync.check"),
+    // `confirmed` is what authorises the DELETE half. The scheduled pass and the preview both omit
+    // it, so an unattended run demotes and reports what it would remove — only this button, pressed
+    // after reading that, can destroy a collection.
+    mutationFn: () => api.runJob("sync.check", { confirmed: true }),
     onSuccess: () => driftPreview.reset(),
     onSettled: invalidateJobs,
   });

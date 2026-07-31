@@ -411,7 +411,9 @@ describe("JobsPage — sync check", () => {
       await screen.findByRole("button", { name: /^Fix 1 row$/ }),
     );
 
-    expect(runJob).toHaveBeenLastCalledWith("sync.check");
+    // `confirmed` is what authorises the DELETE half: the scheduled pass and the preview both omit
+    // it, so only this button — pressed after reading the preview — can destroy a collection.
+    expect(runJob).toHaveBeenLastCalledWith("sync.check", { confirmed: true });
     expect(await screen.findByText(/corrected 1/i)).toBeInTheDocument();
   });
 

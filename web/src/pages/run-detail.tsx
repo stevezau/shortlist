@@ -920,47 +920,9 @@ export function RunDetailPage() {
                   answers a question you are asking while reading the log, not while scanning people. */}
               {run.finished_at && <RunStatTiles run={run} />}
 
-              {/* A peek at the tail while a live run's People tab is open — the full thing is one
-                  tab away, and on the Log tab it would be a duplicate. */}
-              {tab === "users" && !run.finished_at && liveLog.length > 0 && (
-                <Card>
-                  <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
-                    <CardTitle className="text-base">Latest activity</CardTitle>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setTab("log")}
-                    >
-                      View full log
-                    </Button>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-1 rounded-md bg-muted/40 p-3 font-mono text-xs">
-                      {liveLog.slice(-8).map((entry) => (
-                        <div
-                          key={entry.seq ?? `${entry.ts}-${entry.stage}`}
-                          className="flex gap-2"
-                        >
-                          <span className="shrink-0 text-muted-foreground">
-                            {entry.ts
-                              ? new Date(entry.ts).toLocaleTimeString()
-                              : ""}
-                          </span>
-                          <span className="shrink-0 font-medium">
-                            {isServerStage(entry.user) ? "——" : entry.user}
-                          </span>
-                          <span className="text-muted-foreground">
-                            {STAGE_LABELS[entry.stage] ?? entry.stage}
-                            {progressLabel(entry.counts ?? {})
-                              ? ` · ${progressLabel(entry.counts ?? {})}`
-                              : ""}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+              {/* No log peek here. It duplicated the Log tab sitting one click away, and on a live
+                  run it churned under the header while you were trying to read the people list —
+                  the Log tab is the place to watch a run, not this one. */}
 
               {!run.finished_at && (
                 <div className="flex gap-3 rounded-lg border bg-muted/40 p-4 text-sm">

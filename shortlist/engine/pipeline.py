@@ -259,7 +259,10 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     # cancelled, or simply promoted by an older build keeps its flags forever. This walks the rest
     # and takes them off the owner's Home — the one surface nothing can hide.
     _emit(ctx, "Shortlist", "converging", {})
-    _converge_phase(ctx, promoted, report)
+    # `users=[]` is the privacy-sync shape (rule 1: sweep + merge only). It has no authority to
+    # DELETE anyone's collection — it was never given a roster to judge against, and its own contract
+    # says it can only ever make the server more private.
+    _converge_phase(ctx, promoted, report, may_delete=bool(users))
     _emit(
         ctx,
         "Shortlist",
@@ -904,7 +907,9 @@ def promote_user_rows(
     return promoted
 
 
-def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -> None:
+def _converge_phase(
+    ctx: EngineContext, promoted: set[int], report: RunReport, *, may_delete: bool | None = None
+) -> None:
     """Take every Shortlist row this run did NOT promote off the owner's Home.
 
     Promotion is write-only and reaches a collection ONLY when its owner is in tonight's run. So a
@@ -987,11 +992,19 @@ def _converge_phase(ctx: EngineContext, promoted: set[int], report: RunReport) -
                 # the one irreversible action here, and "I could not read the users" is
                 # indistinguishable from "this user does not exist" — so an incomplete picture hides
                 # rather than destroys. Owner decision 2026-07-28: delete, but only when sure.
+                # DELETE authority belongs to the CALLER, not the context. `ctx.may_delete_orphans`
+                # only says "the roster read succeeded, so the picture is complete" — it never said
+                # "this particular pass is entitled to destroy something". Every path reaching here
+                # inherited it, including `privacy.sync`, which documents itself as creating and
+                # deleting nothing and fires from routine mutations like disabling one person.
+                allowed_to_delete = (
+                    ctx.may_delete_orphans if may_delete is None else (may_delete and ctx.may_delete_orphans)
+                )
                 known = {slug.lower() for slug in ctx.known_slugs.values()}
                 own_slug = label[len(prefix) :].lower()
                 is_orphan = bool(known) and not label.lower().startswith(shared_prefix) and own_slug not in known
 
-                if is_orphan and not ctx.may_delete_orphans:
+                if is_orphan and not allowed_to_delete:
                     if ctx.plex.claims_any_surface(collection):
                         wrote = ctx.config.dry_run or ctx.plex.demote_all(collection, reason="unknown owner")
                         if wrote:
