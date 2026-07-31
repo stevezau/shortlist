@@ -6,6 +6,8 @@ decides what Shortlist builds, so "I clicked Add and it saved" has to be true en
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from playwright.sync_api import Page, expect
 
@@ -114,11 +116,23 @@ def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(pag
     assert settings["row.name_template"] == "✨ {library_name} Handpicked"
 
 
-def test_the_default_row_cannot_be_deleted(page: Page, app: ShortlistApp):
+def test_the_default_row_can_be_deleted_like_any_other(page: Page, app: ShortlistApp):
+    """It used to 422, and the card hid its Delete button — so the first row in the list lacked the
+    control every row below it had, with nothing on screen saying why. Rows are user-created now and
+    an empty list means "everything is off", not "resurrect the default"."""
     _open_rows(page)
     picked = next(c for c in app.api("GET", "/api/collections").json() if c["slug"] == "picked")
-    # The API refuses; the UI never offers a delete button on the default row.
-    assert app.api("DELETE", f"/api/collections/{picked['id']}").status_code == 422
+
+    # Counted, not matched by name: the app is shared across this module and another test renames
+    # this row, so its rendered title is not stable. "Every row has a Delete button" is also the
+    # actual property — the bug was ONE card missing the control its neighbours had.
+    #
+    # Asserts the BUTTON only: deleting the seeded row here would pull it out from under every test
+    # that follows. The 204 and the row actually disappearing are covered in
+    # tests/integration/test_api_collections.py::test_the_default_row_can_be_deleted_like_any_other.
+    assert picked, "the seeded default row must exist for this to mean anything"
+    rows = app.api("GET", "/api/collections").json()
+    expect(page.get_by_role("button", name=re.compile(r"^Delete "))).to_have_count(len(rows))
 
 
 PLACEMENT_SWITCHES = (

@@ -239,20 +239,20 @@ export function RowCard({
             <Eraser aria-hidden="true" />
             Remove from Plex
           </Button>
-          {!isDefault && (
-            <Button
-              variant="ghost"
-              size="sm"
-              loading={remove.isPending}
-              onClick={() => setConfirmOpen(true)}
-              aria-label={`Delete ${collection.name}`}
-              title="Delete this row for good"
-              className="text-destructive hover:text-destructive"
-            >
-              {!remove.isPending && <Trash2 aria-hidden="true" />}
-              Delete
-            </Button>
-          )}
+          {/* The default row is deletable too. Hiding this on one card left the first row in the
+              list without the button every other row had, and nothing on screen said why. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={remove.isPending}
+            onClick={() => setConfirmOpen(true)}
+            aria-label={`Delete ${collection.name}`}
+            title="Delete this row for good"
+            className="text-destructive hover:text-destructive"
+          >
+            {!remove.isPending && <Trash2 aria-hidden="true" />}
+            Delete
+          </Button>
         </div>
         {/* The Switch mirrors the saved row, so a rejected save just snaps it back — silently
             reverting is exactly what a click that never landed looks like. */}

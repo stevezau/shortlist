@@ -78,7 +78,13 @@ def _orphaned_slugs(session: Session) -> set[str]:
     Computed server-side, the same way the report labels a line "deleted", so a client cannot ask us
     to purge a row that still exists by passing its slug.
     """
-    live = {c.slug for c in session.query(Collection.slug).all()} | {"", DEFAULT_SLUG}
+    live = {c.slug for c in session.query(Collection.slug).all()}
+    # A blank slug is a legacy pick from before rows were named, and it means the DEFAULT row — so it
+    # counts as live only while that row still exists. Pinning DEFAULT_SLUG live unconditionally was
+    # safe while the row could not be deleted; now that it can, doing so would leave its pick history
+    # permanently unclearable, since the dashboard can only purge a slug it considers deleted.
+    if DEFAULT_SLUG in live:
+        live |= {""}
     used = {slug for (slug,) in session.query(PickRow.collection_slug).distinct().all()}
     return {slug for slug in used if slug not in live}
 

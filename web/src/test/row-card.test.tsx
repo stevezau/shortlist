@@ -62,6 +62,17 @@ function renderCard(value: Collection) {
 }
 
 describe("RowCard", () => {
+  it("offers Delete on the default row, same as every other row", async () => {
+    // The default row used to hide this button, so the first card in the list lacked the control
+    // every card below it had, with nothing on screen explaining why. Disabling it is still the
+    // reversible option; deleting it is allowed.
+    renderCard(collection({ slug: "picked", name: "Picked for You" }));
+
+    expect(
+      await screen.findByRole("button", { name: /Delete Picked for You/ }),
+    ).toBeEnabled();
+  });
+
   it("shows a row's own sources and libraries so overrides are visible without opening it", async () => {
     renderCard(
       collection({

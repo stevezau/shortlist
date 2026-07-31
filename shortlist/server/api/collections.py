@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -483,6 +484,23 @@ def _stranded_sections(state, *, old_media: str, old_keys: list[str], new_media:
     return targeted(old_media, old_keys) - targeted(new_media, new_keys)
 
 
+#: Strong refs to in-flight background drains — a bare `create_task` can be garbage-collected
+#: mid-flight, which would abandon the drain (the JOBS survive; the attempt would not).
+_BACKGROUND_DRAINS: set[asyncio.Task] = set()
+
+
+def _drain_in_background(state, reason: str) -> None:
+    """Run the queue now, without making the caller wait for it.
+
+    For mutations whose Plex work is a per-user walk: the DB change is done and that is what the
+    response reports, so holding the request open for the Plex side only freezes the UI. The jobs are
+    durable, so the worst case of not waiting is that they land a moment later.
+    """
+    task = asyncio.create_task(jobs.drain_now(state, reason))
+    _BACKGROUND_DRAINS.add(task)
+    task.add_done_callback(_BACKGROUND_DRAINS.discard)
+
+
 def _queue_reconcile(
     state,
     *,
@@ -698,12 +716,11 @@ async def delete_collection(collection_id: int, request: Request) -> None:
         collection = session.get(Collection, collection_id)
         if collection is None:
             raise HTTPException(status_code=404, detail="collection not found")
-        if collection.slug == DEFAULT_SLUG:
-            # The default per-person row is what makes an upgrade behaviour-neutral; disable it
-            # instead of deleting so there's always a home for users with no other row.
-            raise HTTPException(
-                status_code=422, detail="the default 'picked' row can't be deleted — disable it instead"
-            )
+        # The default row is deletable like any other. It used to 422 here, on the reasoning that
+        # there must "always be a home for users with no other row" — but rows are user-created now,
+        # `EngineConfig.rows_defined` means an empty list is "everything is off" rather than
+        # "resurrect the default", and an un-deletable item with no visible reason is its own bug
+        # report. Disabling it is still the reversible option; this is the permanent one.
         slug, build = collection.slug, collection.build
         # Captured while the row still exists and carried in the job payload: after the DB row is gone
         # there is nothing left to resolve the title its collections were built under, so a retry
@@ -720,12 +737,20 @@ async def delete_collection(collection_id: int, request: Request) -> None:
             session.query(CollectionAudience).filter_by(collection_id=collection.id).delete()
             session.delete(collection)
             session.commit()
-    await jobs.drain_now(state, f"row '{slug}' was deleted")
     if build == "shared":
         # The row's own `shortlist__shared_<slug>` label is no longer declared shared by the config, so
         # every account's excludes need recomputing — otherwise the label lingers in all of them.
-        await jobs.queue_privacy_sync(state, f"row '{slug}' was deleted")
+        jobs.enqueue(state.sessions, "privacy.sync", {"reason": f"row '{slug}' was deleted"})
     rebuild_schedule(request.app)  # the deleted row's cron job (if any) must stop firing
+    # Drained in the BACKGROUND, not awaited. The row is gone from the DB the moment this returns,
+    # which is what the page is waiting to hear — while the Plex side is a per-user walk over every
+    # library, and for a shared row a privacy pass across every account on the server. Awaiting that
+    # held the request open for the length of both and left the UI sitting on a spinner.
+    #
+    # Nothing is lost by not waiting: the jobs are committed rows, the worker retries them with
+    # backoff, and they are visible in the header's activity popover and on the Jobs page while they
+    # run. A restart mid-drain re-queues them.
+    _drain_in_background(state, f"row '{slug}' was deleted")
 
 
 class RenameRequest(BaseModel):

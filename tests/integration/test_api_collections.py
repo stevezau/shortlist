@@ -1208,9 +1208,32 @@ class TestCollectionsApi:
         assert sorted(body["audience_user_ids"]) == sorted(ids)
         assert body["min_watchers"] == 3
 
-    def test_default_picked_cannot_be_deleted(self, client: TestClient):
+    def test_the_default_row_can_be_deleted_like_any_other(self, client: TestClient):
+        """It used to 422 with "disable it instead". Rows are user-created now and an empty row list
+        means "everything is off" rather than "resurrect the default", so the special case only made
+        one row in the list inexplicably lack a Delete button."""
+        from shortlist.server.db.models import Collection
+
         picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
-        assert client.delete(f"/api/collections/{picked['id']}").status_code == 422
+
+        assert client.delete(f"/api/collections/{picked['id']}").status_code == 204
+        with client.app.state.sessions() as session:
+            assert session.query(Collection).filter_by(slug="picked").one_or_none() is None
+
+    def test_deleting_a_row_returns_before_the_plex_cleanup_finishes(self, client: TestClient):
+        """The Plex side is a per-user walk over every library — and for a shared row, a privacy pass
+        across every account. Awaiting it held the request open for all of it, so the page sat on a
+        spinner. The DB row is gone when this returns; the jobs are durable and visible meanwhile."""
+        from shortlist.server.db.models import Job
+
+        created = client.post("/api/collections", json={"name": "Temp Row"})
+        assert created.status_code in (200, 201)
+
+        assert client.delete(f"/api/collections/{created.json()['id']}").status_code == 204
+
+        with client.app.state.sessions() as session:
+            queued = session.query(Job).filter(Job.kind == "row.reconcile").all()
+        assert queued, "the Plex removal must be QUEUED, not done inline"
 
     def test_validation_rejects_bad_enums(self, client: TestClient):
         assert client.post("/api/collections", json={"name": "X", "build": "nonsense"}).status_code == 422
