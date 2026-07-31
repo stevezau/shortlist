@@ -1,0 +1,20 @@
+[
+  {
+    "id": "nomic-embed-text",
+    "created": 1700000000,
+    "object": "model",
+    "owned_by": "library"
+  },
+  {
+    "id": "llama3.3",
+    "created": 1700000001,
+    "object": "model",
+    "owned_by": "library"
+  },
+  {
+    "id": "bge-m3",
+    "created": 1700000002,
+    "object": "model",
+    "owned_by": "library"
+  }
+]

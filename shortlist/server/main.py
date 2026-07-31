@@ -7,7 +7,6 @@ import hmac
 import logging
 import os
 import secrets as pysecrets
-import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -135,7 +134,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         app.state.secrets = secret_box
         app.state.bus = bus
         app.state.session_secret = _instance_secret(config_dir, "session.secret")
-        app.state.client_id = _instance_secret(config_dir, "client.id")[:32] or str(uuid.uuid4())
+        app.state.client_id = _instance_secret(config_dir, "client.id")[:32]
         app.state.run_service = RunService(sessions, bus, config_dir, secret_box)
         app.state.started_at = datetime.now(UTC)
         # Plex tokens minted during setup, held server-side only (account_id -> token).

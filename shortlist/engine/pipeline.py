@@ -9,25 +9,17 @@ guarantees that depend on it.
 from __future__ import annotations
 
 import json
-import threading
 import time
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from loguru import logger
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
-from shortlist.engine.clients.mdblist import MdbListClient
-from shortlist.engine.clients.plex_pms import PlexClient
-from shortlist.engine.clients.plextv import FilterWriteRefused, PlexTvClient
-from shortlist.engine.clients.poster import PosterArtist
-from shortlist.engine.clients.search import WebSearchProvider
-from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
-from shortlist.engine.clients.trakt import TraktClient
-from shortlist.engine.curator import Curator
+from shortlist.engine.clients.plextv import FilterWriteRefused
+from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
     render_row_name,
     resolve_row_template,
@@ -35,14 +27,12 @@ from shortlist.engine.delivery import (
     sweep_broken_rows,
     target_sections,
 )
-from shortlist.engine.history import HistorySource
 from shortlist.engine.models import (
+    LABEL_PREFIX,
     SHARED_LABEL_PREFIX,
     CollectionDiff,
-    EngineConfig,
     HubAnchor,
     MediaType,
-    Pick,
     RequestOutcome,
     RequestReport,
     RowSpec,
@@ -52,126 +42,10 @@ from shortlist.engine.models import (
     UserType,
 )
 from shortlist.engine.privacy import (
-    SnapshotStore,
     shared_label_audiences,
     shortlist_labels_in,
     sync_user_restrictions,
 )
-
-
-@dataclass
-class EngineContext:
-    """Everything one run needs; the server adapter builds this once."""
-
-    config: EngineConfig
-    plex: PlexClient
-    plextv: PlexTvClient
-    tmdb: TmdbClient
-    history_source: HistorySource
-    curator: Curator
-    snapshots: SnapshotStore
-    # Optional 'related titles' candidate source; None when no Trakt key is configured.
-    trakt: TraktClient | None = None
-    # Optional external web-search backend for the llm_web source (Exa); None when no key is
-    # configured. Native provider web-search tools don't need it; a local Ollama model does.
-    search: WebSearchProvider | None = None
-    # Optional image-generation backend for generate-mode row posters, built from the AI curator's
-    # provider/key. None when the curator provider can't make images (Anthropic, Ollama) or none is set.
-    poster_artist: PosterArtist | None = None
-    # (owner_slug, row_slug, section_key) -> last run's delivered picks for that row+library, newest
-    # first. Carried forward so a row is REUSED unchanged on non-refresh nights (freshness is the
-    # refresh CADENCE) instead of re-curated from scratch every night — the fix for the nightly
-    # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
-    # bootstraps by curating fresh, exactly like a first run.
-    previous_picks: dict[tuple[str, str, str], list[Pick]] = field(default_factory=dict)
-    # (user_slug, row_slug, section_key) -> the Plex ratingKey that row last delivered there, from the
-    # delivery ledger. Delivery's ONE identity question is "is the collection in front of me this
-    # row's, under a title it no longer renders to?" — a rename in place versus a fresh build. It used
-    # to answer that by COUNTING ("if this user has one row, the one collection here must be it"),
-    # which is a guess that was wrong in three separate ways (see jobs-and-runs-design.md §17).
-    # A ratingKey answers it outright, and works for a multi-row user, which counting never could.
-    # Empty for direct engine runs and for rows delivered before the ledger existed — the count-based
-    # fallback still covers those.
-    delivered_keys: dict[tuple[str, str, str], int] = field(default_factory=dict)
-    # plex_account_ids of DISABLED (opted-out) Shortlist users. With config.hide_shared_from_disabled,
-    # the privacy sync hides even public shared rows from these accounts, so disabling a user removes
-    # them from Shortlist entirely. A non-Shortlist account that merely shares the server is NOT here,
-    # so it still sees public shared rows.
-    disabled_account_ids: set[int] = field(default_factory=set)
-    # section key -> {tmdb_id: ratingKey}: per-library index so a row delivered into a specific
-    # library uses that library's ratingKeys. Built by _build_indexes each run.
-    section_index: dict[str, dict[int, int]] = field(default_factory=dict)
-    # Every library rows may be delivered to (all movie + show sections), for resolving a row's
-    # library_keys to real sections. Built by _build_indexes each run.
-    delivery_sections: list = field(default_factory=list)
-    # plex account id -> the slug Shortlist assigned that account, for EVERY user it knows (not just
-    # tonight's). This is how "whose row is this?" is answered. It cannot be answered from a name:
-    # people rename themselves, and two display names can slugify to the same string — either
-    # would silently hand one account another's row.
-    known_slugs: dict[int, str] = field(default_factory=dict)
-    # The server OWNER's slug — the ONE person whose rows may sit on the owner's Home. The converge
-    # phase needs it to tell "this row belongs on Home" from "this row is stranded there", and it
-    # cannot be derived from `known_slugs` (which carries no type) or from the plex.tv roster (which
-    # never returns the owner). Empty = unknown, and converge then does nothing rather than guess.
-    owner_slug: str = ""
-    # Slugs of PAUSED users. Pause means "stop showing their row", not "delete it": their collection
-    # and label stay on the server so everyone else's exclude still matches, and unpausing is a
-    # re-promote rather than a full LLM rebuild. They are absent from every run by definition, so
-    # converge is the only thing that can act on them.
-    paused_slugs: set[str] = field(default_factory=set)
-    # May converge DELETE a collection it cannot attribute to anyone, or only hide it? True is set by
-    # the server adapter, which knows its DB read succeeded and that `known_slugs` therefore lists
-    # every user Shortlist has. Deleting on a partial picture would wipe live rows, so the default is
-    # False and every other caller (direct engine runs, tests) only ever demotes.
-    may_delete_orphans: bool = False
-    # (tmdb_id, media_type) the owner has already actioned in the Requests inbox — sent or rejected.
-    # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
-    # by a later auto-send. Empty for direct engine runs, which have no inbox.
-    handled_requests: set[tuple[int, str]] = field(default_factory=set)
-    # MDBList client (cache-backed) for the chosen non-TMDB rating source; None when requests gate on
-    # TMDB or no MDBList key is set. Built by the server adapter so it shares the persistent cache.
-    mdblist: MdbListClient | None = None
-    # (user_slug, stage, counts, reason) -> None. `reason` explains a non-failing outcome (a
-    # skipped user) in plain English; None for every stage that needs no explaining.
-    progress: Callable[[str, str, dict, str | None], None] | None = None
-    # Called the moment one user finishes (before their terminal progress event), with their profile
-    # and finished report — so the server can persist that user's results INCREMENTALLY and the UI
-    # shows them as each person completes, instead of the whole roster appearing only at run's end.
-    # Must be resilient: it runs on the worker threads, and any error is swallowed (never sinks a run).
-    on_user_done: Callable[[UserProfile, UserRunReport], None] | None = None
-    # Cross-run cache for the per-library tmdb_id -> ratingKey index, keyed by a cheap change signal
-    # (item count + last-updated). An unchanged library skips its full scan next run. NullCache (the
-    # default) disables it — safe, since a stale/missing entry only ever means a re-scan.
-    index_cache: Cache = field(default_factory=NullCache)
-    # Cross-run cache for per-title web-search (Exa) results, keyed (media, tmdb_id). A title many
-    # users watched is searched ONCE server-wide (Exa bills per search). NullCache disables it — safe,
-    # since a miss just re-searches.
-    web_search_cache: Cache = field(default_factory=NullCache)
-    # Day number of this run (date.toordinal()), the phase for freshness rotation so a row shifts
-    # day to day but is reproducible within a day. Set at the start of run(); 0 disables rotation.
-    run_day: int = 0
-    # How many users to process concurrently. 1 = fully sequential (the safe engine/test default).
-    # The server sets this from `run.concurrency`. Only the READ + LLM work overlaps; every Plex and
-    # plex.tv write is serialized by ``write_lock``, so the leak-safe ordering is preserved exactly.
-    concurrency: int = 1
-    write_lock: threading.Lock = field(default_factory=threading.Lock)
-    # Cooperative cancel check — returns True once the run has been asked to stop. The deliver phase
-    # checks it before each user and skips the rest; an in-flight user finishes (per-user
-    # transactional, rule 6), so a cancel never leaves a half-applied user. The privacy merge +
-    # promote still run for the users already delivered, so the server stays consistent. Default:
-    # never cancels (direct engine runs and tests can't be cancelled).
-    cancelled: Callable[[], bool] = lambda: False
-
-
-def _emit(ctx: EngineContext, slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
-    # Mirror every stage to the container log too, so `docker logs` narrates a run in real time —
-    # the same story the UI's activity feed tells, for anyone watching the console.
-    logger.info("run · {} · {}{}{}", slug, stage, f" {counts}" if counts else "", f" — {reason}" if reason else "")
-    if ctx.progress is not None:
-        try:
-            ctx.progress(slug, stage, counts, reason)
-        except Exception:  # a broken progress listener must never fail a run
-            logger.exception("progress callback failed")
 
 
 def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
@@ -190,7 +64,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         "run starting: {} user(s), dry_run={}, label prefix '{}'",
         len(users),
         ctx.config.dry_run,
-        ctx.config.label_prefix,
+        LABEL_PREFIX,
     )
     # Freshness rotates a row by a per-DAY phase, so it shifts day to day but stays reproducible
     # within a day (a re-run the same night doesn't reshuffle). Only overwrite the default 0 (which
@@ -219,7 +93,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 
     # Preload label casing + collection ids from the PMS — the source of truth survives
     # restarts and covers users whose delivery fails this run.
-    stored_labels = {slug: row.label for slug, row in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
+    stored_labels = {slug: row.label for slug, row in ctx.plex.owned_collections(LABEL_PREFIX).items()}
 
     # Missing-title demand, accumulated across users only when requests are on — the common case
     # (feature off) pays nothing for it. None -> _run_user does no missing-title bookkeeping at all.
@@ -568,7 +442,7 @@ def _privacy_sync_phase(
     # missing the only destructive half is worse than no preview (rule 8).
     try:
         ctx.plex.invalidate_collections_cache()
-        owned = ctx.plex.owned_collections(ctx.config.label_prefix)
+        owned = ctx.plex.owned_collections(LABEL_PREFIX)
         stored_labels.update({slug: row.label for slug, row in owned.items()})
         collections_known = True
         if not owned:
@@ -641,7 +515,7 @@ def _privacy_sync_phase(
                 stored_labels,
                 ctx.snapshots,
                 own_label=stored_labels.get(own_slug) if own_slug else None,
-                label_prefix=ctx.config.label_prefix,
+                label_prefix=LABEL_PREFIX,
                 shared_labels=shared_labels,
                 collections_known=collections_known,
                 # A disabled (opted-out) Shortlist account gets even public shared rows hidden, so
@@ -728,9 +602,7 @@ def _privacy_sync_phase(
                 remote2 = fresh.get(account_id)
                 for fieldname, expected in expected_fields.items():
                     got = remote2.filters[fieldname] if remote2 is not None else ""
-                    missing = shortlist_labels_in(expected, ctx.config.label_prefix) - shortlist_labels_in(
-                        got, ctx.config.label_prefix
-                    )
+                    missing = shortlist_labels_in(expected, LABEL_PREFIX) - shortlist_labels_in(got, LABEL_PREFIX)
                     if missing:
                         sync_failed = True
                         msg = f"read-back missing excludes {missing} on {fieldname} for account {account_id}"
@@ -765,7 +637,7 @@ def _promote_phase(
     promoted: set[int] = set()
     for position, user in enumerate(to_promote, start=1):
         _emit(ctx, "Shortlist", "promoting", {"done": position, "total": len(to_promote)})
-        user_report = next(r for r in report.users if r.slug == user.slug)
+        user_report = next((r for r in report.users if r.slug == user.slug), None)
         if ctx.config.dry_run:
             logger.info("[dry-run] {}: would promote row to shared Home", user.username)
             continue
@@ -784,10 +656,11 @@ def _promote_phase(
             # `into=promoted`, not `promoted |= ...`: a PMS failure part-way through this user must
             # still leave behind the ratingKeys already promoted, or converge would see them as
             # untouched and demote rows this run had just correctly set.
-            promote_user_rows(ctx, user, user_report.placement_titles, into=promoted)
+            promote_user_rows(ctx, user, user_report.placement_titles if user_report else {}, into=promoted)
         except Exception as e:
-            user_report.status = "error"
-            user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
+            if user_report is not None:
+                user_report.status = "error"
+                user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
             logger.exception("{}: promote failed", user.username)
 
     # Promote the shared rows too — public, so everyone with library access sees them.
@@ -941,12 +814,16 @@ def _converge_phase(
     # whenever its placement asks for it (_promote_one gives user_type=None `home=spec.show_home`).
     # Matching only the owner's label demoted every shared row on every pass that did not rebuild it
     # — which is most of them: a no-user run, a scoped cron run, a cancelled run, a sync check.
-    allowed = {f"{ctx.config.label_prefix}_{ctx.owner_slug}".lower()}
+    allowed = {f"{LABEL_PREFIX}_{ctx.owner_slug}".lower()}
     allowed |= {spec.label.lower() for spec in ctx.config.rows if spec.shared and spec.show_home and spec.label}
-    prefix = f"{ctx.config.label_prefix}_".lower()
-    paused_labels = {f"{ctx.config.label_prefix}_{slug}".lower() for slug in ctx.paused_slugs}
+    prefix = f"{LABEL_PREFIX}_".lower()
+    paused_labels = {f"{LABEL_PREFIX}_{slug}".lower() for slug in ctx.paused_slugs}
     shared_prefix = SHARED_LABEL_PREFIX.lower()
     live_shared = {spec.label.lower() for spec in ctx.config.shared_rows() if spec.label}
+    # Neither depends on the collection being examined — hoisted out of the loop below rather than
+    # rebuilt (rebuilding `known` re-lowercased every slug Shortlist has, per collection scanned).
+    allowed_to_delete = ctx.may_delete_orphans if may_delete is None else (may_delete and ctx.may_delete_orphans)
+    known = {slug.lower() for slug in ctx.known_slugs.values()}
     demoted: list[str] = []
     deleted: list[str] = []
     try:
@@ -1004,10 +881,6 @@ def _converge_phase(
                 # "this particular pass is entitled to destroy something". Every path reaching here
                 # inherited it, including `privacy.sync`, which documents itself as creating and
                 # deleting nothing and fires from routine mutations like disabling one person.
-                allowed_to_delete = (
-                    ctx.may_delete_orphans if may_delete is None else (may_delete and ctx.may_delete_orphans)
-                )
-                known = {slug.lower() for slug in ctx.known_slugs.values()}
                 own_slug = label[len(prefix) :].lower()
                 is_orphan = bool(known) and not label.lower().startswith(shared_prefix) and own_slug not in known
 
@@ -1023,7 +896,7 @@ def _converge_phase(
                         logger.info("[dry-run] {}: would DELETE (no such user)", collection.title)
                     else:
                         with ctx.write_lock:
-                            ctx.plex.delete_owned_collection(collection, ctx.config.label_prefix)
+                            ctx.plex.delete_owned_collection(collection, LABEL_PREFIX)
                     deleted.append(label)
                     continue
 
@@ -1127,7 +1000,7 @@ def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_ti
         with ctx.write_lock:
             result = ctx.plex.order_owned_hubs(
                 section,
-                label_prefix=ctx.config.label_prefix,
+                label_prefix=LABEL_PREFIX,
                 anchor_title=anchor.anchor_title,
                 before=anchor.before,
                 to_top=anchor.to_top,

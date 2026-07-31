@@ -409,7 +409,14 @@ class TestHandlers:
             assert targeted not in jobs.KINDS, targeted
             assert not jobs.BY_KIND[targeted].manual, targeted
         # The manual kinds are all converge-to-desired-state passes that take no target.
-        assert set(jobs.KINDS) == {"sync.check", "privacy.sync", "sync.users", "sync.history", "backup.take"}
+        assert set(jobs.KINDS) == {
+            "sync.check",
+            "privacy.sync",
+            "sync.users",
+            "sync.history",
+            "backup.take",
+            "maintenance.prune",
+        }
 
     def test_the_catalog_describes_every_registered_handler(self):
         """The Jobs page renders straight from CATALOG, so a kind missing from it is a job the
@@ -456,7 +463,7 @@ class TestHandlers:
         readers = {e.kind for e in jobs.CATALOG if not e.writes_plex}
         # Pinned by name, not counted: if a kind changes side, that is a decision someone has to
         # make here, in a diff, rather than a number quietly moving.
-        assert readers == {"sync.history", "backup.take"}
+        assert readers == {"sync.history", "backup.take", "maintenance.prune"}
         writers = {e.kind for e in jobs.CATALOG if e.writes_plex}
         assert "privacy.sync" in writers and "sync.check" in writers
         assert {"user.cleanup", "user.hide", "user.restore", "row.reconcile"} <= writers
@@ -488,7 +495,9 @@ class TestHandlers:
             demote_all=lambda c: True,
         )
         ctx = SimpleNamespace(plex=plex, config=SimpleNamespace(label_prefix="shortlist", dry_run=False))
-        state = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+        state = SimpleNamespace(
+            sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run, plex_only=False: ctx)
+        )
 
         result = jobs._HANDLERS["user.hide"](state, {"slug": "sarah"})
 
@@ -505,7 +514,9 @@ class TestHandlers:
             demote_all=lambda c: False,  # already claims nothing
         )
         ctx = SimpleNamespace(plex=plex, config=SimpleNamespace(label_prefix="shortlist", dry_run=False))
-        state = SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+        state = SimpleNamespace(
+            sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run, plex_only=False: ctx)
+        )
 
         assert jobs._HANDLERS["user.hide"](state, {"slug": "sarah"})["hidden"] == []
 
@@ -551,7 +562,9 @@ class TestRestoreAfterUnpause:
 
         self._patched = (pipeline_mod, pipeline_mod.run)
         pipeline_mod.run = fake_engine_run
-        return SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+        return SimpleNamespace(
+            sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run, plex_only=False: ctx)
+        )
 
     @pytest.fixture(autouse=True)
     def _restore_engine_run(self):
@@ -818,7 +831,9 @@ class TestSafeMode:
         return SimpleNamespace(plex=plex, config=EngineConfig(dry_run=True), write_lock=None)
 
     def _state(self, sessions, ctx):
-        return SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+        return SimpleNamespace(
+            sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run, plex_only=False: ctx)
+        )
 
     def _add_sarah(self, sessions, **overrides):
         from shortlist.server.db.models import User
@@ -880,8 +895,16 @@ class TestCleanupForgetsTheLedger:
             ),
             delete_owned_collection=lambda c, prefix: None,
         )
-        ctx = SimpleNamespace(plex=plex, config=EngineConfig(), write_lock=None)
-        return SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=lambda dry_run: ctx))
+
+        def build_context(dry_run, plex_only=False):
+            # The stub reproduces the chokepoint, because that is where safe mode is applied: the
+            # handler no longer calls `force_dry_run()` itself, so a context that ignored the flag
+            # would make this test pass for a handler that had stopped honouring it.
+            from shortlist.server.safe_mode import force_dry_run
+
+            return SimpleNamespace(plex=plex, config=EngineConfig(dry_run=force_dry_run() or dry_run), write_lock=None)
+
+        return SimpleNamespace(sessions=sessions, run_service=SimpleNamespace(build_context=build_context))
 
     def _ledger(self, sessions) -> list[tuple]:
         from shortlist.server.db.models import Delivery
@@ -967,3 +990,125 @@ class TestStaleSweepDoesNotDuplicate:
         assert recover_stale(sessions, boot=False) == 1
         with sessions() as session:
             assert session.get(Job, job_id).status == "queued"
+
+
+class TestTheAuditRecordsTheEffectiveDryRun:
+    """Under `SHORTLIST_DRY_RUN`, an audit row must never describe a preview as a real write.
+
+    Safe mode is applied by `build_context`, BELOW the handler that asked for a live run — so the
+    value a handler asks for and the value that governs the writes are two different things. Three
+    handlers audited the one they asked for (`row.reconcile` hardcoded `False` outright), which meant
+    that under safe mode the events feed recorded somebody's row as DELETED when nothing had been
+    touched. That feed is the whole of rule 10's "what changed on whose server at 03:31".
+
+    The chokepoint here is the REAL one: only the client stack below it is stubbed.
+    """
+
+    @pytest.fixture
+    def state(self, sessions, monkeypatch):
+        from pathlib import Path
+
+        from shortlist.server.services import run_service as run_service_mod
+        from shortlist.server.services.run_service import RunService
+        from shortlist.server.services.sse import EventBus
+
+        monkeypatch.setattr(run_service_mod, "force_dry_run", lambda: True)  # SHORTLIST_DRY_RUN=1
+        service = RunService(sessions, EventBus(), Path("/nonexistent"), None)
+        plex = SimpleNamespace(
+            sections=lambda: [SimpleNamespace(title="Movies", key=1, type="movie")],
+            find_owned_collections=lambda section, label: [],
+            claims_any_surface=lambda c: False,
+            demote_all=lambda c: False,
+        )
+        monkeypatch.setattr(
+            service._ctx,
+            "build_plex_only",
+            lambda *, dry_run: SimpleNamespace(plex=plex, config=EngineConfig(dry_run=dry_run)),
+        )
+        return SimpleNamespace(sessions=sessions, run_service=service, secrets=None)
+
+    def _audited(self, sessions, scope: str) -> list[bool]:
+        with sessions() as session:
+            return [e.message.get("dry_run") for e in session.query(Event).filter_by(scope=scope)]
+
+    def test_removing_a_disabled_persons_rows(self, state, sessions):
+        result = jobs._HANDLERS["user.cleanup"](state, {"slug": "sarah", "dry_run": False})
+
+        assert result["dry_run"] is True
+        assert self._audited(sessions, "user.disable.cleanup") == [True]
+
+    def test_hiding_a_paused_persons_rows(self, state, sessions):
+        result = jobs._HANDLERS["user.hide"](state, {"slug": "sarah", "dry_run": False})
+
+        assert result["dry_run"] is True
+        assert self._audited(sessions, "user.pause.hide") == [True]
+
+    def test_reconciling_a_changed_row(self, state, sessions):
+        """The one that hardcoded `"dry_run": False` into its Event."""
+        result = jobs._HANDLERS["row.reconcile"](state, {"slug": "picked", "build": "per_person"})
+
+        assert result["dry_run"] is True
+        assert self._audited(sessions, "row.reconcile") == [True]
+        assert result["detail"].startswith("Would remove")
+
+    def test_no_audit_row_claims_a_timestamp_of_its_own(self, state, sessions):
+        """`Event.ts` is the column the API sorts and filters on. A second copy in the JSON only ever
+        drifts from it, and only some writers ever emitted one — so "when did this happen" was
+        answered from a different field depending on who wrote the row."""
+        jobs._HANDLERS["user.hide"](state, {"slug": "sarah"})
+
+        with sessions() as session:
+            event = session.query(Event).filter_by(scope="user.pause.hide").one()
+            assert "at" not in event.message
+            assert event.ts is not None
+
+
+class TestRetentionPruning:
+    """Retention runs as its own job, in its own transaction.
+
+    It used to run INSIDE the run-persist transaction: a bulk delete that failed there rolled back
+    the persist with it, discarding the record of a run that had already written to Plex.
+    """
+
+    def _seed_old_run(self, sessions) -> int:
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import Event as EventRow
+        from shortlist.server.db.models import Run
+
+        old = datetime.now(UTC) - timedelta(days=400)
+        with sessions() as session:
+            run = Run(trigger="scheduled", status="ok", started_at=old)
+            session.add(run)
+            session.add(EventRow(scope="run.user", level="info", message={}, ts=old))
+            session.commit()
+            return run.id
+
+    def test_it_deletes_past_the_retention_window_and_says_what_it_did(self, sessions):
+        from shortlist.server.db.models import Run
+        from shortlist.server.settings_store import SettingsStore
+
+        run_id = self._seed_old_run(sessions)
+        with sessions() as session:
+            SettingsStore(session).set("runs.retention", 1)
+            SettingsStore(session).set("events.retention", 1)
+
+        result = jobs._HANDLERS["maintenance.prune"](SimpleNamespace(sessions=sessions), {})
+
+        assert result["runs"] == 1 and result["events"] == 1
+        assert "Pruned 1 run(s)" in result["detail"]
+        with sessions() as session:
+            assert session.get(Run, run_id) is None
+
+    def test_a_null_retention_row_does_not_raise(self, sessions):
+        """`int(store.get("runs.retention"))` had no `or 0` guard — and it raised inside the run's
+        persist transaction, where the cost of a TypeError was the whole run's record."""
+        from shortlist.server.settings_store import SettingsStore
+
+        self._seed_old_run(sessions)
+        with sessions() as session:
+            SettingsStore(session).set("runs.retention", None)
+
+        result = jobs._HANDLERS["maintenance.prune"](SimpleNamespace(sessions=sessions), {})
+
+        assert result["runs"] == 0  # unreadable retention means keep everything, not crash

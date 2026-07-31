@@ -21,11 +21,11 @@ from fastapi.responses import JSONResponse, Response
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.tmdb import TmdbClient
+from shortlist.engine.context import EngineContext
 from shortlist.engine.curator import NullCurator
 from shortlist.engine.delivery import row_marker
 from shortlist.engine.history import ShareTokenWatchSource
 from shortlist.engine.models import EngineConfig, MediaType, RowOverride, RowSpec, UserProfile, UserType
-from shortlist.engine.pipeline import EngineContext
 from shortlist.engine.pipeline import run as engine_run
 from tests.fakes.fake_plex import (
     FakeCollection,

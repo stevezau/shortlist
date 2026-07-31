@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,12 +26,29 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-// useSSE opens an EventSource; jsdom has none, so stub a no-op one.
+// useSSE opens an EventSource; jsdom has none, so stub one. Captures registered listeners (rather
+// than the setup.ts no-op default) so a test can simulate a server event and assert on the page's
+// reaction — used below to prove run-detail only refetches on ITS OWN run's SSE events (issue 7.6).
 class FakeEventSource {
-  addEventListener() {}
-  close() {}
+  static instances: FakeEventSource[] = [];
+  listeners: Record<string, ((event: MessageEvent<string>) => void)[]> = {};
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  constructor() {
+    FakeEventSource.instances.push(this);
+  }
+  addEventListener(
+    type: string,
+    handler: (event: MessageEvent<string>) => void,
+  ) {
+    (this.listeners[type] ??= []).push(handler);
+  }
+  close() {}
+  emit(type: string, data: unknown) {
+    for (const handler of this.listeners[type] ?? []) {
+      handler({ data: JSON.stringify(data) } as MessageEvent<string>);
+    }
+  }
 }
 vi.stubGlobal("EventSource", FakeEventSource);
 
@@ -388,6 +405,21 @@ describe("RunDetailPage — grouped by library", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows an error with retry when the log fetch fails, instead of reading as 'no log'", async () => {
+    // Issue 7.7: a failed GET /runs/:id/log rendered exactly the same "No activity recorded" empty
+    // state as a run that genuinely has no log — indistinguishable, and with no way to retry.
+    getRun.mockResolvedValue(run([]));
+    getRunLog.mockRejectedValue(new Error("network error"));
+
+    renderDetail("?tab=log");
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/No activity recorded for this run/i)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Try again/i }),
+    ).toBeInTheDocument();
+  });
+
   it("names the phase a still-running run is actually in", async () => {
     // The complaint this whole tab exists for: every person shows "done" and the run still says
     // running, with nothing anywhere saying what it is doing.
@@ -643,6 +675,72 @@ describe("RunDetail — a failed run says why", () => {
   });
 });
 
+function failedUser(username: string, error: string) {
+  return {
+    username,
+    slug: username,
+    status: "error",
+    error,
+    reason: null,
+    duration_ms: 0,
+    llm_tokens: 0,
+    diff: {},
+    picks: [],
+    breakdown: [],
+  };
+}
+
+describe("RunDetail — 'N people failed with the same problem' (issue 7.1)", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getRunLog.mockReset();
+    getUsers.mockResolvedValue([]);
+    getRunLog.mockResolvedValue([]);
+  });
+
+  it("claims commonality for two people who hit the SAME recognised error class", async () => {
+    const r = run([]);
+    r.stats = { users_ok: 0, users_error: 3, titles_requested: 0 };
+    r.users = [
+      failedUser("sarah", "HTTP 500 while updating collection 12"),
+      failedUser("mike", "HTTP 500 while updating collection 99"),
+      failedUser("amy", "connection refused to 10.0.0.5:32400"),
+    ] as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail("");
+
+    // Scoped to the banner itself: the selected (first) failed person's own panel repeats the same
+    // friendly sentence below it, so an unscoped query matches both and proves nothing about the
+    // banner specifically.
+    const commonLine = await screen.findByText(
+      /people failed with the same problem/i,
+    );
+    const banner = commonLine.closest('[role="alert"]') as HTMLElement;
+    expect(banner).toHaveTextContent(/2 people failed with the same problem/i);
+    expect(banner).toHaveTextContent(/server error \(500\)/i);
+  });
+
+  it("does NOT claim commonality for two people with different unrecognised errors", async () => {
+    // The bug: errorBucket used to be a pure alias of friendlyError, which returns one generic
+    // sentence for anything unrecognised — so these two unrelated failures bucketed together and
+    // the page asserted they were "the same problem", which was false.
+    const r = run([]);
+    r.stats = { users_ok: 0, users_error: 2, titles_requested: 0 };
+    r.users = [
+      failedUser("sarah", "KeyError: 'ratingKey'"),
+      failedUser("mike", "AttributeError: NoneType has no attribute 'guid'"),
+    ] as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail("");
+
+    await screen.findAllByText(/failed/i);
+    expect(screen.queryByText(/failed with the same problem/i)).toBeNull();
+  });
+});
+
 describe("RunDetail — where the phase breakdown lives", () => {
   beforeEach(() => {
     getRun.mockReset();
@@ -719,5 +817,57 @@ describe("RunDetail — where the phase breakdown lives", () => {
 
     expect(within(card).queryByText(/all users done/i)).toBeNull();
     expect(within(card).queryByText(/run finished/i)).toBeNull();
+  });
+});
+
+describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getRunLog.mockReset();
+    getUsers.mockResolvedValue([]);
+    getRunLog.mockResolvedValue([]);
+    FakeEventSource.instances = [];
+  });
+
+  it("does not refetch when the stage event belongs to a different run", async () => {
+    // Sitting on finished run #2 while another run (#40) streams its own stage events used to
+    // refetch #2 on every single one of them — `onRunUserStage` had no run_id guard at all, unlike
+    // `onRunFinished` right below it, which correctly checked `event.run_id === runId`.
+    getRun.mockResolvedValue(run([]));
+    renderDetail("");
+    await screen.findByText("all succeeded");
+
+    const callsBefore = getRun.mock.calls.length;
+    const source = FakeEventSource.instances.at(-1);
+    source?.emit("run.user.stage", {
+      user: "someoneelse",
+      stage: "curating",
+      counts: {},
+      run_id: 999, // this page is showing run #2
+    });
+
+    // Give any (wrongly) queued refetch a chance to fire, then assert it didn't.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getRun.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("does refetch on a stage event for this run", async () => {
+    getRun.mockResolvedValue(run([]));
+    renderDetail("");
+    await screen.findByText("all succeeded");
+
+    const callsBefore = getRun.mock.calls.length;
+    const source = FakeEventSource.instances.at(-1);
+    source?.emit("run.user.stage", {
+      user: "moohouse",
+      stage: "curating",
+      counts: {},
+      run_id: 2, // this page is showing run #2
+    });
+
+    await waitFor(() =>
+      expect(getRun.mock.calls.length).toBeGreaterThan(callsBefore),
+    );
   });
 });

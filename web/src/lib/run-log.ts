@@ -12,6 +12,17 @@ function logKey(entry: RunLogEntry): string {
   return `${entry.ts ?? ""}|${entry.user}|${entry.stage}`;
 }
 
+/** Whether a stage event belongs to this run — the one predicate both the log merge and the
+ *  "should this page refetch" check are built from, so they can't drift apart (a stray event
+ *  tagged for another run must never trigger either). An event with no `run_id` belongs to the
+ *  single in-flight run. */
+export function stageBelongsToRun(
+  entry: { run_id?: number | null },
+  runId: number,
+): boolean {
+  return entry.run_id == null || entry.run_id === runId;
+}
+
 /**
  * Merge new stage events into a run's activity log, dropping duplicates and events for other runs.
  *
@@ -28,7 +39,7 @@ export function mergeRunLog(
   const seen = new Set(prev.map(logKey));
   const added: RunLogEntry[] = [];
   for (const entry of incoming) {
-    if (entry.run_id != null && entry.run_id !== runId) continue;
+    if (!stageBelongsToRun(entry, runId)) continue;
     const key = logKey(entry);
     if (seen.has(key)) continue;
     seen.add(key);

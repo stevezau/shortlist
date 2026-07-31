@@ -1,0 +1,4203 @@
+{
+  "components": {
+    "schemas": {
+      "BlockSeedBody": {
+        "properties": {
+          "media_type": {
+            "default": "",
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id"
+        ],
+        "title": "BlockSeedBody",
+        "type": "object"
+      },
+      "Body_upload_poster_image_api_collections__collection_id__poster_upload_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_poster_image_api_collections__collection_id__poster_upload_post",
+        "type": "object"
+      },
+      "BulkEnabled": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "BulkEnabled",
+        "type": "object"
+      },
+      "CleanupRequest": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "CleanupRequest",
+        "type": "object"
+      },
+      "CollectionIn": {
+        "properties": {
+          "audience": {
+            "default": "everyone",
+            "description": "Everyone, or the subset named by audience_user_ids.",
+            "enum": [
+              "everyone",
+              "subset"
+            ],
+            "title": "Audience",
+            "type": "string"
+          },
+          "audience_user_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Audience User Ids",
+            "type": "array"
+          },
+          "build": {
+            "default": "per_person",
+            "description": "Who the row is built for: one per person, or one shared row.",
+            "enum": [
+              "per_person",
+              "shared"
+            ],
+            "title": "Build",
+            "type": "string"
+          },
+          "candidate_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidate Sources",
+            "type": "array"
+          },
+          "defer_rename": {
+            "default": false,
+            "title": "Defer Rename",
+            "type": "boolean"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness"
+          },
+          "hub_anchor": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HubAnchorIn"
+            },
+            "title": "Hub Anchor",
+            "type": "object"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array"
+          },
+          "max_seeds": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Seeds"
+          },
+          "media": {
+            "default": "both",
+            "description": "Which library types this row builds in.",
+            "enum": [
+              "both",
+              "movie",
+              "show"
+            ],
+            "title": "Media",
+            "type": "string"
+          },
+          "min_watchers": {
+            "default": 2,
+            "minimum": 2.0,
+            "title": "Min Watchers",
+            "type": "integer"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "name_template": {
+            "default": "",
+            "title": "Name Template",
+            "type": "string"
+          },
+          "pin_top": {
+            "default": false,
+            "title": "Pin Top",
+            "type": "boolean"
+          },
+          "placement": {
+            "default": "both",
+            "description": "Where the OWNER's own collection appears.",
+            "enum": [
+              "both",
+              "home",
+              "library",
+              "off"
+            ],
+            "title": "Placement",
+            "type": "string"
+          },
+          "placement_friends": {
+            "default": "both",
+            "description": "Where each FRIEND's own collection appears.",
+            "enum": [
+              "both",
+              "home",
+              "library",
+              "off"
+            ],
+            "title": "Placement Friends",
+            "type": "string"
+          },
+          "poster": {
+            "$ref": "#/components/schemas/PosterIn"
+          },
+          "recent_count": {
+            "anyOf": [
+              {
+                "maximum": 25.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recent Count"
+          },
+          "request_tag": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Request Tag",
+            "type": "string"
+          },
+          "rewatch": {
+            "default": false,
+            "title": "Rewatch",
+            "type": "boolean"
+          },
+          "schedule": {
+            "default": "30 3 * * *",
+            "maxLength": 64,
+            "title": "Schedule",
+            "type": "string"
+          },
+          "size": {
+            "default": 15,
+            "maximum": 40.0,
+            "minimum": 5.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "sort_order": {
+            "default": 0,
+            "title": "Sort Order",
+            "type": "integer"
+          },
+          "unstarted_only": {
+            "default": false,
+            "title": "Unstarted Only",
+            "type": "boolean"
+          },
+          "watched_pct": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched Pct"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CollectionIn",
+        "type": "object"
+      },
+      "CuratorModelsRequest": {
+        "description": "Optional live overrides from the settings form so the model picker can list the provider being\nedited BEFORE it's saved. Any blank field falls back to the saved setting; a redacted api key\n('\u2022\u2022\u2022\u2022\u2022') means 'use the saved key'. The key is used only to build the client in memory \u2014 never\nlogged (only the exception class is).",
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "ollama_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ollama Url"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          }
+        },
+        "title": "CuratorModelsRequest",
+        "type": "object"
+      },
+      "Dismiss": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "Dismiss",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HubAnchorIn": {
+        "description": "A per-library shelf placement for one row: the very TOP (``top``), or after/before a collection\nby title. ``top`` needs no anchor; otherwise ``anchor`` must be a non-empty title.",
+        "properties": {
+          "anchor": {
+            "default": "",
+            "maxLength": 255,
+            "title": "Anchor",
+            "type": "string"
+          },
+          "before": {
+            "default": false,
+            "title": "Before",
+            "type": "boolean"
+          },
+          "top": {
+            "default": false,
+            "title": "Top",
+            "type": "boolean"
+          }
+        },
+        "title": "HubAnchorIn",
+        "type": "object"
+      },
+      "LinkRequest": {
+        "properties": {
+          "machine_id": {
+            "title": "Machine Id",
+            "type": "string"
+          },
+          "owner_account_id": {
+            "title": "Owner Account Id",
+            "type": "integer"
+          },
+          "plex_pass": {
+            "default": false,
+            "title": "Plex Pass",
+            "type": "boolean"
+          },
+          "plex_url": {
+            "title": "Plex Url",
+            "type": "string"
+          },
+          "server_name": {
+            "default": "",
+            "title": "Server Name",
+            "type": "string"
+          },
+          "version": {
+            "default": "",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plex_url",
+          "machine_id",
+          "owner_account_id"
+        ],
+        "title": "LinkRequest",
+        "type": "object"
+      },
+      "PosterIn": {
+        "description": "A row's custom-poster config. ``mode`` \"\" leaves Plex artwork alone; \"upload\" uses the image\nstored via the upload endpoint; \"text\" renders ``title``/``subtitle`` with the built-in Pillow\nengine (no AI); \"ai\" renders them with the curator provider's image model. The text fields share\nthe row-name placeholders ({user}/{library_name}/{top_seed}).",
+        "properties": {
+          "mode": {
+            "default": "",
+            "description": "Poster source; \"\" leaves Plex artwork alone.",
+            "enum": [
+              "",
+              "ai",
+              "generate",
+              "text",
+              "upload"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "style": {
+            "default": "",
+            "maxLength": 400,
+            "title": "Style",
+            "type": "string"
+          },
+          "subtitle": {
+            "default": "",
+            "maxLength": 120,
+            "title": "Subtitle",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "maxLength": 120,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "title": "PosterIn",
+        "type": "object"
+      },
+      "ProbeRequest": {
+        "properties": {
+          "plex_url": {
+            "title": "Plex Url",
+            "type": "string"
+          },
+          "tautulli_apikey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tautulli Apikey"
+          },
+          "tautulli_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tautulli Url"
+          }
+        },
+        "required": [
+          "plex_url"
+        ],
+        "title": "ProbeRequest",
+        "type": "object"
+      },
+      "RenameRequest": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "name_template": {
+            "default": "",
+            "title": "Name Template",
+            "type": "string"
+          },
+          "old_template": {
+            "default": "",
+            "title": "Old Template",
+            "type": "string"
+          }
+        },
+        "title": "RenameRequest",
+        "type": "object"
+      },
+      "RequestAction": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "ids": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 1000,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "RequestAction",
+        "type": "object"
+      },
+      "RequestCandidateOut": {
+        "properties": {
+          "arr_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arr Slug"
+          },
+          "demand": {
+            "title": "Demand",
+            "type": "integer"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "excluded": {
+            "default": false,
+            "title": "Excluded",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "imdb_id": {
+            "default": "",
+            "title": "Imdb Id",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "poster_path": {
+            "default": "",
+            "title": "Poster Path",
+            "type": "string"
+          },
+          "rating": {
+            "title": "Rating",
+            "type": "number"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "vote_count": {
+            "title": "Vote Count",
+            "type": "integer"
+          },
+          "wanters": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Wanters",
+            "type": "array"
+          },
+          "why": {
+            "items": {
+              "$ref": "#/components/schemas/RequestWhyOut"
+            },
+            "title": "Why",
+            "type": "array"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "id",
+          "tmdb_id",
+          "media_type",
+          "title",
+          "year",
+          "rating",
+          "vote_count",
+          "demand",
+          "tags",
+          "wanters",
+          "why",
+          "status",
+          "detail",
+          "updated_at"
+        ],
+        "title": "RequestCandidateOut",
+        "type": "object"
+      },
+      "RequestWhyOut": {
+        "properties": {
+          "row": {
+            "title": "Row",
+            "type": "string"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "row",
+          "seed",
+          "source"
+        ],
+        "title": "RequestWhyOut",
+        "type": "object"
+      },
+      "RestoreRequest": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "RestoreRequest",
+        "type": "object"
+      },
+      "RowOverridePatch": {
+        "properties": {
+          "muted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Muted"
+          },
+          "recent_count": {
+            "anyOf": [
+              {
+                "maximum": 25.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recent Count"
+          },
+          "row_size": {
+            "anyOf": [
+              {
+                "maximum": 40.0,
+                "minimum": 5.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Size"
+          }
+        },
+        "title": "RowOverridePatch",
+        "type": "object"
+      },
+      "RunJobRequest": {
+        "properties": {
+          "background": {
+            "default": false,
+            "title": "Background",
+            "type": "boolean"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "RunJobRequest",
+        "type": "object"
+      },
+      "RunRequest": {
+        "properties": {
+          "collection_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collection Ids"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "user_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Ids"
+          }
+        },
+        "title": "RunRequest",
+        "type": "object"
+      },
+      "SettingsUpdate": {
+        "properties": {
+          "values": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "values"
+        ],
+        "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "UninstallRequest": {
+        "properties": {
+          "confirm": {
+            "default": "",
+            "title": "Confirm",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "UninstallRequest",
+        "type": "object"
+      },
+      "UserPatch": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "nickname": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nickname"
+          },
+          "prefs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UserPrefs"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request_tag": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Tag"
+          }
+        },
+        "title": "UserPatch",
+        "type": "object"
+      },
+      "UserPrefs": {
+        "properties": {
+          "blocked_seeds": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BlockSeedBody"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Seeds"
+          },
+          "excluded_genres": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excluded Genres"
+          },
+          "paused": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paused"
+          },
+          "row_name_tpl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Name Tpl"
+          }
+        },
+        "title": "UserPrefs",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "WizardState": {
+        "properties": {
+          "completed": {
+            "default": false,
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "state": {
+            "additionalProperties": true,
+            "default": {},
+            "title": "State",
+            "type": "object"
+          },
+          "step": {
+            "title": "Step",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "step"
+        ],
+        "title": "WizardState",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Shortlist",
+    "version": "0.1.0b8"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Logout Api Auth Logout Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/pin": {
+      "post": {
+        "operationId": "create_pin_api_auth_pin_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Pin Api Auth Pin Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Pin",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/pin/{pin_id}": {
+      "get": {
+        "description": "Poll the PIN; once linked, verify the account is the server owner and set the session.",
+        "operationId": "poll_pin_api_auth_pin__pin_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pin_id",
+            "required": true,
+            "schema": {
+              "title": "Pin Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Poll Pin Api Auth Pin  Pin Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Poll Pin",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/session": {
+      "get": {
+        "operationId": "get_session_api_auth_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Session Api Auth Session Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/collections": {
+      "get": {
+        "operationId": "list_collections_api_collections_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Collections Api Collections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Collections",
+        "tags": [
+          "collections"
+        ]
+      },
+      "post": {
+        "operationId": "create_collection_api_collections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Collection Api Collections Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Collection",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}": {
+      "delete": {
+        "operationId": "delete_collection_api_collections__collection_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Collection",
+        "tags": [
+          "collections"
+        ]
+      },
+      "patch": {
+        "description": "Edit a row: validate \u2192 apply \u2192 plan the Plex work \u2192 enqueue it \u2192 drain.\n\nThe decision table for \"what does this edit owe Plex\" lives in `api/row_changes.py`, not here.\nIt used to be eleven mutable flags accumulated down this handler and eight conditional\ndispatches at the bottom \u2014 untestable without a Plex context, and the place a missed branch\nsilently left someone's row on the wrong Home screen.",
+        "operationId": "update_collection_api_collections__collection_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Collection Api Collections  Collection Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Collection",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/cleanup": {
+      "post": {
+        "description": "Remove this row's collections from Plex, for everyone who has it, without waiting for a run.\n\nRemoval only \u2014 it never creates or promotes, so it can never leak: deleting a row can only make\nthe server more private. A per-person row's\ncollection for each user is pinned by the exact title the last run delivered (recorded in that\nrun's breakdown); a shared row is addressed by its own label. dry_run previews the plan.",
+        "operationId": "cleanup_collection_api_collections__collection_id__cleanup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CleanupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cleanup Collection Api Collections  Collection Id  Cleanup Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cleanup Collection",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/poster/image": {
+      "delete": {
+        "description": "Remove a row's uploaded poster image, and put the artwork on Plex back to default.\n\nClearing the stored bytes used to be all this did, leaving `mode` as \"upload\" with nothing to\nupload \u2014 so the row kept the artwork Shortlist had already pushed to Plex, for ever, with no way\nto reach it: the PATCH path only reverts when a row that HAD a mode drops to none, and the mode\nnever dropped. \"Delete the image\" now means the image is gone from both places.",
+        "operationId": "delete_poster_image_api_collections__collection_id__poster_image_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Poster Image",
+        "tags": [
+          "collections"
+        ]
+      },
+      "get": {
+        "description": "Serve a row's current poster image: the uploaded original, or a rendered preview.\n\nFor a built-in \"text\" poster the preview is cheap, so it's rendered on demand if not already\ncached (the thumbnail always shows). For an \"ai\" poster only a previously-generated image is\nserved \u2014 a GET never spends money generating one.",
+        "operationId": "get_poster_image_api_collections__collection_id__poster_image_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Poster Image",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/poster/preview": {
+      "post": {
+        "description": "Render a sample poster from the given text and return the image.\n\nUses sample placeholder values (a name + the Movies library) so the owner can see what a poster\nwill look like. A \"text\" poster always renders (no provider needed); an \"ai\" poster needs an\nimage-capable provider. The result is cached, so warming the preview also speeds the next run.",
+        "operationId": "preview_poster_api_collections__collection_id__poster_preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PosterIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Poster",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/poster/upload": {
+      "post": {
+        "description": "Store an uploaded poster image for a row and switch it into upload mode.\n\nNormalizes the image (downscale to poster size + JPEG) before it hits the DB, so a phone photo\ndoesn't bloat /config. Any generate-mode text the user typed is preserved.",
+        "operationId": "upload_poster_image_api_collections__collection_id__poster_upload_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_poster_image_api_collections__collection_id__poster_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Upload Poster Image Api Collections  Collection Id  Poster Upload Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Poster Image",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/rename": {
+      "post": {
+        "description": "Rename this row's collections on Plex, streaming SSE events as each user's collection is\nrenamed. Returns a text/event-stream: one 'rename' event per user, then a 'done' event.",
+        "operationId": "rename_collection_stream_api_collections__collection_id__rename_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Collection Stream",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/events": {
+      "get": {
+        "operationId": "stream_api_events_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Stream",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/events/log": {
+      "get": {
+        "description": "The audit trail, newest first. `before_id` pages backwards \u2014 pass the id of the oldest entry\nyou already have. A cursor, not an offset: events are appended while you read.",
+        "operationId": "audit_log_api_events_log_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Audit Log Api Events Log Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Audit Log",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/notifications": {
+      "get": {
+        "description": "Every currently-firing notification (update available, failed/partial run, paused, errors).",
+        "operationId": "list_notifications_api_notifications_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Notifications Api Notifications Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Notifications",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/notifications/dismiss": {
+      "post": {
+        "description": "Hide a notification by id. The id encodes its state (run id / version), so the SAME condition\nstays hidden but a new failure or a newer release surfaces again on its own.",
+        "operationId": "dismiss_api_notifications_dismiss_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Dismiss"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Dismiss Api Notifications Dismiss Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Dismiss",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/report": {
+      "get": {
+        "description": "The dashboard tracking report: headline counts for the chosen window with their change vs the\nprevious equal period, the landing rate over a matured cohort, watch momentum, per-user and\nper-row breakdowns, the titles landing best, requests that paid off, and a recent-watches feed.\n\nDeliberately a plain `def`, not `async def`: the computation is ~30 synchronous queries, one of\nthem a `GROUP BY user_id, tmdb_id, media_type` over the whole picks table. On the event loop that\nstalled SSE, `/api/system/health` and every other request for as long as it took; as a sync\nhandler Starlette runs it in a worker thread instead.",
+        "operationId": "effectiveness_api_report_get",
+        "parameters": [
+          {
+            "description": "Report window in days: 7, 30, 90, or 'all'.",
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "30",
+              "description": "Report window in days: 7, 30, 90, or 'all'.",
+              "title": "Window",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Effectiveness Api Report Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Effectiveness",
+        "tags": [
+          "report"
+        ]
+      }
+    },
+    "/api/report/deleted-rows": {
+      "delete": {
+        "description": "Permanently delete the pick history of rows that no longer exist. `slug` clears just one.\n\nThis is the one destructive action on the dashboard, so it is deliberately narrow:\n\n* Only slugs with no live Collection are eligible \u2014 the eligible set is recomputed here rather\n  than trusted from the request, so naming a live row's slug deletes nothing.\n* Only `picks` rows are touched. `deliveries` is left alone: it is the ledger of what still\n  exists on Plex, and clearing it would strand a real collection with nothing left to clean it up.\n* These picks disappear from everywhere they are counted \u2014 not just this dashboard. The per-user\n  lifetime stats and a person's pick history on their own page are read from the same rows, so the\n  UI has to say \"history\", not \"the numbers above\".",
+        "operationId": "clear_deleted_rows_api_report_deleted_rows_delete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Slug"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Clear Deleted Rows Api Report Deleted Rows Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Deleted Rows",
+        "tags": [
+          "report"
+        ]
+      },
+      "get": {
+        "description": "Pick history belonging to rows that no longer exist, with how much of it there is.\n\nIts own endpoint rather than a field on the report: the report is windowed, and \"what can I clear\"\nis a question about ALL of a deleted row's history, not the last 30 days of it.",
+        "operationId": "deleted_rows_api_report_deleted_rows_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Deleted Rows Api Report Deleted Rows Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Deleted Rows",
+        "tags": [
+          "report"
+        ]
+      }
+    },
+    "/api/report/sync": {
+      "post": {
+        "description": "Run the daily watch-status sync on demand \u2014 refresh every user's watched picks now. Fires in\nthe background (it fetches history for all users); the report refreshes once it lands.",
+        "operationId": "trigger_sync_api_report_sync_post",
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Sync Api Report Sync Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Trigger Sync",
+        "tags": [
+          "report"
+        ]
+      }
+    },
+    "/api/requests": {
+      "get": {
+        "description": "The whole inbox: pending first (most-wanted, best-rated on top), then sent, then rejected.\n\nRows the owner cleared from the Sent log (``hidden``) are excluded \u2014 they stay in the DB as sent\ntombstones (so the title isn't re-requested) but never show in the UI again.\n\nCapped at :data:`MAX_INBOX`. The cap is applied AFTER the status sort, in Python, because the\nordering is by (status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows\nrather than the oldest history.",
+        "operationId": "list_requests_api_requests_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RequestCandidateOut"
+                  },
+                  "title": "Response List Requests Api Requests Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/clear": {
+      "post": {
+        "description": "Clear the given SENT titles from the send log \u2014 hide them, don't delete them.\n\nA sent row is a load-bearing tombstone: dropping it lets a still-downloading title look \"missing\"\nand get re-requested every night (see ``delete_requests``). So \"clear\" sets ``hidden`` instead \u2014\nthe row stays ``sent`` and keeps protecting against re-request, but never shows in the inbox again.\nOnly ``sent`` rows are cleared; a pending/rejected id is ignored (those have Delete / Reject).",
+        "operationId": "clear_requests_api_requests_clear_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Clear Requests Api Requests Clear Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/delete": {
+      "post": {
+        "description": "Remove the given titles from the inbox entirely, leaving no trace.\n\nUnlike ``/reject`` (a permanent tombstone), a deleted row is gone \u2014 so if a later run's picks turn\nup the same title again, it returns to the pending queue. Two uses: clear a title off the list\nwithout blocking it forever, or delete a previously *rejected* title to let it come back.\n\n``sent`` rows are never deleted: that status is a load-bearing tombstone (``_persist_request_queue``)\nthat stops a still-downloading title from being seen as \"missing\" and re-requested every night.\nDropping it would resurrect that bug, so a ``sent`` id in the request is skipped, not deleted.",
+        "operationId": "delete_requests_api_requests_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Requests Api Requests Delete Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/reject": {
+      "post": {
+        "description": "Permanently dismiss the given titles.\n\nA rejected title is kept on file as a tombstone: it leaves the pending list AND every later run\nskips re-queuing it (``_persist_request_queue`` only touches ``pending`` rows), so a dismissed\nsuggestion can never come back on its own. Use ``/delete`` instead to remove a title without\nblocking it \u2014 or to lift a rejection so a future run may surface it again.",
+        "operationId": "reject_requests_api_requests_reject_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Reject Requests Api Requests Reject Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/restore": {
+      "post": {
+        "description": "Un-reject: move rejected titles back to the pending queue (Waiting) so they can be sent again.\n\nOnly ``rejected`` rows are restored; ``pending``/``sent`` are left as they are. The row keeps its\nrecorded demand/wanters/why/tags, so it reappears in Waiting exactly as it was, ready to send \u2014\nunlike a run, which would only re-surface it if the same taste turned it up again.",
+        "operationId": "restore_requests_api_requests_restore_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Restore Requests Api Requests Restore Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/send": {
+      "post": {
+        "description": "Ask Sonarr/Radarr for the chosen pending titles.\n\nA dry run previews the outcomes without asking and leaves every row pending. A real send marks a\nrow ``sent`` only when the app accepted it; a skip/error leaves it pending with the reason recorded,\nso the owner can see why it didn't go and try again.",
+        "operationId": "send_requests_api_requests_send_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Send Requests Api Requests Send Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send Requests",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/requests/status": {
+      "get": {
+        "description": "Arr download status for every request row. Returns {request_id: 'downloaded' | 'downloading' | ...}.\n\nCovers waiting rows as well as sent ones. A waiting title is normally absent from the Arrs \u2014 the\nnightly pass drops anything they already track \u2014 so a status there means the owner (or another\ntool) added it by hand since, which is exactly the case where \"why is this still waiting?\" needs\nan answer. Rejected rows are skipped: nothing is going to happen to them.\n\nWhole-library maps, not per-title lookups, so the cost is a handful of calls no matter how long\nthe inbox is. Runs in an executor since the Arr clients are sync. A title neither app tracks\nappears as None.",
+        "operationId": "get_arr_status_api_requests_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "title": "Response Get Arr Status Api Requests Status Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Arr Status",
+        "tags": [
+          "requests"
+        ]
+      }
+    },
+    "/api/runs": {
+      "delete": {
+        "description": "Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the\ndashboard's lifetime metrics survive \u2014 only the browsable history is cleared. Changes nothing\non Plex. Note: the next run will re-curate from scratch (no carry-forward) since picks lose\ntheir run association.",
+        "operationId": "clear_runs_api_runs_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Clear Runs Api Runs Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clear Runs",
+        "tags": [
+          "runs"
+        ]
+      },
+      "get": {
+        "description": "Recent runs, newest first. `collection` (a row slug) narrows to runs that actually built that\nrow \u2014 the ones whose picks carry its slug \u2014 so the Rows page can link a row to its own history.\n\n`before_id` pages backwards through history: pass the id of the oldest run you already have.\nCursor rather than offset because runs are inserted while you read \u2014 an offset would skip or\nrepeat rows as the list shifts under you.",
+        "operationId": "list_runs_api_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "collection",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Collection"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Runs Api Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Runs",
+        "tags": [
+          "runs"
+        ]
+      },
+      "post": {
+        "operationId": "trigger_run_api_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Run Api Runs Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/runs/summary": {
+      "get": {
+        "description": "Totals for the Runs page header: how many runs, how many succeeded/failed, and the last one.",
+        "operationId": "runs_summary_api_runs_summary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Runs Summary Api Runs Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Runs Summary",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_api_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Run Api Runs  Run Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/cancel": {
+      "post": {
+        "description": "Ask the in-flight run to stop. Cooperative \u2014 it finishes the person it's on, then stops, and\nstill merges the privacy filters + promotes everyone delivered so far. 409 if it isn't running.",
+        "operationId": "cancel_run_api_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Cancel Run Api Runs  Run Id  Cancel Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/log": {
+      "get": {
+        "description": "The run's activity log: per-user stages, then the server-wide phases that follow them.\n\nServed from the live in-memory tail while the run is in flight and from `run_log_lines`\nafterwards, so a run whose process has since restarted still has a readable log.\n\n`after_seq` returns only lines past that sequence number, for topping up without refetching the\nwhole feed. `format=text` renders it as plain text for the download button.",
+        "operationId": "get_run_log_api_runs__run_id__log_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_seq",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Seq"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Log",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/runs/{run_id}/users/{user_id}/trace": {
+      "get": {
+        "description": "The full pipeline trace for one user in one run: seeds derived, each candidate source's\nqueries and returns, the web-search / RAG prompts, and the titles proposed. Fetched on demand\n(it's a large blob) so the run-detail page stays light. Empty ``{}`` on a run predating the\nfeature or a skipped/cold user \u2014 the UI reads that as \"no trace for this run\", not an error.",
+        "operationId": "get_run_user_trace_api_runs__run_id__users__user_id__trace_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Run User Trace Api Runs  Run Id  Users  User Id  Trace Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run User Trace",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/schedule": {
+      "get": {
+        "description": "Everything on a timer, each with its cron, its next fire time, and how to change it.\n\nRows are grouped by shared cron, exactly as the scheduler groups them \u2014 three rows on `30 3 * * *`\nare ONE trigger that builds all three, and listing them as three separate 03:30 entries would\nmisrepresent what the server does.",
+        "operationId": "schedule_api_schedule_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Schedule Api Schedule Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Schedule",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "operationId": "get_settings_api_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Settings Api Settings Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings",
+        "tags": [
+          "settings"
+        ]
+      },
+      "put": {
+        "operationId": "put_settings_api_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Settings Api Settings Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Settings",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/arr/{service}/options": {
+      "get": {
+        "description": "Quality profiles + root folders for a connected Sonarr/Radarr, so the UI offers dropdowns\nrather than asking a non-technical owner to hunt down numeric profile ids and server paths.",
+        "operationId": "arr_options_api_settings_arr__service__options_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "title": "Service",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Arr Options Api Settings Arr  Service  Options Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Arr Options",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/curator/models": {
+      "post": {
+        "description": "Model ids an AI provider offers, for the model picker.\n\nLists the provider being edited: the request may carry the (unsaved) provider + key/URL from the\nsettings form, so switching provider or typing a new key updates the dropdown live. Blank fields\nfall back to the SAVED settings, and a redacted key means 'use the saved key'. The key builds the\nclient in memory only \u2014 never logged (only the exception CLASS is, since an SDK can embed the key\nin error text). Best-effort: no key yet, an offline Ollama, or a provider without a models\nendpoint returns an empty list, and the UI falls back to the free-text override.",
+        "operationId": "curator_models_api_settings_curator_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CuratorModelsRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Curator Models Api Settings Curator Models Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Curator Models",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/settings/test/{service}": {
+      "post": {
+        "description": "One tiny call per service; returns plain-English ok/error (design: everything re-testable).",
+        "operationId": "test_connection_api_settings_test__service__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "title": "Service",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Test Connection Api Settings Test  Service  Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Connection",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/setup/link": {
+      "post": {
+        "description": "Persist the chosen server; the authenticated account must be its owner.",
+        "operationId": "link_server_api_setup_link_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Link Server Api Setup Link Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Link Server",
+        "tags": [
+          "setup"
+        ]
+      }
+    },
+    "/api/setup/probe": {
+      "post": {
+        "description": "Capability checklist for wizard step 1: version gate, Plex Pass, libraries, Tautulli.",
+        "operationId": "probe_api_setup_probe_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProbeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Probe Api Setup Probe Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Probe",
+        "tags": [
+          "setup"
+        ]
+      }
+    },
+    "/api/setup/servers": {
+      "get": {
+        "description": "Every Plex server this account can reach, with each advertised address tested.\n\nThis is what makes the URL field a picker instead of a guess: Plex advertises several\naddresses per server (LAN, hostname, relay), and only the owner's network knows which one\nactually works from where Shortlist runs \u2014 so we try them all and report what answered.",
+        "operationId": "list_servers_api_setup_servers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Servers Api Setup Servers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Servers",
+        "tags": [
+          "setup"
+        ]
+      }
+    },
+    "/api/setup/state": {
+      "get": {
+        "operationId": "get_state_api_setup_state_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get State Api Setup State Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get State",
+        "tags": [
+          "setup"
+        ]
+      },
+      "put": {
+        "operationId": "put_state_api_setup_state_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WizardState"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put State Api Setup State Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put State",
+        "tags": [
+          "setup"
+        ]
+      }
+    },
+    "/api/system/api-token": {
+      "delete": {
+        "description": "Revoke the API token \u2014 any script still using it starts getting 401s on the next call.",
+        "operationId": "revoke_api_token_api_system_api_token_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Api Token Api System Api Token Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Revoke Api Token",
+        "tags": [
+          "system"
+        ]
+      },
+      "get": {
+        "description": "The owner API token itself (decrypted, for the owner to reveal/copy \u2014 like Sonarr/Radarr's key),\nplus whether one exists and when it was made. Owner-gated; never exposed via GET /api/settings.",
+        "operationId": "api_token_status_api_system_api_token_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Api Token Status Api System Api Token Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Api Token Status",
+        "tags": [
+          "system"
+        ]
+      },
+      "post": {
+        "description": "Generate (or replace) the owner API token. Stored encrypted at rest; regenerating invalidates\nthe previous token immediately.",
+        "operationId": "create_api_token_api_system_api_token_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Api Token Api System Api Token Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Api Token",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/backups": {
+      "get": {
+        "description": "List available DB backups, newest first.",
+        "operationId": "get_backups_api_system_backups_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Backups",
+        "tags": [
+          "system"
+        ]
+      },
+      "post": {
+        "description": "Take a manual backup now.",
+        "operationId": "create_backup_api_system_backups_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Create Backup",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/backups/restore": {
+      "post": {
+        "description": "Restore from a named backup. The app will need to be restarted after.\n\nA restore is not a neutral rollback: the database is what decides WHO MAY SEE WHAT. Restoring a\ncopy taken before a shared row's audience was narrowed puts the wider audience back, and the\nshared-exclude prune \u2014 the only un-hiding path Shortlist has \u2014 then removes the `label!=` excludes\nthat were hiding that row. That is correct for the config being restored, and it is exactly the\nkind of change an operator does not expect from a button labelled \"restore\".\n\nSo it is stated, in the response and in the audit trail (rule 10), rather than left to be\ndiscovered on someone's Home screen.",
+        "operationId": "restore_backup_endpoint_api_system_backups_restore_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Backup Endpoint",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/debug": {
+      "get": {
+        "description": "A pasteable diagnostics bundle for bug reports: version, DB migration head, scheduler jobs,\nconnection status, and record counts. Deliberately plain text and secrets-free \u2014 every connection\nis reported as a yes/no, never a token or key (plex-safety rule 9).",
+        "operationId": "debug_bundle_api_system_debug_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Debug Bundle",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/health": {
+      "get": {
+        "description": "Liveness only \u2014 this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its\nconsumer. The version used to be here too; an unauthenticated caller does not need to know which\nbuild to look up advisories for. The UI reads it from `/system/version`, which is owner-gated.",
+        "operationId": "health_api_system_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Api System Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/image-provider": {
+      "get": {
+        "description": "Whether the configured AI provider can generate poster images (and a plain-English reason if\nnot) \u2014 so the row editor can enable/disable the \"Generate\" poster option honestly.",
+        "operationId": "image_provider_api_system_image_provider_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Image Provider Api System Image Provider Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Image Provider",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/jobs": {
+      "get": {
+        "description": "Recent background jobs, newest first \u2014 the \"did that actually happen?\" answer.\n\nMaintenance work used to be fire-and-forget: it landed in the logs and the events table and\nnowhere an operator would look. Runs keep their own page; this is everything else.\n\n`kind` narrows it to one job type, which is how the Jobs page shows a single job's own history\nwithout pulling every other kind's rows down with it. `before_id` pages backwards \u2014 pass the id\nof the oldest job you already have.",
+        "operationId": "list_jobs_api_system_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Jobs Api System Jobs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Jobs",
+        "tags": [
+          "system"
+        ]
+      },
+      "post": {
+        "description": "Queue a maintenance job and drain immediately, so pressing a button still feels instant.\n\nThe queue is the SAFETY NET, not a delay: if this attempt fails the job stays queued and the\nworker retries it with backoff, which is exactly what fire-and-forget could never do.",
+        "operationId": "run_job_api_system_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunJobRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Run Job Api System Jobs Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Run Job",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/jobs/catalog": {
+      "get": {
+        "description": "Every job Shortlist can run: what it does, when it next runs, and how it went last time.\n\nThe Jobs page is organised BY JOB, not by chronology \u2014 \"is the roster sync healthy?\" was\nunanswerable from a flat list of the last 25 rows mixing every kind together. Each entry\ncarries enough to render a card without a second request per kind.",
+        "operationId": "jobs_catalog_api_system_jobs_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Jobs Catalog Api System Jobs Catalog Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Jobs Catalog",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/libraries": {
+      "get": {
+        "description": "The server's movie/show libraries, so the Rows editor can offer them as delivery targets.",
+        "operationId": "libraries_api_system_libraries_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Libraries Api System Libraries Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Libraries",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/libraries/{key}/collections": {
+      "get": {
+        "description": "A library's managed (orderable) collections \u2014 the candidate ANCHORS for placing Shortlist rows\nin the Recommended shelf. Shortlist's own rows are excluded (you don't anchor a row to itself).",
+        "operationId": "library_collections_api_system_libraries__key__collections_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Library Collections Api System Libraries  Key  Collections Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Library Collections",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/logs": {
+      "get": {
+        "description": "The rotating log file, parsed and filtered \u2014 so a problem can be diagnosed from the app\ninstead of `docker logs`.\n\nEvery line is redacted before it leaves the server: this view exists to be copied and shared\n(that is what the export button is for), so it must never be the thing that leaks a token.",
+        "operationId": "logs_api_system_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "default": "DEBUG",
+              "title": "Level",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Logs Api System Logs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Logs",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/logs/download": {
+      "get": {
+        "description": "Every log file as a redacted zip \u2014 the attachment for a bug report.",
+        "operationId": "logs_download_api_system_logs_download_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logs Download",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/owned-collections": {
+      "get": {
+        "description": "Read-only cleanup audit: every Shortlist-labelled collection currently on Plex, one per entry.\nEach is flagged ``orphan`` when the label's owner is gone from the app \u2014 the USER for a per-person\nrow (all of a user's rows share their one label, so this is user-level), or the SHARED ROW for a\nshared collection (1:1 with its slug). Independent of the database \u2014 this is exactly what a\ncleanup/uninstall finds and removes, so the owner can eyeball nothing has drifted (rule 10).",
+        "operationId": "owned_collections_audit_api_system_owned_collections_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Owned Collections Audit Api System Owned Collections Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Owned Collections Audit",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/syncs": {
+      "get": {
+        "description": "When each sync last ran and when it next fires \u2014 for the Tools page \"last synced\" lines.",
+        "operationId": "syncs_api_system_syncs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Syncs Api System Syncs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Syncs",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/uninstall": {
+      "post": {
+        "description": "Trust feature: restore every snapshot, delete every shortlist collection, disable every row\nand clear its schedule so nothing rebuilds, and report.\n\ndry_run=true previews the plan; the real thing requires the literal confirmation\nstring UNINSTALL \u2014 this is the one deliberately scary button in the product.",
+        "operationId": "uninstall_api_system_uninstall_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UninstallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Uninstall Api System Uninstall Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Uninstall",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/system/version": {
+      "get": {
+        "description": "Current + latest version and whether an update is available.",
+        "operationId": "version_api_system_version_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Version Api System Version Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Version",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/users": {
+      "get": {
+        "description": "Every user with their badges, watch depth, lifetime hit rate and a pick preview.\n\nDeliberately a plain `def`, not `async def`: it issues four synchronous queries PER USER,\nwhich on a 40-account server is ~160 round-trips. On the event loop that stalls SSE,\n`/api/system/health` and every other request for the duration; as a sync handler Starlette\nruns it in a worker thread instead.",
+        "operationId": "list_users_api_users_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response List Users Api Users Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Users",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/search/titles": {
+      "get": {
+        "description": "Look a title up on TMDB, for the \"block a seed\" picker.\n\nOwner-gated like the rest of this router. Returns at most one match per query \u2014 TMDB's own best\nguess \u2014 because the only thing the caller needs is a tmdb_id to attach a name to.",
+        "operationId": "search_titles_api_users_search_titles_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "media_type",
+            "required": false,
+            "schema": {
+              "default": "movie",
+              "title": "Media Type",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Search Titles Api Users Search Titles Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Titles",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/set-enabled": {
+      "post": {
+        "description": "Enable or disable EVERY user at once. Disabling removes each newly-disabled user's rows from\nPlex now and writes their share filters \u2014 the same cleanup the per-user toggle does, so 'off'\nmeans gone, not merely 'not refreshed'. Enabling gives back the shared rows that disabling hid;\ntheir own rows rebuild on the next run. Best-effort + audited.",
+        "operationId": "set_all_users_enabled_api_users_set_enabled_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkEnabled"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set All Users Enabled Api Users Set Enabled Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set All Users Enabled",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/sync": {
+      "post": {
+        "description": "Pull shared + Home users \u2014 and the owner \u2014 from plex.tv into the users table (idempotent).",
+        "operationId": "sync_users_api_users_sync_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sync Users Api Users Sync Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sync Users",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}": {
+      "patch": {
+        "operationId": "patch_user_api_users__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Patch User Api Users  User Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch User",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/blocked-seeds": {
+      "post": {
+        "description": "Stop a title being used as a seed for this person's recommendations.\n\nBlocking a seed does not ban the title outright \u2014 it stops that watch from SHAPING their picks,\nwhich is the thing you want after a one-off that isn't representative of them.",
+        "operationId": "block_seed_api_users__user_id__blocked_seeds_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlockSeedBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Block Seed Api Users  User Id  Blocked Seeds Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Block Seed",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/blocked-seeds/{tmdb_id}": {
+      "delete": {
+        "description": "Unblock a title so it can be used as a seed again.",
+        "operationId": "unblock_seed_api_users__user_id__blocked_seeds__tmdb_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "tmdb_id",
+            "required": true,
+            "schema": {
+              "title": "Tmdb Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Unblock Seed Api Users  User Id  Blocked Seeds  Tmdb Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unblock Seed",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/history": {
+      "get": {
+        "description": "Recent watch history for this user, from Tautulli/Plex \u2014 the same source recommendations use.",
+        "operationId": "user_history_api_users__user_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response User History Api Users  User Id  History Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User History",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/rows": {
+      "get": {
+        "description": "The rows this user gets, each with its effective settings, their override, and latest picks.",
+        "operationId": "user_rows_api_users__user_id__rows_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response User Rows Api Users  User Id  Rows Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Rows",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/rows/{collection_id}": {
+      "put": {
+        "description": "Mute or resize one row for one person \u2014 upserts their override.",
+        "operationId": "set_user_row_override_api_users__user_id__rows__collection_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RowOverridePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Set User Row Override Api Users  User Id  Rows  Collection Id  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set User Row Override",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/runs": {
+      "get": {
+        "description": "This user's recent run results \u2014 status, what changed, and the picks with their reasons.",
+        "operationId": "user_runs_api_users__user_id__runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 15,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response User Runs Api Users  User Id  Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Runs",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/runs/summary": {
+      "get": {
+        "description": "How many runs included this person, against how many there have been.\n\nA run is server-wide, so \"6 runs\" on a person's page is only honest next to \"of 148\" \u2014 otherwise\nthe page reads as though the server has run six times.",
+        "operationId": "user_runs_summary_api_users__user_id__runs_summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response User Runs Summary Api Users  User Id  Runs Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Runs Summary",
+        "tags": [
+          "users"
+        ]
+      }
+    }
+  }
+}

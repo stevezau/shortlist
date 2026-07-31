@@ -32,7 +32,14 @@ class NullCache:
 
 
 class TmdbClient:
-    def __init__(self, api_key: str, *, cache: Cache | None = None, timeout: float = 30.0):
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        cache: Cache | None = None,
+        # TMDB is fast and well-provisioned; the shared ceiling needs no override.
+        timeout: float = http_retry.DEFAULT_TIMEOUT_S,
+    ):
         self._api_key = api_key
         self._cache = cache or NullCache()
         self._timeout = timeout
@@ -51,6 +58,9 @@ class TmdbClient:
             timeout=self._timeout,
         )
         if r.status_code == 404:
+            # Cache the miss too (like trakt.py's `related()` deliberately does): without this, a
+            # title TMDB doesn't have is re-fetched every run for every user who has it as a seed.
+            self._cache.set(cache_key, json.dumps({}), CACHE_TTL_S)
             return {}
         if r.status_code != 200:
             # Never raise_for_status(): its message embeds the full URL, api_key included

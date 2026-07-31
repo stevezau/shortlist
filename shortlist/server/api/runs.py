@@ -126,17 +126,55 @@ def _with_provenance(breakdown: list[dict], picks: list) -> list[dict]:
     return out
 
 
-def _request_outcomes(session) -> dict[str, dict]:
+def _tmdb_ids_in(blob: object) -> set[int]:
+    """Every ``tmdb_id`` mentioned anywhere in a trace/breakdown blob.
+
+    Walked generically rather than by reaching into named stages: the trace's shape is the engine's,
+    it has gained stages several times, and the page looks an outcome up for any candidate it renders.
+    A structural walk cannot fall behind that; a hand-written list of paths silently would.
+    """
+    found: set[int] = set()
+    stack: list[object] = [blob]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            value = node.get("tmdb_id")
+            if isinstance(value, int):
+                found.add(value)
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
+#: `.in_()` binds one parameter per id and SQLite's compiled ceiling is 999 on older builds, so a
+#: long trace is queried in chunks rather than in one statement that would raise.
+_ID_CHUNK = 500
+
+
+def _request_outcomes(session, tmdb_ids: set[int]) -> dict[str, dict]:
     """What became of every wanted-but-missing title, keyed ``"<tmdb_id>:<media_type>"``.
 
     The trace's "not in your libraries" drops are the titles the curator wanted that no delivery
     library held; some of those become Sonarr/Radarr requests. This joins the request inbox back so
-    the trace can say WHICH — "requested from Radarr" vs "queued for your approval". Run-wide (one row
-    per title, whoever wanted it), so the key is title-only; the trace overlays it only where a drop
-    matches. `hidden` rows are kept: they're still `status="sent"` — the request DID happen, and the
-    trace records what happened, not what's currently in the inbox.
+    the trace can say WHICH — "requested from Radarr" vs "queued for your approval". Request state is
+    run-WIDE (one row per title, whoever wanted it), so the key is title-only.
+
+    Scoped to the ids this trace actually mentions. It used to read the WHOLE ``request_candidates``
+    table for a single user's page — a table that only grows, every night, for ever — and then throw
+    away everything the overlay never looked up.
+
+    `hidden` rows are kept: they're still `status="sent"` — the request DID happen, and the trace
+    records what happened, not what's currently in the inbox.
     """
-    rows = session.query(RequestCandidate).all()
+    if not tmdb_ids:
+        return {}
+    ids = sorted(tmdb_ids)
+    rows = []
+    for start in range(0, len(ids), _ID_CHUNK):
+        rows.extend(
+            session.query(RequestCandidate).filter(RequestCandidate.tmdb_id.in_(ids[start : start + _ID_CHUNK])).all()
+        )
     return {
         f"{r.tmdb_id}:{r.media_type}": {
             "status": r.status,  # pending | sent | rejected
@@ -237,6 +275,8 @@ async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dic
         # the picks table + breakdown blob, not in the trace dict. Join it here so the trace page can
         # show "what we built per library" as the last stage without a second fetch.
         picks = session.query(PickRow).filter_by(run_id=run_id, user_id=run_user.user_id).order_by(PickRow.rank).all()
+        trace = run_user.trace or {}
+        breakdown = _with_provenance(run_user.breakdown or [], picks)
         return {
             "username": run_user.user.username,
             "display_name": run_user.user.display_name,
@@ -245,15 +285,15 @@ async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dic
             # stages: `error` for a failure, `reason` for a (non-failing) skip.
             "error": run_user.error,
             "reason": run_user.reason,
-            "trace": run_user.trace or {},
-            "breakdown": _with_provenance(run_user.breakdown or [], picks),
+            "trace": trace,
+            "breakdown": breakdown,
             # What became of the titles the curator wanted but no library held. The trace marks those
             # "not in your libraries"; this says whether the request subsystem then asked Sonarr/Radarr
             # for them (or queued them for the owner), keyed by "<tmdb_id>:<media_type>" so the UI can
             # overlay the outcome onto that fate. Run-WIDE state (a title is requested once for the
             # whole server, whoever wanted it) — the overlay is scoped by only matching this user's
             # missing titles. Empty on a deployment with requests off.
-            "requests": _request_outcomes(session),
+            "requests": _request_outcomes(session, _tmdb_ids_in(trace) | _tmdb_ids_in(breakdown)),
         }
 
 

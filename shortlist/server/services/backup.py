@@ -37,7 +37,10 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
         return None
 
     backup_dir = _backup_dir(config_dir)
-    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    # LOCAL time, matching every log line (the container's TZ). An operator picking a restore point
+    # reads these filenames against a log that narrates what happened at 03:31 their time; a UTC
+    # filename asks them to convert, and an off-by-a-timezone choice restores the wrong night.
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     # The label lands in a filename, and `POST /api/system/jobs` takes an unvalidated payload — so
     # `{"label": "../../../../tmp/x"}` wrote a complete copy of the database, encrypted Plex tokens
     # included, outside /config. The restore path has always validated its filename; this one didn't.

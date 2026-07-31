@@ -172,7 +172,7 @@ export function PosterField({
               : "An AI-generated image from your text and style, using your AI provider."}
           </p>
           {isAiMode && provider.data && !provider.data.capable && (
-            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+            <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm text-warning-foreground">
               {provider.data.reason} You can use a <strong>Text</strong> poster
               instead — it needs no AI provider.
             </p>

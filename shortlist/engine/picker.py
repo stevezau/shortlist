@@ -23,6 +23,10 @@ _SEEDLESS_REASON = {
     "tmdb_discover": "In genres you watch a lot",
     "cold_start": "Popular on this server",
 }
+# Explicit precedence for a candidate whose sources include MORE THAN ONE of the above (e.g. found by
+# both llm_web and tmdb_discover) — a plain `.items()` walk would pick whichever happened to be
+# inserted first in the dict literal, silently coupling the reason shown to the user to source order.
+_SEEDLESS_SOURCE_PRECEDENCE = ("llm_web", "tmdb_discover", "cold_start")
 _SEEDLESS_REASON_DEFAULT = "Matched to your taste"
 
 
@@ -35,9 +39,9 @@ def reason_for(candidate: Candidate) -> str:
     """
     seed = candidate.top_seed
     if not seed:
-        for source, reason in _SEEDLESS_REASON.items():
+        for source in _SEEDLESS_SOURCE_PRECEDENCE:
             if source in candidate.sources:
-                return reason
+                return _SEEDLESS_REASON[source]
         return _SEEDLESS_REASON_DEFAULT
     if candidate.genres:
         genres = ", ".join(candidate.genres[:2]).lower()

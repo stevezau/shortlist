@@ -69,6 +69,37 @@ class TestBuildContext:
         assert ctx.curator.name == "none"
         assert ctx.config.dry_run is True
 
+    def test_plex_only_skips_the_clients_a_label_walk_never_touches(self, service, configured, monkeypatch):
+        """The reconciles, the pause/disable handlers and the watch sync only ever walk collections
+        under a label — but every one of them opened Trakt, Exa, MDBList, the LLM curator and the
+        poster studio first, so a wrong LLM key could fail a read of watch history.
+
+        `_refuse_a_different_server` still runs: it is what stops a reconcile enumerating a stranger's
+        PMS, finding zero Shortlist collections, and concluding every row is gone.
+        """
+        monkeypatch.setattr(
+            context_builder_mod, "make_studio", lambda *a, **k: pytest.fail("plex-only built the poster studio")
+        )
+
+        ctx = service.build_context(dry_run=True, plex_only=True)
+
+        assert ctx.plex is not None and isinstance(ctx.history_source, ShareTokenWatchSource)
+        assert ctx.curator.name == "none"  # the NullCurator, not whatever provider is configured
+        assert ctx.trakt is None and ctx.search is None and ctx.mdblist is None and ctx.poster_artist is None
+        assert ctx.config.dry_run is True
+
+    def test_plex_only_still_refuses_a_different_server(self, service, sessions, configured):
+        from shortlist.server.db.models import Server
+
+        with sessions() as session:
+            session.add(
+                Server(machine_id="a-different-machine", name="elsewhere", url="http://elsewhere:32400", token_enc="x")
+            )
+            session.commit()
+
+        with pytest.raises(RuntimeError, match="different server"):
+            service.build_context(dry_run=False, plex_only=True)
+
     def test_the_progress_callback_carries_a_reason_without_polluting_the_counts(self, service, configured):
         """`counts` is a map of NUMBERS the UI renders as a "113 history · 40 seeds" tally, so a skip
         reason (a whole sentence) travels beside it, never inside it. This closure feeds BOTH the SSE
@@ -481,6 +512,12 @@ class TestSyncWatched:
 
         `_run_user` returns "skipped" before reading any history for anyone with no row in scope, so
         pre-filling them is a complete per-user PMS read spent on someone the run then skips.
+
+        REQUIRES `shortlist.engine.rows.builds_anything_for(profile, config)`. The server asks the
+        engine that question now instead of importing the engine's private `_in_audience`/`_is_muted`
+        and re-assembling the rule. `_has_a_row_in_scope` fails OPEN when the export is missing — so
+        this test failing with `True` means the engine has not exported it, and every scoped run is
+        pre-filling history for people it then skips.
         """
         from shortlist.engine.models import EngineConfig, RowSpec, UserProfile, UserType
 

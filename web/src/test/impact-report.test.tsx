@@ -325,6 +325,32 @@ describe("ImpactReport", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("shows a count and a way to see active watchers past the first 10, instead of silently hiding them", async () => {
+    // Issue 7.3: `active.slice(0, 10)` used to just drop everyone past the tenth, with no count and
+    // no way to see them — unlike the IDLE half of this same list, which already got a disclosure.
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      username: `user${i}`,
+      slug: `user${i}`,
+      delivered: 5,
+      watched: 12 - i,
+    }));
+    getReport.mockResolvedValue({ ...REPORT, per_user: many });
+    renderReport();
+
+    await screen.findByText("user0");
+    expect(screen.getByText("user9")).toBeInTheDocument();
+    // The 11th and 12th are not silently dropped...
+    expect(screen.queryByText("user10")).toBeNull();
+    expect(screen.queryByText("user11")).toBeNull();
+    // ...they're named and offered, the same way idle people already were.
+    const toggle = screen.getByRole("button", {
+      name: /2 more people watched something/i,
+    });
+    await userEvent.click(toggle);
+    expect(screen.getByText("user10")).toBeInTheDocument();
+    expect(screen.getByText("user11")).toBeInTheDocument();
+  });
+
   it("folds away people with nothing watched in the window", async () => {
     getReport.mockResolvedValue({
       ...REPORT,
@@ -392,6 +418,56 @@ describe("ImpactReport", () => {
         /Nothing delivered or watched in the last 30 days/i,
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("WatchSyncLine — 'Sync now'", () => {
+  beforeEach(() => {
+    getReport.mockReset();
+    getReport.mockResolvedValue(REPORT);
+    getDeletedRows.mockReset();
+    getDeletedRows.mockResolvedValue([]);
+    syncWatched.mockReset();
+  });
+
+  it("re-enables after a successful sync instead of sticking on 'Syncing…' forever", async () => {
+    // Issue 7.4: `disabled={isPending || isSuccess}` with the label keyed on `isSuccess` meant a
+    // SUCCESSFUL sync permanently disabled the button and permanently read "Syncing…" until the page
+    // was reloaded — the opposite of what a finished sync should look like.
+    let resolveSync!: (v: { started: boolean }) => void;
+    syncWatched.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSync = resolve;
+        }),
+    );
+    renderReport();
+    await screen.findByText("Watched");
+
+    await userEvent.click(screen.getByRole("button", { name: /Sync now/i }));
+    expect(
+      await screen.findByRole("button", { name: /Syncing…/i }),
+    ).toBeDisabled();
+
+    resolveSync({ started: true });
+
+    const again = await screen.findByRole("button", { name: /Sync now/i });
+    expect(again).toBeEnabled();
+  });
+
+  it("shows an error and re-enables the button when the sync can't be started", async () => {
+    // The old version had no isError branch at all — a failed POST looked identical to nothing
+    // having happened.
+    syncWatched.mockRejectedValueOnce(new Error("boom"));
+    renderReport();
+    await screen.findByText("Watched");
+
+    await userEvent.click(screen.getByRole("button", { name: /Sync now/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /Couldn.t start the sync/i,
+    );
+    expect(screen.getByRole("button", { name: /Try again/i })).toBeEnabled();
   });
 });
 

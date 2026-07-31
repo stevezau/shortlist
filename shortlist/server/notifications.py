@@ -172,7 +172,11 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
     ]
     dismissed = set(store.get(DISMISSED_KEY) or [])
     order = {"error": 0, "warning": 1, "info": 2}
+    # `dismissable` is enforced HERE, not just at the dismiss endpoint: a "runs are paused" alert that
+    # could be silenced for good would leave the owner with a server they believe is building rows
+    # nightly and isn't. Enforcing on read also re-surfaces one that some earlier call already wrote
+    # into the dismissed list, which validating only on write would not.
     return sorted(
-        (n for n in candidates if n and n["id"] not in dismissed),
+        (n for n in candidates if n and not (n["dismissable"] and n["id"] in dismissed)),
         key=lambda n: order.get(n["severity"], 3),
     )

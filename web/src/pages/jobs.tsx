@@ -12,8 +12,9 @@ import {
 import { useState } from "react";
 import { useSearchParams } from "react-router";
 
-import { CronInput } from "@/components/cron-input";
+import { CronPicker } from "@/components/cron-picker";
 import { ActivityFeed } from "@/components/jobs/activity-feed";
+import { BackupPanel } from "@/components/jobs/backup-panel";
 import { JobRow } from "@/components/jobs/job-row";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
@@ -23,7 +24,6 @@ import { Button } from "@/components/ui/button";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
-import { timeAgo } from "@/lib/format";
 import { queryKeys, useSettings, useSaveSettings } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
 import type {
@@ -31,48 +31,6 @@ import type {
   SyncFinishedEvent,
   SyncProgressEvent,
 } from "@/lib/types";
-
-const SYNC_PRESETS = [
-  { value: "", label: "Daily" },
-  { value: "17 */12 * * *", label: "12h" },
-  { value: "17 */6 * * *", label: "6h" },
-  { value: "17 */4 * * *", label: "4h" },
-];
-
-const RETENTION_OPTIONS = ["5", "10", "20", "30"];
-
-function CronPicker({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (cron: string) => void;
-}) {
-  const matchesPreset = SYNC_PRESETS.some((p) => p.value === value);
-  const [custom, setCustom] = useState(!matchesPreset && value !== "");
-
-  return (
-    <div className="flex flex-wrap items-start gap-2">
-      <span className="pt-1.5 text-xs text-muted-foreground">Frequency:</span>
-      <Segmented
-        value={custom ? "__custom__" : value}
-        onChange={(v) => {
-          if (v === "__custom__") {
-            setCustom(true);
-          } else {
-            setCustom(false);
-            onChange(v);
-          }
-        }}
-        options={[
-          ...SYNC_PRESETS.map((p) => ({ value: p.value, label: p.label })),
-          { value: "__custom__", label: "Custom" },
-        ]}
-      />
-      {custom && <CronInput value={value} onChange={onChange} />}
-    </div>
-  );
-}
 
 /** Names for rows that render before the catalogue arrives, so a row is never blank-titled. The
  *  server's catalogue is authoritative and replaces these the moment it lands. */
@@ -116,16 +74,6 @@ function GroupHeading({ title, hint }: { title: string; hint?: string }) {
 
 // --- panels: settings and reference, revealed when a row is expanded -----------------------------
 
-function SyncCronPanel({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (cron: string) => void;
-}) {
-  return <CronPicker value={value} onChange={onChange} />;
-}
-
 /**
  * The frequency editor, for any job that owns a cron.
  *
@@ -157,189 +105,10 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
           size="sm"
           className="h-7 px-2 text-xs text-muted-foreground"
           disabled={saveSettings.isPending}
-          onClick={() =>
-            saveSettings.mutate({ [entry.schedule_setting]: "" })
-          }
+          onClick={() => saveSettings.mutate({ [entry.schedule_setting]: "" })}
         >
           Turn this schedule off
         </Button>
-      )}
-    </div>
-  );
-}
-
-/** Backups: what's in one, where it lives, how often, how many to keep, and the restore list. */
-function BackupPanel() {
-  const queryClient = useQueryClient();
-  const settings = useSettings();
-  const saveSettings = useSaveSettings();
-  const backups = useQuery({ queryKey: ["backups"], queryFn: api.getBackups });
-  const restore = useMutation({ mutationFn: api.restoreBackup });
-  const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
-
-  const backupCron = ((settings.data ?? {})["backup.cron"] as string) ?? "";
-  const backupMaxKeep =
-    ((settings.data ?? {})["backup.max_keep"] as number) ?? 10;
-
-  function formatSize(bytes: number) {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="space-y-1.5 rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-        <p>
-          <span className="font-medium text-foreground">What:</span> settings,
-          rows, people, run history — and each user&rsquo;s original Plex share
-          filters.
-        </p>
-        <p>
-          <span className="font-medium text-foreground">Why:</span> those share
-          filters are the only record of how sharing looked before Shortlist.
-          Uninstall restores from them.
-        </p>
-        <p>
-          Saved to <span className="font-mono text-xs">/config/backups</span>.{" "}
-          <span className="font-mono text-xs">secret.key</span> isn&rsquo;t
-          included — keep a copy, or a restored backup can&rsquo;t read your
-          saved keys.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap items-start gap-4">
-        <CronPicker
-          value={backupCron}
-          onChange={(cron) =>
-            saveSettings.mutate(
-              { "backup.cron": cron },
-              {
-                onSuccess: () =>
-                  queryClient.invalidateQueries({ queryKey: ["syncs"] }),
-              },
-            )
-          }
-        />
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Keep:</span>
-          <Segmented
-            value={String(backupMaxKeep)}
-            onChange={(v) =>
-              saveSettings.mutate(
-                { "backup.max_keep": Number(v) },
-                {
-                  onSuccess: () => {
-                    queryClient.invalidateQueries({ queryKey: ["syncs"] });
-                    queryClient.invalidateQueries({
-                      queryKey: queryKeys.settings,
-                    });
-                  },
-                },
-              )
-            }
-            options={RETENTION_OPTIONS.map((v) => ({ value: v, label: v }))}
-          />
-        </div>
-      </div>
-
-      {restore.isSuccess && (
-        <div className="space-y-1.5">
-          <p className="text-sm text-success">{restore.data.message}</p>
-          {/* A restore is not a neutral rollback: the database decides who may see which rows, so
-              restoring one from before an audience was narrowed puts the wider audience back. */}
-          {restore.data.privacy_note && (
-            <p
-              role="alert"
-              className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm text-warning-foreground"
-            >
-              {restore.data.privacy_note}
-            </p>
-          )}
-        </div>
-      )}
-      {restore.isError && (
-        <MutationAlert error={restore.error} fallback="Restore failed." />
-      )}
-
-      {/* Shown BEFORE the confirm, not after it — the un-hiding happens on the next run, long after
-          this screen is closed. */}
-      {confirmRestore && (
-        <p
-          role="alert"
-          className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm text-warning-foreground"
-        >
-          Restoring also puts back who could see which rows at the time of the
-          backup. If you have narrowed a shared row&rsquo;s audience since then,
-          those people will be able to see it again after the next run.
-        </p>
-      )}
-
-      {backups.data && backups.data.length > 0 && (
-        <div className="max-h-48 overflow-y-auto rounded border">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-muted/80 text-left text-xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-1.5">Backup</th>
-                <th className="px-3 py-1.5">Size</th>
-                <th className="px-3 py-1.5">When</th>
-                <th className="px-3 py-1.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {backups.data.map((b) => (
-                <tr key={b.name} className="border-t">
-                  <td className="px-3 py-1.5 font-mono text-xs">
-                    {b.name.replace("shortlist_", "").replace(".db", "")}
-                  </td>
-                  <td className="px-3 py-1.5">{formatSize(b.size_bytes)}</td>
-                  <td className="px-3 py-1.5">{timeAgo(b.created_at)}</td>
-                  <td className="px-3 py-1.5 text-right">
-                    {confirmRestore === b.name ? (
-                      <span className="flex items-center justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="h-6 px-2 text-xs"
-                          loading={restore.isPending}
-                          onClick={() =>
-                            restore.mutate(b.name, {
-                              onSuccess: () => setConfirmRestore(null),
-                            })
-                          }
-                        >
-                          Confirm
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 px-2 text-xs"
-                          onClick={() => setConfirmRestore(null)}
-                        >
-                          Cancel
-                        </Button>
-                      </span>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 px-2 text-xs"
-                        onClick={() => setConfirmRestore(b.name)}
-                      >
-                        Restore
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {backups.data && backups.data.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          No backups yet. One will be created automatically tonight at 3 AM.
-        </p>
       )}
     </div>
   );
@@ -373,7 +142,7 @@ function Succeeded({ children }: { children: React.ReactNode }) {
     <p className="flex items-center gap-2 text-sm text-foreground">
       <CheckCircle2
         aria-hidden="true"
-        className="size-4 shrink-0 text-emerald-600 dark:text-emerald-500"
+        className="size-4 shrink-0 text-success"
       />
       {children}
     </p>
@@ -401,7 +170,7 @@ export function JobsPage() {
   const view: JobsView = tab === "activity" ? "activity" : "jobs";
 
   const catalog = useQuery({
-    queryKey: ["jobs", "catalog"],
+    queryKey: queryKeys.jobsCatalog,
     queryFn: api.getJobCatalog,
     // Fast while something is in flight, SLOW when idle — never `false`. Stopping altogether meant a
     // job queued anywhere else (the scheduler firing, another tab, a row edit) never showed up here:
@@ -442,7 +211,7 @@ export function JobsPage() {
         setWatchedResult(event);
         // The watched sync refreshes each user's picks-watched — repaint the users list once done.
         queryClient.invalidateQueries({ queryKey: queryKeys.users });
-        queryClient.invalidateQueries({ queryKey: ["jobs"] });
+        queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
       } else {
         setUsersProgress(null);
       }
@@ -457,7 +226,7 @@ export function JobsPage() {
   // Every job's action lives here rather than inside its panel: the button is on the ROW, which
   // stays visible when the panel is closed.
   const invalidateJobs = () =>
-    queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
   const syncWatched = useMutation({
     mutationFn: api.syncWatched,
     onSettled: invalidateJobs,
@@ -492,7 +261,7 @@ export function JobsPage() {
   const backupNow = useMutation({
     mutationFn: api.createBackup,
     onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ["backups"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.backups });
       invalidateJobs();
     },
   });
@@ -561,7 +330,9 @@ export function JobsPage() {
           {active > 0 && (
             <button
               type="button"
-              onClick={() => setSearchParams({ tab: "activity" }, { replace: true })}
+              onClick={() =>
+                setSearchParams({ tab: "activity" }, { replace: true })
+              }
               className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               title="See which jobs are running"
             >
@@ -610,46 +381,48 @@ export function JobsPage() {
                 }}
                 live={
                   syncUsers.isPending || syncUsers.isError || syncUsers.data ? (
-                  <div className="flex flex-col gap-3">
-                    {syncUsers.isPending && (
-                      <SyncBar
-                        label="Syncing users"
-                        done={
-                          usersProgress?.phase === "save"
-                            ? usersProgress.done
-                            : undefined
-                        }
-                        total={
-                          usersProgress?.phase === "save"
-                            ? usersProgress.total
-                            : undefined
-                        }
-                        line={
-                          usersProgress?.phase === "save" && usersProgress.total
-                            ? `Saving ${usersProgress.done ?? 0} of ${usersProgress.total} ${usersProgress.total === 1 ? "user" : "users"}…`
-                            : "Contacting plex.tv…"
-                        }
-                      />
-                    )}
-                    {syncUsers.isError && (
-                      <MutationAlert
-                        error={syncUsers.error}
-                        fallback="Couldn't reach plex.tv to refresh the user list. Try again."
-                        onRetry={() => syncUsers.mutate()}
-                      />
-                    )}
-                    {syncUsers.data && !syncUsers.isPending && (
-                      <Succeeded>
-                        {syncUsers.data.added > 0 || syncUsers.data.updated > 0
-                          ? `Synced ${syncUsers.data.total} ${syncUsers.data.total === 1 ? "user" : "users"} — ${syncUsers.data.added} added, ${syncUsers.data.updated} updated.`
-                          : `All ${syncUsers.data.total} ${syncUsers.data.total === 1 ? "user is" : "users are"} already up to date.`}
-                      </Succeeded>
-                    )}
-                  </div>
+                    <div className="flex flex-col gap-3">
+                      {syncUsers.isPending && (
+                        <SyncBar
+                          label="Syncing users"
+                          done={
+                            usersProgress?.phase === "save"
+                              ? usersProgress.done
+                              : undefined
+                          }
+                          total={
+                            usersProgress?.phase === "save"
+                              ? usersProgress.total
+                              : undefined
+                          }
+                          line={
+                            usersProgress?.phase === "save" &&
+                            usersProgress.total
+                              ? `Saving ${usersProgress.done ?? 0} of ${usersProgress.total} ${usersProgress.total === 1 ? "user" : "users"}…`
+                              : "Contacting plex.tv…"
+                          }
+                        />
+                      )}
+                      {syncUsers.isError && (
+                        <MutationAlert
+                          error={syncUsers.error}
+                          fallback="Couldn't reach plex.tv to refresh the user list. Try again."
+                          onRetry={() => syncUsers.mutate()}
+                        />
+                      )}
+                      {syncUsers.data && !syncUsers.isPending && (
+                        <Succeeded>
+                          {syncUsers.data.added > 0 ||
+                          syncUsers.data.updated > 0
+                            ? `Synced ${syncUsers.data.total} ${syncUsers.data.total === 1 ? "user" : "users"} — ${syncUsers.data.added} added, ${syncUsers.data.updated} updated.`
+                            : `All ${syncUsers.data.total} ${syncUsers.data.total === 1 ? "user is" : "users are"} already up to date.`}
+                        </Succeeded>
+                      )}
+                    </div>
                   ) : null
                 }
                 panel={
-                  <SyncCronPanel
+                  <CronPicker
                     value={usersCron}
                     onChange={(cron) =>
                       saveSettings.mutate(
@@ -657,7 +430,7 @@ export function JobsPage() {
                         {
                           onSuccess: () =>
                             queryClient.invalidateQueries({
-                              queryKey: ["syncs"],
+                              queryKey: queryKeys.syncs,
                             }),
                         },
                       )
@@ -679,56 +452,58 @@ export function JobsPage() {
                   syncWatched.isError ||
                   watchedResult ||
                   syncWatched.isSuccess ? (
-                  <div className="flex flex-col gap-3">
-                    {watchedRunning && (
-                      <SyncBar
-                        label="Syncing watch history"
-                        done={watchedProgress.done}
-                        total={watchedProgress.total}
-                        line={
-                          watchedProgress.total
-                            ? `Syncing ${watchedProgress.done ?? 0} of ${watchedProgress.total} ${watchedProgress.total === 1 ? "user" : "users"}…`
-                            : "Syncing…"
-                        }
-                      />
-                    )}
-                    {syncWatched.isError && (
-                      <MutationAlert
-                        error={syncWatched.error}
-                        fallback="Couldn't start the sync. Check the Plex connection and try again."
-                        onRetry={() => syncWatched.mutate()}
-                      />
-                    )}
-                    {!watchedRunning && watchedResult?.ok === false && (
-                      <p role="alert" className="text-sm text-destructive">
-                        The sync couldn&rsquo;t finish
-                        {watchedResult.error ? ` (${watchedResult.error})` : ""}
-                        . Check the Plex connection and try again.
-                      </p>
-                    )}
-                    {!watchedRunning && watchedResult?.ok && (
-                      <Succeeded>
-                        Synced {watchedResult.count ?? 0}{" "}
-                        {watchedResult.count === 1 ? "user" : "users"} — watch
-                        history is up to date and the effectiveness report
-                        reflects it now.
-                      </Succeeded>
-                    )}
-                    {/* No bus result yet (SSE not connected) but the POST was accepted. */}
-                    {!watchedRunning &&
-                      !watchedResult &&
-                      syncWatched.isSuccess && (
+                    <div className="flex flex-col gap-3">
+                      {watchedRunning && (
+                        <SyncBar
+                          label="Syncing watch history"
+                          done={watchedProgress.done}
+                          total={watchedProgress.total}
+                          line={
+                            watchedProgress.total
+                              ? `Syncing ${watchedProgress.done ?? 0} of ${watchedProgress.total} ${watchedProgress.total === 1 ? "user" : "users"}…`
+                              : "Syncing…"
+                          }
+                        />
+                      )}
+                      {syncWatched.isError && (
+                        <MutationAlert
+                          error={syncWatched.error}
+                          fallback="Couldn't start the sync. Check the Plex connection and try again."
+                          onRetry={() => syncWatched.mutate()}
+                        />
+                      )}
+                      {!watchedRunning && watchedResult?.ok === false && (
+                        <p role="alert" className="text-sm text-destructive">
+                          The sync couldn&rsquo;t finish
+                          {watchedResult.error
+                            ? ` (${watchedResult.error})`
+                            : ""}
+                          . Check the Plex connection and try again.
+                        </p>
+                      )}
+                      {!watchedRunning && watchedResult?.ok && (
                         <Succeeded>
-                          Sync started — it runs in the background across every
-                          user. The effectiveness report updates on its own once
-                          it finishes.
+                          Synced {watchedResult.count ?? 0}{" "}
+                          {watchedResult.count === 1 ? "user" : "users"} — watch
+                          history is up to date and the effectiveness report
+                          reflects it now.
                         </Succeeded>
                       )}
-                  </div>
+                      {/* No bus result yet (SSE not connected) but the POST was accepted. */}
+                      {!watchedRunning &&
+                        !watchedResult &&
+                        syncWatched.isSuccess && (
+                          <Succeeded>
+                            Sync started — it runs in the background across
+                            every user. The effectiveness report updates on its
+                            own once it finishes.
+                          </Succeeded>
+                        )}
+                    </div>
                   ) : null
                 }
                 panel={
-                  <SyncCronPanel
+                  <CronPicker
                     value={watchCron}
                     onChange={(cron) =>
                       saveSettings.mutate(
@@ -736,7 +511,7 @@ export function JobsPage() {
                         {
                           onSuccess: () =>
                             queryClient.invalidateQueries({
-                              queryKey: ["syncs"],
+                              queryKey: queryKeys.syncs,
                             }),
                         },
                       )
@@ -761,70 +536,71 @@ export function JobsPage() {
                   driftFix.isError ||
                   driftPreview.data ||
                   driftFix.data ? (
-                  <div className="flex flex-col gap-3">
-                    {driftPreview.isError && (
-                      <MutationAlert
-                        error={driftPreview.error}
-                        fallback="Couldn't run the sync check. Try again."
-                      />
-                    )}
-                    {driftFix.isError && (
-                      <MutationAlert
-                        error={driftFix.error}
-                        fallback="Couldn't fix those rows. Try again."
-                      />
-                    )}
-                    {/* Deletions get their own callout above the summary. Folding them into the "N
+                    <div className="flex flex-col gap-3">
+                      {driftPreview.isError && (
+                        <MutationAlert
+                          error={driftPreview.error}
+                          fallback="Couldn't run the sync check. Try again."
+                        />
+                      )}
+                      {driftFix.isError && (
+                        <MutationAlert
+                          error={driftFix.error}
+                          fallback="Couldn't fix those rows. Try again."
+                        />
+                      )}
+                      {/* Deletions get their own callout above the summary. Folding them into the "N
                         rows" count would hide the one irreversible action behind a number. */}
-                    {orphans.length > 0 && (
-                      <p className="rounded-md border border-dashed border-destructive/50 bg-destructive/5 p-3 text-sm text-muted-foreground">
-                        <strong className="text-foreground">
-                          This will delete {orphans.length} collection
-                          {orphans.length === 1 ? "" : "s"}
-                        </strong>{" "}
-                        &mdash; {orphans.join(", ")}. Shortlist no longer knows
-                        who they belong to, so hiding them would leave them in
-                        your Collections tab for ever. This cannot be undone.
-                      </p>
-                    )}
-                    {/* `status` matters: the queue skips a drain while a run is writing to Plex,
+                      {orphans.length > 0 && (
+                        <p className="rounded-md border border-dashed border-destructive/50 bg-destructive/5 p-3 text-sm text-muted-foreground">
+                          <strong className="text-foreground">
+                            This will delete {orphans.length} collection
+                            {orphans.length === 1 ? "" : "s"}
+                          </strong>{" "}
+                          &mdash; {orphans.join(", ")}. Shortlist no longer
+                          knows who they belong to, so hiding them would leave
+                          them in your Collections tab for ever. This cannot be
+                          undone.
+                        </p>
+                      )}
+                      {/* `status` matters: the queue skips a drain while a run is writing to Plex,
                         which is exactly when someone presses this. Reporting "everything is in
                         sync" for a check that never ran would be a lie. */}
-                    {driftPreview.data &&
-                      !driftPreview.data.error &&
-                      driftPreview.data.status !== "done" && (
+                      {driftPreview.data &&
+                        !driftPreview.data.error &&
+                        driftPreview.data.status !== "done" && (
+                          <p className="text-sm text-muted-foreground">
+                            Waiting for the current run to finish — the check
+                            will run straight after.
+                          </p>
+                        )}
+                      {driftPreview.data &&
+                        !driftPreview.data.error &&
+                        driftPreview.data.status === "done" && (
+                          <p className="text-sm text-muted-foreground">
+                            {drifted.length === 0 && orphans.length === 0
+                              ? "Everything is in sync — nothing to fix."
+                              : `${drifted.length} row${drifted.length === 1 ? "" : "s"} drifted onto your Home screen: ${drifted.join(", ")}`}
+                          </p>
+                        )}
+                      {drifted.length + orphans.length > 0 && (
+                        <div>
+                          <Button
+                            size="sm"
+                            loading={driftFix.isPending}
+                            onClick={() => driftFix.mutate()}
+                          >
+                            Fix {drifted.length + orphans.length} row
+                            {drifted.length + orphans.length === 1 ? "" : "s"}
+                          </Button>
+                        </div>
+                      )}
+                      {driftFix.data && !driftFix.data.error && (
                         <p className="text-sm text-muted-foreground">
-                          Waiting for the current run to finish — the check will
-                          run straight after.
+                          {driftFix.data.detail}
                         </p>
                       )}
-                    {driftPreview.data &&
-                      !driftPreview.data.error &&
-                      driftPreview.data.status === "done" && (
-                        <p className="text-sm text-muted-foreground">
-                          {drifted.length === 0 && orphans.length === 0
-                            ? "Everything is in sync — nothing to fix."
-                            : `${drifted.length} row${drifted.length === 1 ? "" : "s"} drifted onto your Home screen: ${drifted.join(", ")}`}
-                        </p>
-                      )}
-                    {drifted.length + orphans.length > 0 && (
-                      <div>
-                        <Button
-                          size="sm"
-                          loading={driftFix.isPending}
-                          onClick={() => driftFix.mutate()}
-                        >
-                          Fix {drifted.length + orphans.length} row
-                          {drifted.length + orphans.length === 1 ? "" : "s"}
-                        </Button>
-                      </div>
-                    )}
-                    {driftFix.data && !driftFix.data.error && (
-                      <p className="text-sm text-muted-foreground">
-                        {driftFix.data.detail}
-                      </p>
-                    )}
-                  </div>
+                    </div>
                   ) : null
                 }
               />
@@ -859,23 +635,23 @@ export function JobsPage() {
                 }}
                 live={
                   backupNow.isError || backupNow.isSuccess ? (
-                  <>
-                    {backupNow.isError && (
-                      <MutationAlert
-                        error={backupNow.error}
-                        fallback="Backup failed."
-                      />
-                    )}
-                    {backupNow.isSuccess && !backupNow.isPending && (
-                      <Succeeded>
-                        Backed up as{" "}
-                        <span className="font-mono text-xs">
-                          {backupNow.data.name}
-                        </span>
-                        .
-                      </Succeeded>
-                    )}
-                  </>
+                    <>
+                      {backupNow.isError && (
+                        <MutationAlert
+                          error={backupNow.error}
+                          fallback="Backup failed."
+                        />
+                      )}
+                      {backupNow.isSuccess && !backupNow.isPending && (
+                        <Succeeded>
+                          Backed up as{" "}
+                          <span className="font-mono text-xs">
+                            {backupNow.data.name}
+                          </span>
+                          .
+                        </Succeeded>
+                      )}
+                    </>
                   ) : null
                 }
                 panel={<BackupPanel />}

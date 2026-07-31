@@ -1,0 +1,43 @@
+{
+  "id": "resp_67cf1a2b3c4d5e6f",
+  "object": "response",
+  "created_at": 1753900000,
+  "model": "gpt-4o-mini",
+  "status": "completed",
+  "error": null,
+  "incomplete_details": null,
+  "instructions": null,
+  "metadata": {},
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_1a2b3c",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Here is what I found after searching the web: ",
+          "annotations": []
+        },
+        {
+          "type": "output_text",
+          "text": "[{\"title\": \"The Wild Robot\", \"year\": 2024, \"media\": \"movie\"}, {\"title\": \"Severance\", \"year\": 2022, \"media\": \"show\"}]",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "parallel_tool_calls": true,
+  "tool_choice": "auto",
+  "tools": [],
+  "temperature": 1.0,
+  "top_p": 1.0,
+  "usage": {
+    "input_tokens": 540,
+    "output_tokens": 96,
+    "total_tokens": 636,
+    "output_tokens_details": { "reasoning_tokens": 0 },
+    "input_tokens_details": { "cached_tokens": 0, "cache_write_tokens": 0 }
+  }
+}

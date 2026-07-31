@@ -294,6 +294,32 @@ class TestPrivacySyncSchedule:
         assert job is not None and job.trigger is not None
 
 
+class TestThereIsOneSourceOfTruthForEveryCronDefault:
+    """`DEFAULT_CRONS` owns each expression; `settings_store.DEFAULTS` derives blank placeholders
+    from it. The second copy that used to sit beside the settings defaults is what let the drift
+    check be documented as off-by-default for months while it ran nightly at 05:45."""
+
+    def test_the_settings_defaults_carry_no_cron_literal_of_their_own(self):
+        from shortlist.server.scheduler import DEFAULT_CRONS
+        from shortlist.server.settings_store import DEFAULTS
+
+        assert {key: DEFAULTS[key] for key in DEFAULT_CRONS} == dict.fromkeys(DEFAULT_CRONS, "")
+
+    def test_every_schedulable_key_is_writable_through_the_settings_api(self):
+        """`PUT /api/settings` builds its allowlist from `DEFAULTS`, so a cron the scheduler honours
+        but the settings dict has never heard of is a schedule the owner cannot change."""
+        from shortlist.server.api.settings import KNOWN_KEYS
+        from shortlist.server.scheduler import DEFAULT_CRONS
+
+        assert set(DEFAULT_CRONS) <= KNOWN_KEYS
+
+    def test_an_unset_cron_resolves_to_the_one_declared_default(self, app):
+        """The claim a comment cannot make: what each schedule ACTUALLY runs on out of the box."""
+        from shortlist.server.scheduler import DEFAULT_CRONS, effective_cron
+
+        assert {key: effective_cron(app, key) for key in DEFAULT_CRONS} == DEFAULT_CRONS
+
+
 class TestCronResolverEdges:
     """The two ways a settings row can be wrong, both of which run at BOOT."""
 

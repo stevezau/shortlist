@@ -70,6 +70,27 @@ class Server(Base):
 
 
 class User(Base):
+    """A person on the server.
+
+    **FK cascade policy for everything keyed to a user.** Five tables reference `users.id`, and they
+    split on one question: *is this row regenerable from Plex?*
+
+    * ``ondelete="CASCADE"`` — `watched_titles` and `watch_sync_state`. Both are a CACHE of what the
+      PMS already knows; their own docstrings say so. Losing them costs one full re-read, nothing
+      more, so they follow the person out.
+    * **No ``ondelete`` (SQLite's NO ACTION → `IntegrityError`)** — `picks`, `run_users` and
+      `restriction_snapshots`. Each is the ONLY copy of something: the impact ledger behind every
+      lifetime dashboard metric, the run history, and — the one that matters most —
+      `restriction_snapshots`, which holds a person's share filters *as they were before Shortlist
+      touched them* and is what uninstall restores from (plex-safety rule 2). Cascading those away
+      would silently destroy an irreplaceable record.
+
+    So a `DELETE FROM users` fails loudly today, and that is the designed outcome: nothing in the
+    codebase deletes a user (they are disabled instead), and the first code that wants to must state,
+    per table, what happens to the three records that cannot be rebuilt. The app's engine sets
+    `PRAGMA foreign_keys=ON` (`db/session.py`), so both halves of this policy are actually enforced.
+    """
+
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -236,6 +257,7 @@ class RunUser(Base):
     __tablename__ = "run_users"
 
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), primary_key=True)
+    # No ondelete: run history is the only copy of what happened. See User's cascade policy.
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -268,6 +290,7 @@ class PickRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), index=True, nullable=True)
+    # No ondelete: the impact ledger is the only copy of what was recommended. See User's cascade policy.
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     tmdb_id: Mapped[int] = mapped_column(Integer)
     # A TMDB id is unique only within its namespace, so the pair (tmdb_id, media_type) is what
@@ -294,7 +317,7 @@ class PickRow(Base):
     seed_tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     seed_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Both indexed: the effectiveness report is windowed, so every aggregate on it filters by one of
-    # these two, over the one table in this schema that grows without bound.
+    # these two, over the largest table in this schema (retention prunes it, but only by whole runs).
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     watched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)  # hit-rate
 
@@ -303,6 +326,9 @@ class RestrictionSnapshotRow(Base):
     __tablename__ = "restriction_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # No ondelete, and this is the one that must never change: these are the person's share filters as
+    # they were BEFORE Shortlist, and uninstall restores from them (plex-safety rule 2). There is no
+    # second copy anywhere. See User's cascade policy.
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     reason: Mapped[str] = mapped_column(String(32), default="initial")  # initial | sync | uninstall_restore
@@ -372,6 +398,7 @@ class WatchedTitle(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # CASCADE: this is a cache of what the PMS already knows. See User's cascade policy.
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     section_key: Mapped[str] = mapped_column(String(64))
     # Plex's own id for the item in this library — the stable key within a section, and what an
@@ -405,6 +432,7 @@ class WatchSyncState(Base):
     __table_args__ = (UniqueConstraint("user_id", "section_key", name="uq_watch_sync_state"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # CASCADE: this is a cursor into a cache, rebuilt by one full read. See User's cascade policy.
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     section_key: Mapped[str] = mapped_column(String(64))
     # None means "never read" — which always forces a full read, never a guess at where to resume.

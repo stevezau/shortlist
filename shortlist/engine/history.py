@@ -225,9 +225,16 @@ def derive_seeds(
     if not (movies and shows):
         return seeds[:max_seeds]  # single media type — nothing to balance
     per_type = max(1, max_seeds // 3)  # each present type keeps >= a third of the budget (if it has that many)
-    reserved = {id(s) for s in movies[:per_type]} | {id(s) for s in shows[:per_type]}
+    # Keyed on (tmdb_id, media_type) — the identity every other module uses — not object identity
+    # (`id(s)`): correct either way today since `by_title` already yields one Seed per title, but a
+    # stable key survives a future refactor that rebuilds equivalent Seeds rather than reusing them.
+    reserved = {(s.tmdb_id, s.media_type) for s in movies[:per_type]} | {
+        (s.tmdb_id, s.media_type) for s in shows[:per_type]
+    }
     # Reserved seeds first, then the rest — but weight order is preserved WITHIN each group (both lists
     # are already weight-sorted), so a balanced watcher's ordering is unchanged; only a lopsided one's
     # minority-media seeds get promoted above the cutoff.
-    ordered = [s for s in seeds if id(s) in reserved] + [s for s in seeds if id(s) not in reserved]
+    ordered = [s for s in seeds if (s.tmdb_id, s.media_type) in reserved] + [
+        s for s in seeds if (s.tmdb_id, s.media_type) not in reserved
+    ]
     return ordered[:max_seeds]

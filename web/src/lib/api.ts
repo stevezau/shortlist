@@ -17,7 +17,7 @@ import type {
   PinCreated,
   CleanupResult,
   Collection,
-  CollectionInput,
+  CollectionBody,
   ImageProviderStatus,
   PosterInput,
   PinStatus,
@@ -445,10 +445,10 @@ export const api = {
   // --- Collections (rows) ---
   listCollections: (): Promise<Collection[]> => request("/api/collections"),
 
-  createCollection: (body: CollectionInput): Promise<Collection> =>
+  createCollection: (body: CollectionBody): Promise<Collection> =>
     request("/api/collections", { method: "POST", body: JSON.stringify(body) }),
 
-  updateCollection: (id: number, body: CollectionInput): Promise<Collection> =>
+  updateCollection: (id: number, body: CollectionBody): Promise<Collection> =>
     request(`/api/collections/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),

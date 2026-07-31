@@ -1,4 +1,21 @@
-"""System API: health (unauthenticated, for Docker HEALTHCHECK), version, full uninstall."""
+"""System API: the operator's toolbox.
+
+Health (the one unauthenticated endpoint, for Docker's HEALTHCHECK), version and update check, the
+sync/backup schedule summary, the owner API token, the log viewer and its zip export, the diagnostics
+bundle, the Plex library/collection reads the Rows editor offers, backups, the background-job queue,
+and the full uninstall.
+
+**Auth is declared once, at router construction**, exactly like every sibling router: ``_authed``
+carries ``require_owner`` and everything hangs off it. ``/health`` is the sole exception — Docker's
+HEALTHCHECK has no session — and FastAPI has no way to *drop* a router-level dependency for a single
+route, so it lives on ``_public``, a bare router with nothing else on it.
+
+Both are mounted onto the exported ``router`` at the BOTTOM of this module, which is deliberate:
+``router`` does not exist while the handlers below are being defined, so a ``@router.get(...)``
+written among them fails at import instead of quietly shipping an unauthenticated endpoint. This is
+the router with ``POST /system/uninstall``, ``GET /system/debug`` and ``GET /system/api-token`` on it
+— a forgotten gate here is the worst one in the app. Add new endpoints to ``_authed``.
+"""
 
 from __future__ import annotations
 
@@ -24,18 +41,21 @@ from shortlist.server.settings_store import SettingsStore
 
 _TOKEN_CREATED_KEY = "api.token_created_at"
 
-router = APIRouter(prefix="/system", tags=["system"])
+#: Owner-gated. Everything except `/health` goes here — see the module docstring.
+_authed = APIRouter(dependencies=[Depends(require_owner)])
+#: Unauthenticated, and it holds exactly one route. Nothing else may be added to it.
+_public = APIRouter()
 
 
-@router.get("/version", dependencies=[Depends(require_owner)])
+@_authed.get("/version")
 async def version(request: Request) -> dict:
     """Current + latest version and whether an update is available."""
-    from shortlist.server.services.version_check import version_info
+    from shortlist.server.version_check import version_info
 
     return version_info()
 
 
-@router.get("/health")
+@_public.get("/health")
 async def health() -> dict:
     """Liveness only — this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its
     consumer. The version used to be here too; an unauthenticated caller does not need to know which
@@ -43,7 +63,7 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-@router.get("/syncs", dependencies=[Depends(require_owner)])
+@_authed.get("/syncs")
 async def syncs(request: Request) -> dict:
     """When each sync last ran and when it next fires — for the Tools page "last synced" lines."""
     from shortlist.server.scheduler import BACKUP_JOB_ID, USER_SYNC_JOB_ID, WATCH_SYNC_JOB_ID
@@ -80,7 +100,7 @@ async def syncs(request: Request) -> dict:
     }
 
 
-@router.get("/api-token", dependencies=[Depends(require_owner)])
+@_authed.get("/api-token")
 async def api_token_status(request: Request) -> dict:
     """The owner API token itself (decrypted, for the owner to reveal/copy — like Sonarr/Radarr's key),
     plus whether one exists and when it was made. Owner-gated; never exposed via GET /api/settings."""
@@ -94,7 +114,7 @@ async def api_token_status(request: Request) -> dict:
         }
 
 
-@router.post("/api-token", dependencies=[Depends(require_owner)])
+@_authed.post("/api-token")
 async def create_api_token(request: Request) -> dict:
     """Generate (or replace) the owner API token. Stored encrypted at rest; regenerating invalidates
     the previous token immediately."""
@@ -112,20 +132,20 @@ async def create_api_token(request: Request) -> dict:
     return {"token": token, "created_at": created}
 
 
-@router.delete("/api-token", dependencies=[Depends(require_owner)])
+@_authed.delete("/api-token")
 async def revoke_api_token(request: Request) -> dict:
     """Revoke the API token — any script still using it starts getting 401s on the next call."""
     with request.app.state.sessions() as session:
         store = SettingsStore(session, request.app.state.secrets)
         store.set(API_TOKEN_KEY, "")
         store.set(_TOKEN_CREATED_KEY, "")
-        session.add(Event(scope="api_token.revoke", level="warn", message={"at": datetime.now(UTC).isoformat()}))
+        session.add(Event(scope="api_token.revoke", level="warning", message={"at": datetime.now(UTC).isoformat()}))
         session.commit()
     logger.info("owner API token revoked")
     return {"enabled": False}
 
 
-@router.get("/image-provider", dependencies=[Depends(require_owner)])
+@_authed.get("/image-provider")
 async def image_provider(request: Request) -> dict:
     """Whether the configured AI provider can generate poster images (and a plain-English reason if
     not) — so the row editor can enable/disable the "Generate" poster option honestly."""
@@ -137,7 +157,7 @@ async def image_provider(request: Request) -> dict:
         return image_provider_status(store)
 
 
-@router.get("/logs", dependencies=[Depends(require_owner)])
+@_authed.get("/logs")
 async def logs(request: Request, level: str = "DEBUG", q: str = "", limit: int = 1000) -> dict:
     """The rotating log file, parsed and filtered — so a problem can be diagnosed from the app
     instead of `docker logs`.
@@ -156,7 +176,7 @@ async def logs(request: Request, level: str = "DEBUG", q: str = "", limit: int =
     )
 
 
-@router.get("/logs/download", dependencies=[Depends(require_owner)])
+@_authed.get("/logs/download")
 async def logs_download(request: Request) -> Response:
     """Every log file as a redacted zip — the attachment for a bug report."""
     payload = await asyncio.get_running_loop().run_in_executor(
@@ -170,7 +190,7 @@ async def logs_download(request: Request) -> Response:
     )
 
 
-@router.get("/debug", dependencies=[Depends(require_owner)], response_class=PlainTextResponse)
+@_authed.get("/debug", response_class=PlainTextResponse)
 async def debug_bundle(request: Request) -> str:
     """A pasteable diagnostics bundle for bug reports: version, DB migration head, scheduler jobs,
     connection status, and record counts. Deliberately plain text and secrets-free — every connection
@@ -185,7 +205,10 @@ async def debug_bundle(request: Request) -> str:
     lines.append(f"time: {datetime.now(UTC).isoformat()}  TZ={os.environ.get('TZ', '(unset)')}")
 
     with request.app.state.sessions() as session:
-        store = SettingsStore(session)
+        # With the secret box: `tmdb.apikey` below is a SECRET_KEY, and a boxless store now refuses
+        # those outright rather than silently handing back ciphertext. The value is only ever
+        # `bool()`-ed here — it is never rendered into the bundle (rule 9).
+        store = SettingsStore(session, request.app.state.secrets)
         head = session.execute(text("select version_num from alembic_version")).scalar()
         lines.append(f"db migration head: {head}")
 
@@ -227,7 +250,7 @@ async def debug_bundle(request: Request) -> str:
     return "\n".join(lines)
 
 
-@router.get("/libraries", dependencies=[Depends(require_owner)])
+@_authed.get("/libraries")
 async def libraries(request: Request) -> list[dict]:
     """The server's movie/show libraries, so the Rows editor can offer them as delivery targets."""
     from shortlist.engine.clients.plex_pms import PlexClient
@@ -246,7 +269,7 @@ async def libraries(request: Request) -> list[dict]:
     return await asyncio.get_running_loop().run_in_executor(None, read)
 
 
-@router.get("/libraries/{key}/collections", dependencies=[Depends(require_owner)])
+@_authed.get("/libraries/{key}/collections")
 async def library_collections(key: str, request: Request) -> list[dict]:
     """A library's managed (orderable) collections — the candidate ANCHORS for placing Shortlist rows
     in the Recommended shelf. Shortlist's own rows are excluded (you don't anchor a row to itself)."""
@@ -279,7 +302,7 @@ async def library_collections(key: str, request: Request) -> list[dict]:
     return await asyncio.get_running_loop().run_in_executor(None, read)
 
 
-@router.get("/owned-collections", dependencies=[Depends(require_owner)])
+@_authed.get("/owned-collections")
 async def owned_collections_audit(request: Request) -> dict:
     """Read-only cleanup audit: every Shortlist-labelled collection currently on Plex, one per entry.
     Each is flagged ``orphan`` when the label's owner is gone from the app — the USER for a per-person
@@ -336,7 +359,7 @@ class UninstallRequest(BaseModel):
     dry_run: bool = False  # preview: report what WOULD be restored/deleted (rule 8)
 
 
-@router.post("/uninstall", dependencies=[Depends(require_owner)])
+@_authed.post("/uninstall")
 async def uninstall(body: UninstallRequest, request: Request) -> dict:
     """Trust feature: restore every snapshot, delete every shortlist collection, disable every row
     and clear its schedule so nothing rebuilds, and report.
@@ -428,9 +451,9 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
         rebuild_schedule(request.app)
     with state.sessions() as session:
         for entry in per_user:
-            session.add(Event(scope="uninstall.user", level="warn", message=entry))
+            session.add(Event(scope="uninstall.user", level="warning", message=entry))
         session.add(
-            Event(scope="system.uninstall", level="warn", message={**result, "at": datetime.now(UTC).isoformat()})
+            Event(scope="system.uninstall", level="warning", message={**result, "at": datetime.now(UTC).isoformat()})
         )
         session.commit()
     logger.warning("UNINSTALL {}: {}", "preview" if body.dry_run else "executed", result)
@@ -441,7 +464,7 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
 # -- Backups -----------------------------------------------------------------------------------
 
 
-@router.get("/backups", dependencies=[Depends(require_owner)])
+@_authed.get("/backups")
 async def get_backups(request: Request):
     """List available DB backups, newest first."""
     from shortlist.server.services.backup import list_backups
@@ -449,7 +472,7 @@ async def get_backups(request: Request):
     return list_backups(request.app.state.config_dir)
 
 
-@router.post("/backups", dependencies=[Depends(require_owner)])
+@_authed.post("/backups")
 async def create_backup(request: Request):
     """Take a manual backup now."""
     from shortlist.server.services.backup import take_backup
@@ -458,7 +481,7 @@ async def create_backup(request: Request):
         None, lambda: take_backup(request.app.state.config_dir, label="manual")
     )
     if path is None:
-        raise HTTPException(500, "backup failed")
+        raise HTTPException(status_code=500, detail="backup failed")
     return {"name": path.name, "size_bytes": path.stat().st_size}
 
 
@@ -466,7 +489,7 @@ class RestoreRequest(BaseModel):
     name: str
 
 
-@router.post("/backups/restore", dependencies=[Depends(require_owner)])
+@_authed.post("/backups/restore")
 async def restore_backup_endpoint(body: RestoreRequest, request: Request):
     """Restore from a named backup. The app will need to be restarted after.
 
@@ -484,12 +507,12 @@ async def restore_backup_endpoint(body: RestoreRequest, request: Request):
     state = request.app.state
     ok = await asyncio.get_running_loop().run_in_executor(None, lambda: restore_backup(state.config_dir, body.name))
     if not ok:
-        raise HTTPException(404, "backup not found")
+        raise HTTPException(status_code=404, detail="backup not found")
     with state.sessions() as session:
         session.add(
             Event(
                 scope="backup.restore",
-                level="warn",
+                level="warning",
                 message={"backup": body.name, "at": datetime.now(UTC).isoformat()},
             )
         )
@@ -531,7 +554,7 @@ def _job_dict(job) -> dict:
     }
 
 
-@router.get("/jobs", dependencies=[Depends(require_owner)])
+@_authed.get("/jobs")
 async def list_jobs(
     request: Request, limit: int = Query(25, ge=1, le=200), kind: str | None = None, before_id: int | None = None
 ) -> list[dict]:
@@ -556,7 +579,7 @@ async def list_jobs(
         return [_job_dict(job) for job in rows]
 
 
-@router.get("/jobs/catalog", dependencies=[Depends(require_owner)])
+@_authed.get("/jobs/catalog")
 async def jobs_catalog(request: Request) -> list[dict]:
     """Every job Shortlist can run: what it does, when it next runs, and how it went last time.
 
@@ -630,7 +653,7 @@ class RunJobRequest(BaseModel):
     background: bool = False
 
 
-@router.post("/jobs", dependencies=[Depends(require_owner)])
+@_authed.post("/jobs")
 async def run_job(body: RunJobRequest, request: Request) -> dict:
     """Queue a maintenance job and drain immediately, so pressing a button still feels instant.
 
@@ -640,7 +663,7 @@ async def run_job(body: RunJobRequest, request: Request) -> dict:
     from shortlist.server.services.jobs import KINDS, enqueue, run_pending
 
     if body.kind not in KINDS:
-        raise HTTPException(422, f"unknown job kind; valid: {sorted(KINDS)}")
+        raise HTTPException(status_code=422, detail=f"unknown job kind; valid: {sorted(KINDS)}")
     state = request.app.state
     job_id = enqueue(state.sessions, body.kind, body.payload)
     if body.background:
@@ -667,3 +690,11 @@ async def run_job(body: RunJobRequest, request: Request) -> dict:
             "fixed": (job.result or {}).get("fixed", []),
             "orphans": (job.result or {}).get("orphans", []),
         }
+
+
+# The exported router, assembled LAST on purpose: see the module docstring. `_public` carries only
+# `/health`; `_authed` carries its `require_owner` dependency with it through include_router, so
+# every route below /api/system except the health check is owner-gated by construction.
+router = APIRouter(prefix="/system", tags=["system"])
+router.include_router(_public)
+router.include_router(_authed)

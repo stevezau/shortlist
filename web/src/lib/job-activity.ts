@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { queryKeys } from "@/lib/queries";
 import type { Job, JobCatalogEntry } from "@/lib/types";
 
 /** How many recent jobs the activity poll carries. Enough to catch a burst of automatic jobs (one
@@ -38,7 +39,7 @@ export function useJobActivity() {
  *  changes when Shortlist itself is upgraded. */
 export function useJobLabels() {
   const query = useQuery({
-    queryKey: ["jobs", "catalog"],
+    queryKey: queryKeys.jobsCatalog,
     queryFn: api.getJobCatalog,
     staleTime: 5 * 60_000,
   });

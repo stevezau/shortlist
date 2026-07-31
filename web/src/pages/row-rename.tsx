@@ -137,7 +137,7 @@ export function RowRenamePage() {
         // inline, so the stream found nothing left to do and told the owner "renamed 0 collections"
         // straight after a rename that had in fact rewritten every one.
         defer_rename: true,
-      } as never);
+      });
       setOldTemplate(prev);
       setConfirmed(true);
       startRename(newName, prev);

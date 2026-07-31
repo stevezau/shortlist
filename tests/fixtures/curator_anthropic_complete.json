@@ -1,0 +1,16 @@
+{
+  "id": "msg_01FZ8mQeN2vX6yTpL9wRcKdA",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-haiku-4-5-20251001",
+  "content": [
+    {
+      "type": "text",
+      "text": "Based on the articles, I'd recommend The Wild Robot and Severance for their next watch.",
+      "citations": null
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": { "input_tokens": 340, "output_tokens": 27 }
+}

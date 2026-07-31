@@ -26,7 +26,7 @@ it, and never leak environment-specific hostnames/IPs/paths into the public repo
 # Backend
 pip install -r requirements.lock && pip install -e ".[dev]"   # lock first: same versions the image ships
 pytest                       # unit+integration, parallel, coverage (target ≥80%)
-pytest -m e2e                # Playwright vs built image + tests/fakes/fake_plex.py
+pytest -m e2e                # Playwright vs an in-process app (uvicorn + built SPA) + tests/fakes/fake_plex.py
 ruff check . --fix && ruff format .
 
 # Regenerate requirements.lock — REQUIRED whenever pyproject's dependencies change.

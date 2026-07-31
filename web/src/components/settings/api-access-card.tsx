@@ -5,6 +5,7 @@ import {
   EyeOff,
   KeyRound,
   RefreshCw,
+  TriangleAlert,
   Trash2,
 } from "lucide-react";
 import { useState } from "react";
@@ -13,13 +14,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { apiErrorMessage, apiUrl } from "@/lib/api";
 import { formatDate, timeAgo } from "@/lib/format";
+import { useCopy } from "@/lib/use-copy";
 import {
   useApiToken,
   useCreateApiToken,
   useRevokeApiToken,
 } from "@/lib/queries";
 
-/** A copy-to-clipboard button that flips to a check for a moment. */
+/** A copy-to-clipboard button that flips to a check for a moment — or an error, since the token is
+ *  the whole point of this card and a silent clipboard failure here leaves someone with nothing. */
 function CopyButton({
   value,
   label = "Copy",
@@ -27,20 +30,26 @@ function CopyButton({
   value: string;
   label?: string;
 }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopy();
   return (
     <Button
       type="button"
       variant="outline"
       size="sm"
-      onClick={async () => {
-        await navigator.clipboard.writeText(value);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      }}
+      onClick={() => copy(value)}
     >
-      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-      {copied ? "Copied" : label}
+      {state === "copied" ? (
+        <Check aria-hidden="true" />
+      ) : state === "error" ? (
+        <TriangleAlert aria-hidden="true" />
+      ) : (
+        <Copy aria-hidden="true" />
+      )}
+      {state === "copied"
+        ? "Copied"
+        : state === "error"
+          ? "Couldn’t copy"
+          : label}
     </Button>
   );
 }

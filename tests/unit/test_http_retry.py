@@ -110,3 +110,24 @@ class TestRedact:
         from shortlist.engine.clients.http_retry import redact
 
         assert redact("ConnectTimeout: pms unreachable") == "ConnectTimeout: pms unreachable"
+
+    @pytest.mark.parametrize(
+        ("secret", "text"),
+        [
+            # Header form — not a query parameter, so the original `_SECRET_RE` alone missed it.
+            ("abc123", "X-Plex-Token: abc123"),
+            # JSON/dict form, single-quoted.
+            ("SECRET", "{'X-Api-Key': 'SECRET'}"),
+            # JSON form with a different credential field name.
+            ("SECRETVALUE", '{"accessToken": "SECRETVALUE"}'),
+        ],
+    )
+    def test_redacts_shapes_that_are_not_query_params(self, secret: str, text: str):
+        """These three probed unchanged before `_EXTRA_SECRETS` was merged in from `log_reader.scrub`
+        — and `redact()` is what guards API 502 details and `events` rows (plex-safety rule 9), so it
+        must be at least as strong as the log view's own redaction."""
+        from shortlist.engine.clients.http_retry import redact
+
+        out = redact(text)
+        assert secret not in out
+        assert "REDACTED" in out

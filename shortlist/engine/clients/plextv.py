@@ -72,7 +72,16 @@ class PlexTvClient:
     _SLOW_TO = 1.0  # the first 429 jumps the pace to at least this (the old conservative rate)
     _MAX_PACE = 30.0  # never space writes further apart than this, even after repeated 429s
 
-    def __init__(self, token: str, machine_id: str, *, min_write_interval: float = 0.0, timeout: float = 30.0):
+    def __init__(
+        self,
+        token: str,
+        machine_id: str,
+        *,
+        min_write_interval: float = 0.0,
+        # plex.tv is shared infra outside our control, no closer than the other read APIs — the
+        # shared ceiling gives it the same tolerance.
+        timeout: float = http_retry.DEFAULT_TIMEOUT_S,
+    ):
         self._token = token
         self._machine_id = machine_id
         self._floor = max(0.0, min_write_interval)  # fastest allowed spacing between writes
@@ -253,6 +262,11 @@ class PlexTvClient:
         """
         url = f"{PLEXTV}/api/users/{plex_account_id}"
         net_backoff = 2.0
+        # What the LAST attempt actually failed with — reported if every attempt is exhausted, so the
+        # final error names its real cause instead of always blaming throttling (a repeated connect
+        # failure used to raise "still throttling", sending the operator to the wrong diagnosis on
+        # the most privacy-sensitive write path).
+        last_failure = "no attempt was made"
         for attempt in range(6):
             self._throttle()
             try:
@@ -262,6 +276,7 @@ class PlexTvClient:
                 # is safe (it's a full-value PUT, not a delta — rule 3's merge already happened). A
                 # read timeout is deliberately NOT retried here: the write may have applied.
                 logger.warning("plex.tv unreachable on filter write (attempt {}): {}", attempt + 1, type(e).__name__)
+                last_failure = f"plex.tv was unreachable ({type(e).__name__})"
                 time.sleep(net_backoff)
                 net_backoff = min(net_backoff * 2, 30.0)
                 continue
@@ -274,6 +289,7 @@ class PlexTvClient:
                 logger.warning(
                     "plex.tv 429 on filter write (attempt {}); slowing to {:.1f}s/write", attempt + 1, self._pace
                 )
+                last_failure = "plex.tv is rate-limiting filter writes (HTTP 429)"
                 continue  # the loop-top _throttle now waits the new, larger pace before retrying
             # Carry plex.tv's own words. "HTTP 400" alone leaves the operator guessing which of
             # their accounts plex.tv won't accept a filter for, and why (issue #1). The body is
@@ -286,7 +302,9 @@ class PlexTvClient:
             if r.status_code == 422:
                 raise FilterWriteRefused(msg)
             raise RuntimeError(msg)
-        raise RuntimeError(f"plex.tv still throttling filter update for {plex_account_id} after retries")
+        raise RuntimeError(
+            f"plex.tv filter update for {plex_account_id} failed after {attempt + 1} attempts: {last_failure}"
+        )
 
     def home_users(self) -> list[dict]:
         r = http_retry.get(f"{PLEXTV}/api/v2/home/users", headers=self._headers(json=True), timeout=self._timeout)

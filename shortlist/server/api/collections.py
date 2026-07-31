@@ -18,6 +18,15 @@ from shortlist.engine.candidates import KNOWN_SOURCES
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import target_sections
 from shortlist.engine.models import RowSpec, dedupe_slug, slugify
+from shortlist.server.api.row_changes import (
+    POSTER_RESET,
+    PRIVACY_SYNC,
+    RECONCILE,
+    RENAME,
+    PlannedWork,
+    RowChange,
+    plan_row_changes,
+)
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Event, PickRow, User
 from shortlist.server.scheduler import rebuild_schedule
@@ -43,6 +52,20 @@ PLACEMENTS = {"both", "home", "library", "off"}
 POSTER_MODES = {"", "upload", "text", "ai", "generate"}
 
 
+def _closed_set(values: set[str], default: str, description: str) -> Field:
+    """A string field whose accepted values are ADVERTISED in the OpenAPI schema.
+
+    `_validate` below is what actually rejects a bad value, and it stays the enforcement point — it
+    raises one plain-English 422 naming the valid options, which a Pydantic enum error does not.
+    But a schema that says only `str` is a schema that lies by omission: the SPA's types are
+    generated from it, so every one of these closed sets arrived in TypeScript as a bare `string`
+    and the UI had to re-declare the union by hand to get any checking at all.
+    Sorted so the emitted schema is stable — `tests/unit/test_openapi_snapshot.py` compares it
+    byte-for-byte, and a set's iteration order is not something to hang that on.
+    """
+    return Field(default=default, description=description, json_schema_extra={"enum": sorted(values)})
+
+
 class HubAnchorIn(BaseModel):
     """A per-library shelf placement for one row: the very TOP (``top``), or after/before a collection
     by title. ``top`` needs no anchor; otherwise ``anchor`` must be a non-empty title."""
@@ -58,7 +81,7 @@ class PosterIn(BaseModel):
     engine (no AI); "ai" renders them with the curator provider's image model. The text fields share
     the row-name placeholders ({user}/{library_name}/{top_seed})."""
 
-    mode: str = ""
+    mode: str = _closed_set(POSTER_MODES, "", 'Poster source; "" leaves Plex artwork alone.')
     title: str = Field(default="", max_length=120)
     subtitle: str = Field(default="", max_length=120)
     style: str = Field(default="", max_length=400)
@@ -66,15 +89,15 @@ class PosterIn(BaseModel):
 
 class CollectionIn(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    build: str = "per_person"
-    audience: str = "everyone"
+    build: str = _closed_set(BUILDS, "per_person", "Who the row is built for: one per person, or one shared row.")
+    audience: str = _closed_set(AUDIENCES, "everyone", "Everyone, or the subset named by audience_user_ids.")
     audience_user_ids: list[int] = Field(default_factory=list)
     enabled: bool = True
     # This row's own run schedule (5-field cron); "" = never runs on a schedule. New rows default to
     # a nightly 03:30 so they work out of the box; there is no global schedule.
     schedule: str = Field(default="30 3 * * *", max_length=64)
     size: int = Field(default=15, ge=5, le=40)
-    media: str = "both"
+    media: str = _closed_set(MEDIA, "both", "Which library types this row builds in.")
     sort_order: int = 0
     name_template: str = ""
     min_watchers: int = Field(default=2, ge=2)  # a public row must never be shaped by one person
@@ -93,8 +116,8 @@ class CollectionIn(BaseModel):
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
-    placement: str = "both"  # both | home | library | off — the OWNER's own collection
-    placement_friends: str = "both"  # both | home | library | off — each FRIEND's own collection
+    placement: str = _closed_set(PLACEMENTS, "both", "Where the OWNER's own collection appears.")
+    placement_friends: str = _closed_set(PLACEMENTS, "both", "Where each FRIEND's own collection appears.")
     pin_top: bool = False  # pin to top of the library's Recommended shelf
     # Per-library Recommended-shelf override for this row, keyed by section key. {} -> inherit the
     # global default (settings `rows.hub_anchor`).
@@ -104,45 +127,62 @@ class CollectionIn(BaseModel):
 
 def _validate(body: CollectionIn) -> None:
     if body.build not in BUILDS:
-        raise HTTPException(422, f"build must be one of {sorted(BUILDS)}")
+        raise HTTPException(status_code=422, detail=f"build must be one of {sorted(BUILDS)}")
     if body.audience not in AUDIENCES:
-        raise HTTPException(422, f"audience must be one of {sorted(AUDIENCES)}")
+        raise HTTPException(status_code=422, detail=f"audience must be one of {sorted(AUDIENCES)}")
     if body.media not in MEDIA:
-        raise HTTPException(422, f"media must be one of {sorted(MEDIA)}")
+        raise HTTPException(status_code=422, detail=f"media must be one of {sorted(MEDIA)}")
     unknown = [s for s in body.candidate_sources if s not in KNOWN_SOURCES]
     if unknown:
-        raise HTTPException(422, f"unknown candidate source(s) {unknown}; valid: {sorted(KNOWN_SOURCES)}")
+        raise HTTPException(
+            status_code=422, detail=f"unknown candidate source(s) {unknown}; valid: {sorted(KNOWN_SOURCES)}"
+        )
     if body.placement not in PLACEMENTS:
-        raise HTTPException(422, f"placement must be one of {sorted(PLACEMENTS)}")
+        raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")
     if body.placement_friends not in PLACEMENTS:
-        raise HTTPException(422, f"placement_friends must be one of {sorted(PLACEMENTS)}")
+        raise HTTPException(status_code=422, detail=f"placement_friends must be one of {sorted(PLACEMENTS)}")
     if body.poster.mode not in POSTER_MODES:
-        raise HTTPException(422, f"poster mode must be one of {sorted(POSTER_MODES)}")
+        raise HTTPException(status_code=422, detail=f"poster mode must be one of {sorted(POSTER_MODES)}")
     if body.schedule.strip():
         try:
             CronTrigger.from_crontab(body.schedule.strip())
         except ValueError as e:
-            raise HTTPException(422, f"invalid schedule — needs a 5-field cron (e.g. '30 3 * * *'): {e}") from e
+            raise HTTPException(
+                status_code=422, detail=f"invalid schedule — needs a 5-field cron (e.g. '30 3 * * *'): {e}"
+            ) from e
     for lib, anchor in body.hub_anchor.items():
         if not anchor.top and not anchor.anchor.strip():
-            raise HTTPException(422, f"hub_anchor[{lib}]: needs 'top' or a non-empty 'anchor'")
+            raise HTTPException(status_code=422, detail=f"hub_anchor[{lib}]: needs 'top' or a non-empty 'anchor'")
+    _validate_pairing(rewatch=body.rewatch, unstarted_only=body.unstarted_only, media=body.media)
+
+
+def _validate_pairing(*, rewatch: bool, unstarted_only: bool, media: str) -> None:
+    """Refuse the two combinations of these three fields that a row cannot honour.
+
+    Its own function because a PATCH must check the MERGED row, not the request body — `CollectionIn`
+    hands `_validate` its DEFAULTS for anything the request omitted, so a row already set to rewatch
+    could be sent `unstarted_only: true` alone, `body.rewatch` would read as its default False, no
+    contradiction would be seen, and the invalid pair would land in the database one field at a time.
+    Same for `unstarted_only` surviving a narrowing to a movies-only row. This used to be written out
+    twice, which is how the two copies could have drifted.
+    """
     # Contradictory, and it fails SILENTLY rather than loudly: `unstarted_only` leaves the pool holding
     # only never-opened series, so the rewatch ordering finds nothing finished to lead with and the row
     # fills entirely with new titles — a shelf of unseen shows under a "things you've already seen"
     # title. Refusing is the only outcome that can't mislead.
-    if body.rewatch and body.unstarted_only:
+    if rewatch and unstarted_only:
         raise HTTPException(
-            422,
-            "a rewatch row can't also exclude everything already started — "
+            status_code=422,
+            detail="a rewatch row can't also exclude everything already started — "
             "they ask for opposite things, so the row would fill with titles nobody has seen",
         )
     # "Shows only" in the field's own docs, and structurally: `_started_shows` yields only show keys, so
     # on a movies row the flag is inert. Storing an inert setting the editor won't even show is how a
     # row ends up behaving unlike what its settings say.
-    if body.unstarted_only and body.media == "movie":
+    if unstarted_only and media == "movie":
         raise HTTPException(
-            422,
-            "unstarted_only applies to shows — a movie is finished the moment it is watched, "
+            status_code=422,
+            detail="unstarted_only applies to shows — a movie is finished the moment it is watched, "
             "so there is no 'started' state to exclude",
         )
 
@@ -232,7 +272,7 @@ def _reject_duplicate_name(session, name: str, *, exclude_id: int | None = None)
         .first()
     )
     if clash is not None:
-        raise HTTPException(422, f"a row named {name!r} already exists — pick a different name")
+        raise HTTPException(status_code=422, detail=f"a row named {name!r} already exists — pick a different name")
 
 
 def _unique_slug(session, base: str) -> str:
@@ -241,10 +281,26 @@ def _unique_slug(session, base: str) -> str:
 
 
 def _set_audience(session, collection: Collection, body: CollectionIn) -> None:
+    """Replace this row's audience with the requested user ids, refusing any that don't exist.
+
+    The ids are RESOLVED first, deliberately. `CollectionAudience.user_id` is a foreign key and the
+    connection runs with `PRAGMA foreign_keys=ON`, so an unknown id used to surface as an
+    `IntegrityError` at commit — an unhandled 500 carrying a SQL string, where every other bad input
+    on this router is a 422. And on a SHARED row this list is what decides who is excluded from the
+    share filter, so silently dropping an id nobody recognises is the wrong direction to fail in.
+    """
     session.query(CollectionAudience).filter_by(collection_id=collection.id).delete()
-    if body.audience == "subset":
-        for user_id in dict.fromkeys(body.audience_user_ids):  # dedupe, keep order
-            session.add(CollectionAudience(collection_id=collection.id, user_id=user_id))
+    if body.audience != "subset":
+        return
+    wanted = list(dict.fromkeys(body.audience_user_ids))  # dedupe, keep order
+    if not wanted:
+        return
+    known = {user_id for (user_id,) in session.query(User.id).filter(User.id.in_(wanted)).all()}
+    unknown = [user_id for user_id in wanted if user_id not in known]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"no such user(s): {unknown} — the audience must be existing users")
+    for user_id in wanted:
+        session.add(CollectionAudience(collection_id=collection.id, user_id=user_id))
 
 
 @router.get("")
@@ -381,53 +437,30 @@ def _queue_reconcile(
 
 @router.patch("/{collection_id}")
 async def update_collection(collection_id: int, body: CollectionIn, request: Request) -> dict:
+    """Edit a row: validate → apply → plan the Plex work → enqueue it → drain.
+
+    The decision table for "what does this edit owe Plex" lives in `api/row_changes.py`, not here.
+    It used to be eleven mutable flags accumulated down this handler and eight conditional
+    dispatches at the bottom — untestable without a Plex context, and the place a missed branch
+    silently left someone's row on the wrong Home screen.
+    """
     _validate(body)
     # Only touch fields the request actually sent, so a partial PATCH (e.g. an enable toggle) never
     # resets the columns it omitted back to CollectionIn's defaults.
     sent = body.model_fields_set
     state = request.app.state
-    dropped_user_ids: set[int] = set()
-    new_row_template: str | None = None  # set when a rename should be reconciled onto Plex
-    default_template_change: str | None = None  # set when the DEFAULT row's global name template changed
-    poster_reset_needed = False  # set when a row drops a custom poster back to Plex default
-    shared_audience_changed = False  # set when a SHARED row's audience changed → share filters owed
-    slug = build = None
     with state.sessions() as session:
         collection = session.get(Collection, collection_id)
         if collection is None:
-            raise HTTPException(404, "collection not found")
-        slug, build = collection.slug, collection.build
-        was_enabled = collection.enabled
-        # What the row targeted BEFORE the patch. Narrowing either of these — "both" media down to
-        # movies only, or dropping a library from the list — leaves the collections in the libraries it
-        # walked away from with nothing to ever revisit them: delivery no longer targets those
-        # libraries, so they are never refreshed, never removed, and re-promoted every run by
-        # promotion's no-spec fallback.
-        was_media, was_libraries = collection.media, list(collection.library_keys or [])
+            raise HTTPException(status_code=404, detail="collection not found")
+        before = _snapshot(session, collection)
         is_default = collection.slug == DEFAULT_SLUG
-        # Capture the audience BEFORE the patch so we can tell WHO was dropped (their row is now stale
-        # on Plex and must be removed). "everyone" resolves to the full user set.
-        #
-        # Per-person and shared rows need OPPOSITE things here, which is why both are tracked:
-        # a per-person row is one collection per person, so dropping someone means DELETING theirs;
-        # a shared row is ONE collection for everyone, so deletion cannot hide it from one person —
-        # the only mechanism is a `label!=` exclude on their share, written by a privacy pass.
-        # Narrowing a shared row's audience with no such pass left the dropped accounts still seeing
-        # it until the next nightly run.
-        audience_changed = bool(sent & {"audience", "audience_user_ids"})
-        touching_audience = build == "per_person" and audience_changed
-        if audience_changed:
-            all_ids = {u.id for u in session.query(User).all()}
-            old_users = (
-                all_ids
-                if collection.audience == "everyone"
-                else {a.user_id for a in session.query(CollectionAudience).filter_by(collection_id=collection.id)}
-            )
         # A rename only matters for a NON-default per-person row (the default row's title follows the
-        # global Settings template, not this column). Capture the old effective template to tell whether
-        # the title actually changed — delivery renders from `name_template or name`.
-        touching_name = build == "per_person" and not is_default and bool(sent & {"name", "name_template"})
-        old_template = (collection.name_template or collection.name) if touching_name else None
+        # global Settings template, not this column). The old effective template is what the
+        # collections on Plex are titled with right now — delivery renders from `name_template or name`.
+        touching_name = before["build"] == "per_person" and not is_default and bool(sent & {"name", "name_template"})
+        template_before = (collection.name_template or collection.name) if touching_name else ""
+        template_after = template_before
         # The default row has no per-collection name: its title IS the global `row.name_template`
         # (Settings → Defaults), which delivery renders per library. So a rename of it writes that
         # global setting — NOT this column — because a per-collection template would win over each
@@ -439,42 +472,23 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
             previous = store.get("row.name_template") or ""
             if new_template and new_template != previous:
                 store.set("row.name_template", new_template)
-                default_template_change = new_template
-                old_template = previous  # what the collections on Plex are titled with right now
+                template_before, template_after = previous, new_template
         elif "name" in sent:
             _reject_duplicate_name(session, body.name, exclude_id=collection_id)
             collection.name = body.name
-        # These three interact, so they must be validated against the MERGED row, not the request body.
-        # `_validate` sees CollectionIn's DEFAULTS for anything the PATCH omitted, so a row already set
-        # to rewatch could be sent `unstarted_only: true` alone — body.rewatch reads as its default
-        # False, no contradiction is seen, and the invalid pair lands in the database one field at a
-        # time. Same for `unstarted_only` surviving a narrowing to a movies-only row.
-        merged_rewatch = body.rewatch if "rewatch" in sent else bool(collection.rewatch)
-        merged_unstarted = body.unstarted_only if "unstarted_only" in sent else bool(collection.unstarted_only)
-        merged_media = body.media if "media" in sent else collection.media
-        if merged_rewatch and merged_unstarted:
-            raise HTTPException(
-                422,
-                "a rewatch row can't also exclude everything already started — "
-                "they ask for opposite things, so the row would fill with titles nobody has seen",
-            )
-        if merged_unstarted and merged_media == "movie":
-            raise HTTPException(
-                422,
-                "unstarted_only applies to shows — a movie is finished the moment it is watched, "
-                "so there is no 'started' state to exclude",
-            )
+        # Checked against the MERGED row, never the request body — see `_validate_pairing`.
+        _validate_pairing(
+            rewatch=body.rewatch if "rewatch" in sent else bool(collection.rewatch),
+            unstarted_only=body.unstarted_only if "unstarted_only" in sent else bool(collection.unstarted_only),
+            media=body.media if "media" in sent else collection.media,
+        )
         for column in _PATCHABLE_COLUMNS:
             if column in sent:
                 setattr(collection, column, getattr(body, column))
         if "schedule" in sent:
             collection.schedule = body.schedule.strip()  # a whitespace-only cron means "no schedule"
         if "poster" in sent:
-            old_poster_mode = (collection.poster or {}).get("mode") or ""
             collection.poster = body.poster.model_dump()
-            # Switching a row that HAD a custom poster back to Plex default must actually revert the
-            # artwork on Plex, not just stop managing it.
-            poster_reset_needed = bool(old_poster_mode) and not body.poster.mode
             session.add(
                 Event(
                     scope="collection.poster",
@@ -491,92 +505,112 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         if sent & {"audience", "audience_user_ids"}:
             _set_audience(session, collection, body)
         session.commit()
-        if audience_changed:
-            new_users = (
-                all_ids
-                if collection.audience == "everyone"
-                else {a.user_id for a in session.query(CollectionAudience).filter_by(collection_id=collection.id)}
-            )
-            if touching_audience:
-                dropped_user_ids = old_users - new_users  # no longer in the audience → clean them up
-            # A shared row's membership changed in EITHER direction: narrowing owes the dropped
-            # accounts an exclude, widening owes the added ones its removal. Both are share-filter
-            # work, so both need the pass.
-            shared_audience_changed = build == "shared" and old_users != new_users
+        after = _snapshot(session, collection)
         if touching_name:
-            new_effective = collection.name_template or collection.name
-            if new_effective != old_template:
-                new_row_template = new_effective
+            template_after = collection.name_template or collection.name
         result = _serialize(session, collection)
     # A schedule or enable/disable change alters which cron jobs should exist — re-derive them.
     if sent & {"schedule", "enabled"}:
         rebuild_schedule(request.app)
-    build_changed = "build" in sent and body.build != build
 
-    # A build flip (per-person ↔ shared) makes the OLD build's collections stale — a shared collection,
-    # or every user's per-person one, under a label the new build won't touch. Remove them so the next
-    # run rebuilds the row cleanly under its new build; otherwise both live on Home at once. This is a
-    # removal (gate-exempt), and it supersedes the audience/rename reconciles (which act on the old
-    # build that's being fully removed). Best-effort + audited.
-    if build_changed:
-        _queue_reconcile(state, slug=slug, build=build, scope="collection.build")
-        # Flipping per_person→shared makes one PUBLIC row out of what were private per-person ones,
-        # and shared→per_person does the reverse. Either way every account's excludes are now wrong.
-        await jobs.queue_privacy_sync(state, f"row '{slug}' changed how it is built")
-        return result
-    # Removing a dropped user's row is a removal (gate-exempt); a newly-ADDED user's row is a create,
-    # so it's left for the next run's gated delivery.
-    if dropped_user_ids:
-        _queue_reconcile(
-            state, slug=slug, build=build, scope="collection.audience", only_user_ids=sorted(dropped_user_ids)
-        )
-    # Switching a row OFF must take its collections down, not merely stop refreshing them. Nothing used
-    # to fire here: the next run removes the row only for the users it processes, so anyone paused,
-    # disabled or restricted kept it indefinitely — and a row with no schedule has no next run at all.
-    if "enabled" in sent and body.enabled is False and was_enabled:
-        _queue_reconcile(state, slug=slug, build=build, scope="collection.disable")
-    # A row narrowed to fewer libraries — by media type or by an explicit list — strands whatever it
-    # already built in the ones it left. Remove those and only those: the collections in the libraries
-    # it still targets are live and must survive.
-    if sent & {"media", "library_keys"}:
-        stranded = _stranded_sections(
+    change = RowChange(
+        slug=before["slug"],
+        build_before=before["build"],
+        build_after=after["build"],
+        enabled_before=before["enabled"],
+        enabled_after=after["enabled"],
+        media_before=before["media"],
+        media_after=after["media"],
+        libraries_before=before["libraries"],
+        libraries_after=after["libraries"],
+        audience_before=before["audience"],
+        audience_after=after["audience"],
+        template_before=template_before,
+        template_after=template_after,
+        poster_mode_before=before["poster_mode"],
+        poster_mode_after=after["poster_mode"],
+        defer_rename=body.defer_rename,
+    )
+
+    # Narrowing a row is not the same as removing it, and answering "which libraries did it leave"
+    # costs a Plex read — so it is passed as a callable and only paid for when the plan needs it.
+    def stranded() -> set[str]:
+        return _stranded_sections(
             state,
-            old_media=was_media,
-            old_keys=was_libraries,
-            new_media=body.media if "media" in sent else was_media,
-            new_keys=body.library_keys if "library_keys" in sent else was_libraries,
+            old_media=change.media_before,
+            old_keys=list(change.libraries_before),
+            new_media=change.media_after,
+            new_keys=list(change.libraries_after),
         )
-        if stranded:
-            _queue_reconcile(state, slug=slug, build=build, scope="collection.libraries", in_sections=sorted(stranded))
-    # A shared row is ONE collection, so there is nothing per-person to delete — who SEES it is decided
-    # entirely by each account's `label!=` excludes. Without this pass, narrowing the audience changed
-    # only the config: the dropped accounts kept the row on their Home until the next nightly run.
-    if shared_audience_changed:
-        await jobs.queue_privacy_sync(state, f"the audience for row '{slug}' changed")
-    # A rename updates each user's collection title IN PLACE (multi-row users would otherwise keep the
-    # old-named copy until the next run rebuilt it). Privacy-neutral, so gate-exempt. Best-effort + audited.
-    if new_row_template is not None and not body.defer_rename:
-        await reconcile.run_row_rename_from_plex(
-            state, slug=slug, new_template=new_row_template, old_template=old_template or "", scope="collection.rename"
+
+    await _apply_plan(state, plan_row_changes(change, stranded), slug=change.slug, build=change.build_before)
+    return result
+
+
+def _snapshot(session, collection: Collection) -> dict:
+    """The fields a row edit is judged on, read off the row as it stands right now.
+
+    Taken once before the patch and once after, so `plan_row_changes` compares two like-for-like
+    pictures instead of the handler tracking eleven "did this change?" flags down its own body.
+    """
+    if collection.audience == "everyone":
+        # "everyone" is not a stable set — it resolves to whoever is on the roster at this moment,
+        # which is what makes a row switched from a subset to everyone drop nobody.
+        audience = frozenset(user_id for (user_id,) in session.query(User.id).all())
+    else:
+        audience = frozenset(
+            a.user_id for a in session.query(CollectionAudience).filter_by(collection_id=collection.id)
         )
-    # Renaming the DEFAULT row changed the global template, so reconcile it onto Plex now (same in-place
-    # rename path, keyed on the new global template). run_row_rename re-renders per user and skips anyone
-    # whose title didn't actually change — so a user with their own `row_name_tpl` override is left alone.
-    if default_template_change is not None and not body.defer_rename:
-        await reconcile.run_row_rename_from_plex(
-            state,
-            slug=slug,
-            new_template=default_template_change,
-            old_template=old_template or "",
-            scope="collection.rename",
-        )
-    # Dropping a custom poster back to Plex default reverts the artwork on Plex now, not just in config.
-    # Cosmetic + privacy-neutral, so gate-exempt. Best-effort + audited.
-    if poster_reset_needed:
-        await reconcile.run_poster_reset(state, slug=slug, build=build, scope="collection.poster")
+    return {
+        "slug": collection.slug,
+        "build": collection.build,
+        "enabled": bool(collection.enabled),
+        # Narrowing either of these — "both" media down to movies only, or dropping a library from the
+        # list — leaves the collections in the libraries it walked away from with nothing to ever
+        # revisit them: delivery no longer targets those libraries, so they are never refreshed, never
+        # removed, and re-promoted every run by promotion's no-spec fallback.
+        "media": collection.media,
+        "libraries": tuple(str(k) for k in (collection.library_keys or [])),
+        "audience": audience,
+        "poster_mode": (collection.poster or {}).get("mode") or "",
+    }
+
+
+async def _apply_plan(state, plan: list[PlannedWork], *, slug: str, build: str) -> None:
+    """Carry out a planned edit, in order, then drain whatever is still queued.
+
+    The order matters and is the planner's, not this function's: a `privacy.sync` drains the queue as
+    it goes, so every removal planned before it has actually happened by the time each account's
+    excludes are recomputed (plex-safety rule 1).
+
+    `build` is the row's build BEFORE the edit — the collections being removed are the old build's.
+    """
+    for work in plan:
+        if work.kind == RECONCILE:
+            _queue_reconcile(
+                state,
+                slug=slug,
+                build=build,
+                scope=work.scope,
+                only_user_ids=work.only_user_ids,
+                in_sections=work.in_sections,
+            )
+        elif work.kind == PRIVACY_SYNC:
+            await jobs.queue_privacy_sync(state, work.scope)
+        elif work.kind == RENAME:
+            # Re-renders per user and skips anyone whose title didn't actually change — so a user with
+            # their own `row_name_tpl` override is left alone. Best-effort + audited.
+            await reconcile.run_row_rename_from_plex(
+                state,
+                slug=slug,
+                new_template=work.new_template,
+                old_template=work.old_template,
+                scope=work.scope,
+            )
+        elif work.kind == POSTER_RESET:
+            await reconcile.run_poster_reset(state, slug=slug, build=build, scope=work.scope)
     # Anything queued above happens NOW when Plex is reachable; when it isn't, the worker retries it.
     await jobs.drain_now(state, f"row '{slug}' was edited")
-    return result
 
 
 @router.delete("/{collection_id}", status_code=204)
@@ -585,11 +619,13 @@ async def delete_collection(collection_id: int, request: Request) -> None:
     with state.sessions() as session:
         collection = session.get(Collection, collection_id)
         if collection is None:
-            raise HTTPException(404, "collection not found")
+            raise HTTPException(status_code=404, detail="collection not found")
         if collection.slug == DEFAULT_SLUG:
             # The default per-person row is what makes an upgrade behaviour-neutral; disable it
             # instead of deleting so there's always a home for users with no other row.
-            raise HTTPException(422, "the default 'picked' row can't be deleted — disable it instead")
+            raise HTTPException(
+                status_code=422, detail="the default 'picked' row can't be deleted — disable it instead"
+            )
         slug, build = collection.slug, collection.build
         # Captured while the row still exists and carried in the job payload: after the DB row is gone
         # there is nothing left to resolve the title its collections were built under, so a retry
@@ -630,7 +666,7 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
     renamed. Returns a text/event-stream: one 'rename' event per user, then a 'done' event."""
     import asyncio
     import json
-    from queue import Empty, Queue
+    from queue import Queue
 
     with request.app.state.sessions() as session:
         collection = session.get(Collection, collection_id)
@@ -682,11 +718,12 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
 
     async def generate():
         while True:
-            try:
-                event = q.get(timeout=0.1)
-            except Empty:
-                await asyncio.sleep(0.05)
-                continue
+            # `Queue.get` is a BLOCKING stdlib call. Awaiting it here used to be a plain call with a
+            # 0.1s timeout, which froze the event loop for that long on every empty tick — and a
+            # rename walks every user over plex.tv, so the loop (SSE, other requests, the Docker
+            # HEALTHCHECK) was unavailable roughly two thirds of the time. The wait belongs on a
+            # worker thread. `_run`'s `finally` always puts the sentinel, so this can't hang.
+            event = await loop.run_in_executor(None, q.get)
             if event is None:
                 break
             yield f"data: {json.dumps(event)}\n\n"
@@ -715,14 +752,14 @@ async def cleanup_collection(collection_id: int, body: CleanupRequest, request: 
     with state.sessions() as session:
         collection = session.get(Collection, collection_id)
         if collection is None:
-            raise HTTPException(404, "collection not found")
+            raise HTTPException(status_code=404, detail="collection not found")
         slug, build, name = collection.slug, collection.build, collection.name
 
     removed, error = await reconcile.run_reconcile(
         state, slug=slug, build=build, dry_run=body.dry_run, scope="collection.cleanup"
     )
     if error:
-        raise HTTPException(502, f"Cleanup failed part-way; removed {len(removed)} before: {error}")
+        raise HTTPException(status_code=502, detail=f"Cleanup failed part-way; removed {len(removed)} before: {error}")
     verb = "Would remove" if body.dry_run else "Removed"
     return {
         "removed": removed,
@@ -734,7 +771,7 @@ async def cleanup_collection(collection_id: int, body: CleanupRequest, request: 
 def _require_collection(session, collection_id: int) -> Collection:
     collection = session.get(Collection, collection_id)
     if collection is None:
-        raise HTTPException(404, "collection not found")
+        raise HTTPException(status_code=404, detail="collection not found")
     return collection
 
 
@@ -745,15 +782,25 @@ async def upload_poster_image(collection_id: int, request: Request, file: Annota
     Normalizes the image (downscale to poster size + JPEG) before it hits the DB, so a phone photo
     doesn't bloat /config. Any generate-mode text the user typed is preserved.
     """
+    # Refuse on the declared length BEFORE reading the body: `await file.read()` buffers the whole
+    # upload (Starlette spills past ~1 MB to a temp file), so checking the size afterwards means a
+    # 500 MB post is fully received and written to disk only to be rejected. A missing or lying
+    # Content-Length still hits the real check below — this is a cheap early out, not the guard.
+    # The 4 KB allowance is the multipart envelope (boundaries + part headers), which Content-Length
+    # counts and the image bytes do not — without it a file a few bytes under the cap would be
+    # refused here by a check that is only meant to catch the obviously-too-big.
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > poster_service.MAX_UPLOAD_BYTES + 4096:
+        raise HTTPException(status_code=413, detail="that image is too large — keep it under 8 MB")
     raw = await file.read()
     if not raw:
-        raise HTTPException(422, "no file was uploaded")
+        raise HTTPException(status_code=422, detail="no file was uploaded")
     if len(raw) > poster_service.MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "that image is too large — keep it under 8 MB")
+        raise HTTPException(status_code=413, detail="that image is too large — keep it under 8 MB")
     try:
         image, content_type = poster_service.normalize_upload(raw)
     except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     with request.app.state.sessions() as session:
         collection = _require_collection(session, collection_id)
         poster_service.store_upload(session, collection_id, image, content_type)
@@ -805,7 +852,7 @@ async def get_poster_image(collection_id: int, request: Request) -> Response:
                 )
                 if image:
                     return Response(image, media_type="image/png")
-    raise HTTPException(404, "no poster image for this row")
+    raise HTTPException(status_code=404, detail="no poster image for this row")
 
 
 @router.post("/{collection_id}/poster/preview")
@@ -824,7 +871,7 @@ async def preview_poster(collection_id: int, body: PosterIn, request: Request) -
         if poster_service.preview_engine(mode) == "ai":
             status = poster_service.image_provider_status(store)
             if not status["capable"]:
-                raise HTTPException(422, status["reason"])
+                raise HTTPException(status_code=422, detail=status["reason"])
         studio = poster_service.make_studio(store, state.sessions)
     try:
         image = await run_in_threadpool(
@@ -834,9 +881,9 @@ async def preview_poster(collection_id: int, body: PosterIn, request: Request) -
         # Type only in both the log and the response — an image-provider error can carry the API key
         # (Google embeds it in the URL). Without this line the operator sees only a browser 502.
         logger.warning("poster preview failed (mode {!r}, {})", mode, type(exc).__name__)
-        raise HTTPException(502, f"couldn't generate a preview ({type(exc).__name__})") from exc
+        raise HTTPException(status_code=502, detail=f"couldn't generate a preview ({type(exc).__name__})") from exc
     if not image:
-        raise HTTPException(502, "couldn't produce a poster image")
+        raise HTTPException(status_code=502, detail="couldn't produce a poster image")
     return Response(image, media_type="image/png")
 
 

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
-from shortlist.engine.models import SHARED_LABEL_PREFIX, FilterSnapshot, UserProfile, UserType
+from shortlist.engine.models import LABEL_PREFIX, SHARED_LABEL_PREFIX, FilterSnapshot, UserProfile, UserType
 
 if TYPE_CHECKING:
     from shortlist.engine.clients.plextv import PlexTvClient, PlexTvUser
@@ -198,7 +198,7 @@ def sync_user_restrictions(
     snapshots: SnapshotStore,
     *,
     own_label: str | None = None,
-    label_prefix: str = "shortlist",
+    label_prefix: str = LABEL_PREFIX,
     shared_labels: dict[str, set[int] | None] | None = None,
     hide_all_shared: bool = False,
     collections_known: bool = False,
@@ -283,7 +283,10 @@ def sync_user_restrictions(
     # mid library-index rebuild answers 200 with no collections, which is indistinguishable from "every
     # row is gone" — and acting on that reading removes excludes across every account on the server.
     existing_lower = {v.lower() for v in stored_labels.values()} if (collections_known and stored_labels) else None
-    prunable_shared: set[str] = set()
+    # NOT shared-only despite the section header above: it also collects `excluded_from_self` (an
+    # account's own label sitting in its own filter), a private-row exclude — but one whose removal
+    # is still leak-safe, since un-hiding someone from their OWN row can't expose it to anyone else.
+    prunable: set[str] = set()
     for fieldname in RESTRICTED_FILTER_FIELDS:
         for lbl in shortlist_labels_in(remote.filters[fieldname], label_prefix):
             stale_shared = (
@@ -319,14 +322,14 @@ def sync_user_restrictions(
             # else — the same reasoning that makes the shared case safe to prune.
             excluded_from_self = bool(own_label) and lbl.lower() == (own_label or "").lower()
             if stale_shared or excluded_from_self:
-                prunable_shared.add(lbl)
+                prunable.add(lbl)
 
     desired_fields = {}
     for fieldname in RESTRICTED_FILTER_FIELDS:
         current = remote.filters[fieldname]
         merged = merge_label_excludes(current, wanted)
-        if prunable_shared:
-            merged = remove_label_excludes(merged, prunable_shared)
+        if prunable:
+            merged = remove_label_excludes(merged, prunable)
         if merged != current:
             desired_fields[fieldname] = merged
 

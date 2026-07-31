@@ -5,7 +5,6 @@ import pytest
 
 from shortlist.engine.candidates import (
     GatherStats,
-    _slice_for_llm,
     filter_candidates,
     gather_candidates,
     genre_coherence,
@@ -597,44 +596,26 @@ class TestBuildWebQueryForTitle:
         assert build_web_query_for_title("  ") and "watch" in build_web_query_for_title("").lower()
 
 
-class TestSliceForLlm:
-    def test_caps_and_prefers_taste_matching_titles(self):
-        # A big library must be trimmed to the cap, keeping taste-matching titles over the long tail.
-        items = [{"tmdb_id": i, "genres": ["Comedy"]} for i in range(400)]
-        items.append({"tmdb_id": 9999, "genres": ["Drama"]})  # the only Drama title, last in the list
-        sliced = _slice_for_llm(items, {"Drama"}, 300)
-        assert len(sliced) == 300  # capped
-        assert any(it["tmdb_id"] == 9999 for it in sliced)  # taste match kept despite being last
-
-    def test_small_library_is_returned_whole(self):
-        items = [{"tmdb_id": 1, "genres": []}, {"tmdb_id": 2, "genres": []}]
-        assert _slice_for_llm(items, set(), 300) == items
-
-
 class TestFilterCandidates:
     def _index(self):
         return {MediaType.MOVIE: {10: 1010, 20: 1020, 30: 1030}, MediaType.SHOW: {}}
 
     def test_keeps_only_library_matches_and_sets_rating_key(self):
         cands = [make_candidate(10, "In"), make_candidate(99, "Out")]
-        kept = filter_candidates(
-            cands, self._index(), watched_tmdb_ids=set(), excluded_genres=set(), recent_pick_ids=set()
-        )
+        kept = filter_candidates(cands, self._index(), watched_tmdb_ids=set(), excluded_genres=set())
         assert [c.tmdb_id for c in kept] == [10]
         assert kept[0].rating_key == 1010
 
-    def test_drops_watched_excluded_genre_and_stale(self):
+    def test_drops_watched_and_excluded_genre(self):
         cands = [
             make_candidate(10, "Watched"),
             make_candidate(20, "Horror pick", genres=["Horror"]),
-            make_candidate(30, "Stale"),
         ]
         kept = filter_candidates(
             cands,
             self._index(),
             watched_tmdb_ids={(10, MediaType.MOVIE)},
             excluded_genres={"horror"},
-            recent_pick_ids={(30, MediaType.MOVIE)},
         )
         assert kept == []
 
@@ -649,7 +630,6 @@ class TestFilterCandidates:
             index,
             watched_tmdb_ids={(550, MediaType.MOVIE)},  # they watched the FILM
             excluded_genres=set(),
-            recent_pick_ids={(550, MediaType.MOVIE)},  # and it was recently picked
         )
 
         assert [c.title for c in kept] == ["Some Show"]
@@ -667,7 +647,6 @@ class TestFilterCandidates:
         kwargs = dict(
             watched_tmdb_ids={(20, MediaType.MOVIE)},
             excluded_genres={"horror"},
-            recent_pick_ids=set(),
         )
         without = filter_candidates([replace(c) for c in cands], self._index(), **kwargs)
         dropped: list[tuple] = []

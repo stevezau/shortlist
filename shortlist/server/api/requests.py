@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from shortlist.engine.models import MediaType, MissingTitle
 from shortlist.engine.requests import request_titles
@@ -58,7 +59,10 @@ class RequestCandidateOut(BaseModel):
 
 
 class RequestAction(BaseModel):
-    ids: list[int]
+    #: Bounded because every handler feeds this straight into `.in_()`. SQLite's compiled parameter
+    #: ceiling (SQLITE_MAX_VARIABLE_NUMBER, 999 on older builds) turns an over-long list into an
+    #: OperationalError — a 500 with a SQL string in it — rather than a refusal the caller can read.
+    ids: list[int] = Field(max_length=1000)
     dry_run: bool = False
 
 
@@ -251,8 +255,13 @@ async def get_arr_status(request: Request) -> dict[int, str | None]:
             status = shows_by_tmdb.get(row.tmdb_id)
             if status is None and shows_by_tvdb and not shows_by_tmdb:
                 try:
-                    tvdb_id = tmdb.external_ids(row.tmdb_id, MediaType.TV).get("tvdb_id")
-                except Exception as e:
+                    tvdb_id = tmdb.external_ids(row.tmdb_id, MediaType.SHOW).get("tvdb_id")
+                # Deliberately NOT a bare `except Exception`: this used to pass `MediaType.TV`, which
+                # does not exist, and the AttributeError was swallowed to a debug line — so on Sonarr
+                # v3 the fallback silently no-op'd for ever and every show showed a blank status. Only
+                # a transport failure or the TMDB client's own HTTP error is tolerable here; anything
+                # else is a bug and must be loud.
+                except (httpx.HTTPError, RuntimeError) as e:
                     logger.debug("request status: tvdb lookup for {!r} failed ({})", row.title, e)
                     tvdb_id = None
                 status = shows_by_tvdb.get(tvdb_id) if tvdb_id else None

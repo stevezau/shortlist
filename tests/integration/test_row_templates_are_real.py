@@ -37,13 +37,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from shortlist.engine.context import EngineContext
 from shortlist.engine.models import EngineConfig, MediaType, RowSpec
-from shortlist.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
-from tests.integration.test_api import client as _api_client
 
-#: The API suite's own app fixture, reused rather than re-made so the two can never drift apart.
-client = _api_client
+# The `client` fixture comes from tests/integration/conftest.py — the same app fixture the
+# `test_api_*.py` files use, so the two can never drift apart.
 
 TEMPLATES_TS = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "row-templates.ts"
 

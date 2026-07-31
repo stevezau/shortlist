@@ -13,6 +13,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Setting
+from shortlist.server.scheduler import DEFAULT_CRONS as _DEFAULT_CRONS
 
 DEFAULTS: dict[str, Any] = {
     "plex.url": "",
@@ -66,8 +67,6 @@ DEFAULTS: dict[str, Any] = {
     # "what changed on whose share at 03:31" (plex-safety rule 10) is the one record an operator may
     # want long after the run detail around it is gone.
     "events.retention": 0,
-    # The cron expression for the daily watch-history sync. Blank = the default (04:17 daily).
-    "sync.watch_cron": "",
     # Read only what changed since the last sync (Plex's `lastViewedAt>=` filter) instead of every
     # watched title, every night, per user, per library. An incremental read cannot see an un-watch
     # or a deletion, so a COMPLETE read still runs every `sync.watch_full_days` regardless — this
@@ -76,23 +75,8 @@ DEFAULTS: dict[str, Any] = {
     # How often the complete re-read happens, in days. It is the only thing that can notice a title
     # being un-watched or removed, so it is not optional — only its frequency is.
     "sync.watch_full_days": 7,
-    # The cron expression for the user-list sync (plex.tv + Tautulli). Blank = the default (daily 04:47).
-    "sync.users_cron": "",
-    # The cron for the nightly privacy sync — a re-merge of every account's share filter.
-    #
-    # It exists because the automatic Privacy Check + write gate was removed on 2026-07-16 at the
-    # owner's request: nothing verifies hiding after the fact any more, so leak-safe write ORDERING
-    # is the only remaining guarantee. This is the cheapest safety net against drift, and it can only
-    # ever make the server more private (it builds, delivers and promotes nothing).
-    "privacy.sync_cron": "15 5 * * *",
-    # The cron for the drift check. Blank = off; it is a converge-to-desired-state pass that is safe
-    # to schedule, but it WRITES to Plex, so turning it on is a deliberate choice.
-    # Nightly at 05:45 — see scheduler._SYNC_CHECK_CRON. Clearing it in the UI stores an empty
-    # row, which the scheduler reads as an explicit "off" rather than "inherit this".
-    "sync.check_cron": "45 5 * * *",
-    # Backup schedule. Blank cron = the default (daily 03:00). max_keep = number of backups to retain.
-    "backup.cron": "",
-    "backup.max_keep": 10,
+    # (the schedulable crons are added below, derived from scheduler.DEFAULT_CRONS)
+    "backup.max_keep": 10,  # how many backups to retain
     # How many read-only jobs may run at once. Jobs that WRITE to Plex/plex.tv are always exclusive
     # and never overlap a run — share-filter writes are read-modify-write merges, so two at once lose
     # one of them (plex-safety rule 3). Dial to 1 if a PMS complains about the concurrency.
@@ -152,6 +136,18 @@ DEFAULTS: dict[str, Any] = {
     "setup.state": {},
 }
 
+# Every schedulable cron ships BLANK, meaning "use the built-in default". The expressions themselves
+# live in exactly one place — `scheduler.DEFAULT_CRONS` — and are NOT copied here: a second copy is
+# what let the drift check be documented as off-by-default for months while it ran nightly. Deriving
+# the keys also means a cron added there is automatically accepted by `PUT /api/settings`, whose
+# allowlist is built from this dict.
+#
+# The scheduler resolves a cron from the RAW settings row, never through here, because a stored blank
+# and an absent row must stay distinguishable: for `sync.check_cron` — the one schedule the UI offers
+# to switch off — a stored blank means OFF, while an absent row means "nightly at 05:45". So the
+# effective schedule is `scheduler.effective_cron`, not this default.
+DEFAULTS.update({key: "" for key in _DEFAULT_CRONS})
+
 # Secrets are stored Fernet-encrypted under these keys (never in the clear, never logged).
 SECRET_KEYS = {
     "plex.token",
@@ -188,29 +184,56 @@ ENV_SEEDS = {
 }
 
 
+_UNSET = object()
+
+
 class SettingsStore:
     def __init__(self, session: Session, secret_box=None):
         self._session = session
         self._secrets = secret_box
 
+    @staticmethod
+    def _unwrap(row: Setting, key: str) -> Any:
+        """The stored value, or `_UNSET` when the row is not the `{"v": ...}` shape every write uses.
+
+        A row that is somehow not that shape — a hand-edited database, a half-written migration, a
+        future format — must read as "unset" and fall back, not raise. This is read during boot (the
+        scheduler resolves every cron here), so an exception is a crash loop rather than one broken
+        setting; and `all_public()` backs the whole Settings page, where one bad row used to mean a
+        500 recoverable only by hand-editing SQLite.
+        """
+        if not isinstance(row.value, dict) or "v" not in row.value:
+            logger.warning("setting {!r} has an unreadable value — using the default", key)
+            return _UNSET
+        return row.value["v"]
+
+    def _require_box(self, key: str) -> None:
+        """A secret key may only be read or written through a store that can encrypt it.
+
+        Without this the crypto silently short-circuits and `set("plex.token", …)` writes the owner's
+        token to the DB in the clear (plex-safety rule 9). Failing loudly is the only safe direction:
+        a caller that reached a SECRET_KEY without a box is wired wrong, not merely unlucky.
+        """
+        if key in SECRET_KEYS and self._secrets is None:
+            raise RuntimeError(
+                f"settings key {key!r} is a secret — SettingsStore needs a SecretBox to read or write it"
+            )
+
     def get(self, key: str, default: Any = None) -> Any:
+        self._require_box(key)
         row = self._session.get(Setting, key)
         if row is None:
             return DEFAULTS.get(key, default)
-        # `.get`, not `["v"]`. Every setting is written as {"v": ...}, but a row that is somehow not
-        # that shape — a hand-edited database, a half-written migration, a future format — must read
-        # as "unset" and fall back, not raise. This is read during boot (the scheduler resolves every
-        # cron here), so an exception is a crash loop rather than one broken setting.
-        if not isinstance(row.value, dict) or "v" not in row.value:
-            logger.warning("setting {!r} has an unreadable value — using the default", key)
+        value = self._unwrap(row, key)
+        if value is _UNSET:
             return DEFAULTS.get(key, default)
-        value = row.value["v"]
-        if key in SECRET_KEYS and value and self._secrets:
+        if key in SECRET_KEYS and value:
             return self._secrets.decrypt(value)
         return value
 
     def set(self, key: str, value: Any) -> None:
-        if key in SECRET_KEYS and value and self._secrets:
+        self._require_box(key)
+        if key in SECRET_KEYS and value:
             value = self._secrets.encrypt(str(value))
         row = self._session.get(Setting, key)
         if row is None:
@@ -220,15 +243,19 @@ class SettingsStore:
         self._session.commit()
 
     def all_public(self) -> dict[str, Any]:
-        """Everything except secrets; secrets appear redacted when set (UI contract)."""
+        """Everything except secrets; secrets appear redacted when set (UI contract).
+
+        Reads secret rows without decrypting them — only their truthiness decides the redaction — so
+        this stays callable from a store with no SecretBox.
+        """
         out = dict(DEFAULTS)
         for row in self._session.query(Setting).all():
             if row.key in PRIVATE_KEYS:
                 continue  # never surfaced to any client — managed via dedicated endpoints only
-            if row.key in SECRET_KEYS:
-                out[row.key] = "•••••" if row.value.get("v") else ""
-            else:
-                out[row.key] = row.value["v"]
+            value = self._unwrap(row, row.key)
+            if value is _UNSET:
+                continue  # leave the default in place
+            out[row.key] = ("•••••" if value else "") if row.key in SECRET_KEYS else value
         return out
 
     def encrypt_plaintext_secrets(self) -> list[str]:

@@ -10,7 +10,7 @@ import { EmptyState, ErrorState } from "@/components/query-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import { resolveArea } from "@/lib/auth";
-import { useSession, useSetupState } from "@/lib/queries";
+import { queryKeys, useSession, useSetupState } from "@/lib/queries";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
 import { RequestsPage } from "@/pages/requests";
@@ -35,7 +35,7 @@ const queryClient = new QueryClient({
   // silent for 30 seconds in the first place.
   mutationCache: new MutationCache({
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
     },
   }),
   defaultOptions: {
@@ -128,10 +128,7 @@ export default function App() {
             <Route path="jobs" element={<JobsPage />} />
             {/* Merged into Jobs. Redirect rather than remove: the old page was linked from docs
                 and may be bookmarked, and a 404 would read as the feature being gone. */}
-            <Route
-              path="schedule"
-              element={<Navigate to="/jobs" replace />}
-            />
+            <Route path="schedule" element={<Navigate to="/jobs" replace />} />
             {/* The page was /tools until the nav started calling it Jobs. Kept as a redirect:
                 bookmarks and the `action_url` baked into notifications already in the DB. */}
             <Route path="tools" element={<Navigate to="/jobs" replace />} />

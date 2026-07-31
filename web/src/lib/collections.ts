@@ -1,4 +1,5 @@
 import { freshnessBadgeLabel, watchedBadgeLabel } from "@/lib/constants";
+import { placementLabel } from "@/lib/placement";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
 import type {
   Collection,
@@ -6,13 +7,14 @@ import type {
   PlexLibrary,
   Settings,
   User,
-  Placement,
 } from "@/lib/types";
 
 /** A fresh row definition with sensible defaults, for the "Add a row" editor. */
 export function blankInput(): CollectionInput {
   return {
     name: "",
+    // The editor renames inline; only the dedicated rename page defers to its own stream.
+    defer_rename: false,
     build: "per_person",
     audience: "everyone",
     audience_user_ids: [],
@@ -44,6 +46,7 @@ export function blankInput(): CollectionInput {
 export function toInput(collection: Collection): CollectionInput {
   return {
     name: collection.name,
+    defer_rename: false,
     build: collection.build,
     audience: collection.audience,
     audience_user_ids: collection.audience_user_ids,
@@ -105,22 +108,6 @@ export function audienceSummary(collection: Collection, users: User[]): string {
  * `libraries` is null while the library list is still loading or unavailable: a raw section key is
  * not a name an owner recognises, so the libraries part is withheld rather than guessed at.
  */
-/** Where a row shows, in words. `Placement` has FOUR values — the "off" arm was missing, so a row
- *  hidden from every shelf was badged "Shows on: Home & Library": a confident, specific, false claim
- *  about who can see it. */
-export function placementLabel(placement: Placement): string {
-  switch (placement) {
-    case "home":
-      return "Home";
-    case "library":
-      return "Library";
-    case "off":
-      return "Nowhere";
-    default:
-      return "Home & Library";
-  }
-}
-
 export function rowOverrides(
   collection: Collection,
   libraries: PlexLibrary[] | null,

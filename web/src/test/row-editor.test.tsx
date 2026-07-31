@@ -229,15 +229,45 @@ describe("RowEditor — placement", () => {
       name: /Friends Library Recommended/i,
     });
 
-    expect(owner).toBeDisabled();
-    expect(friends).toBeEnabled();
+    // Marked unavailable via aria-disabled, NOT the native `disabled` attribute — a truly disabled
+    // switch drops out of the tab order, so its explanation could never be reached by keyboard or
+    // screen reader (issue: aria-describedby pointed at an id that never existed either).
+    expect(owner).toHaveAttribute("aria-disabled", "true");
+    expect(owner).not.toBeDisabled();
+    expect(friends).not.toHaveAttribute("aria-disabled");
     // Disabled, but still showing the TRUE state — the row really is on their Recommended shelf.
     expect(owner).toBeChecked();
-    expect(owner).toHaveAttribute("title", expect.stringMatching(/single collection/i));
+    expect(owner).toHaveAttribute(
+      "title",
+      expect.stringMatching(/single collection/i),
+    );
+    // The explanation is announced: aria-describedby resolves to a real, matching id.
+    const describedBy = owner.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy as string)).toHaveTextContent(
+      /single collection/i,
+    );
 
     // Home stays split and fully editable, because Home visibility really is per-share.
     expect(screen.getByRole("switch", { name: /Owner Home/i })).toBeEnabled();
-    expect(screen.getByRole("switch", { name: /Friends' Home/i })).toBeEnabled();
+    expect(
+      screen.getByRole("switch", { name: /Friends' Home/i }),
+    ).toBeEnabled();
+  });
+
+  it("keeps a disabled cell reachable by keyboard, and its toggle a no-op", async () => {
+    renderEditor(row({ build: "shared", placement: "both" }));
+    const owner = screen.getByRole("switch", {
+      name: /Owner Library Recommended/i,
+    });
+
+    // Reachable: a native `disabled` button is skipped entirely by Tab.
+    owner.focus();
+    expect(owner).toHaveFocus();
+
+    // A click can't actually flip it — the handler is a no-op for an unavailable cell.
+    await userEvent.click(owner);
+    expect(owner).toBeChecked();
   });
 
   it("a per-person row leaves all four editable — the asymmetry is Plex's, not ours", () => {
@@ -437,7 +467,7 @@ describe("RowEditor — placement on a shared row", () => {
     const owner = screen.getByRole("switch", {
       name: /Owner Library Recommended/i,
     });
-    expect(owner).toBeDisabled();
+    expect(owner).toHaveAttribute("aria-disabled", "true");
     expect(owner).toBeChecked(); // disabled, but still telling the truth about the shelf
     expect(
       screen.getByRole("switch", { name: /Friends Library Recommended/i }),

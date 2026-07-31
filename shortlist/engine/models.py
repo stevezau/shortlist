@@ -21,6 +21,13 @@ class UserType(StrEnum):
     MANAGED = "managed"
 
 
+# Every Plex label/collection Shortlist owns starts with this. Was also an `EngineConfig` field,
+# but nothing ever assigned it a non-default value, so `UserProfile.label` had already hardcoded
+# the literal separately — one knob nobody turned, and one hardcode that could drift from it. This
+# constant is now the single place either could change.
+LABEL_PREFIX = "shortlist"
+
+
 def slugify(name: str) -> str:
     """Normalize a username into the slug used in labels: ``shortlist_<slug>``."""
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
@@ -204,7 +211,7 @@ class UserProfile:
 
     @property
     def label(self) -> str:
-        return f"shortlist_{self.slug}"
+        return f"{LABEL_PREFIX}_{self.slug}"
 
 
 # Shared ("popular on this server") rows live in a namespace no per-person label can collide with.
@@ -212,7 +219,7 @@ class UserProfile:
 # username can never produce a slug containing "__" — the DOUBLE underscore here makes a shared
 # label unreachable from any user slug, so a private row can never be mistaken for a shared one.
 SHARED_SLUG_PREFIX = "shared"
-SHARED_LABEL_PREFIX = "shortlist__shared_"
+SHARED_LABEL_PREFIX = f"{LABEL_PREFIX}__shared_"
 
 
 @dataclass
@@ -238,7 +245,9 @@ class RowSpec:
     """One curated-row definition the engine delivers, built by the adapter from a Collection row.
 
     A per-person spec produces one private row per audience member (label ``shortlist_<userslug>``); a
-    shared spec produces one public row for the whole audience (label ``shortlist_shared_<slug>``).
+    shared spec produces one public row for the whole audience (label ``shortlist__shared_<slug>`` —
+    the DOUBLE underscore puts it in a namespace no user slug can ever collide with; see
+    ``SHARED_LABEL_PREFIX``).
     """
 
     slug: str
@@ -535,7 +544,6 @@ class EngineConfig:
 
     row_size: int = 15
     row_name_template: str = DEFAULT_ROW_TEMPLATE
-    label_prefix: str = "shortlist"
     candidates_pre_rank: int = 40  # heuristic pre-rank keeps this many for the curator
     # How many of a person's most recent watched titles the web-search source searches per row (one
     # cached Exa search each). Row-overridable via RowSpec.recent_count.

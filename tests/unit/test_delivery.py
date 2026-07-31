@@ -7,7 +7,7 @@ import pytest
 
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, deliver_rows, render_row_name, row_marker, sweep_broken_rows
-from shortlist.engine.models import EngineConfig, MediaType, Pick
+from shortlist.engine.models import LABEL_PREFIX, EngineConfig, MediaType, Pick
 from tests.conftest import make_profile
 
 
@@ -329,29 +329,15 @@ class TestDeliverRows:
 
         plex.delete_owned_collection.assert_called_once()
         assert plex.delete_owned_collection.call_args.args[0] is existing
-        # The ownership-guard prefix is the one the SUT threads from config (rule 4) — not a hardcode.
-        assert plex.delete_owned_collection.call_args.args[1] == engine_config.label_prefix
+        # The ownership-guard prefix (rule 4) — LABEL_PREFIX is the one hardcoded source of truth now
+        # that EngineConfig no longer carries a (never-set) label_prefix knob of its own.
+        assert plex.delete_owned_collection.call_args.args[1] == LABEL_PREFIX
         plex.create_collection.assert_called_once()  # rebuilt via one batched create
         plex.set_items.assert_not_called()  # NOT the per-item update path
         existing.editTitle.assert_not_called()  # nothing to rename — it's being deleted
         plex.fetch_items.assert_called_once_with([1001, 1002])  # the fresh row holds the wanted picks
         assert stored == "Shortlist_sarah"
         assert diff.removed == [f"Stale {k}" for k in range(6)]
-
-    def test_rebuild_threads_the_configured_label_prefix_to_the_delete_guard(self, engine_config, movies, shows):
-        """A non-default label_prefix must reach delete_owned_collection — the rule-4 ownership guard —
-        so a broken thread can't silently pass by matching the default."""
-        from dataclasses import replace as dc_replace
-
-        cfg = dc_replace(engine_config, label_prefix="rowz")
-        plex = self._plex(movies, shows)
-        profile = make_profile()
-        existing = self._existing_with_stale(profile, 6)
-        plex.find_owned_collections.side_effect = lambda section, label: [existing] if section is movies else []
-
-        deliver_rows(plex, profile, picks(), cfg)
-
-        assert plex.delete_owned_collection.call_args.args[1] == "rowz"
 
     def test_exactly_the_threshold_rebuilds_boundary(self, engine_config, movies, shows):
         """Boundary: removing exactly _REBUILD_MIN_REMOVES items rebuilds (the branch is `>=`)."""
@@ -818,6 +804,99 @@ class TestARowSharingItsTagWithOthers:
         # The sweep already deleted it and recorded that. Delivery must not double-count.
         plex.delete_owned_collection.assert_not_called()
         assert diff.deleted == []
+
+
+class TestFindThisRowsCollection:
+    """`_find_this_rows_collection` is the identity match `_deliver_one` was extracted around: which
+    (if any) of this user's OWNED collections is this row. Rule 4 ("touch only what we own") lives
+    here — every candidate it can return comes from the `owned` list the caller already filtered by
+    this user's label, never anything else on the server.
+    """
+
+    def _plex(self, matches_section: bool = True) -> MagicMock:
+        plex = MagicMock(spec=PlexClient)
+        plex.matches_section.return_value = matches_section
+        return plex
+
+    def test_matches_by_title_when_it_already_carries_the_current_marker(self):
+        from shortlist.engine.delivery import _find_this_rows_collection
+
+        section = _section("Movies", "movie", 1)
+        marker = row_marker(1)
+        wanted = MagicMock(title="✨ Picked for You" + marker, ratingKey=111)
+        other = MagicMock(title="Some Other Row" + marker, ratingKey=222)
+        plex = self._plex()
+
+        found = _find_this_rows_collection(
+            plex, section, [other, wanted], wanted.title, marker, delivered_key=None, sole_row=False, who="alex"
+        )
+
+        assert found is wanted
+        plex.matches_section.assert_called_once_with(wanted, section)
+
+    def test_matches_by_ledger_ratingkey_when_the_title_no_longer_renders(self):
+        """A renamed template/library/nickname means the title we'd render today no longer matches
+        what's on the server — the ledger's ratingKey is this row's identity, independent of title."""
+        from shortlist.engine.delivery import _find_this_rows_collection
+
+        section = _section("Movies", "movie", 1)
+        marker = row_marker(1)
+        renamed = MagicMock(title="Old Template Name" + marker, ratingKey=555)
+        plex = self._plex()
+
+        found = _find_this_rows_collection(
+            plex,
+            section,
+            [renamed],
+            "New Template Name" + marker,
+            marker,
+            delivered_key=555,
+            sole_row=False,
+            who="alex",
+        )
+
+        assert found is renamed
+        plex.matches_section.assert_called_once_with(renamed, section)
+
+    def test_a_collection_outside_owned_is_never_claimed(self):
+        """Foreign (e.g. Kometa) and other-user collections never carry our label, so the caller's
+        `find_owned_collections` never puts them in `owned` — this function only ever considers what
+        it is handed. Nothing else on the server, however similarly titled, is reachable from here."""
+        from shortlist.engine.delivery import _find_this_rows_collection
+
+        section = _section("Movies", "movie", 1)
+        marker = row_marker(1)
+        plex = self._plex()
+
+        found = _find_this_rows_collection(
+            plex, section, [], "✨ Picked for You" + marker, marker, delivered_key=None, sole_row=True, who="alex"
+        )
+
+        assert found is None
+        # Nothing was even a candidate, so there was nothing to type-check.
+        plex.matches_section.assert_not_called()
+
+    def test_sole_row_fallback_requires_both_the_marker_and_being_the_only_owned_row(self):
+        """The legacy fallback (rows delivered before the ledger existed) may rename a row in place
+        only when it's unambiguous: exactly one owned collection, and it already carries THIS
+        account's marker — otherwise it could be a shared-tag row holding other people's picks too,
+        and must be rebuilt rather than adopted."""
+        from shortlist.engine.delivery import _find_this_rows_collection
+
+        section = _section("Movies", "movie", 1)
+        marker = row_marker(1)
+        sole = MagicMock(title="Renamed By Template Change" + marker, ratingKey=999)
+        plex = self._plex()
+
+        matched = _find_this_rows_collection(
+            plex, section, [sole], "✨ Picked for You" + marker, marker, delivered_key=None, sole_row=True, who="alex"
+        )
+        assert matched is sole
+
+        not_matched = _find_this_rows_collection(
+            plex, section, [sole], "✨ Picked for You" + marker, marker, delivered_key=None, sole_row=False, who="alex"
+        )
+        assert not_matched is None
 
 
 class TestRowMarker:

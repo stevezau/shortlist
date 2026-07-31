@@ -43,7 +43,7 @@ function StatusChip({ entry }: { entry: JobCatalogEntry }) {
     <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
       <CheckCircle2
         aria-hidden="true"
-        className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-500"
+        className="size-3.5 shrink-0 text-success"
       />
       {last.created_at ? timeAgo(last.created_at) : "done"}
     </span>

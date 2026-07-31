@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from shortlist.server.api.users import _pick_dict
+from shortlist.server.api.serializers import pick_dict
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -60,7 +60,7 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
                 session.query(PickRow).filter_by(user_id=user.id, run_id=latest.run_id).order_by(PickRow.rank).all()
             ):
                 key = (pick.collection_slug or DEFAULT_SLUG, pick.section_key or "")
-                picks_by_row_lib.setdefault(key, []).append(_pick_dict(pick))
+                picks_by_row_lib.setdefault(key, []).append(pick_dict(pick))
 
         overrides = {o.collection_id: o for o in session.query(CollectionUserOverride).filter_by(user_id=user.id).all()}
         # The default 'picked' row's size follows the global setting, not its own stored column

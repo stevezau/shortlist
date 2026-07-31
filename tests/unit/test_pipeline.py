@@ -12,9 +12,9 @@ import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.tmdb import NullCache
+from shortlist.engine.context import EngineContext
 from shortlist.engine.delivery import render_row_name, resolve_row_template, row_marker
 from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec, UserType
-from shortlist.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 
@@ -1225,7 +1225,11 @@ class TestPerRowOverrides:
 
         pipeline_mod.run(ctx, [sarah])
 
-        ctx.plex.create_collection.assert_called()  # the synthesized "Picked for You"
+        ctx.plex.create_collection.assert_called_once()
+        section, title, items = ctx.plex.create_collection.call_args.args
+        assert section.type == "movie"  # the only library this ctx fixture configures
+        assert title == "✨ Movies Picked for You" + row_marker(100)  # the synthesized default row's title
+        assert len(items) == 2  # both mocked TMDB candidates (Candidate Ten, Candidate Twenty) — not empty, not more
 
     def test_a_both_row_fills_each_library_to_its_own_size(self, ctx: EngineContext, mock_plextv):
         """A 'both' row delivers a movie collection AND a show collection, and each library fills to
@@ -1913,6 +1917,7 @@ class TestPlacement:
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
         ctx.plex.promote.assert_called_once()  # reached despite living outside delivery_sections
+        assert ctx.plex.promote.call_args.args[0] is stranded  # promoted the STRANDED collection, not a fallback
 
     def test_a_stranded_collection_resolves_to_its_row_rather_than_the_fallback(self, ctx: EngineContext):
         """Regression: widening promotion to every library made this WORSE before it made it better.

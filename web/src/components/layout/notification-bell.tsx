@@ -115,8 +115,10 @@ export function NotificationBell({
         {count > 0 && (
           <span
             className={cn(
-              "absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white",
-              hasError ? "bg-destructive" : "bg-amber-500",
+              "absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold",
+              hasError
+                ? "bg-destructive text-destructive-foreground"
+                : "bg-warning text-warning-foreground",
             )}
           >
             {count}

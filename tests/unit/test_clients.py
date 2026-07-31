@@ -244,8 +244,21 @@ class TestPlexTvClient:
         monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)  # don't actually wait
         route = respx.put("https://plex.tv/api/users/100")
         route.side_effect = [httpx.Response(429)] * 8  # plex.tv never relents
-        with pytest.raises(RuntimeError, match="throttling"):
+        with pytest.raises(RuntimeError, match="rate-limiting"):
             self._client().update_user_filters(100, {"filterMovies": "x=y"})
+        assert len(route.calls) == 6  # bounded retries — it gives up, never loops forever
+
+    @respx.mock
+    def test_relentless_connect_failure_gives_up_with_the_real_reason_not_throttling(self, monkeypatch):
+        """A run of pure connect failures used to raise 'plex.tv still throttling filter update…',
+        which sends the operator to the wrong diagnosis on the most privacy-sensitive write path
+        (never a single 429). The final error must name what actually happened."""
+        monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)
+        route = respx.put("https://plex.tv/api/users/100")
+        route.side_effect = httpx.ConnectError("never landed")
+        with pytest.raises(RuntimeError, match="unreachable") as excinfo:
+            self._client().update_user_filters(100, {"filterMovies": "x=y"})
+        assert "throttl" not in str(excinfo.value).lower()
         assert len(route.calls) == 6  # bounded retries — it gives up, never loops forever
 
     @respx.mock
@@ -474,6 +487,19 @@ class TestTmdbClient:
         assert TmdbClient("k").suggestions(1, MediaType.MOVIE) == []
 
     @respx.mock
+    def test_a_404_miss_is_cached_like_trakts_related_deliberately_does(self):
+        """Without this, a title TMDB 404s on gets re-fetched every run for every user who has it as
+        a seed — trakt.py's `related()` already caches its own misses, with a comment saying why."""
+        route = respx.get("https://api.themoviedb.org/3/tv/95396/external_ids").mock(return_value=httpx.Response(404))
+        client = TmdbClient("k", cache=_MemoryCache())
+
+        first = client.tvdb_id(95396, MediaType.SHOW)
+        second = client.tvdb_id(95396, MediaType.SHOW)
+
+        assert first is None and second is None
+        assert route.call_count == 1, "the second call must be a cache hit, not a second 404"
+
+    @respx.mock
     def test_api_key_never_appears_in_error_messages(self):
         respx.get("https://api.themoviedb.org/3/movie/1/recommendations").mock(return_value=httpx.Response(500))
         with pytest.raises(RuntimeError) as excinfo:
@@ -489,17 +515,12 @@ class TestRemovedOmdbClient:
 
 class TestTautulliClient:
     @respx.mock
-    def test_get_history_success(self):
+    def test_ping_success(self):
         route = respx.get("http://taut.test/api/v2").mock(
-            return_value=httpx.Response(
-                200, json={"response": {"result": "success", "data": {"data": [{"title": "Heat"}]}}}
-            )
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": {}}})
         )
-        rows = TautulliClient("http://taut.test", "key").get_history(100)
-        assert rows == [{"title": "Heat"}]
-        params = route.calls.last.request.url.params
-        assert params["cmd"] == "get_history"
-        assert params["user_id"] == "100"
+        assert TautulliClient("http://taut.test", "key").ping() is True
+        assert route.calls.last.request.url.params["cmd"] == "status"
 
     @respx.mock
     def test_api_failure_raises(self):
@@ -507,13 +528,13 @@ class TestTautulliClient:
             return_value=httpx.Response(200, json={"response": {"result": "error", "message": "bad key"}})
         )
         with pytest.raises(RuntimeError, match="bad key"):
-            TautulliClient("http://taut.test", "key").get_history(100)
+            TautulliClient("http://taut.test", "key").friendly_names()
 
     @respx.mock
     def test_api_key_never_appears_in_error_messages(self):
         respx.get("http://taut.test/api/v2").mock(return_value=httpx.Response(502))
         with pytest.raises(RuntimeError) as excinfo:
-            TautulliClient("http://taut.test", "SUPERSECRETKEY").get_history(100)
+            TautulliClient("http://taut.test", "SUPERSECRETKEY").friendly_names()
         assert "SUPERSECRETKEY" not in str(excinfo.value)
         assert "502" in str(excinfo.value)
 
@@ -530,6 +551,20 @@ class TestPlexClient:
         ]
         index = mock_plex.build_library_index(section)
         assert index == {42: 1}
+
+    def test_build_library_index_skips_a_malformed_tmdb_guid(self, mock_plex: PlexClient):
+        """A guid whose id isn't a real integer (a bad scrape, a corrupted agent match) must not raise
+        out of the whole section scan — every other tolerant spot in this file skips a bad row rather
+        than failing the caller, and this was the one place that didn't."""
+        section = MagicMock()
+        section.title = "Movies"
+        section.totalSize = 2
+        section.all.return_value = [
+            SimpleNamespace(ratingKey=1, title="Malformed", guids=[SimpleNamespace(id="tmdb://not-a-number")]),
+            fake_media_item(2, "Good", tmdb_id=99),
+        ]
+        index = mock_plex.build_library_index(section)
+        assert index == {99: 2}
 
     def test_stored_label_returns_existing_title_cased_form_without_write(self, mock_plex: PlexClient):
         collection = MagicMock()
@@ -822,6 +857,47 @@ class TestPlexClient:
         assert mock_plex.sections_by_type() == {MediaType.MOVIE: movies, MediaType.SHOW: shows}
 
 
+class TestUserHubs:
+    """Fetch hubs AS another user (a canary token) — the visibility-check read."""
+
+    _URL = "http://pms:32400/hubs"
+
+    @respx.mock
+    def test_reads_hubs_as_the_canary_user(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, json={"MediaContainer": {"Hub": [{"title": "Home"}]}})
+        )
+
+        hubs = mock_plex.user_hubs("CANARY-TOK")
+
+        assert hubs == [{"title": "Home"}]
+        request = respx.calls.last.request
+        assert request.headers["X-Plex-Token"] == "CANARY-TOK"
+
+    @respx.mock
+    def test_a_missing_hub_container_is_an_empty_list_not_an_error(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, json={"MediaContainer": {}}))
+        assert mock_plex.user_hubs("CANARY-TOK") == []
+
+    def test_the_configured_timeout_reaches_the_raw_read(self, mock_plex: PlexClient, monkeypatch):
+        """This used to hardcode `timeout=30`, ignoring the operator's configured `plex.timeout_s`."""
+        from shortlist.engine.clients import plex_pms
+
+        mock_plex._server.url.return_value = self._URL
+        mock_plex._timeout = 77
+        seen: list[object] = []
+
+        def fake_get(*_args, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            return httpx.Response(200, json={"MediaContainer": {}}, request=httpx.Request("GET", self._URL))
+
+        monkeypatch.setattr(plex_pms.http_retry, "get", fake_get)
+        mock_plex.user_hubs("CANARY-TOK")
+        assert seen == [77]
+
+
 class TestSectionsByType:
     def test_the_lowest_keyed_library_of_each_type_wins(self, mock_plex: PlexClient):
         """PMS list order must not decide where rows live: a reordering would silently move
@@ -1099,6 +1175,39 @@ class TestWatchedTitles:
         )
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
         assert mock_plex.watched_titles("1", MediaType.MOVIE, "TOK") == []
+
+    @respx.mock
+    def test_a_malformed_tmdb_guid_is_dropped_not_raised(self, mock_plex: PlexClient):
+        """A guid id that isn't a real integer must be treated like no guid at all — dropped, not a
+        crash that ends the whole watched-titles read for this user (see the same tolerance in
+        `build_library_index`/`_tmdb_guid`)."""
+        self._mock_url(mock_plex)
+        xml = (
+            '<MediaContainer size="2" totalSize="2">'
+            '<Video ratingKey="9" title="Malformed" viewCount="1"><Guid id="tmdb://not-a-number"/></Video>'
+            '<Video ratingKey="10" title="Good" viewCount="1"><Guid id="tmdb://949"/></Video>'
+            "</MediaContainer>"
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        assert [i.title for i in items] == ["Good"]
+
+    def test_the_configured_timeout_reaches_the_raw_watched_read(self, mock_plex: PlexClient, monkeypatch):
+        """`_read_watched_page` used to hardcode `timeout=45`, ignoring the operator's configured
+        `plex.timeout_s` on the heaviest raw PMS read in the file."""
+        from shortlist.engine.clients import plex_pms
+
+        self._mock_url(mock_plex)
+        mock_plex._timeout = 99
+        seen: list[object] = []
+
+        def fake_get(*_args, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            return httpx.Response(200, text=self._watched_xml(), request=httpx.Request("GET", self._URL))
+
+        monkeypatch.setattr(plex_pms.http_retry, "get", fake_get)
+        mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        assert seen == [99]
 
     @respx.mock
     def test_pages_until_the_reported_total_is_reached(self, mock_plex: PlexClient):

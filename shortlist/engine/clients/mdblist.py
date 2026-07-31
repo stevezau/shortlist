@@ -42,7 +42,15 @@ class MdbListRateLimitError(MdbListError):
 
 
 class MdbListClient:
-    def __init__(self, api_key: str, *, cache: Cache | None = None, timeout: float = 15.0):
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        cache: Cache | None = None,
+        # Shorter than the shared default: a rating is optional enrichment, not required, so a slow
+        # MDBList response should fail fast rather than eat run time other sources need.
+        timeout: float = 15.0,
+    ):
         self._api_key = api_key
         self._cache = cache or NullCache()
         self._timeout = timeout
@@ -100,17 +108,6 @@ class MdbListClient:
             votes = _parse_int(entry.get("votes")) if source in VOTE_SOURCES else 0
             out[source] = [rating, votes or 0]
         return out
-
-    def usage(self) -> tuple[int, int] | None:
-        """(requests used today, daily allowance) from /user, or None if it can't be read — for the
-        'Test' button and the early low-quota warning."""
-        try:
-            r = http_retry.get(f"{API}/user", params={"apikey": self._api_key}, timeout=self._timeout)
-        except httpx.HTTPError:
-            return None
-        if r.status_code != 200:
-            return None
-        return self._parse_usage(r)
 
     def ping(self) -> str:
         """A tiny authenticated call for the settings 'Test' button; raises on a bad key.

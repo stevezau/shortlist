@@ -20,6 +20,7 @@ from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.search import ExaClient
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
+from shortlist.engine.context import EngineContext
 from shortlist.engine.curator import make_curator
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, render_row_name
 from shortlist.engine.history import ShareTokenWatchSource, distinct_recent
@@ -36,7 +37,6 @@ from shortlist.engine.models import (
     UserProfile,
     UserType,
 )
-from shortlist.engine.pipeline import EngineContext
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -274,6 +274,40 @@ class ContextBuilder:
         """
         rows = session.query(RequestCandidate).filter(RequestCandidate.status.in_(("sent", "rejected"))).all()
         return {(row.tmdb_id, row.media_type) for row in rows}
+
+    def build_plex_only(self, *, dry_run: bool) -> EngineContext:
+        """A context with the PMS, plex.tv and the watch-history source — and nothing else.
+
+        For the handlers that only ever walk collections under a label: removing a disabled user's
+        rows, hiding a paused user's, the row reconciles, the poster reset, the rename, and the
+        read-only watch-history sync. `build()` opens TMDB, Trakt, Exa and MDBList clients, constructs
+        the LLM curator, and scans the whole `Collection` table to decide whether to build the poster
+        studio — none of which any of those touch, and all of which couple them to the availability of
+        services they never call. A watch sync failing because an LLM key is wrong is not a failure
+        anyone can act on.
+
+        The curator is the NullCurator and TMDB is unkeyed-but-real, because `EngineContext` requires
+        both; nothing on these paths calls either. `_refuse_a_different_server` still runs — it is what
+        stops a reconcile enumerating a stranger's PMS and concluding every row is gone.
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            plex_url = store.get("plex.url")
+            plex_token = store.get("plex.token")
+            if not plex_url or not plex_token:
+                raise RuntimeError("Plex connection is not configured yet — finish setup first")
+            plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
+            _refuse_a_different_server(session, plex.machine_id)
+            plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
+            return EngineContext(
+                config=EngineConfig(dry_run=dry_run),
+                plex=plex,
+                plextv=plextv,
+                tmdb=TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions)),
+                history_source=ShareTokenWatchSource(plex, plextv, owner_token=plex_token),
+                curator=make_curator(""),
+                snapshots=DbSnapshotStore(self._sessions),
+            )
 
     def build_requests_only(self) -> tuple[RequestConfig | None, TmdbClient]:
         """Just the pieces the approval inbox's manual send needs: the request config and a TMDB client.

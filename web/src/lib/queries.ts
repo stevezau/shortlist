@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "./api";
+import { useSSE } from "./sse";
 import type {
   CollectionInput,
   ReportWindow,
@@ -17,17 +18,28 @@ import type {
   UserPatch,
 } from "./types";
 
+/**
+ * Every React Query key used anywhere in the app, in one place.
+ *
+ * Query keys are also invalidation targets — get one wrong (a typo, a copy-pasted literal) and a
+ * mutation silently stops refreshing the view it's supposed to. Scattering `["report"]`-style
+ * literals across pages meant the same key was hand-typed in up to three different files with no
+ * way to catch a drift between them; every key lives here now, so a rename is a one-line change
+ * and `invalidateQueries` calls import the exact same array their query used.
+ */
 export const queryKeys = {
   users: ["users"] as const,
   runs: ["runs"] as const,
   run: (id: number) => ["runs", id] as const,
   runUserTrace: (runId: number, userId: number) =>
     ["runs", runId, "trace", userId] as const,
+  runLog: (runId: number) => ["run-log", runId] as const,
   settings: ["settings"] as const,
   collections: ["collections"] as const,
   requests: ["requests"] as const,
   arrOptions: (service: "radarr" | "sonarr") =>
     ["arr-options", service] as const,
+  arrStatus: ["arrStatus"] as const,
   curatorModels: (provider: string, credential: string) =>
     ["curator-models", provider, credential] as const,
   userRows: (id: number) => ["users", id, "rows"] as const,
@@ -39,6 +51,24 @@ export const queryKeys = {
   apiToken: ["api-token"] as const,
   logs: (level: string, q: string, limit: number) =>
     ["logs", level, q, limit] as const,
+  // The base key covers every window ("30", "90", …) for broad invalidation; `reportWindow` is
+  // what each windowed query itself is keyed on.
+  report: ["report"] as const,
+  reportWindow: (window: ReportWindow) => ["report", window] as const,
+  deletedRows: ["report", "deleted-rows"] as const,
+  schedule: ["schedule"] as const,
+  libraries: ["libraries"] as const,
+  libraryCollections: (key: string) => ["library-collections", key] as const,
+  ownedCollections: ["owned-collections"] as const,
+  notifications: ["notifications"] as const,
+  syncs: ["syncs"] as const,
+  version: ["version"] as const,
+  imageProvider: ["image-provider"] as const,
+  backups: ["backups"] as const,
+  // The base key ("jobs") covers every job-queue query for a broad "something changed" invalidation
+  // (fired after every mutation — App.tsx); `jobsCatalog` is what the catalogue query itself uses.
+  jobs: ["jobs"] as const,
+  jobsCatalog: ["jobs", "catalog"] as const,
 };
 
 export function useSession() {
@@ -128,7 +158,7 @@ export function useUnblockSeed(userId: number) {
 
 export function useDeletedRows() {
   return useQuery({
-    queryKey: ["report", "deleted-rows"],
+    queryKey: queryKeys.deletedRows,
     queryFn: api.getDeletedRows,
   });
 }
@@ -139,13 +169,13 @@ export function useClearDeletedRows() {
     mutationFn: (slug?: string) => api.clearDeletedRows(slug),
     // The dashboard totals change, so the report has to refetch — not just this list.
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["report"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.report });
     },
   });
 }
 
 export function useSchedule() {
-  return useQuery({ queryKey: ["schedule"], queryFn: api.getSchedule });
+  return useQuery({ queryKey: queryKeys.schedule, queryFn: api.getSchedule });
 }
 
 export function useClearRuns() {
@@ -155,7 +185,7 @@ export function useClearRuns() {
     // Picks survive (metrics preserved), but the runs list and the dashboard's "Runs" card refresh.
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.runs });
-      queryClient.invalidateQueries({ queryKey: ["report"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.report });
     },
   });
 }
@@ -183,13 +213,13 @@ export function useSettings() {
 }
 
 export function useSyncs() {
-  return useQuery({ queryKey: ["syncs"], queryFn: api.getSyncs });
+  return useQuery({ queryKey: queryKeys.syncs, queryFn: api.getSyncs });
 }
 
 /** Whether the AI provider can generate poster images — for the row editor's Generate gate. */
 export function useImageProvider() {
   return useQuery({
-    queryKey: ["image-provider"],
+    queryKey: queryKeys.imageProvider,
     queryFn: api.getImageProvider,
   });
 }
@@ -379,7 +409,7 @@ export function useCuratorModels(
 
 export function useLibraries() {
   return useQuery({
-    queryKey: ["libraries"],
+    queryKey: queryKeys.libraries,
     queryFn: () => api.getLibraries(),
     staleTime: 60_000,
     retry: false,
@@ -388,7 +418,7 @@ export function useLibraries() {
 
 export function useLibraryCollections(key: string, enabled = true) {
   return useQuery({
-    queryKey: ["library-collections", key],
+    queryKey: queryKeys.libraryCollections(key),
     queryFn: () => api.getLibraryCollections(key),
     staleTime: 60_000,
     retry: false,
@@ -398,7 +428,7 @@ export function useLibraryCollections(key: string, enabled = true) {
 
 export function useOwnedCollections(enabled = false) {
   return useQuery({
-    queryKey: ["owned-collections"],
+    queryKey: queryKeys.ownedCollections,
     queryFn: () => api.getOwnedCollections(),
     retry: false,
     enabled, // on demand — this scans every Plex collection, so don't fire it on page load
@@ -455,7 +485,7 @@ export function useRequests() {
 
 export function useArrStatus() {
   return useQuery({
-    queryKey: ["arrStatus"],
+    queryKey: queryKeys.arrStatus,
     queryFn: api.getArrStatus,
     staleTime: 30_000, // status changes slowly, cache 30s
   });
@@ -463,7 +493,7 @@ export function useArrStatus() {
 
 export function useNotifications() {
   return useQuery({
-    queryKey: ["notifications"],
+    queryKey: queryKeys.notifications,
     queryFn: api.getNotifications,
     // Poll so a failed run / new release surfaces without a manual refresh.
     refetchInterval: 60_000,
@@ -476,13 +506,13 @@ export function useDismissNotification() {
   return useMutation({
     mutationFn: (id: string) => api.dismissNotification(id),
     onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.notifications }),
   });
 }
 
 export function useVersion() {
   return useQuery({
-    queryKey: ["version"],
+    queryKey: queryKeys.version,
     queryFn: api.getVersion,
     staleTime: 3600_000, // check once per hour
     refetchOnWindowFocus: false,
@@ -491,24 +521,32 @@ export function useVersion() {
 
 export function useReport(window: ReportWindow = "30") {
   return useQuery({
-    queryKey: ["report", window],
+    queryKey: queryKeys.reportWindow(window),
     queryFn: () => api.getReport(window),
     staleTime: 60_000,
   });
 }
 
+/**
+ * Kick off a watch-history sync, and refresh the report once it actually finishes.
+ *
+ * The sync runs in the background, so the POST returning tells you nothing about when it's done —
+ * this used to guess with a flat 4s `setTimeout`, which could refetch before the sync landed (a
+ * slow server) or long after (a fast one, leaving the "last synced" time stale in between). The
+ * sync already emits `sync.finished` on the shared SSE bus the moment it's actually done; this
+ * listens for that instead of guessing.
+ */
 export function useSyncWatched() {
   const queryClient = useQueryClient();
+  useSSE({
+    onSyncFinished: (event) => {
+      if (event.kind === "watched") {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.report });
+      }
+    },
+  });
   return useMutation({
     mutationFn: api.syncWatched,
-    // The sync runs in the background; give it a moment, then refresh the report to pick up the new
-    // "last synced" time and any freshly-credited watches.
-    onSuccess: () => {
-      setTimeout(
-        () => queryClient.invalidateQueries({ queryKey: ["report"] }),
-        4000,
-      );
-    },
   });
 }
 

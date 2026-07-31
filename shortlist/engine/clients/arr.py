@@ -62,7 +62,15 @@ class _ArrClient:
 
     app_name = "Arr"
 
-    def __init__(self, target: ArrTarget, *, timeout: float = 30.0, min_write_interval: float = 1.0):
+    def __init__(
+        self,
+        target: ArrTarget,
+        *,
+        # Radarr/Sonarr run on the same LAN as Plex, not across the internet — the shared default is
+        # already generous for a local call, so no override is needed.
+        timeout: float = http_retry.DEFAULT_TIMEOUT_S,
+        min_write_interval: float = 1.0,
+    ):
         self._target = target
         self._base = target.url.rstrip("/")
         self._timeout = timeout
@@ -151,20 +159,51 @@ class _ArrClient:
                     continue
         return out
 
+    _QUEUE_PAGE_SIZE = 1000
+    # A hard stop if the app ignores `page` and keeps answering with a full page forever — 50k
+    # records is far past any real download queue, so hitting this means paging itself is broken,
+    # not that the queue is genuinely that large.
+    _MAX_QUEUE_PAGES = 50
+
     def _queued_ids(self, key: str) -> set[int]:
         """The movieIds/seriesIds currently in the app's download queue.
 
         The queue is paginated and defaults to 20 records, so a busy server would otherwise report
-        older downloads as merely "queued". Fails OPEN — a queue the app won't serve costs us the
-        downloading/queued distinction, never the whole status fetch.
+        older downloads as merely "queued". This pages through the whole queue rather than trusting
+        one 1000-record page — a server with more active downloads than that used to have its tail
+        silently missed, with no signal that the read was short. Fails OPEN — a queue the app won't
+        serve costs us the downloading/queued distinction, never the whole status fetch.
         """
-        try:
-            queue = self._get("/api/v3/queue", pageSize=1000)
-        except ArrError as e:
-            logger.debug("{}: queue unavailable ({}) — treating nothing as downloading", self.app_name, e)
-            return set()
-        records = queue.get("records") if isinstance(queue, dict) else None
-        return self._ids_from(records, key)
+        ids: set[int] = set()
+        fetched = 0
+        for page in range(1, self._MAX_QUEUE_PAGES + 1):
+            try:
+                queue = self._get("/api/v3/queue", page=page, pageSize=self._QUEUE_PAGE_SIZE)
+            except ArrError as e:
+                logger.debug("{}: queue unavailable ({}) — treating nothing as downloading", self.app_name, e)
+                return set()
+            records = queue.get("records") if isinstance(queue, dict) else None
+            record_list = records if isinstance(records, list) else []
+            ids |= self._ids_from(record_list, key)
+            fetched += len(record_list)
+            total = queue.get("totalRecords") if isinstance(queue, dict) else None
+            if len(record_list) < self._QUEUE_PAGE_SIZE:
+                if isinstance(total, int) and fetched < total:
+                    logger.warning(
+                        "{}: queue paging stopped on a short page having read only {} of {} records",
+                        self.app_name,
+                        fetched,
+                        total,
+                    )
+                return ids
+            if isinstance(total, int) and fetched >= total:
+                return ids
+        logger.warning(
+            "{}: queue paging hit the {}-page safety cap — reporting a partial queue",
+            self.app_name,
+            self._MAX_QUEUE_PAGES,
+        )
+        return ids
 
     def _tag_ids(self, extra: set[str] | None = None) -> list[int]:
         """Resolve the labels to apply for one add: the target's global tag unioned with ``extra``
@@ -271,10 +310,6 @@ class RadarrClient(_ArrClient):
 class SonarrClient(_ArrClient):
     app_name = "Sonarr"
 
-    def library_tvdb_ids(self) -> set[int]:
-        """Every tvdbId Sonarr already tracks (Sonarr keys shows on TVDB, not TMDB)."""
-        return self._id_set("/api/v3/series", "tvdbId")
-
     def library_ids(self) -> tuple[set[int], set[int]]:
         """(tvdbIds, tmdbIds) Sonarr already tracks, from ONE /series fetch.
 
@@ -353,8 +388,16 @@ class SonarrClient(_ArrClient):
 
 
 def make_arr_client(service: str, target: ArrTarget) -> _ArrClient:
-    """Radarr for ``"radarr"``, Sonarr for ``"sonarr"`` — the one place that maps the name to a client."""
-    return (RadarrClient if service == "radarr" else SonarrClient)(target)
+    """Radarr for ``"radarr"``, Sonarr for ``"sonarr"`` — the one place that maps the name to a client.
+
+    Raises ``ValueError`` on anything else — a typo here used to fall through to Sonarr silently,
+    talking to the wrong app with the wrong app's api key.
+    """
+    if service == "radarr":
+        return RadarrClient(target)
+    if service == "sonarr":
+        return SonarrClient(target)
+    raise ValueError(f"unknown Arr service {service!r} — expected 'radarr' or 'sonarr'")
 
 
 def _match_tvdb(results: object, tvdb_id: int) -> dict | None:
@@ -368,15 +411,21 @@ def _match_tvdb(results: object, tvdb_id: int) -> dict | None:
 
 
 def _first_error(response: httpx.Response) -> str:
-    """Pull the app's own human message out of a validation-error body, if there is one."""
+    """Pull the app's own human message out of a validation-error body, if there is one.
+
+    Passed through ``redact()`` on every return path: this text lands straight in an ``ArrError``
+    message, and ``ArrError``'s own docstring promises the URL/api key never appear in it — a
+    non-JSON body (a proxy or error page) is the one case that isn't the app's own well-formed
+    validation JSON, so it gets no special trust.
+    """
     try:
         payload = response.json()
     except ValueError:
-        return response.text[:200]
+        return http_retry.redact(response.text[:200])
     if isinstance(payload, list) and payload:
         first = payload[0]
         if isinstance(first, dict):
-            return str(first.get("errorMessage") or first.get("message") or first)
+            return http_retry.redact(str(first.get("errorMessage") or first.get("message") or first))
     if isinstance(payload, dict):
-        return str(payload.get("message") or payload)
-    return str(payload)[:200]
+        return http_retry.redact(str(payload.get("message") or payload))
+    return http_retry.redact(str(payload)[:200])

@@ -2,7 +2,7 @@
 
 Three rules, all learned the hard way:
 
-1. Seed provenance ADDS to a title's score, it does not multiply it. When the score was
+1. Seed provenance scales a title's score, it never zeroes it. When the score was
    ``seed_frequency x rating x weight``, every candidate from a seedless source — tmdb_discover,
    llm_web — scored exactly 0 and sorted below the worst seeded title on the list.
 2. Rating is not similarity. Without `affinity` the only thing separating two single-seed

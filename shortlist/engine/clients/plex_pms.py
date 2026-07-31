@@ -71,7 +71,13 @@ def _tmdb_guid(item) -> int | None:
     """The item's TMDB id, or None. The one place the ``tmdb://`` guid grammar lives."""
     for guid in getattr(item, "guids", []):
         if guid.id.startswith("tmdb://"):
-            return int(guid.id.removeprefix("tmdb://"))
+            try:
+                return int(guid.id.removeprefix("tmdb://"))
+            except ValueError:
+                # A malformed guid must not raise out of a whole section scan — every other
+                # tolerant spot in this file (label parsing, watched-item ids) skips a bad row
+                # rather than failing the caller; this one didn't, and one bad guid killed it.
+                continue
     return None
 
 
@@ -208,6 +214,11 @@ def _is_newest_first(entries: list) -> bool:
 class PlexClient:
     """PMS operations, restricted to collections Shortlist owns (label-gated)."""
 
+    # Class-level fallback ONLY for test doubles built via `PlexClient.__new__` (see
+    # `tests/conftest.py`'s `mock_plex`, which skips `__init__`); every real instance overrides this
+    # in `__init__` below with the operator's configured `plex.timeout_s`.
+    _timeout: int = 20
+
     def __init__(self, base_url: str, token: str, *, timeout: int = 20, follow_redirects: bool = True):
         # This 20s default is for the fast-fail connection probes (setup/test-connection/section list).
         # The RUN's client is built by context_builder with the configurable `plex.timeout_s` (default
@@ -226,6 +237,11 @@ class PlexClient:
             # plexapi issues the requests and would otherwise have to be trusted to pass the flag.
             _forbid_redirects(session)
         self._server = PlexServer(base_url, token, session=session, timeout=timeout)
+        # Every raw (non-plexapi) PMS read in this class must use THIS, not a hardcoded number —
+        # plexapi's own calls already get `timeout` via the PlexServer above; `user_hubs` and
+        # `_read_watched_page` used to hardcode 30/45 here, silently ignoring the operator's
+        # configured `plex.timeout_s` on exactly the two heaviest raw reads.
+        self._timeout = timeout
         # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
         # constructs one per run), so these live exactly one run — no cross-run staleness. Library
         # sections don't change mid-run; a section's collection LIST changes only when WE create or
@@ -777,7 +793,7 @@ class PlexClient:
         r = http_retry.get(
             self._server.url(path, includeToken=False),
             headers={"X-Plex-Token": canary_token, "Accept": "application/json"},
-            timeout=30,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return r.json().get("MediaContainer", {}).get("Hub", []) or []
@@ -932,7 +948,7 @@ class PlexClient:
                 "X-Plex-Container-Start": str(start),
                 "X-Plex-Container-Size": str(self._WATCHED_PAGE),
             },
-            timeout=45,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return ET.fromstring(r.text)
@@ -944,7 +960,12 @@ class PlexClient:
         for guid in el.iter("Guid"):
             gid = guid.get("id") or ""
             if gid.startswith("tmdb://"):
-                tmdb_id = int(gid.removeprefix("tmdb://"))
+                try:
+                    tmdb_id = int(gid.removeprefix("tmdb://"))
+                except ValueError:
+                    # A malformed guid must not raise out of the whole watched-titles read — treat
+                    # it the same as no guid at all (see `_tmdb_guid`'s tolerance for the same case).
+                    continue
                 break
         if tmdb_id is None:
             return None

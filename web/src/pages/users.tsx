@@ -133,10 +133,11 @@ export function UsersPage() {
               <RefreshCw aria-hidden="true" />
               Sync users
             </Button>
+            {/* Neither trigger carries `loading` — both merely OPEN a dialog; the mutation (and its
+                loading state) belongs to the confirm button inside it. */}
             <Button
               variant="outline"
               onClick={() => setConfirmEnableOpen(true)}
-              loading={setAll.isPending && setAll.variables === true}
             >
               Enable all
             </Button>

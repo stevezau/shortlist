@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-9AbCdEfGhIjKlMnOpQrStUv",
+  "object": "chat.completion",
+  "created": 1753900000,
+  "model": "gpt-4o-mini",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "stop",
+      "message": {
+        "role": "assistant",
+        "content": "Based on the articles, I'd recommend The Wild Robot and Severance."
+      }
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 210,
+    "completion_tokens": 18,
+    "total_tokens": 228
+  }
+}

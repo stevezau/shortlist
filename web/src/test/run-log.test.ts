@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { latestSeq, mergeRunLog } from "@/lib/run-log";
+import { latestSeq, mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
 import type { RunLogEntry } from "@/lib/types";
 
 function entry(patch: Partial<RunLogEntry>): RunLogEntry {
@@ -101,6 +101,21 @@ describe("mergeRunLog", () => {
     });
     const out = mergeRunLog([], [later, earlier], 2);
     expect(out.map((e) => e.stage)).toEqual(["promoting", "ordering"]);
+  });
+});
+
+describe("stageBelongsToRun", () => {
+  // The same predicate mergeRunLog uses to filter — asserted directly so a caller deciding whether
+  // to REFETCH (not just whether to log) can rely on identical semantics (issue: run-detail's SSE
+  // handler used to refetch on every stage event regardless of which run it belonged to).
+  it("matches this run's id, and tolerates a missing run_id", () => {
+    expect(stageBelongsToRun({ run_id: 2 }, 2)).toBe(true);
+    expect(stageBelongsToRun({ run_id: null }, 2)).toBe(true);
+    expect(stageBelongsToRun({}, 2)).toBe(true);
+  });
+
+  it("rejects a different run's id", () => {
+    expect(stageBelongsToRun({ run_id: 40 }, 2)).toBe(false);
   });
 });
 

@@ -104,13 +104,6 @@ def mock_plex():
 
 
 @pytest.fixture
-def mock_tautulli():
-    client = MagicMock()
-    client.get_history.return_value = []
-    return client
-
-
-@pytest.fixture
 def mock_tmdb():
     client = MagicMock()
     client.suggestions.return_value = []

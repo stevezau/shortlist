@@ -637,7 +637,7 @@ class TestRunLogBuffer:
         assert [e["stage"] for e in service.run_log(1)] == ["history", "candidates"]
 
         # Only the most-recent runs' logs are kept in memory; older ones are evicted.
-        for run_id in range(2, 2 + service._run_log_runs + 1):
+        for run_id in range(2, 2 + service._log._run_log_runs + 1):
             service._new_run_log(run_id)
         assert service.run_log(999_999) == [], "a run that never ran, and has no rows, has an empty log"
 
@@ -669,9 +669,9 @@ class TestRunLogBuffer:
         service.flush_run_log(run_id)
 
         # Evict every in-memory tail, as a restart would.
-        for other in range(run_id + 1, run_id + 2 + service._run_log_runs):
+        for other in range(run_id + 1, run_id + 2 + service._log._run_log_runs):
             service._new_run_log(other)
-        assert run_id not in service._run_logs
+        assert run_id not in service._log._run_logs
 
         replayed = service.run_log(run_id)
         assert [e["stage"] for e in replayed] == ["history", "finished"]
@@ -688,5 +688,5 @@ class TestRunLogBuffer:
         def boom():
             raise RuntimeError("disk is on fire")
 
-        monkeypatch.setattr(service, "_sessions", boom)
+        monkeypatch.setattr(service._log, "_sessions", boom)
         service.flush_run_log(1)  # must not raise

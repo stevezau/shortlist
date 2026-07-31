@@ -165,18 +165,3 @@ describe("rowOverrides", () => {
     ]);
   });
 });
-
-describe("placementLabel — every value of the enum", () => {
-  it("names all four, including the one that was missing", async () => {
-    // `Placement` is a FOUR-value union and only three had a branch, so a row hidden from every
-    // shelf fell through to the default and was badged "Shows on: Home & Library" — a confident,
-    // specific, false claim about who can see it. One row per enum value, so a fifth can't slip in
-    // silently either.
-    const { placementLabel } = await import("@/lib/collections");
-
-    expect(placementLabel("both")).toBe("Home & Library");
-    expect(placementLabel("home")).toBe("Home");
-    expect(placementLabel("library")).toBe("Library");
-    expect(placementLabel("off")).toBe("Nowhere");
-  });
-});

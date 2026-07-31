@@ -87,16 +87,15 @@ shortlist/
 │       ├── components/           # shadcn + PlexRowPreview, PosterGrid, LiveLog (SSE), CapabilityChecklist
 │       └── lib/                  # sse.ts, theme, format
 ├── tests/
-│   ├── conftest.py               # mock_plex, mock_tautulli, mock_tmdb, mock_curator fixtures (MPG discipline: ALL external I/O mocked)
+│   ├── conftest.py               # mock_plex, mock_plextv, mock_tmdb, mock_curator fixtures (MPG discipline: ALL external I/O mocked)
 │   ├── unit/ · integration/
 │   ├── fakes/fake_plex.py        # FastAPI stub emulating PMS+plex.tv endpoints Shortlist touches → enables full-wizard e2e with NO real server
-│   └── e2e/                      # Playwright vs built image + fake_plex
+│   └── e2e/                      # Playwright vs an in-process app (uvicorn + built SPA) + fake_plex
 ├── docs/                         # hub: README, getting-started, guides, reference, faq (MPG structure)
 ├── unraid-templates/
 ├── Dockerfile                    # multi-stage: node:22 build web → python:3.12-slim runtime; PUID/PGID init; HEALTHCHECK
 ├── docker-compose.example.yml
 ├── pyproject.toml                # ruff config, pytest config (cov target 80%), hatchling
-├── Makefile                      # dev, test, lint, e2e, build
 └── README.md · CONTRIBUTING.md · LICENSE(MIT) · llms.txt
 ```
 
@@ -203,14 +202,14 @@ API), same as the *arr convention.
 
 ## 6. Testing strategy (MPG discipline, adapted)
 
-| Layer         | Tooling                                                                                      | Rules                                                                                                                                                                         |
-| ------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Engine unit   | pytest, `-n auto`, cov ≥ 80%                                                                 | ALL external I/O mocked via conftest fixtures; recorded real plex.tv/PMS XML+JSON as fixture files                                                                            |
-| Privacy logic | dedicated suite                                                                              | filter parse/merge round-trips property-tested (hypothesis); snapshot/restore invariants; **the merge code is the highest-consequence code in the repo — test it like money** |
-| Server        | pytest + httpx AsyncClient                                                                   | API contract tests against the OpenAPI schema                                                                                                                                 |
-| Frontend      | vitest + testing-library                                                                     | wizard state machine fully unit-tested                                                                                                                                        |
-| E2E           | Playwright vs built Docker image + `tests/fakes/fake_plex.py`                                | full wizard → first run → dashboard, no real Plex needed; CI-shardable (MPG's e2e sharding pattern)                                                                           |
-| Live smoke    | A dry-run **Run now**, then a manual view-check from a non-owner account (rows stay private) | run against Steve's real server pre-release                                                                                                                                   |
+| Layer         | Tooling                                                                                      | Rules                                                                                                                                                                                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Engine unit   | pytest, `-n auto`, cov ≥ 80%                                                                 | ALL external I/O mocked via conftest fixtures; recorded real plex.tv/PMS XML+JSON as fixture files                                                                                                                                                                             |
+| Privacy logic | dedicated suite                                                                              | filter parse/merge round-trips property-tested (hypothesis); snapshot/restore invariants; **the merge code is the highest-consequence code in the repo — test it like money**                                                                                                  |
+| Server        | pytest + httpx AsyncClient                                                                   | API contract tests against the OpenAPI schema                                                                                                                                                                                                                                  |
+| Frontend      | vitest + testing-library                                                                     | wizard state machine fully unit-tested                                                                                                                                                                                                                                         |
+| E2E           | Playwright vs the app in-process (uvicorn + built SPA) + `tests/fakes/fake_plex.py`          | full wizard → first run → dashboard, no real Plex needed; the built Docker image itself is untested — the `docker` CI job builds and pushes it but never runs it, so the PUID/PGID drop, the `HEALTHCHECK`, and `web/dist` landing where the app expects it are all unverified |
+| Live smoke    | A dry-run **Run now**, then a manual view-check from a non-owner account (rows stay private) | run against Steve's real server pre-release                                                                                                                                                                                                                                    |
 
 `fake_plex.py` is a deliberate investment (~300 lines): stubs `/identity`, `/library/sections`,
 `/status/sessions/history/all`, `/hubs`, collection CRUD, plus plex.tv `/api/v2/pins`, `/api/users`,
@@ -223,9 +222,11 @@ competitor tests.
 
 One workflow, `.github/workflows/ci.yml`. Five jobs:
 
-`lint (ruff)`, `test-python (pytest + codecov)` and `test-web (pnpm lint/vitest/build)` run in
-parallel; `e2e (playwright)` waits on `test-web` for the `web-dist` artifact; `docker` (buildx,
-linux/amd64 + linux/arm64) waits on all four and is the publish gate.
+`lint (ruff)`, `test-python (pytest + codecov)`, `test-web (pnpm lint/vitest/build)` and `e2e`
+(playwright) all run in parallel — `e2e` deliberately does NOT wait on `test-web`'s `web-dist`
+artifact; it builds its own copy of the SPA so it can start at t=0 instead of queuing behind
+`test-web`, trading one extra `vite build` for keeping that wait off the critical path. `docker`
+(buildx, linux/amd64 + linux/arm64) waits on all four and is the publish gate.
 
 What runs, by event:
 

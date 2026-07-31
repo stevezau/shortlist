@@ -172,16 +172,65 @@ jobs:
       - run: playwright install chromium
       - run: pytest -m e2e --no-cov --reruns 2 --reruns-delay 5
 
+  docker-smoke:
+    # The ONLY thing that runs the actual image. Every other job tests the source: e2e boots
+    # uvicorn in-process, so nothing else would notice the PUID/PGID drop failing, web/dist
+    # landing somewhere the app doesn't look, or a missing runtime package — all of which are
+    # invisible until a user pulls the tag. Single-arch and load-only on purpose: this exists to
+    # boot the thing, not to publish it, and it primes the layer cache the publish job reuses.
+    # Runs on PRs too, where the publish job deliberately never does.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: shortlist:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Boot the image and wait for it to report healthy
+        run: |
+          set -euo pipefail
+          # A named volume, not a bind mount: /config must be writable by the dropped-to UID, and
+          # a bind mount would be root-owned and mask exactly the permission bug this job exists
+          # to catch.
+          docker run -d --name smoke -e PUID=1000 -e PGID=1000 -p 5959:5959 \
+            -v shortlist-smoke:/config shortlist:smoke
+          for _ in $(seq 1 60); do
+            state=$(docker inspect smoke --format '{{.State.Health.Status}}' 2>/dev/null || echo gone)
+            [ "$state" = healthy ] && echo "healthy" && exit 0
+            [ "$state" = gone ] && break
+            sleep 2
+          done
+          echo "::error::the image never reported healthy"
+          docker inspect smoke --format 'state={{.State.Status}} exit={{.State.ExitCode}}' || true
+          docker logs smoke 2>&1 | tail -50
+          exit 1
+      - name: Serve the built SPA, not just the API
+        run: |
+          set -euo pipefail
+          # The health endpoint lives in Python and answers even if the web build never made it
+          # into the image, so it cannot catch a missing SPA on its own.
+          curl -fsS http://localhost:5959/ | grep -qi '<div id="root"' \
+            || { echo "::error::/ did not serve the built SPA"; exit 1; }
+      - if: always()
+        run: docker rm -f smoke >/dev/null 2>&1 || true
+
   docker:
-    # Publish gate: build + push the image ONLY after lint, both Python versions,
-    # web tests, and e2e are all green. Restricted to pushes on dev + v* tags —
+    # Publish gate: build + push the image ONLY after lint, test-python (3.12 only — see that
+    # job's comment for why there's no version matrix), web tests, e2e, and the image
+    # actually booting are all green.
+    # Restricted to pushes on dev + v* tags —
     # never on pull_request (a PR must not publish), never on workflow_dispatch, and
     # never on master. The ref test is load-bearing, not belt-and-braces: master is a
     # push trigger so the stable branch gets CI, but every `type=raw`/`type=semver`
     # rule below is gated on dev-or-tag, so a master push would reach build-push-action
     # with `push: true` and an EMPTY tag list.
     # dev push -> :dev; tag push -> :latest + :<version> + :dev.
-    needs: [lint, test-python, test-web, e2e]
+    needs: [lint, test-python, test-web, e2e, docker-smoke]
     if: >-
       github.event_name == 'push'
       && (github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/tags/v'))

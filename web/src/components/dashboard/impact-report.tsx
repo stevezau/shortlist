@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatDate, timeAgo } from "@/lib/format";
+import { formatDate, formatHitRate, timeAgo } from "@/lib/format";
 import {
   useClearDeletedRows,
   useDeletedRows,
@@ -43,6 +43,14 @@ const WINDOW_PHRASE: Record<ReportWindow, string> = {
 /** Shows when the daily watch-status sync last ran and next fires, with a manual "Sync now". */
 function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
   const syncNow = useSyncWatched();
+  // Disabled only while the request is actually in flight — it used to also stay disabled (and
+  // stuck reading "Syncing…") forever after a SUCCESSFUL sync, with no way to run it again short of
+  // reloading the page, and no way to tell a failure from success at all.
+  const label = syncNow.isPending
+    ? "Syncing…"
+    : syncNow.isError
+      ? "Try again"
+      : "Sync now";
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
       <span>
@@ -51,21 +59,24 @@ function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
         {sync.next && ` · next check ${formatDate(sync.next)}`}. It also
         refreshes on every run.
       </span>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => syncNow.mutate()}
-        disabled={syncNow.isPending || syncNow.isSuccess}
-      >
-        <RefreshCw aria-hidden="true" />
-        {syncNow.isSuccess ? "Syncing…" : "Sync now"}
-      </Button>
+      <div className="flex items-center gap-2">
+        {syncNow.isError && (
+          <span role="alert" className="text-destructive">
+            Couldn’t start the sync.
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => syncNow.mutate()}
+          disabled={syncNow.isPending}
+        >
+          <RefreshCw aria-hidden="true" />
+          {label}
+        </Button>
+      </div>
     </div>
   );
-}
-
-function pct(rate: number | null): string {
-  return rate === null ? "—" : `${Math.round(rate * 100)}%`;
 }
 
 /**
@@ -76,18 +87,20 @@ function pct(rate: number | null): string {
  */
 function Delta({
   value,
-  window,
+  reportWindow,
   suffix = "",
   lowerIsBetter = false,
 }: {
   value: number | null;
-  window: ReportWindow;
+  reportWindow: ReportWindow;
   suffix?: string;
   lowerIsBetter?: boolean;
 }) {
-  if (window === "all") return <>all time</>;
+  if (reportWindow === "all") return <>all time</>;
   if (value === null || value === 0) {
-    return <>vs previous {WINDOW_PHRASE[window].replace("the last ", "")}</>;
+    return (
+      <>vs previous {WINDOW_PHRASE[reportWindow].replace("the last ", "")}</>
+    );
   }
   const up = value > 0;
   const good = lowerIsBetter ? !up : up;
@@ -120,16 +133,30 @@ function Trend({ trend }: { trend: EffectivenessReport["trend"] }) {
         </p>
       </div>
     );
+  const total = trend.reduce((s, t) => s + t.watched, 0);
+  const first = trend[0];
+  const last = trend[trend.length - 1];
   return (
-    <div className="flex h-20 items-end gap-1" aria-hidden="true">
-      {trend.map((t) => (
-        <div
-          key={t.week}
-          className="flex-1 rounded-t bg-primary/70"
-          style={{ height: `${Math.max(4, (t.watched / max) * 100)}%` }}
-          title={`${t.week}: ${t.watched} watched`}
-        />
-      ))}
+    <div>
+      {/* The bars are aria-hidden (a per-bar `title` only reaches a mouse), so a screen reader gets
+          NOTHING from this chart without a text alternative — this is that alternative. */}
+      <p className="sr-only">
+        {total} watched across the last {trend.length} weeks
+        {first && last
+          ? `, from ${first.watched} in week ${first.week} to ${last.watched} in week ${last.week}`
+          : ""}
+        .
+      </p>
+      <div className="flex h-20 items-end gap-1" aria-hidden="true">
+        {trend.map((t) => (
+          <div
+            key={t.week}
+            className="flex-1 rounded-t bg-primary/70"
+            style={{ height: `${Math.max(4, (t.watched / max) * 100)}%` }}
+            title={`${t.week}: ${t.watched} watched`}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -202,6 +229,40 @@ function Section({
   );
 }
 
+/**
+ * A collapsed-by-default section: a one-line toggle, expanding to `children`.
+ *
+ * `ZeroDisclosure` and `DeletedRows` were the same widget wearing different copy — a button that
+ * flips "›"/"▾" and reveals a list underneath. This is that widget; each caller supplies only what
+ * makes it theirs (the label, and — for `DeletedRows` — the delete-history UI alongside its list).
+ */
+function Disclosure({
+  label,
+  openLabel,
+  children,
+}: {
+  /** Button text while collapsed. */
+  label: string;
+  /** Button text while open, if different (defaults to `label`). */
+  openLabel?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="space-y-1.5 border-t pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {open ? "▾" : "›"} {open ? (openLabel ?? label) : label}
+      </button>
+      {open && <div className="space-y-1.5">{children}</div>}
+    </div>
+  );
+}
+
 /** Rows with nothing in the window, folded away behind a count.
  *
  *  Seven of ten people reading "0" is a wall of empty bars that says nothing. It is still true, and
@@ -215,32 +276,28 @@ function ZeroDisclosure({
   noun: string;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
   if (count === 0) return null;
   return (
-    <div className="space-y-1.5 border-t pt-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {open ? "▾" : "›"} {count} {noun} with none in this window
-      </button>
-      {open && <div className="space-y-1.5">{children}</div>}
-    </div>
+    <Disclosure label={`${count} ${noun} with none in this window`}>
+      {children}
+    </Disclosure>
   );
 }
 
 function ByPerson({
   people,
-  window,
+  reportWindow,
 }: {
   people: EffectivenessReport["per_user"];
-  window: ReportWindow;
+  reportWindow: ReportWindow;
 }) {
   const active = people.filter((p) => p.watched > 0);
   const idle = people.filter((p) => p.watched === 0);
   const max = Math.max(1, ...active.map((p) => p.watched));
+  // First 10 are shown outright; anyone past that used to just vanish with no count and no way to
+  // see them — the exact asymmetry ZeroDisclosure already fixed for the IDLE half of this list.
+  const shown = active.slice(0, 10);
+  const overflow = active.slice(10);
 
   const line = (p: EffectivenessReport["per_user"][number]) => (
     <div
@@ -255,7 +312,7 @@ function ByPerson({
   return (
     <Section
       title="By person"
-      hint={`Picks watched in ${WINDOW_PHRASE[window]}, of picks delivered.`}
+      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered.`}
     >
       {active.length === 0 && idle.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -263,11 +320,18 @@ function ByPerson({
         </p>
       ) : (
         <>
-          <div className="space-y-1.5">{active.slice(0, 10).map(line)}</div>
+          <div className="space-y-1.5">{shown.map(line)}</div>
           {active.length === 0 && (
             <p className="text-sm text-muted-foreground">
               Nobody watched a pick in this window.
             </p>
+          )}
+          {overflow.length > 0 && (
+            <Disclosure
+              label={`${overflow.length} more ${overflow.length === 1 ? "person" : "people"} watched something`}
+            >
+              {overflow.map(line)}
+            </Disclosure>
           )}
           <ZeroDisclosure count={idle.length} noun="people">
             {idle.map(line)}
@@ -280,10 +344,10 @@ function ByPerson({
 
 function ByRow({
   rows,
-  window,
+  reportWindow,
 }: {
   rows: EffectivenessReport["per_row"];
-  window: ReportWindow;
+  reportWindow: ReportWindow;
 }) {
   // Deleted rows are kept — those watches really happened and still count in the totals — but they
   // are history, not something you can act on, so they don't get to crowd out the live rows.
@@ -317,7 +381,7 @@ function ByRow({
   return (
     <Section
       title="By row"
-      hint={`Picks watched in ${WINDOW_PHRASE[window]}, of picks delivered.`}
+      hint={`Picks watched in ${WINDOW_PHRASE[reportWindow]}, of picks delivered.`}
     >
       {live.length === 0 && gone.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -329,7 +393,9 @@ function ByRow({
           {gone.length > 0 && (
             <DeletedRows
               count={gone.length}
-              windowLabel={window === "all" ? "" : WINDOW_PHRASE[window]}
+              windowLabel={
+                reportWindow === "all" ? "" : WINDOW_PHRASE[reportWindow]
+              }
             >
               {gone.map(line)}
             </DeletedRows>
@@ -355,103 +421,94 @@ function DeletedRows({
   windowLabel: string;
   children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const history = useDeletedRows();
   const clear = useClearDeletedRows();
   const totalPicks = (history.data ?? []).reduce((n, r) => n + r.picks, 0);
+  const noun = count === 1 ? "row" : "rows";
 
   return (
-    <div className="space-y-1.5 border-t pt-2">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        {open ? "▾" : "›"} {open ? "Hide" : "Show"} {count} deleted{" "}
-        {count === 1 ? "row" : "rows"}
-      </button>
-      {open && (
-        <>
-          <p className="text-xs text-muted-foreground/80">
-            These rows were removed from Shortlist. Their picks still count in
-            the totals above.
+    <Disclosure
+      label={`Show ${count} deleted ${noun}`}
+      openLabel={`Hide ${count} deleted ${noun}`}
+    >
+      <p className="text-xs text-muted-foreground/80">
+        These rows were removed from Shortlist. Their picks still count in the
+        totals above.
+      </p>
+      {children}
+      {confirming ? (
+        <div
+          role="alert"
+          className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
+        >
+          <p className="text-foreground">
+            Permanently delete the pick history of{" "}
+            {count === 1 ? "this deleted row" : "these deleted rows"}?
           </p>
-          {children}
-          {confirming ? (
-            <div
-              role="alert"
-              className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
-            >
-              <p className="text-foreground">
-                Permanently delete the pick history of{" "}
-                {count === 1 ? "this deleted row" : "these deleted rows"}?
-              </p>
-              {/* Name the all-time total, and why it exceeds the lines above. Clearing is never
-                  windowed, so on a 30-day view "20 picks" sits next to a visible 5 + 5 + 5 and reads
-                  as a bug unless the difference is said out loud. */}
-              {totalPicks > 0 && (
-                <p className="text-foreground">
-                  {totalPicks} picks in total
-                  {windowLabel && (
-                    <> &mdash; the lines above show only {windowLabel}</>
-                  )}
-                  .
-                </p>
+          {/* Name the all-time total, and why it exceeds the lines above. Clearing is never
+              windowed, so on a 30-day view "20 picks" sits next to a visible 5 + 5 + 5 and reads
+              as a bug unless the difference is said out loud. */}
+          {totalPicks > 0 && (
+            <p className="text-foreground">
+              {totalPicks} picks in total
+              {windowLabel && (
+                <> &mdash; the lines above show only {windowLabel}</>
               )}
-              {/* Say what it costs BEFORE asking. "The totals above" would under-warn: the same picks
-                  back each person's lifetime stats and their own pick history, so those drop too. */}
-              <p className="text-muted-foreground">
-                Their picks disappear from every total that counts them &mdash;
-                here and on each person&rsquo;s page. This can&rsquo;t be
-                undone. Rows that still exist are never touched.
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  loading={clear.isPending}
-                  onClick={() =>
-                    clear.mutate(undefined, {
-                      onSuccess: () => setConfirming(false),
-                    })
-                  }
-                >
-                  Delete the history
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setConfirming(false)}
-                >
-                  Keep it
-                </Button>
-              </div>
-            </div>
-          ) : (
+              .
+            </p>
+          )}
+          {/* Say what it costs BEFORE asking. "The totals above" would under-warn: the same picks
+              back each person's lifetime stats and their own pick history, so those drop too. */}
+          <p className="text-muted-foreground">
+            Their picks disappear from every total that counts them &mdash; here
+            and on each person&rsquo;s page. This can&rsquo;t be undone. Rows
+            that still exist are never touched.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="destructive"
+              size="sm"
+              loading={clear.isPending}
+              onClick={() =>
+                clear.mutate(undefined, {
+                  onSuccess: () => setConfirming(false),
+                })
+              }
+            >
+              Delete the history
+            </Button>
             <Button
               variant="ghost"
               size="sm"
-              className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
-              onClick={() => setConfirming(true)}
+              onClick={() => setConfirming(false)}
             >
-              <Trash2 className="h-3 w-3" aria-hidden />
-              Delete their history
+              Keep it
             </Button>
-          )}
-        </>
+          </div>
+        </div>
+      ) : (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+          onClick={() => setConfirming(true)}
+        >
+          <Trash2 className="h-3 w-3" aria-hidden />
+          Delete their history
+        </Button>
       )}
-    </div>
+    </Disclosure>
   );
 }
 
 function ReportBody({
   report,
-  window,
+  reportWindow,
   onWindowChange,
 }: {
   report: EffectivenessReport;
-  window: ReportWindow;
+  reportWindow: ReportWindow;
   onWindowChange: (next: ReportWindow) => void;
 }) {
   const { overall, coverage, runs, requests } = report;
@@ -470,7 +527,7 @@ function ReportBody({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-sm font-medium text-muted-foreground">Impact</h1>
         <Segmented
-          value={window}
+          value={reportWindow}
           onChange={onWindowChange}
           options={WINDOW_OPTIONS}
           ariaLabel="Report window"
@@ -495,7 +552,7 @@ function ReportBody({
           <CardContent className="pt-6 text-sm text-muted-foreground">
             {runs.total === 0
               ? "No picks delivered yet — run Shortlist, and once people start watching what it picked, the tracking shows up here."
-              : `Nothing delivered or watched in ${WINDOW_PHRASE[window]}. Try a longer window.`}
+              : `Nothing delivered or watched in ${WINDOW_PHRASE[reportWindow]}. Try a longer window.`}
           </CardContent>
         </Card>
       </div>
@@ -512,14 +569,21 @@ function ReportBody({
           icon={TrendingUp}
           label="Watched"
           value={overall.watched}
-          hint={<Delta value={overall.watched_delta} window={window} />}
+          hint={
+            <Delta value={overall.watched_delta} reportWindow={reportWindow} />
+          }
           title="Picks people watched in this window. A pick delivered earlier and watched now counts here — this is about watching, not delivery."
         />
         <StatTile
           icon={UsersIcon}
           label="People watching"
           value={`${coverage.users_watched} of ${coverage.users_enabled}`}
-          hint={<Delta value={coverage.users_watched_delta} window={window} />}
+          hint={
+            <Delta
+              value={coverage.users_watched_delta}
+              reportWindow={reportWindow}
+            />
+          }
           title="People who watched at least one pick in this window, out of everyone currently enabled."
         />
         <StatTile
@@ -533,7 +597,7 @@ function ReportBody({
           hint={
             <Delta
               value={overall.avg_days_to_watch_delta}
-              window={window}
+              reportWindow={reportWindow}
               suffix="d"
               lowerIsBetter
             />
@@ -574,7 +638,7 @@ function ReportBody({
           ) : (
             <div className="space-y-1.5">
               <p className="text-2xl font-semibold tabular-nums">
-                {pct(landing.rate)}
+                {formatHitRate(landing.rate)}
               </p>
               <p className="text-sm text-muted-foreground">
                 {landing.watched} of {landing.delivered} picks delivered
@@ -595,15 +659,15 @@ function ReportBody({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ByPerson people={report.per_user} window={window} />
-        <ByRow rows={report.per_row} window={window} />
+        <ByPerson people={report.per_user} reportWindow={reportWindow} />
+        <ByRow rows={report.per_row} reportWindow={reportWindow} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {report.top_titles.length > 0 && (
           <Section
             title="Landing best"
-            hint={`Most-watched picks in ${WINDOW_PHRASE[window]}.`}
+            hint={`Most-watched picks in ${WINDOW_PHRASE[reportWindow]}.`}
           >
             <ul className="space-y-1 text-sm">
               {report.top_titles.map((t) => (
@@ -624,7 +688,7 @@ function ReportBody({
         {requests.sent > 0 && (
           <Section
             title="Requests"
-            hint={`Sent to Sonarr/Radarr in ${WINDOW_PHRASE[window]}.`}
+            hint={`Sent to Sonarr/Radarr in ${WINDOW_PHRASE[reportWindow]}.`}
           >
             <div className="flex items-center gap-2 text-sm">
               <Send className="h-4 w-4 text-muted-foreground" aria-hidden />
@@ -658,7 +722,9 @@ function ReportBody({
           <ul className="space-y-1 text-sm">
             {report.recent.slice(0, 12).map((w, i) => (
               <li
-                key={`${w.username}-${w.title}-${i}`}
+                // watched_at (when present) is a stable, unique-enough identity for this list;
+                // falling back to the index only for the rare entry missing it.
+                key={`${w.username}-${w.title}-${w.watched_at ?? i}`}
                 className="flex flex-wrap items-baseline gap-x-2 text-muted-foreground"
               >
                 <span className="font-medium text-foreground">
@@ -688,15 +754,21 @@ function ReportBody({
  * delivered, forever.
  */
 export function ImpactReport() {
-  const [window, setWindow] = useState<ReportWindow>("30");
-  const report = useReport(window);
+  // Named `reportWindow`, not `window` — the global `window` object shadowed here used to be one
+  // character away from every reference inside this file and its children.
+  const [reportWindow, setReportWindow] = useState<ReportWindow>("30");
+  const report = useReport(reportWindow);
   return (
     <QueryBoundary
       query={report}
       skeleton={<Skeleton className="h-96 w-full" />}
     >
       {(data) => (
-        <ReportBody report={data} window={window} onWindowChange={setWindow} />
+        <ReportBody
+          report={data}
+          reportWindow={reportWindow}
+          onWindowChange={setReportWindow}
+        />
       )}
     </QueryBoundary>
   );

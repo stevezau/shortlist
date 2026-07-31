@@ -22,31 +22,32 @@ _JOB_PREFIX = "row-schedule::"
 WATCH_SYNC_JOB_ID = "watch-sync"
 USER_SYNC_JOB_ID = "user-sync"
 BACKUP_JOB_ID = "db-backup"
-_WATCH_SYNC_CRON = "17 4 * * *"  # 04:17 local daily — a quiet hour, offset off the top of the hour
-_USER_SYNC_CRON = "47 4 * * *"  # 04:47 local daily — 30 min after the watch sync so they don't overlap
-_BACKUP_CRON = "0 3 * * *"  # 03:00 local daily — before any syncs or row runs
 PRIVACY_SYNC_JOB_ID = "privacy-sync"
 SYNC_CHECK_JOB_ID = "sync-check"
-# 05:15 — after the watch (04:17) and user (04:47) syncs, so it merges filters for a roster that has
-# already been refreshed. Only ever makes the server MORE private, so a daily pass costs nothing.
-_PRIVACY_SYNC_CRON = "15 5 * * *"
-# After the privacy pass, so the drift check sees the state the night's work actually left behind.
-_SYNC_CHECK_CRON = "45 5 * * *"
 
 
-#: The built-in cron for each schedulable settings key. A BLANK setting means "use this" for every
-#: key here except `sync.check_cron`, whose blank genuinely means off — which is why the Schedule view
-#: must show the EFFECTIVE cron rather than the stored one. Reading the raw setting made a backup that
-#: runs nightly at 03:00 appear under "Not scheduled".
+#: The built-in cron for each schedulable settings key, and the ONLY place each of these expressions
+#: is written down — `settings_store.DEFAULTS` derives its blank placeholders from this dict. Keeping a
+#: second copy beside the settings defaults is what let the drift check be documented as off-by-default
+#: for months while running nightly.
+#:
+#: A BLANK setting means "use this" for every key here except `sync.check_cron`, whose blank genuinely
+#: means off — which is why the Schedule view must show the EFFECTIVE cron rather than the stored one.
+#: Reading the raw setting made a backup that runs nightly at 03:00 appear under "Not scheduled".
 DEFAULT_CRONS: dict[str, str] = {
-    "sync.watch_cron": _WATCH_SYNC_CRON,
-    "sync.users_cron": _USER_SYNC_CRON,
-    "backup.cron": _BACKUP_CRON,
-    "privacy.sync_cron": _PRIVACY_SYNC_CRON,
+    # 04:17 local daily — a quiet hour, offset off the top of the hour.
+    "sync.watch_cron": "17 4 * * *",
+    # 04:47 — 30 min after the watch sync so the two don't overlap.
+    "sync.users_cron": "47 4 * * *",
+    # 03:00 — before any syncs or row runs.
+    "backup.cron": "0 3 * * *",
+    # 05:15 — after the watch (04:17) and user (04:47) syncs, so it merges filters for a roster that
+    # has already been refreshed. Only ever makes the server MORE private, so a daily pass costs nothing.
+    "privacy.sync_cron": "15 5 * * *",
     # 05:45 — after the rows build (03:30), the syncs, and the privacy pass (05:15), so it checks the
     # state those actually left behind. Still turn-off-able: clearing the box stores "" and
     # `blank_means_off` keeps it off rather than falling back to this.
-    "sync.check_cron": _SYNC_CHECK_CRON,
+    "sync.check_cron": "45 5 * * *",
 }
 
 
@@ -163,7 +164,7 @@ def _resolve_cron(app, key: str, fallback: str, *, blank_means_off: bool = False
 
 def _resolve_watch_cron(app) -> str:
     """The watch sync cron, from the DB setting or the built-in default."""
-    return _resolve_cron(app, "sync.watch_cron", _WATCH_SYNC_CRON)
+    return _resolve_cron(app, "sync.watch_cron", DEFAULT_CRONS["sync.watch_cron"])
 
 
 def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
@@ -180,7 +181,7 @@ def _register_watch_sync(scheduler: AsyncIOScheduler, app) -> None:
 
 def _resolve_users_cron(app) -> str:
     """The user sync cron, from the DB setting or the built-in default."""
-    return _resolve_cron(app, "sync.users_cron", _USER_SYNC_CRON)
+    return _resolve_cron(app, "sync.users_cron", DEFAULT_CRONS["sync.users_cron"])
 
 
 def _register_user_sync(scheduler: AsyncIOScheduler, app) -> None:
@@ -202,18 +203,10 @@ def _resolve_backup_settings(app) -> tuple[str, int]:
     from shortlist.server.services.backup import DEFAULT_MAX_BACKUPS
     from shortlist.server.settings_store import SettingsStore
 
-    cron = _BACKUP_CRON
+    cron = _resolve_cron(app, "backup.cron", DEFAULT_CRONS["backup.cron"])
     max_keep = DEFAULT_MAX_BACKUPS
     with app.state.sessions() as session:
-        store = SettingsStore(session)
-        custom_cron = store.get("backup.cron")
-        custom_keep = store.get("backup.max_keep")
-    if custom_cron and isinstance(custom_cron, str) and custom_cron.strip():
-        try:
-            CronTrigger.from_crontab(custom_cron.strip())
-            cron = custom_cron.strip()
-        except ValueError:
-            logger.warning("invalid backup.cron {!r} — falling back to default", custom_cron)
+        custom_keep = SettingsStore(session).get("backup.max_keep")
     if custom_keep and isinstance(custom_keep, int) and 1 <= custom_keep <= 100:
         max_keep = custom_keep
     return cron, max_keep
@@ -240,7 +233,7 @@ def _register_privacy_sync(scheduler: AsyncIOScheduler, app) -> None:
     drift: it builds nothing, delivers nothing and promotes nothing, so it can only ever make the
     server more private.
     """
-    cron = _resolve_cron(app, "privacy.sync_cron", _PRIVACY_SYNC_CRON)
+    cron = _resolve_cron(app, "privacy.sync_cron", DEFAULT_CRONS["privacy.sync_cron"])
 
     async def fire() -> None:
         await _queue_and_drain(app, "privacy.sync")
@@ -249,12 +242,15 @@ def _register_privacy_sync(scheduler: AsyncIOScheduler, app) -> None:
 
 
 def _register_sync_check(scheduler: AsyncIOScheduler, app) -> None:
-    """The drift check, only when the owner has set a cron for it.
+    """The drift check — nightly at 05:45 by default; clearing the cron turns it off entirely.
 
-    Off by default and deliberately so: unlike the privacy sync it WRITES corrections to Plex, so
-    running it unattended is a choice to make rather than a default to inherit.
+    It ships ON because drift is the failure nobody notices. It is still the one schedule that can be
+    switched OFF, because it WRITES corrections to Plex: an owner who wants to review drift before it
+    is repaired must be able to say so. That is what `blank_means_off` buys — a STORED blank means off
+    rather than "inherit the default". Deletion is separately gated behind `confirmed`, so the
+    unattended pass corrects without removing anything.
     """
-    cron = _resolve_cron(app, "sync.check_cron", _SYNC_CHECK_CRON, blank_means_off=True)
+    cron = _resolve_cron(app, "sync.check_cron", DEFAULT_CRONS["sync.check_cron"], blank_means_off=True)
     if not cron:
         # Remove any trigger left from a previous setting, so clearing the box really turns it off.
         if scheduler.get_job(SYNC_CHECK_JOB_ID):

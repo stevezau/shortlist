@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from shortlist.engine import requests as requests_mod
-from shortlist.engine.models import ArrTarget, RequestConfig
+from shortlist.engine.models import ArrTarget, MediaType, RequestConfig
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import RequestCandidate, Server
 from shortlist.server.main import create_app
@@ -112,6 +112,13 @@ class TestRequestsApi:
     def test_requires_owner_session(self, client: TestClient):
         client.cookies.delete(SESSION_COOKIE)
         assert client.get("/api/requests").status_code == 401
+
+    def test_an_over_long_id_list_is_refused_rather_than_500ing(self, client: TestClient):
+        """`ids` feeds `.in_()` in five handlers, one bind parameter each. Past SQLite's compiled
+        ceiling that is an OperationalError reaching the client as a 500 with a SQL string in it, so
+        the list is bounded at the schema and comes back as the 422 every other bad input gets."""
+        assert client.post("/api/requests/reject", json={"ids": list(range(1001))}).status_code == 422
+        assert client.post("/api/requests/reject", json={"ids": list(range(1000))}).status_code == 200
 
     def test_list_is_pending_first_then_most_wanted(self, client: TestClient):
         rows = client.get("/api/requests").json()
@@ -299,6 +306,32 @@ class TestArrStatusEndpoint:
         body = client.get("/api/requests/status").json()
         assert body["1"] == "downloaded"
         assert body["2"] is None
+
+    def test_sonarr_v3_falls_back_to_a_tvdb_lookup_keyed_on_show(self, client: TestClient, monkeypatch):
+        """Sonarr v3 carries no tmdbId on a series, so the only way to resolve a show is TMDB→TVDB.
+
+        That fallback asked TMDB for `MediaType.TV` — which does not exist, `MediaType` is MOVIE/SHOW
+        — and the AttributeError was swallowed by a bare `except Exception` into a debug line. So on
+        every v3 server the fallback silently no-op'd for ever and every show showed a blank status.
+        """
+        from shortlist.engine.clients import arr as arr_mod
+
+        asked: list = []
+
+        class TmdbRecordingExternalIds(FakeTmdb):
+            def external_ids(self, tmdb_id: int, media_type) -> dict:
+                asked.append((tmdb_id, media_type))
+                return {"tvdb_id": 7777}
+
+        cfg = RequestConfig(enabled=True, sonarr=_SONARR)
+        monkeypatch.setattr(arr_mod, "SonarrClient", lambda *a, **k: FakeSonarrStatus({7777: "downloaded"}, {}))
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_requests_context", lambda: (cfg, TmdbRecordingExternalIds())
+        )
+
+        # Row id 2 is the pending SHOW (tmdb_id 20) from the fixture.
+        assert client.get("/api/requests/status").json()["2"] == "downloaded"
+        assert asked == [(20, MediaType.SHOW)]
 
     def test_requests_not_configured_returns_empty(self, client: TestClient, monkeypatch):
         monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(None))

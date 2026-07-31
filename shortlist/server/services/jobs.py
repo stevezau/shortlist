@@ -35,7 +35,9 @@ from sqlalchemy import text
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.engine.delivery import row_marker
-from shortlist.server.db.models import Event, Job
+from shortlist.engine.models import LABEL_PREFIX
+from shortlist.server.db.models import Job
+from shortlist.server.services.audit import add_audit, write_audit
 from shortlist.server.settings_store import SettingsStore
 
 # A job still marked `running` this long after it started is presumed dead — its process is gone.
@@ -159,6 +161,20 @@ CATALOG: tuple[JobKind, ...] = (
         writes_plex=False,  # local filesystem only
         schedule_job_id="db-backup",
         schedule_setting="backup.cron",
+    ),
+    JobKind(
+        kind="maintenance.prune",
+        label="Apply the retention limits",
+        description=(
+            "Delete runs and audit events older than the retention you set in Settings, and drop "
+            "expired cache rows. Local database housekeeping — nothing on Plex changes."
+        ),
+        manual=True,
+        writes_plex=False,  # local database only
+        # Queued by the run service the moment a run's results are safely persisted. It used to run
+        # INSIDE that persist's transaction, so a bulk delete that failed took the whole persist with
+        # it — discarding the record of a run that had already written to Plex.
+        trigger="Queued after every run, and runnable by hand.",
     ),
     JobKind(
         kind="user.cleanup",
@@ -380,13 +396,7 @@ def _finish(sessions, job_id: int, *, result: dict | None = None, error: str | N
             job.status = "failed"
             job.error = error
             logger.error("job {} ({}) gave up after {} attempts: {}", job.id, job.kind, job.attempts, error)
-            session.add(
-                Event(
-                    scope="job.failed",
-                    level="error",
-                    message={"job_id": job.id, "kind": job.kind, "error": error, "attempts": job.attempts},
-                )
-            )
+            add_audit(session, "job.failed", "error", job_id=job.id, kind=job.kind, error=error, attempts=job.attempts)
         session.commit()
 
 
@@ -610,6 +620,21 @@ async def _drain(state, sessions) -> int:
 # Each one MUST be idempotent: a job interrupted mid-flight is requeued and replayed on the next
 # boot with no way to know how far it got. Every handler here is a converge-to-desired-state
 # operation, never a delta, which is what makes replay safe.
+#
+# ONE dry-run idiom, everywhere (plex-safety rule 8):
+#
+#     requested = payload.get("dry_run", False)
+#     ctx = state.run_service.build_context(dry_run=requested)
+#     dry_run = ctx.config.dry_run or requested
+#
+# and then `dry_run` for every decision, log line, audit field and detail string.
+#
+# Both halves matter. `build_context` ORs `SHORTLIST_DRY_RUN` in, so the value the caller asked for
+# and the value that governs the writes are NOT the same variable — reading the caller's is how the
+# audit trail came to record a preview as a real removal. And the `or requested` is the floor: the
+# chokepoint may force a preview ON, never off, so a context that somehow dropped the flag cannot
+# turn "show me what this would delete" into a deletion. Five handlers wrote five different versions
+# of this; only one was right.
 
 
 @handler("sync.check")
@@ -624,8 +649,9 @@ def _sync_check(state, payload: dict) -> dict:
     from shortlist.engine.pipeline import _converge_phase
 
     report = RunReport(started_at=datetime.now(UTC))
-    dry_run = bool(payload.get("dry_run"))
-    ctx = state.run_service.build_context(dry_run=dry_run)
+    requested = payload.get("dry_run", False)
+    ctx = state.run_service.build_context(dry_run=requested)
+    dry_run = ctx.config.dry_run or requested
     # Deleting is only ever a DELIBERATE act. This job now has a nightly schedule, so an unattended
     # pass must not be able to destroy a collection on its own — it demotes, and reports what it
     # WOULD remove. The owner sees that in the preview and presses Fix, which arrives here with
@@ -661,19 +687,21 @@ def _privacy_sync(state, payload: dict) -> dict:
     """
     from shortlist.engine.pipeline import run as engine_run
 
-    ctx = state.run_service.build_context(dry_run=False)
+    requested = payload.get("dry_run", False)
+    ctx = state.run_service.build_context(dry_run=requested)
+    dry_run = ctx.config.dry_run or requested
     report = engine_run(ctx, [])
     swept = sum(len(titles) for titles in report.swept_rows.values())
     # The reason is carried through to the detail line so the Jobs page answers "why did this fire?"
     # — "someone was removed from a shared row" reads very differently from a nightly housekeeping
     # pass, and an operator seeing filters rewritten deserves to know which.
     reason = str(payload.get("reason") or "")
-    detail = "Share filters merged for every account"
+    detail = "Share filters would be merged" if dry_run else "Share filters merged for every account"
     if reason:
         detail += f" after {reason}"
     if swept:
         detail += f"; swept {swept} unhidable row(s)"
-    return {"swept": swept, "converged": report.converged, "reason": reason, "detail": detail}
+    return {"swept": swept, "converged": report.converged, "reason": reason, "dry_run": dry_run, "detail": detail}
 
 
 @handler("sync.users")
@@ -689,7 +717,7 @@ async def _sync_users(state, payload: dict) -> dict:
     """
     from fastapi import HTTPException
 
-    from shortlist.server.api.users import sync_users_from_state
+    from shortlist.server.services.user_sync import sync_users_from_state
 
     try:
         result = await sync_users_from_state(state)
@@ -743,20 +771,57 @@ def _backup_take(state, payload: dict) -> dict:
     return {"path": str(path), "detail": f"Backed up to {path.name}"}
 
 
+@handler("maintenance.prune")
+def _maintenance_prune(state, payload: dict) -> dict:
+    """Apply the retention limits to `runs`, `events` and the cache table.
+
+    Its OWN transaction, which is the whole point of it being a job. This used to run inside the
+    run-persist transaction: a bulk delete that failed there — a locked database, a FK the delete
+    order got wrong — rolled back the persist along with it, discarding the record of a run that had
+    already written to Plex. Retention is housekeeping; it must never be able to cost a run.
+
+    Idempotent by construction: it deletes whatever is currently older than the limit, so replaying
+    it after a crash simply finds nothing left to delete.
+    """
+    from shortlist.server.services.run_service import RunService
+
+    with state.sessions() as session:
+        store = SettingsStore(session)
+        # `or 0` on BOTH: a legacy or hand-edited row storing null made `int(None)` raise — and it
+        # raised inside the run's persist transaction, where the cost was the whole persist.
+        months = int(store.get("runs.retention") or 0)
+        event_months = int(store.get("events.retention") or 0)
+        # Legacy DBs store the old count-based "100" — values beyond the new 24-month max are treated
+        # as 0 (keep forever) until the owner visits Settings and sets a real month value.
+        runs = RunService._prune_runs(session, months if 0 < months <= 24 else 0)
+        events = RunService._prune_events(session, event_months if 0 < event_months <= 24 else 0)
+        cached = RunService._prune_expired_cache(session)
+        session.commit()
+    return {
+        "runs": runs,
+        "events": events,
+        "cache_rows": cached,
+        "detail": f"Pruned {runs} run(s), {events} audit event(s) and {cached} expired cache row(s)",
+    }
+
+
 @handler("user.cleanup")
 def _user_cleanup(state, payload: dict) -> dict:
     """Remove a disabled user's collections. Retried, unlike the old fire-and-forget call — which is
     the bug: if Plex was down at the moment of disabling, nothing ever revisited them, because no
     run touches a disabled user."""
     from shortlist.engine.delivery import remove_row_collections
-    from shortlist.server.safe_mode import force_dry_run
     from shortlist.server.services.collection_reconcile import forget_user_deliveries
 
     slug = payload["slug"]
-    dry_run = force_dry_run()
-    ctx = state.run_service.build_context(dry_run=dry_run)
+    # Through the chokepoint, not `force_dry_run()` here: this used to call the safe-mode helper
+    # itself, which is the one idiom `build_context` exists to make unnecessary — and the only way the
+    # value the handler logs can drift from the value the writes actually used.
+    requested = payload.get("dry_run", False)
+    ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
+    dry_run = ctx.config.dry_run or requested
     removed = remove_row_collections(
-        ctx.plex, ctx.config, label=f"{ctx.config.label_prefix}_{slug}", displays=None, dry_run=dry_run
+        ctx.plex, ctx.config, label=f"{LABEL_PREFIX}_{slug}", displays=None, dry_run=dry_run
     )
     if not dry_run:
         # Their whole label just came off the server, so every ledger row naming it is now a pointer to
@@ -770,21 +835,7 @@ def _user_cleanup(state, payload: dict) -> dict:
     # from the events feed, not only from the jobs list. `dry_run` is recorded because
     # remove_row_collections fills `removed` either way: without it a preview is indistinguishable
     # in the audit from a real deletion.
-    with state.sessions() as session:
-        session.add(
-            Event(
-                scope="user.disable.cleanup",
-                level="warn",
-                message={
-                    "user": slug,
-                    "removed": removed,
-                    "dry_run": dry_run,
-                    "error": None,
-                    "at": datetime.now(UTC).isoformat(),
-                },
-            )
-        )
-        session.commit()
+    write_audit(state, "user.disable.cleanup", "warning", user=slug, removed=removed, dry_run=dry_run)
     return {
         "removed": removed,
         "dry_run": dry_run,
@@ -802,35 +853,24 @@ def _user_hide(state, payload: dict) -> dict:
     """
     slug = payload["slug"]
     # `build_context` ORs in SHORTLIST_DRY_RUN, so `ctx.config.dry_run` can be True despite the False
-    # here — and `demote_all` has no dry-run branch of its own (rule 8).
-    ctx = state.run_service.build_context(dry_run=False)
+    # the payload asks for — and `demote_all` has no dry-run branch of its own (rule 8).
+    requested = payload.get("dry_run", False)
+    ctx = state.run_service.build_context(dry_run=requested, plex_only=True)
+    dry_run = ctx.config.dry_run or requested
     hidden: list[str] = []
-    label = f"{ctx.config.label_prefix}_{slug}"
+    label = f"{LABEL_PREFIX}_{slug}"
     for section in ctx.plex.sections():
         for collection in ctx.plex.find_owned_collections(section, label):
-            if ctx.config.dry_run:
+            if dry_run:
                 if ctx.plex.claims_any_surface(collection):
                     logger.info("[dry-run] {}: would take off every surface", collection.title)
                     hidden.append(collection.title)
                 continue
             if ctx.plex.demote_all(collection):
                 hidden.append(collection.title)
-    with state.sessions() as session:
-        session.add(
-            Event(
-                scope="user.pause.hide",
-                level="info",
-                message={
-                    "user": slug,
-                    "hidden": len(hidden),
-                    "dry_run": ctx.config.dry_run,
-                    "at": datetime.now(UTC).isoformat(),
-                },
-            )
-        )
-        session.commit()
-    verb = "Would hide" if ctx.config.dry_run else "Hid"
-    return {"hidden": hidden, "dry_run": ctx.config.dry_run, "detail": f"{verb} {len(hidden)} row(s) for {slug}"}
+    write_audit(state, "user.pause.hide", "info", user=slug, hidden=len(hidden), dry_run=dry_run)
+    verb = "Would hide" if dry_run else "Hid"
+    return {"hidden": hidden, "dry_run": dry_run, "detail": f"{verb} {len(hidden)} row(s) for {slug}"}
 
 
 @handler("user.restore")
@@ -858,7 +898,9 @@ def _user_restore(state, payload: dict) -> dict:
     from shortlist.server.db.models import Delivery, Run, RunUser, User
 
     slug = payload["slug"]
-    ctx = state.run_service.build_context(dry_run=False)
+    requested = payload.get("dry_run", False)
+    ctx = state.run_service.build_context(dry_run=requested)
+    dry_run = ctx.config.dry_run or requested
     with state.sessions() as session:
         user = session.query(User).filter_by(slug=slug).first()
         if user is None or not user.enabled or (user.prefs or {}).get("paused"):
@@ -912,16 +954,16 @@ def _user_restore(state, payload: dict) -> dict:
     # Rule 1's ordering: every account's excludes are merged BEFORE anything is promoted.
     engine_run(ctx, [])
     restored = promote_user_rows(ctx, profile, placements, placement_keys=keys)
-    with state.sessions() as session:
-        session.add(
-            Event(
-                scope="user.unpause.restore",
-                level="info",
-                message={"user": slug, "restored": len(restored), "at": datetime.now(UTC).isoformat()},
-            )
-        )
-        session.commit()
-    return {"restored": sorted(restored), "detail": f"Put {len(restored)} row(s) back for {slug}"}
+    # `dry_run` recorded, not assumed False: `promote_user_rows` carries its own safe-mode guard, so
+    # under SHORTLIST_DRY_RUN it returns the keys it WOULD have promoted and nothing on Plex moved.
+    # Auditing that as a real restore is the audit trail lying about a visibility change.
+    write_audit(state, "user.unpause.restore", "info", user=slug, restored=len(restored), dry_run=dry_run)
+    verb = "Would put" if dry_run else "Put"
+    return {
+        "restored": sorted(restored),
+        "dry_run": dry_run,
+        "detail": f"{verb} {len(restored)} row(s) back for {slug}",
+    }
 
 
 @handler("row.reconcile")
@@ -939,11 +981,14 @@ def _row_reconcile(state, payload: dict) -> dict:
     build = payload.get("build", "per_person")
     only_user_ids = set(payload["only_user_ids"]) if payload.get("only_user_ids") is not None else None
     removed: list[str] = []
-    _reconcile_row_removal(
+    # The EFFECTIVE value, back off the context the removal actually used. This audited a hardcoded
+    # `False` while `build_context` had OR'd SHORTLIST_DRY_RUN in below it — so under safe mode the
+    # audit trail recorded a preview as a real deletion of somebody's row.
+    dry_run = _reconcile_row_removal(
         state,
         slug=slug,
         build=build,
-        dry_run=False,
+        dry_run=payload.get("dry_run", False),
         removed=removed,
         only_user_ids=only_user_ids,
         # Carried in the payload by the DELETE path only: the row is gone by the time a retry runs, so
@@ -953,19 +998,10 @@ def _row_reconcile(state, payload: dict) -> dict:
         # targets survive. Absent means every library, which is right for an outright removal.
         in_sections=set(payload["in_sections"]) if payload.get("in_sections") is not None else None,
     )
-    with state.sessions() as session:
-        session.add(
-            Event(
-                scope=payload.get("scope", "row.reconcile"),
-                level="warn",
-                message={
-                    "slug": slug,
-                    "removed": removed,
-                    "dry_run": False,
-                    "error": None,
-                    "at": datetime.now(UTC).isoformat(),
-                },
-            )
-        )
-        session.commit()
-    return {"removed": removed, "detail": f"Removed {len(removed)} collection(s) for row {slug}"}
+    write_audit(state, payload.get("scope", "row.reconcile"), "warning", slug=slug, removed=removed, dry_run=dry_run)
+    verb = "Would remove" if dry_run else "Removed"
+    return {
+        "removed": removed,
+        "dry_run": dry_run,
+        "detail": f"{verb} {len(removed)} collection(s) for row {slug}",
+    }

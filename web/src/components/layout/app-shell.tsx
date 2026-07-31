@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useSession, useVersion } from "@/lib/queries";
 import { GITHUB_REPO, newBugReportUrl } from "@/lib/support";
+import { useCopy } from "@/lib/use-copy";
 import { Toaster } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -50,25 +51,15 @@ const NAV_ITEMS = [
  *  version + browser so a report always carries the two facts people forget to include. */
 export function HelpLinks() {
   const version = useVersion();
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
-    "idle",
-  );
+  const { state: copyState, copy } = useCopy(2500);
   const linkClass =
     "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
 
   // The secrets-free diagnostics bundle lives with the bug-report action, not in Settings — grab it
-  // here, then paste it into the GitHub issue. (Too long to pre-fill into the issue URL.)
-  const copyDiagnostics = async () => {
-    try {
-      // Both the fetch (a 500 building the bundle) and the clipboard write can fail — surface either
-      // as "couldn't copy" rather than a silently dead button.
-      await navigator.clipboard.writeText(await api.getDebugBundle());
-      setCopyState("copied");
-    } catch {
-      setCopyState("error");
-    }
-    setTimeout(() => setCopyState("idle"), 2500);
-  };
+  // here, then paste it into the GitHub issue. (Too long to pre-fill into the issue URL.) Both the
+  // fetch (a 500 building the bundle) and the clipboard write can fail — useCopy surfaces either as
+  // "couldn't copy" rather than a silently dead button.
+  const copyDiagnostics = () => copy(api.getDebugBundle());
   const copyLabel =
     copyState === "copied"
       ? "Copied — paste into the issue"
@@ -254,7 +245,10 @@ export function AppShell() {
           // The app's own spinner, so a running toast matches every other "in flight" indicator
           // instead of introducing a second visual language for the same idea.
           loading: (
-            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden />
+            <Loader2
+              className="h-4 w-4 animate-spin text-primary"
+              aria-hidden
+            />
           ),
           success: <CircleCheck className="h-4 w-4 text-success" aria-hidden />,
           error: (
