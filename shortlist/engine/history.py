@@ -15,7 +15,7 @@ from typing import Protocol
 
 from loguru import logger
 
-from shortlist.engine.clients.plex_pms import PlexClient
+from shortlist.engine.clients.plex_pms import PlexClient, SectionNotShared
 from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.models import MediaType, Seed, UserProfile, UserType, WatchedItem
 
@@ -122,6 +122,11 @@ class ShareTokenWatchSource:
             media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
             try:
                 items.extend(self._plex.watched_titles(section.key, media_type, token, since=since))
+            except SectionNotShared:
+                # Not shared with them, so "nothing watched there" is the right answer, not a
+                # degraded one. DEBUG, not WARNING: `sections()` is the OWNER's library list, so
+                # every library a person isn't given is expected to land here on every single read.
+                logger.debug("{}: section {} not shared — skipped", user.username, section.key)
             except Exception as e:
                 # One unreadable library degrades to "nothing watched there" (it may re-surface a title
                 # they've seen), never a failed run — the same fail-soft stance the old sources took.

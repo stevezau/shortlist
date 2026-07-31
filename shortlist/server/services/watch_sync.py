@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
+from shortlist.engine.clients.plex_pms import SectionNotShared
 from shortlist.engine.models import MediaType
 from shortlist.server.db.models import User
 from shortlist.server.services.sse import EventBus
@@ -107,6 +108,14 @@ class WatchSync:
                             force_full=force_full,
                         )
                     )
+                except SectionNotShared:
+                    # NOT a failure, so it must not reach `failed`. `ctx.plex.sections()` is the
+                    # OWNER's library list walked for every person, so any library someone isn't
+                    # given 403s here on every sync — and counting that as unreadable threw away
+                    # their whole cache and forced an uncached complete re-read of every library,
+                    # hourly, for ever. Skipping also leaves the cursor alone: there is nothing to
+                    # self-heal, and a forced full read would 403 exactly the same way.
+                    logger.debug("watch cache: {} section {} not shared — skipped", profile.username, section.key)
                 except Exception as e:
                     failed.append(str(section.key))
                     logger.warning(

@@ -123,6 +123,27 @@ class TestShareTokenWatchSource:
 
         assert [i.title for i in items] == ["Suits"]
 
+    def test_an_unshared_library_is_skipped_without_losing_the_shared_ones(self, mock_plex, mock_plextv):
+        """A 403 means the owner never shared that library — "nothing watched there" is correct.
+
+        `sections()` is the OWNER's list, so this is the normal state for anyone with a partial
+        share, not an error worth warning about on every read.
+        """
+        from shortlist.engine.clients.plex_pms import SectionNotShared
+
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {100: "SARAH-TOK"}
+
+        def read(key, media_type, token, since=None):
+            if media_type is MediaType.SHOW:
+                raise SectionNotShared("section 12 is not shared with this user")
+            return [make_watched("Dune", media_type=MediaType.MOVIE)]
+
+        mock_plex.watched_titles.side_effect = read
+        items = source.fetch(make_profile(account_id=100), min_completion=0.7)
+
+        assert [i.title for i in items] == ["Dune"]
+
 
 class TestDistinctRecent:
     def test_a_binge_collapses_to_one_entry_and_lets_variety_through(self):
