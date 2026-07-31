@@ -96,6 +96,7 @@ describe("exaSummary", () => {
 
 function entry(patch: Partial<RunLogEntry>): RunLogEntry {
   return {
+    seq: 0,
     ts: "2026-07-15T04:18:00Z",
     run_id: 2,
     user: "sarah",

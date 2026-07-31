@@ -16,6 +16,7 @@ function okTrace(
     status: "ok",
     error: null,
     reason: null,
+    requests: {},
     trace: {
       history: {
         total: 20,
@@ -78,6 +79,9 @@ function okTrace(
             title: "Toy Story 2",
             reason: "Because you loved Toy Story",
             media_type: "movie",
+            seed_title: null,
+            sources: [],
+            affinity: null,
           },
         ],
       },

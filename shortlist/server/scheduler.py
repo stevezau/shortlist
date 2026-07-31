@@ -24,6 +24,7 @@ USER_SYNC_JOB_ID = "user-sync"
 BACKUP_JOB_ID = "db-backup"
 PRIVACY_SYNC_JOB_ID = "privacy-sync"
 SYNC_CHECK_JOB_ID = "sync-check"
+MAINTENANCE_PRUNE_JOB_ID = "maintenance-prune"
 
 
 #: The built-in cron for each schedulable settings key, and the ONLY place each of these expressions
@@ -48,6 +49,9 @@ DEFAULT_CRONS: dict[str, str] = {
     # state those actually left behind. Still turn-off-able: clearing the box stores "" and
     # `blank_means_off` keeps it off rather than falling back to this.
     "sync.check_cron": "45 5 * * *",
+    # 06:15 — last of the night, after every other schedule has finished writing runs and events, so
+    # the retention pass trims a settled database rather than one still being appended to.
+    "maintenance.prune_cron": "15 6 * * *",
 }
 
 
@@ -263,6 +267,22 @@ def _register_sync_check(scheduler: AsyncIOScheduler, app) -> None:
     scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=SYNC_CHECK_JOB_ID, replace_existing=True)
 
 
+def _register_maintenance_prune(scheduler: AsyncIOScheduler, app) -> None:
+    """The nightly retention pass — a FLOOR under the prune each run persist already queues.
+
+    Retention is queued after every run, which is fine until runs stop happening: a server whose rows
+    all have blank crons, or one paused with `paused_all`, never prunes anything again, so `runs`,
+    `events` and the expired cache rows grow without bound in the same file the backup copies whole
+    and keeps ten of. Local database housekeeping only — nothing on Plex changes.
+    """
+    cron = _resolve_cron(app, "maintenance.prune_cron", DEFAULT_CRONS["maintenance.prune_cron"])
+
+    async def fire() -> None:
+        await _queue_and_drain(app, "maintenance.prune")
+
+    scheduler.add_job(fire, CronTrigger.from_crontab(cron), id=MAINTENANCE_PRUNE_JOB_ID, replace_existing=True)
+
+
 def _register_jobs_worker(scheduler: AsyncIOScheduler, app) -> None:
     """Drain the durable job queue on a short interval, and sweep abandoned jobs on a long one.
 
@@ -303,9 +323,10 @@ def build_scheduler(app) -> AsyncIOScheduler:
     _register_backup(scheduler, app)
     _register_privacy_sync(scheduler, app)
     _register_sync_check(scheduler, app)
+    _register_maintenance_prune(scheduler, app)
     _register_jobs_worker(scheduler, app)
     logger.info(
-        "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync{} + job worker",
+        "scheduled {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + prune{} + job worker",
         len(groups),
         " + sync-check" if scheduler.get_job(SYNC_CHECK_JOB_ID) else "",
     )
@@ -327,8 +348,9 @@ def rebuild_schedule(app) -> None:
     _register_backup(scheduler, app)
     _register_privacy_sync(scheduler, app)
     _register_sync_check(scheduler, app)
+    _register_maintenance_prune(scheduler, app)
     logger.info(
-        "rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync{}",
+        "rebuilt schedule: {} row cron group(s) + watch-sync + user-sync + backup + privacy-sync + prune{}",
         len(groups),
         " + sync-check" if scheduler.get_job(SYNC_CHECK_JOB_ID) else "",
     )

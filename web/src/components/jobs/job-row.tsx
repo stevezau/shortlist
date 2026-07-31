@@ -15,15 +15,26 @@ import type { JobCatalogEntry } from "@/lib/types";
  * Deliberately not a sentence: nine of these stack up, and "Done · Synced 7 people from plex.tv ·
  * 2h ago" on every line is what made the old card list unreadable. The full detail is one click away.
  */
-function StatusChip({ entry }: { entry: JobCatalogEntry }) {
+function StatusChip({
+  entry,
+  queuedTitle,
+}: {
+  entry: JobCatalogEntry;
+  /** Why it's queued, when it is — the fuller explanation the terse chip text has no room for. */
+  queuedTitle?: string;
+}) {
   if (entry.running + entry.queued > 0) {
+    const queued = entry.running === 0;
     return (
-      <span className="flex items-center gap-1.5 text-sm font-medium text-primary">
+      <span
+        className="flex items-center gap-1.5 text-sm font-medium text-primary"
+        title={queued ? queuedTitle : undefined}
+      >
         <span
           aria-hidden="true"
           className="size-1.5 animate-pulse rounded-full bg-primary"
         />
-        {entry.running > 0 ? "Running" : "Queued"}
+        {queued ? "Queued" : "Running"}
       </span>
     );
   }
@@ -65,6 +76,7 @@ export function JobRow({
   live,
   panel,
   first,
+  queuedTitle,
 }: {
   entry: JobCatalogEntry;
   icon: LucideIcon;
@@ -76,6 +88,8 @@ export function JobRow({
   /** Settings and results for this job, revealed on expand. */
   panel?: React.ReactNode;
   first?: boolean;
+  /** Why this job's kind is queued right now, when it is — see {@link StatusChip}. */
+  queuedTitle?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -115,7 +129,7 @@ export function JobRow({
           <span className="truncate text-sm font-medium">{entry.label}</span>
         </button>
 
-        <StatusChip entry={entry} />
+        <StatusChip entry={entry} queuedTitle={queuedTitle} />
 
         {/* Next run earns a column only when there IS a schedule — an em-dash in eight rows is noise.
             But a job that COULD be scheduled and isn't must say so: rendering nothing left "Sync

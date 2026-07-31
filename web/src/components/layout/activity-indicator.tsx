@@ -8,9 +8,12 @@ import { timeAgo } from "@/lib/format";
 import {
   isInFlight,
   jobTransitions,
+  queuedReason,
   statusMap,
   useJobActivity,
   useJobLabels,
+  useRunActive,
+  useWritesPlex,
 } from "@/lib/job-activity";
 import type { Job } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -34,7 +37,16 @@ function jobTarget(job: Job): string | undefined {
   return undefined;
 }
 
-function JobLine({ job, label }: { job: Job; label: string }) {
+function JobLine({
+  job,
+  label,
+  queued,
+}: {
+  job: Job;
+  label: string;
+  /** Why it's waiting, when `job.status === "queued"` — ignored otherwise. */
+  queued?: { text: string; title: string };
+}) {
   return (
     <li className="flex items-center justify-between gap-3 py-1 text-sm">
       <span className="flex min-w-0 items-center gap-2">
@@ -58,9 +70,12 @@ function JobLine({ job, label }: { job: Job; label: string }) {
         )}
         <span className="truncate">{label}</span>
       </span>
-      <span className="shrink-0 text-xs text-muted-foreground">
+      <span
+        className="shrink-0 text-xs text-muted-foreground"
+        title={job.status === "queued" ? queued?.title : undefined}
+      >
         {job.status === "queued"
-          ? "waiting"
+          ? (queued?.text ?? "waiting its turn")
           : job.finished_at
             ? timeAgo(job.finished_at)
             : job.started_at
@@ -97,6 +112,7 @@ export function ActivityIndicator({
   const seen = useRef<Map<number, Job["status"]> | null>(null);
 
   const jobs = query.data ?? [];
+  const writesPlexFor = useWritesPlex();
 
   useEffect(() => {
     if (!query.data) return;
@@ -133,8 +149,13 @@ export function ActivityIndicator({
   }, [query.data, labelFor]);
 
   const inFlight = jobs.filter(isInFlight);
+  // Split rather than one "Running" heading over both: a queued job is NOT running, and heading it
+  // that way is exactly what left an operator unable to tell "working" from "stuck".
+  const running = jobs.filter((job) => job.status === "running");
+  const queued = jobs.filter((job) => job.status === "queued");
   const recent = jobs.filter((job) => !isInFlight(job)).slice(0, 5);
   const failing = jobs.filter((job) => job.status === "failed").length;
+  const runActive = useRunActive(queued.length > 0);
 
   return (
     <div className="relative">
@@ -184,17 +205,37 @@ export function ActivityIndicator({
             </p>
           ) : (
             <div className="space-y-3">
-              {inFlight.length > 0 && (
+              {running.length > 0 && (
                 <div>
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Running
                   </p>
                   <ul>
-                    {inFlight.map((job) => (
+                    {running.map((job) => (
                       <JobLine
                         key={job.id}
                         job={job}
                         label={labelFor(job.kind)}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {queued.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Queued
+                  </p>
+                  <ul>
+                    {queued.map((job) => (
+                      <JobLine
+                        key={job.id}
+                        job={job}
+                        label={labelFor(job.kind)}
+                        queued={queuedReason(
+                          writesPlexFor(job.kind),
+                          runActive,
+                        )}
                       />
                     ))}
                   </ul>

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { isInFlight, jobTransitions, statusMap } from "@/lib/job-activity";
+import {
+  isInFlight,
+  jobTransitions,
+  queuedReason,
+  statusMap,
+} from "@/lib/job-activity";
 import type { Job } from "@/lib/types";
 
 function job(patch: Partial<Job> & { id: number }): Job {
@@ -11,11 +16,15 @@ function job(patch: Partial<Job> & { id: number }): Job {
     max_attempts: 3,
     detail: "",
     error: null,
-    created_at: null,
+    payload: {},
+    result: {},
+    // `JobOut.created_at` is not nullable — the row is stamped on insert. The fixture used to say
+    // null, which the `as Job` cast hid.
+    created_at: "2026-07-28T10:00:00Z",
     started_at: null,
     finished_at: null,
     ...patch,
-  } as Job;
+  };
 }
 
 describe("job activity", () => {
@@ -67,7 +76,9 @@ describe("job activity", () => {
       job({ id: 9, status: "done", detail: "Removed 2 rows for mike" }),
     ]);
     expect(finished.map((j) => j.id)).toEqual([9]);
-    expect(started, "a finished job must not also announce a start").toEqual([]);
+    expect(started, "a finished job must not also announce a start").toEqual(
+      [],
+    );
   });
 
   it("reports an outcome once, and never as a start", () => {
@@ -81,5 +92,30 @@ describe("job activity", () => {
     ]);
     expect(started).toEqual([]);
     expect(finished.map((j) => j.id)).toEqual([1, 2]);
+  });
+});
+
+describe("queuedReason", () => {
+  it("blames the run when a Plex-writing job is queued while one is active", () => {
+    const reason = queuedReason(true, true);
+    expect(reason.text).toMatch(/waiting for the run to finish/i);
+    expect(reason.title).toMatch(/run is writing to plex/i);
+  });
+
+  it("does not blame a run when a Plex-writing job is queued and none is active", () => {
+    // Serialized behind another WRITER job, or simply about to be claimed — either way, not the run.
+    const reason = queuedReason(true, false);
+    expect(reason.text).toMatch(/waiting its turn/i);
+    expect(reason.text).not.toMatch(/run/i);
+  });
+
+  it("gives a read-only job the parallelism-cap reason, never the run — even while one is active", () => {
+    // Only writers wait on a run (services/jobs.py::_claimable); a read-only job queued during a run
+    // is queued for the reader cap, and telling it "a run is blocking you" would be a guess, not a fact.
+    const reason = queuedReason(false, true);
+    expect(reason.text).toMatch(/waiting for a free slot/i);
+    expect(reason.text).not.toMatch(/run/i);
+    // "jobs run at once" is fine — it's "a/the run" (the engine run) this must never say.
+    expect(reason.title).not.toMatch(/\b(a|the) run\b/i);
   });
 });

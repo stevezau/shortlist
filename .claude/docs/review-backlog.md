@@ -1,57 +1,45 @@
 # Full-repo review backlog
 
-Findings from the nine-reviewer pre-`beta.8` sweep (July 2026). **Sections 1–8 are all closed** — see
-the `dev` history for 2026-07-31. What remains is one item the sweep did not find and the last pass
-did, recorded here because it is real, sizeable, and not safe to do at a release gate.
+Findings from the nine-reviewer pre-`beta.8` sweep (July 2026). **Everything is closed** — sections
+1–8 from the sweep itself, plus the one item the sweep missed and a later pass found. See the `dev`
+history for 2026-07-31.
+
+Kept as the record of what was fixed, so a future reviewer who rediscovers one of these checks the
+history before "fixing" it again. Nothing here is outstanding.
 
 ---
 
-## Open: the API declares almost no response models
+## The item the sweep missed (closed 2026-07-31)
 
-**Found 2026-07-31, while generating the SPA's types from the OpenAPI schema (old item 4.14).**
+**The API declared response models on 1 of 68 endpoints.** Everything else was `-> dict`, so the
+OpenAPI schema published `{ [key: string]: unknown }` and the SPA hand-wrote ~65 response interfaces
+— a standing violation of `.claude/rules/frontend.md`. Those hand-written types had measurably
+drifted: the UI was sending `prefs.row_size` and `prefs.max_rating`, **fields the server had
+deleted**, silently swallowed by Pydantic's `extra="ignore"`, with a test asserting the broken body.
 
-Of 68 paths, **exactly one JSON response declares a Pydantic model** (`GET /api/requests` →
-`RequestCandidateOut`). Every other operation is annotated `-> dict` or `-> list[dict]`, so the schema
-publishes `{ [key: string]: unknown }` and nothing downstream can check anything. Four operations
-declare no response content at all: `GET /api/runs/{run_id}/log` and the three `/api/system/backups*`
-endpoints. (Five more — SSE `/api/events`, the rename stream, poster image/preview, `logs/download` —
-are streams or binary and correctly have no JSON schema.)
+I initially deferred this as too risky for a release gate, on the grounds that a Pydantic response
+model *filters* the payload — any key not declared is dropped, silently, in production. That reason
+was sound but the conclusion was not: `model_config = ConfigDict(extra="allow")` documents the shape
+**without** filtering it, so undeclared keys pass through untouched and the failure mode cannot occur.
 
-Consequences, all live today:
+Now **65 routes / 115 schemas**, every model inheriting `PassthroughModel`
+(`shortlist/server/api/schemas.py`), which is the single home for that rule.
 
-- `web/src/lib/types.ts` still hand-writes **65 response interfaces**, which `.claude/rules/frontend.md`
-  explicitly forbids ("never hand-write request/response types"). Only 15 types could be generated.
-- Those hand-written types were measurably wrong. The pass that generated the other 15 found the UI
-  sending `prefs.row_size` and `prefs.max_rating` — **fields the server had deleted** — accepted and
-  silently discarded by Pydantic's `extra="ignore"`, with a frontend test asserting the broken body.
-  It also found `defer_rename` declared on the response type rather than the request, which forced an
-  `as never` cast in `pages/row-rename.tsx` — a cast worse than `any`, caused purely by the
-  hand-written type being wrong. Six nullability mismatches besides.
-- Nothing catches the next such drift.
+Two things worth remembering from doing it:
 
-**Why it is not done yet.** A Pydantic response model does not merely describe a response, it
-**filters** it — any key not on the model is dropped from the payload. Adding ~65 of them to endpoints
-whose exact dict shape the SPA already depends on is a change that fails _silently and in production_,
-by removing a field the UI reads. It wants doing at the start of a cycle, endpoint by endpoint, each
-diffed against a recorded real response — not in the same push as everything else.
+1. **The obvious test does not catch a violation.** Asserting an endpoint's full key set passes
+   whether or not the model declares every field — precisely *because* `extra="allow"` lets the rest
+   through. Those assertions protect the passthrough; nothing protected the passthrough itself.
+   `tests/unit/test_response_models.py` walks the live route table and checks the config directly.
+2. **It caught a real regression immediately.** Consolidating three different passthrough mechanisms
+   into one, a script deleted the config line before the rebase ran, leaving 26 models filtering
+   their payloads. No other test noticed. That is the exact bug the rule exists to prevent, and it
+   happened within an hour of the rule being written.
 
-**Suggested order**, by how much UI depends on the shape:
-
-1. `GET /api/runs/{id}` → `RunDetail` (~8 nested interfaces)
-2. `GET /api/report` → `EffectivenessReport` (the largest single hand-written type)
-3. `GET /api/runs/{id}/users/{uid}/trace` (13 `Trace*` interfaces)
-4. `GET /api/users`, `GET /api/collections`
-5. The three `/api/system/backups*` endpoints (no declared content at all)
-
-**Method that works** (proven on the 15 already done): add the model → regenerate
-`web/openapi.snapshot.json` → `pnpm -C web gen:api` → repoint the type in `types.ts` → `tsc -b`.
-`tests/unit/test_openapi_snapshot.py` fails if the snapshot drifts from the app, so the generated
-types cannot silently go stale.
-
-Six frontend-only unions stay hand-written until their server fields stop being bare `str`:
-`UserType`, `RunTrigger`, `SyncKind`, `TraceFate`, `ReportWindow`, `TestableService`. `Placement` and
-`PosterMode` no longer need to be — those closed sets are now advertised in the schema by
-`_closed_set()` in `api/collections.py`, which is the pattern to copy.
+Deliberately left as open maps, because their keys vary by DATA rather than by branch: `Run.stats`,
+`RunUser.diff`, `RunUser.breakdown`, `RunUserTrace.trace`, the run log's `counts`, `UserOut.prefs`,
+`Collection.hub_anchor` values' parent map, and `GET /api/settings`. A model over any of them would
+either 500 on legacy rows or invent absent keys into every payload. Each is commented where it lives.
 
 ---
 

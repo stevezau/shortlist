@@ -66,7 +66,7 @@ async def remove_users_rows(state, user_slugs: list[str]) -> None:
     await jobs.queue_privacy_sync(state, reason)
 
 
-async def _rename_after_nickname(state, was_called: dict[str, str]) -> None:
+async def rename_after_nickname(state, was_called: dict[str, str]) -> None:
     """Re-render every per-person row's titles so a name change lands on Plex now, not next run.
 
     Reuses the row-rename reconcile with each row's UNCHANGED template. What moved is not the template
@@ -372,7 +372,7 @@ async def sync_users_from_state(state) -> dict:
     emit("sync.progress", {"phase": "save", "done": total, "total": total})
     with state.sessions() as session:  # the owner's own name can drift on the same sync
         display_changed = {**display_changed, **_display_names_drifted(session, before)}
-    await _rename_after_nickname(state, display_changed)
+    await rename_after_nickname(state, display_changed)
     with state.sessions() as session:
         SettingsStore(session, state.secrets).set("report.users_synced_at", datetime.now(UTC).isoformat())
         session.commit()

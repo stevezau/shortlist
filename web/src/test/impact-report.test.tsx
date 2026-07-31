@@ -103,13 +103,22 @@ const REPORT: EffectivenessReport = {
     { tmdb_id: 1, media_type: "movie", title: "Dune: Part Two", watchers: 3 },
   ],
   trend: [{ week: "2026-28", watched: 4 }],
-  per_user: [{ username: "sarah", slug: "sarah", delivered: 6, watched: 3 }],
+  per_user: [
+    {
+      username: "sarah",
+      display_name: "sarah",
+      slug: "sarah",
+      delivered: 6,
+      watched: 3,
+    },
+  ],
   per_row: [
     {
       slug: "picked",
       section_key: "10",
       library: "Movies",
       name: "✨ Movies Picked for You",
+      deleted: false,
       delivered: 10,
       watched: 4,
     },
@@ -118,6 +127,7 @@ const REPORT: EffectivenessReport = {
       section_key: "20",
       library: "TV Shows",
       name: "My Faves",
+      deleted: false,
       delivered: 6,
       watched: 3,
     },
@@ -125,6 +135,7 @@ const REPORT: EffectivenessReport = {
   recent: [
     {
       username: "sarah",
+      display_name: "sarah",
       title: "Dune: Part Two",
       media_type: "movie",
       row: "✨ Movies Picked for You",

@@ -9,7 +9,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from shortlist.server.api.serializers import pick_dict
+from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.api.serializers import UserPickOut, pick_dict
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -31,6 +32,39 @@ class RowOverridePatch(BaseModel):
     recent_count: int | None = Field(default=None, ge=1, le=25)
 
 
+class RowOverrideOut(PassthroughModel):
+    """This person's stored tweaks for one row. `None` on either field means "use the row's own"."""
+
+    row_size: int | None
+    recent_count: int | None
+
+
+class UserRowOut(PassthroughModel):
+    """One row this person gets, in one library: its effective settings, their override, its picks."""
+
+    collection_id: int
+    slug: str
+    name: str
+    media: str
+    library: str
+    section_key: str
+    size: int
+    recent_count: int  # the row's EFFECTIVE depth — what "use the row's default" resolves to
+    is_default: bool
+    muted: bool
+    override: RowOverrideOut
+    picks: list[UserPickOut]
+
+
+class RowOverrideSavedOut(PassthroughModel):
+    """The override as stored, echoed back by the PUT."""
+
+    collection_id: int
+    muted: bool
+    row_size: int | None
+    recent_count: int | None
+
+
 def _applicable_rows(session, user: User) -> list[Collection]:
     """Enabled per-person collections this user is in the audience of (everyone, or a subset they're in)."""
     subset_ids = {row.collection_id for row in session.query(CollectionAudience).filter_by(user_id=user.id).all()}
@@ -43,7 +77,7 @@ def _applicable_rows(session, user: User) -> list[Collection]:
     return [c for c in rows if c.audience == "everyone" or c.id in subset_ids]
 
 
-@router.get("/{user_id}/rows")
+@router.get("/{user_id}/rows", response_model=list[UserRowOut])
 async def user_rows(user_id: int, request: Request) -> list[dict]:
     """The rows this user gets, each with its effective settings, their override, and latest picks."""
     with request.app.state.sessions() as session:
@@ -106,7 +140,7 @@ async def user_rows(user_id: int, request: Request) -> list[dict]:
         return out
 
 
-@router.put("/{user_id}/rows/{collection_id}")
+@router.put("/{user_id}/rows/{collection_id}", response_model=RowOverrideSavedOut)
 async def set_user_row_override(user_id: int, collection_id: int, patch: RowOverridePatch, request: Request) -> dict:
     """Mute or resize one row for one person — upserts their override."""
     with request.app.state.sessions() as session:

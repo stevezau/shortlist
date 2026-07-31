@@ -41,6 +41,14 @@ const USER: User = {
   last_run_at: null,
   request_tag: "",
   hit_rate: null,
+  nickname: "",
+  friendly_name: "",
+  display_name: "",
+  avatar_url: "",
+  plex_account_id: 0,
+  restriction_profile: "",
+  preview_titles: [],
+  prefs: {},
 };
 
 function row(patch: Partial<UserRow> = {}): UserRow {

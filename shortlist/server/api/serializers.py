@@ -8,7 +8,62 @@ render belongs here.
 
 from __future__ import annotations
 
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.db.models import DEFAULT_SLUG, PickRow, User, iso_utc
+
+#: Every response model in this package sets it. A Pydantic response model does not merely DESCRIBE a
+#: response, it FILTERS it — a key the model forgot to declare is dropped from the payload, silently,
+#: in production. `extra="allow"` turns the model back into documentation: undeclared keys pass
+#: through untouched, so the worst a stale model can do is under-describe the schema.
+
+
+class UserPickOut(PassthroughModel):
+    """One delivered pick as the USER pages render it — the response shape of :func:`pick_dict`.
+
+    Not ``PickOut``: the run detail publishes its own, narrower pick shape under that name
+    (``api/schemas_runs.py``), and two models sharing a name make FastAPI fall back to
+    fully-qualified schema names for both — which the SPA then generates as
+    ``shortlist__server__api__serializers__PickOut``.
+    """
+
+    rank: int
+    title: str
+    reason: str
+    media_type: str
+    collection_slug: str
+    library: str
+    section_key: str
+    seed_title: str | None
+    sources: list[str]
+    affinity: float
+
+
+class UserOut(PassthroughModel):
+    """One person — the response shape of :func:`user_dict`."""
+
+    id: int
+    plex_account_id: int
+    username: str
+    slug: str
+    nickname: str
+    friendly_name: str
+    display_name: str
+    avatar_url: str
+    user_type: str
+    restricted: bool
+    restriction_profile: str
+    enabled: bool
+    cold_start: bool
+    request_tag: str
+    # Free-form JSON, deliberately left untyped here: which keys exist varies by DATA, not by branch
+    # (`history_depth` appears after the first watch sync, `paused` only once someone is paused), and
+    # a model with defaults would INVENT the absent ones into every payload. `UserPrefs` in
+    # `api/users.py` is the shape a client may WRITE; what is stored is whatever an install accrued.
+    prefs: dict
+    history_depth: int
+    last_run_at: str | None
+    hit_rate: float | None
+    preview_titles: list[str]
 
 
 def pick_dict(pick: PickRow) -> dict:

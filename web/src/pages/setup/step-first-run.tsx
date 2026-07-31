@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
 import type { StepProps } from "./step-props";
 
 /** What each stage's counts mean, phrased for humans ("113 history · 40 seeds"). */
-function countsLine(counts: Record<string, number>): string {
+function countsLine(counts: Record<string, number | string>): string {
   const entries = Object.entries(counts).filter(
     ([name]) => name !== "position",
   );
@@ -35,7 +35,7 @@ function countsLine(counts: Record<string, number>): string {
 
 interface UserProgress {
   stage: string;
-  counts: Record<string, number>;
+  counts: Record<string, number | string>;
   reason?: string | null;
 }
 
@@ -163,7 +163,7 @@ export function StepFirstRun({ complete }: StepProps) {
         ...current,
         [event.user]: {
           stage: event.stage,
-          counts: event.counts,
+          counts: event.counts ?? {},
           reason: event.reason ?? null,
         },
       })),

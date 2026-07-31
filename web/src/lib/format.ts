@@ -50,7 +50,10 @@ export function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function formatDuration(ms: number): string {
+/** A duration in ms, or "—" when there isn't one yet — a run user who hasn't started has
+ *  `duration_ms: null`, which used to render as the literal "nullms". */
+export function formatDuration(ms: number | null): string {
+  if (ms === null) return "—";
   if (ms < 1000) return `${ms}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
@@ -60,10 +63,10 @@ export function formatDuration(ms: number): string {
 
 /** Wall-clock a run took: finished − started in ms, or null while it's still running / unparseable. */
 export function runElapsedMs(
-  startedAt: string,
+  startedAt: string | null,
   finishedAt: string | null,
 ): number | null {
-  if (!finishedAt) return null;
+  if (!startedAt || !finishedAt) return null;
   const start = Date.parse(startedAt);
   const end = Date.parse(finishedAt);
   if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;

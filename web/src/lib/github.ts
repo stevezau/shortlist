@@ -9,7 +9,7 @@ export function githubIssueSnippet(
     "### Shortlist run error",
     "",
     `- Run: #${run.id} (${run.trigger}${run.dry_run ? ", dry-run" : ""})`,
-    `- Started: ${run.started_at}`,
+    `- Started: ${run.started_at ?? "unknown"}`,
     `- User: ${result.slug}`,
     `- Status: ${result.status}`,
     "",

@@ -80,3 +80,77 @@ export function jobTransitions(
 export function statusMap(jobs: Job[]): Map<number, Job["status"]> {
   return new Map(jobs.map((job) => [job.id, job.status]));
 }
+
+/**
+ * Is an engine run writing to Plex right now? `_plex_busy` (services/jobs.py) is what actually
+ * defers a Plex-writing job while a run holds the writer lock — this is the SPA's one window onto
+ * that same fact: the newest run row, which carries `status: "running"` for exactly as long as the
+ * lock is held. Polled only while `enabled` (a queued job that might be waiting on it exists), so
+ * an idle popover costs nothing extra.
+ */
+export function useRunActive(enabled: boolean): boolean {
+  const query = useQuery({
+    queryKey: ["runs", "active"],
+    queryFn: () => api.getRuns(undefined, undefined, 1),
+    enabled,
+    refetchInterval: enabled ? 3_000 : false,
+  });
+  return query.data?.[0]?.status === "running";
+}
+
+/**
+ * Does this job kind write to Plex or plex.tv? `GET /api/schedule` is the one endpoint that carries
+ * `writes_plex` per kind (services/jobs.py's `JobKind.writes_plex`) — but it only lists the kinds
+ * that run on a timer, so the four kinds queued automatically by a mutation (`user.cleanup`,
+ * `user.hide`, `user.restore`, `row.reconcile`) are absent from it and fall back to `true` here.
+ * That mirrors the server's own default for a kind it doesn't recognise
+ * (`services/jobs.py::writes_plex`): the safe assumption is "takes the lock", never "assume it's
+ * harmless".
+ */
+export function useWritesPlex(): (kind: string) => boolean {
+  const query = useQuery({
+    queryKey: queryKeys.schedule,
+    queryFn: api.getSchedule,
+    staleTime: 5 * 60_000,
+  });
+  const map = new Map<string, boolean>();
+  for (const entry of query.data?.jobs ?? []) {
+    if (entry.kind && entry.writes_plex !== undefined) {
+      map.set(entry.kind, entry.writes_plex);
+    }
+  }
+  return (kind: string) => map.get(kind) ?? true;
+}
+
+/**
+ * Why a queued job hasn't started, in words that say what it's waiting FOR — the gap that made
+ * "waiting" alone unreadable: it never said whether the wait was expected or something was stuck.
+ *
+ * Only a job that writes to Plex ever waits on a RUN (`services/jobs.py::_claimable`) — a read-only
+ * job that is queued is queued for a different reason (the parallel-reader cap), so it gets its own
+ * wording rather than being told a run is holding it up.
+ */
+export function queuedReason(
+  writesPlex: boolean,
+  runActive: boolean,
+): { text: string; title: string } {
+  if (!writesPlex) {
+    return {
+      text: "waiting for a free slot",
+      title:
+        "Shortlist limits how many background jobs run at once. This starts as soon as one of them finishes.",
+    };
+  }
+  if (runActive) {
+    return {
+      text: "waiting for the run to finish",
+      title:
+        "A run is writing to Plex right now, and Shortlist never writes to Plex from two places at once — this starts the moment the run finishes.",
+    };
+  }
+  return {
+    text: "waiting its turn",
+    title:
+      "Shortlist writes to Plex one thing at a time, so this starts as soon as the current write finishes.",
+  };
+}

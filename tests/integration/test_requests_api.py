@@ -137,9 +137,20 @@ class TestRequestsApi:
         assert rows[20]["poster_path"] == ""  # seeded without one — absent, not null
 
     def test_reject_marks_rejected_and_drops_from_pending(self, client: TestClient):
-        assert client.post("/api/requests/reject", json={"ids": [1]}).json()["rejected"] == 1
+        body = client.post("/api/requests/reject", json={"ids": [1]}).json()
+        assert body["rejected"] == 1
+        # Each inbox action now declares a Pydantic response model, and a model missing its one key
+        # would return `{}` with a 200 — the button would look like it worked and report nothing.
+        assert set(body) == {"rejected"}
         rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
         assert rows[10]["status"] == "rejected"
+
+    def test_every_inbox_action_returns_its_own_count_and_nothing_else(self, client: TestClient):
+        """One assertion per action, because each names its count differently and the UI reads the
+        name — `deleted` arriving where `cleared` was expected is a silent no-op in the inbox."""
+        assert set(client.post("/api/requests/restore", json={"ids": [1]}).json()) == {"restored"}
+        assert set(client.post("/api/requests/clear", json={"ids": [3]}).json()) == {"cleared"}
+        assert set(client.post("/api/requests/delete", json={"ids": [1]}).json()) == {"deleted"}
 
     def test_delete_removes_the_row_entirely_leaving_no_tombstone(self, client: TestClient):
         # Delete (unlike reject) removes the row outright, so a later run can re-surface the title.
@@ -216,6 +227,10 @@ class TestRequestsApi:
         body = client.post("/api/requests/send", json={"ids": [1]}).json()
         assert body["sent"] == 1 and fake.movie_calls == [(10, False)]
         assert fake.tag_calls == [{"kids", "sarah"}]  # the queued tags are applied on send
+        # The per-title outcomes are how the owner sees WHY something didn't go, so the nested key
+        # set is asserted too — a response model that dropped `detail` would hide every skip reason.
+        assert set(body) == {"sent", "dry_run", "outcomes"}
+        assert [set(o) for o in body["outcomes"]] == [{"id", "title", "status", "detail"}]
         rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
         assert rows[10]["status"] == "sent" and rows[10]["detail"] == "queued in Radarr"
         assert rows[10]["arr_slug"] == "movie-10"  # captured at send time -> the inbox deep-links to it
@@ -227,6 +242,7 @@ class TestRequestsApi:
         monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
         body = client.post("/api/requests/send", json={"ids": [1], "dry_run": True}).json()
         assert body["dry_run"] is True and fake.movie_calls == [(10, True)]
+        assert set(body) == {"sent", "dry_run", "outcomes"}
         rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
         assert rows[10]["status"] == "pending"  # a preview leaves the inbox untouched
 

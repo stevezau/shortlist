@@ -7,15 +7,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ApiModule from "@/lib/api";
 import { JobsPage } from "@/pages/jobs";
 
-const { syncWatched, syncUsers, getJobs, getJobCatalog, runJob, getSchedule } =
-  vi.hoisted(() => ({
-    syncWatched: vi.fn(),
-    syncUsers: vi.fn(),
-    getJobs: vi.fn(),
-    getJobCatalog: vi.fn(),
-    runJob: vi.fn(),
-    getSchedule: vi.fn(),
-  }));
+const {
+  syncWatched,
+  syncUsers,
+  getJobs,
+  getJobCatalog,
+  runJob,
+  getSchedule,
+  getRuns,
+} = vi.hoisted(() => ({
+  syncWatched: vi.fn(),
+  syncUsers: vi.fn(),
+  getJobs: vi.fn(),
+  getJobCatalog: vi.fn(),
+  runJob: vi.fn(),
+  getSchedule: vi.fn(),
+  getRuns: vi.fn(),
+}));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -28,6 +36,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       getJobCatalog,
       runJob,
       getSchedule,
+      getRuns,
     },
   };
 });
@@ -118,6 +127,8 @@ describe("JobsPage — sync users and watch history", () => {
     getJobCatalog.mockReset();
     getJobCatalog.mockResolvedValue(CATALOG);
     runJob.mockReset();
+    getRuns.mockReset();
+    getRuns.mockResolvedValue([]);
     FakeEventSource.latest = null;
     vi.stubGlobal("EventSource", FakeEventSource);
   });
@@ -257,6 +268,8 @@ describe("JobsPage — sync check", () => {
     runJob.mockReset();
     syncWatched.mockReset();
     syncUsers.mockReset();
+    getRuns.mockReset();
+    getRuns.mockResolvedValue([]);
     FakeEventSource.latest = null;
     vi.stubGlobal("EventSource", FakeEventSource);
   });
@@ -608,6 +621,8 @@ describe("JobsPage — one place for everything on a timer", () => {
     getJobs.mockResolvedValue([]);
     getJobCatalog.mockReset();
     getJobCatalog.mockResolvedValue(CATALOG);
+    getRuns.mockReset();
+    getRuns.mockResolvedValue([]);
     getSchedule.mockReset();
     getSchedule.mockResolvedValue({
       jobs: [],
@@ -634,7 +649,9 @@ describe("JobsPage — one place for everything on a timer", () => {
     expect(
       await screen.findByRole("button", { name: "Jobs" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Activity" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
   });
 

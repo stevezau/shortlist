@@ -12,12 +12,69 @@ from shortlist.server.db.models import User
 
 pytestmark = pytest.mark.integration
 
+# The exact key set each response carries, spelled out. These endpoints declare Pydantic response
+# models, and a response model FILTERS: any key it does not declare is dropped from the payload,
+# silently, with nothing failing until a page goes blank in production. Asserting the whole key set
+# (not "some field I care about is present") is what proves the models describe the shape instead of
+# eating part of it.
+RUN_SUMMARY_KEYS = {
+    "id",
+    "trigger",
+    "started_at",
+    "finished_at",
+    "status",
+    "dry_run",
+    "stats",
+    "error",
+    "promotion_blockers",
+}
+RUN_DETAIL_KEYS = RUN_SUMMARY_KEYS | {"users"}
+RUN_USER_KEYS = {
+    "username",
+    "display_name",
+    "slug",
+    "status",
+    "error",
+    "reason",
+    "duration_ms",
+    "llm_tokens",
+    "llm_tokens_by_step",
+    "exa_searches",
+    "diff",
+    "picks",
+    "breakdown",
+    "has_trace",
+}
+PICK_KEYS = {"rank", "title", "reason", "seed_title", "sources", "affinity"}
+TRACE_KEYS = {"username", "display_name", "status", "error", "reason", "trace", "breakdown", "requests"}
+TRACE_REQUEST_KEYS = {"status", "detail", "arr_slug", "excluded"}
+RUN_LOG_KEYS = {"seq", "ts", "run_id", "user", "stage", "counts", "reason"}
+RUNS_SUMMARY_KEYS = {"total", "ok", "error", "last_finished", "last_status"}
+
+REPORT_KEYS = {
+    "window",
+    "window_days",
+    "since",
+    "first_pick",
+    "overall",
+    "watch_sync",
+    "coverage",
+    "runs",
+    "requests",
+    "trend",
+    "per_user",
+    "per_row",
+    "top_titles",
+    "recent",
+}
+
 
 class TestRunsApi:
     def test_empty_list_then_trigger(self, client: TestClient):
         assert client.get("/api/runs").json() == []
         r = client.post("/api/runs", json={"dry_run": True})
         assert r.status_code == 202
+        assert set(r.json()) == {"run_id"}
         run_id = r.json()["run_id"]
         # The run fails fast (Plex unconfigured) but must exist with a terminal/queued status.
         for _ in range(50):
@@ -27,8 +84,10 @@ class TestRunsApi:
             time.sleep(0.05)
         assert runs[0]["id"] == run_id
         assert runs[0]["status"] == "error"  # no plex configured in this app instance
+        assert set(runs[0]) == RUN_SUMMARY_KEYS
         detail = client.get(f"/api/runs/{run_id}")
         assert detail.status_code == 200
+        assert set(detail.json()) == RUN_DETAIL_KEYS
 
     def test_a_skipped_users_reason_reaches_the_run_detail_without_looking_like_a_failure(self, client: TestClient):
         """The whole point of `reason` (issue #3): "skipped" has to explain itself in the UI. It is
@@ -57,6 +116,52 @@ class TestRunsApi:
         assert result["status"] == "skipped"
         assert result["reason"] == "There are no per-person rows to build."
         assert result["error"] is None
+
+    def test_run_detail_carries_every_key_for_a_finished_and_a_still_pending_user(self, client: TestClient):
+        """Both branches of the users list — the people the run has finished, and the ones it hasn't
+        started yet (synthesised from `stats.expected_users` so the page can pre-populate mid-run) —
+        must carry the SAME keys, and every one of them. The response model would otherwise be free
+        to drop a field from one branch only, which is the hardest version of this bug to see."""
+        from shortlist.server.db.models import PickRow, Run, RunUser
+
+        with client.app.state.sessions() as session:
+            done = session.query(User).filter_by(slug="sarah").first()
+            run = Run(
+                trigger="manual",
+                status="running",
+                # mike has not been reached yet; sarah has.
+                stats={"expected_users": [{"username": "mike", "display_name": "Mike", "slug": "mike"}]},
+            )
+            session.add(run)
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=done.id, status="ok", duration_ms=1200, llm_tokens=42))
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=done.id,
+                    tmdb_id=1,
+                    media_type="movie",
+                    rating_key=1,
+                    rank=1,
+                    title="Dune",
+                    reason="because you watched Arrival",
+                    seed_title="Arrival",
+                    sources="tmdb_similar",
+                    affinity=0.5,
+                )
+            )
+            session.commit()
+            run_id = run.id
+
+        body = client.get(f"/api/runs/{run_id}").json()
+
+        assert set(body) == RUN_DETAIL_KEYS
+        by_slug = {u["slug"]: u for u in body["users"]}
+        assert set(by_slug) == {"sarah", "mike"}
+        assert set(by_slug["sarah"]) == RUN_USER_KEYS
+        assert set(by_slug["mike"]) == RUN_USER_KEYS, "a pending user is the same shape, not a subset"
+        assert by_slug["mike"]["status"] == "pending"
+        assert set(by_slug["sarah"]["picks"][0]) == PICK_KEYS
 
     def test_run_detail_shows_the_display_name_not_the_bare_username(self, client: TestClient):
         """The runs view must read a person the same way the Users page does — nickname → Tautulli
@@ -207,6 +312,7 @@ class TestRunsApi:
 
         payload = client.get(f"/api/runs/{run_id}/users/{user_id}/trace").json()
 
+        assert set(payload) == TRACE_KEYS
         assert payload["status"] == "error"
         assert "every candidate source failed" in payload["error"]
         # The delivered ending is present and provenance-enriched from the picks table.
@@ -250,6 +356,7 @@ class TestRunsApi:
         payload = client.get(f"/api/runs/{run_id}/users/{user_id}/trace").json()
 
         assert list(payload["requests"]) == ["77:movie"]
+        assert set(payload["requests"]["77:movie"]) == TRACE_REQUEST_KEYS
         assert payload["requests"]["77:movie"]["status"] == "sent"
 
     def test_a_failed_run_exposes_why_not_just_that_it_failed(self, client: TestClient):
@@ -285,6 +392,14 @@ class TestRunsApi:
         # A run that already finished (or never existed) can't be cancelled — the endpoint says so
         # rather than pretending it stopped something.
         assert client.post("/api/runs/999999/cancel").status_code == 409
+
+    def test_cancelling_a_live_run_answers_that_it_is_stopping(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(client.app.state.run_service, "cancel_run", lambda run_id: True)
+
+        r = client.post("/api/runs/1/cancel")
+
+        assert r.status_code == 200
+        assert r.json() == {"cancelling": True}
 
     def test_runs_can_be_filtered_to_one_row(self, client: TestClient):
         """?collection=<slug> narrows the list to runs that actually built that row (their picks carry
@@ -332,6 +447,7 @@ class TestRunsApi:
             session.commit()
 
         summary = client.get("/api/runs/summary").json()
+        assert set(summary) == RUNS_SUMMARY_KEYS
         assert summary["total"] == 3
         assert summary["ok"] == 2
         assert summary["error"] == 1
@@ -360,11 +476,11 @@ class TestRunsApi:
             assert session.query(RunUser).count() == 0  # per-user detail is gone
 
     def test_retention_prunes_runs_older_than_configured_months_but_keeps_picks(self, client: TestClient):
-        """_prune_runs deletes runs older than retention_months but keeps their picks (nulls run_id)
+        """prune_runs deletes runs older than retention_months but keeps their picks (nulls run_id)
         so the dashboard's lifetime metrics survive. Runs inside the window are untouched."""
 
         from shortlist.server.db.models import PickRow, Run, RunUser
-        from shortlist.server.services.run_service import RunService
+        from shortlist.server.services.run_persistence import prune_runs
 
         with client.app.state.sessions() as session:
             uid = session.query(User).first().id
@@ -381,7 +497,7 @@ class TestRunsApi:
                 )
             session.commit()
 
-            RunService._prune_runs(session, retention_months=3)
+            prune_runs(session, retention_months=3)
             session.commit()
 
             kept_runs = {r.id for r in session.query(Run).all()}
@@ -401,7 +517,7 @@ class TestRunsApi:
         to clean them up — a silent, unrecoverable leak of other people's rows onto their screens.
         """
         from shortlist.server.db.models import Delivery, PickRow, Run
-        from shortlist.server.services.run_service import RunService
+        from shortlist.server.services.run_persistence import prune_runs
 
         with client.app.state.sessions() as session:
             uid = session.query(User).first().id
@@ -415,7 +531,7 @@ class TestRunsApi:
             session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=4242))
             session.commit()
 
-            RunService._prune_runs(session, retention_months=3)
+            prune_runs(session, retention_months=3)
             session.commit()
 
             assert session.query(Run).count() == 0, "the old run should have gone"
@@ -425,7 +541,7 @@ class TestRunsApi:
     def test_pruning_a_run_takes_its_activity_log_with_it(self, client: TestClient):
         """Narration is the storage hog and is meaningless without the run it describes."""
         from shortlist.server.db.models import Run, RunLogLine
-        from shortlist.server.services.run_service import RunService
+        from shortlist.server.services.run_persistence import prune_runs
 
         with client.app.state.sessions() as session:
             now = datetime.now(UTC)
@@ -442,7 +558,7 @@ class TestRunsApi:
             recent_id = recent.id
             session.commit()
 
-            RunService._prune_runs(session, retention_months=3)
+            prune_runs(session, retention_months=3)
             session.commit()
 
             remaining = session.query(RunLogLine).all()
@@ -452,7 +568,7 @@ class TestRunsApi:
         """The audit trail answers "what changed on whose share at 03:31" (plex-safety rule 10), so
         it is the one record kept forever unless the owner asks otherwise."""
         from shortlist.server.db.models import Event
-        from shortlist.server.services.run_service import RunService
+        from shortlist.server.services.run_persistence import prune_events
 
         with client.app.state.sessions() as session:
             now = datetime.now(UTC)
@@ -464,11 +580,11 @@ class TestRunsApi:
             )
             session.commit()
 
-            RunService._prune_events(session, retention_months=0)  # the default
+            prune_events(session, retention_months=0)  # the default
             session.commit()
             assert session.query(Event).count() == 2, "0 must mean keep forever"
 
-            RunService._prune_events(session, retention_months=3)
+            prune_events(session, retention_months=3)
             session.commit()
             assert session.query(Event).count() == 1
 
@@ -595,6 +711,77 @@ class TestRunsApi:
             )
             session.commit()
             return uid
+
+    def test_report_payload_carries_every_key_the_dashboard_reads(self, client: TestClient):
+        """The report is the largest shape this API returns and the dashboard reads nearly all of it,
+        so its response model is the one most able to blank out a page by quietly dropping a key.
+        Every level of it is pinned here — the top-level keys, each nested object, and one element of
+        each list (which are empty, and therefore unassertable, until something has been watched)."""
+        self._seed_picks(client, [(1, 2, 1), (2, 2, None)])
+
+        body = client.get("/api/report?window=30").json()
+
+        assert set(body) == REPORT_KEYS
+        assert set(body["overall"]) == {
+            "delivered",
+            "watched",
+            "watched_prev",
+            "watched_delta",
+            "avg_days_to_watch",
+            "avg_days_to_watch_delta",
+            "landing",
+        }
+        assert set(body["overall"]["landing"]) == {
+            "delivered",
+            "watched",
+            "rate",
+            "cohort_from",
+            "cohort_to",
+            "matured_days",
+        }
+        assert set(body["watch_sync"]) == {"last", "next"}
+        assert set(body["coverage"]) == {
+            "users_enabled",
+            "users_total",
+            "users_with_picks",
+            "users_watched",
+            "users_watched_delta",
+            "rows_enabled",
+        }
+        assert set(body["runs"]) == {
+            "total",
+            "in_window",
+            "in_window_delta",
+            "last_finished",
+            "last_status",
+            "errors_last",
+        }
+        assert set(body["requests"]) == {"sent", "pending", "watched_after_sent"}
+        assert set(body["trend"][0]) == {"week", "watched"}
+        assert set(body["per_user"][0]) == {"username", "display_name", "slug", "delivered", "watched"}
+        assert set(body["per_row"][0]) == {
+            "slug",
+            "section_key",
+            "library",
+            "name",
+            "deleted",
+            "delivered",
+            "watched",
+        }
+        assert set(body["top_titles"][0]) == {"tmdb_id", "media_type", "title", "watchers"}
+        assert set(body["recent"][0]) == {
+            "username",
+            "display_name",
+            "title",
+            "media_type",
+            "row",
+            "library",
+            "seed_title",
+            "watched_at",
+        }
+        # `all` is the branch with no previous period: the deltas and `since` go null, but not one
+        # key may go missing with them.
+        assert set(client.get("/api/report?window=all").json()) == REPORT_KEYS
 
     def test_report_window_excludes_what_falls_outside_it(self, client: TestClient):
         """The whole point of windowing: an old pick must stop dragging on today's numbers.
@@ -1132,6 +1319,62 @@ class TestRunsApi:
         # The line carries the time of the watch, not of any one delivery.
         assert recent[0]["watched_at"].startswith((now - timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M"))
 
+    def test_report_sync_answers_that_it_started_and_fires_in_the_background(self, client: TestClient, monkeypatch):
+        """The dashboard's "sync now" button. It returns immediately (202) — the sync itself fetches
+        history for every user, so it cannot be awaited on the request."""
+        calls = []
+        monkeypatch.setattr(client.app.state.run_service, "sync_watched_background", lambda: calls.append(1))
+
+        r = client.post("/api/report/sync")
+
+        assert r.status_code == 202
+        assert r.json() == {"started": True}
+        assert calls == [1]
+
+    def test_deleted_rows_lists_orphaned_history_and_says_what_clearing_it_removed(self, client: TestClient):
+        """Both endpoints of the one destructive action on the dashboard, and both branches of the
+        DELETE: nothing eligible (naming a row that still exists) and something eligible."""
+        from shortlist.server.db.models import PickRow, Run
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            for tmdb_id, slug in ((1, "picked"), (2, "date-night"), (3, "date-night")):
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        rating_key=tmdb_id,
+                        rank=1,
+                        collection_slug=slug,
+                        title=f"T{tmdb_id}",
+                    )
+                )
+            session.commit()
+
+        listed = client.get("/api/report/deleted-rows").json()
+        assert [r["slug"] for r in listed] == ["date-night"]  # "picked" still exists
+        assert set(listed[0]) == {"slug", "picks", "first_seen", "last_seen"}
+        assert listed[0]["picks"] == 2
+
+        # A live row's slug is not eligible, and refusing still answers in full rather than 404ing.
+        assert client.delete("/api/report/deleted-rows?slug=picked").json() == {
+            "cleared": 0,
+            "picks": 0,
+            "slugs": [],
+        }
+
+        cleared = client.delete("/api/report/deleted-rows").json()
+        assert set(cleared) == {"cleared", "picks", "slugs"}
+        assert cleared == {"cleared": 1, "picks": 2, "slugs": ["date-night"]}
+        assert client.get("/api/report/deleted-rows").json() == []
+        with client.app.state.sessions() as session:
+            assert session.query(PickRow).count() == 1, "the live row's history must survive"
+
     def test_unknown_run_404(self, client: TestClient):
         assert client.get("/api/runs/424242").status_code == 404
 
@@ -1153,15 +1396,41 @@ class TestRunsApi:
 
         sink = service._new_run_log(run_id)
         sink({"stage": "history", "user": "sarah", "counts": {"titles": 113}})
+        sink({"stage": "skipped", "user": "mike", "counts": {}, "reason": "no watch history yet"})
         sink({"stage": "finished", "user": "Shortlist", "counts": {"ok": 1}})
 
         full = client.get(f"/api/runs/{run_id}/log").json()
-        assert [e["stage"] for e in full] == ["history", "finished"]
+        assert [e["stage"] for e in full] == ["history", "skipped", "finished"]
+        # `reason` is the one key the writer omits when there's nothing to say — both branches come
+        # back with the same keys, so a client never has to guess whether a line is truncated.
+        assert set(full[0]) == RUN_LOG_KEYS and full[0]["reason"] is None
+        assert set(full[1]) == RUN_LOG_KEYS and full[1]["reason"] == "no watch history yet"
 
         # Topping up: only what the client hasn't already got.
         tail = client.get(f"/api/runs/{run_id}/log?after_seq=0").json()
-        assert [e["stage"] for e in tail] == ["finished"]
+        assert [e["stage"] for e in tail] == ["skipped", "finished"]
 
         text = client.get(f"/api/runs/{run_id}/log?format=text")
         assert text.headers["content-type"].startswith("text/plain")
         assert "sarah" in text.text and "titles=113" in text.text
+
+    def test_run_log_read_back_from_the_durable_rows_carries_the_same_keys(self, client: TestClient):
+        """The other half of the log endpoint: a run this process never buffered is served from
+        `run_log_lines` instead of the in-memory tail. Same shape, so a page reload after a restart
+        renders identically."""
+        from shortlist.server.db.models import Run, RunLogLine
+
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(RunLogLine(run_id=run.id, seq=0, stage="history", user_slug="sarah", counts={"titles": 7}))
+            session.add(RunLogLine(run_id=run.id, seq=1, stage="skipped", user_slug="mike", reason="paused"))
+            session.commit()
+            run_id = run.id
+
+        lines = client.get(f"/api/runs/{run_id}/log").json()
+
+        assert [set(line) for line in lines] == [RUN_LOG_KEYS, RUN_LOG_KEYS]
+        assert lines[0]["counts"] == {"titles": 7} and lines[0]["ts"] is not None
+        assert lines[0]["reason"] is None and lines[1]["reason"] == "paused"

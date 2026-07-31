@@ -78,17 +78,20 @@ class User(Base):
     * ``ondelete="CASCADE"`` — `watched_titles` and `watch_sync_state`. Both are a CACHE of what the
       PMS already knows; their own docstrings say so. Losing them costs one full re-read, nothing
       more, so they follow the person out.
-    * **No ``ondelete`` (SQLite's NO ACTION → `IntegrityError`)** — `picks`, `run_users` and
-      `restriction_snapshots`. Each is the ONLY copy of something: the impact ledger behind every
-      lifetime dashboard metric, the run history, and — the one that matters most —
-      `restriction_snapshots`, which holds a person's share filters *as they were before Shortlist
-      touched them* and is what uninstall restores from (plex-safety rule 2). Cascading those away
-      would silently destroy an irreplaceable record.
+    * ``ondelete="RESTRICT"`` — `picks`, `run_users` and `restriction_snapshots`. Each is the ONLY
+      copy of something: the impact ledger behind every lifetime dashboard metric, the run history,
+      and — the one that matters most — `restriction_snapshots`, which holds a person's share filters
+      *as they were before Shortlist touched them* and is what uninstall restores from (plex-safety
+      rule 2). Cascading those away would silently destroy an irreplaceable record.
 
     So a `DELETE FROM users` fails loudly today, and that is the designed outcome: nothing in the
     codebase deletes a user (they are disabled instead), and the first code that wants to must state,
     per table, what happens to the three records that cannot be rebuilt. The app's engine sets
     `PRAGMA foreign_keys=ON` (`db/session.py`), so both halves of this policy are actually enforced.
+
+    RESTRICT is spelled out rather than left to SQLite's default NO ACTION, which behaves the same
+    here but says nothing: the policy above lived only in this docstring until 0055 put it in the
+    schema, and a comment is not something a `DELETE` can trip over.
     """
 
     __tablename__ = "users"
@@ -257,8 +260,8 @@ class RunUser(Base):
     __tablename__ = "run_users"
 
     run_id: Mapped[int] = mapped_column(ForeignKey("runs.id"), primary_key=True)
-    # No ondelete: run history is the only copy of what happened. See User's cascade policy.
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    # RESTRICT: run history is the only copy of what happened. See User's cascade policy.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Why a non-failing outcome happened (a `skipped` row that could not build). NOT an error: the
@@ -290,8 +293,8 @@ class PickRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id"), index=True, nullable=True)
-    # No ondelete: the impact ledger is the only copy of what was recommended. See User's cascade policy.
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # RESTRICT: the impact ledger is the only copy of what was recommended. See User's cascade policy.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
     tmdb_id: Mapped[int] = mapped_column(Integer)
     # A TMDB id is unique only within its namespace, so the pair (tmdb_id, media_type) is what
     # identifies a title — the staleness guard reads these back and would otherwise let a movie
@@ -326,10 +329,10 @@ class RestrictionSnapshotRow(Base):
     __tablename__ = "restriction_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    # No ondelete, and this is the one that must never change: these are the person's share filters as
-    # they were BEFORE Shortlist, and uninstall restores from them (plex-safety rule 2). There is no
-    # second copy anywhere. See User's cascade policy.
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    # RESTRICT, and this is the one that must never become a cascade: these are the person's share
+    # filters as they were BEFORE Shortlist, and uninstall restores from them (plex-safety rule 2).
+    # There is no second copy anywhere. See User's cascade policy.
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
     taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     reason: Mapped[str] = mapped_column(String(32), default="initial")  # initial | sync | uninstall_restore
     filters_before: Mapped[dict] = mapped_column(JSON, default=dict)

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, iso_utc
 from shortlist.server.scheduler import effective_cron
@@ -23,7 +24,47 @@ from shortlist.server.settings_store import SettingsStore
 router = APIRouter(prefix="/schedule", tags=["schedule"], dependencies=[Depends(require_owner)])
 
 
-@router.get("")
+class ScheduleJobOut(PassthroughModel):
+    """One scheduled job.
+
+    ``extra="allow"`` is on every model in this file, nested ones included: a strict Pydantic
+    response model silently DROPS undeclared keys from the payload, so a field missed here would
+    disappear from the response instead of failing loudly. The model documents; it never filters.
+    """
+
+    type: str  # always "job" — the discriminator against the "rows" entries below
+    kind: str
+    label: str
+    description: str
+    setting: str  # the settings key the UI writes to change this cron
+    cron: str  # the cron it ACTUALLY runs on, defaults resolved; "" = not scheduled
+    using_default: bool  # the cron came from the built-in default, not from something the owner set
+    optional: bool
+    writes_plex: bool
+    next_run: str | None
+
+
+class ScheduleRowOut(PassthroughModel):
+    id: int
+    slug: str
+    name: str
+
+
+class ScheduleRowsOut(PassthroughModel):
+    """The rows sharing one cron — ONE trigger that builds all of them, not one entry each."""
+
+    type: str  # always "rows"
+    cron: str
+    rows: list[ScheduleRowOut]
+    next_run: str | None
+
+
+class ScheduleOut(PassthroughModel):
+    jobs: list[ScheduleJobOut]
+    rows: list[ScheduleRowsOut]
+
+
+@router.get("", response_model=ScheduleOut)
 async def schedule(request: Request) -> dict:
     """Everything on a timer, each with its cron, its next fire time, and how to change it.
 

@@ -87,7 +87,11 @@ class TestSettingsValidation:
 
     def test_curator_models_is_empty_for_the_built_in_picker(self, client: TestClient):
         client.put("/api/settings", json={"values": {"curator.provider": "none"}})
-        assert client.post("/api/settings/curator/models").json() == {"provider": "none", "models": []}
+        body = client.post("/api/settings/curator/models").json()
+        assert body == {"provider": "none", "models": []}
+        # Whole key set, because the endpoint declares a response model now and a model that dropped
+        # `provider` would leave the picker unable to tell a stale reply from a live one.
+        assert set(body) == {"provider", "models"}
 
     def test_curator_models_lists_the_saved_providers_models(self, client: TestClient, monkeypatch):
 
@@ -208,6 +212,28 @@ class TestSettingsApi:
         assert r.json()["row.size"] == 20
         assert client.put("/api/settings", json={"values": {"evil.key": 1}}).status_code == 422
 
+    def test_every_stored_setting_survives_the_response_model(self, client: TestClient):
+        """This endpoint's key set is genuinely dynamic — `DEFAULTS` plus whatever the DB holds — so
+        its response model declares no fields at all and relies on `extra="allow"` to pass them
+        through. That is exactly the arrangement a stricter model would break SILENTLY: every
+        undeclared key would be dropped, and the settings page would render blank controls with a
+        200 and nothing in the log.
+
+        Asserted against the store itself rather than a hard-coded list, so a setting added tomorrow
+        is covered the day it is written.
+        """
+        client.put("/api/settings", json={"values": {"row.size": 20, "plex.token": "real-token"}})
+        with client.app.state.sessions() as session:
+            expected = set(SettingsStore(session, client.app.state.secrets).all_public())
+
+        served = client.get("/api/settings").json()
+        put_back = client.put("/api/settings", json={"values": {"row.size": 21}}).json()
+
+        assert set(served) == expected
+        assert set(put_back) == expected, "PUT returns the same store, so it must not filter either"
+        assert len(expected) > 50, "a vacuous pass if the store were somehow empty"
+        assert served["plex.token"] == "•••••"  # …and secrets are still redacted on the way out
+
     def test_secret_set_then_redacted_and_placeholder_roundtrip_keeps_value(self, client: TestClient):
         client.put("/api/settings", json={"values": {"tmdb.apikey": "abc123"}})
         # tmdb.apikey isn't a SECRET_KEY; use the plex token which is.
@@ -240,6 +266,34 @@ class TestSettingsApi:
         monkeypatch.setattr("shortlist.engine.clients.search.ExaClient.ping", lambda self: "ok — 1 result")
         ok = client.post("/api/settings/test/exa").json()
         assert ok["ok"] is True and "ok" in ok["message"]
+        # Both branches build their own dict, so both are checked against the response model.
+        assert set(no_key) == {"ok", "message"} and set(ok) == {"ok", "message"}
+
+    def test_arr_options_serve_the_dropdowns_the_settings_form_needs(self, client: TestClient, monkeypatch):
+        """Quality profiles and root folders, so a non-technical owner picks from a list instead of
+        hunting down a numeric profile id and a server path."""
+        from types import SimpleNamespace
+
+        client.put(
+            "/api/settings",
+            json={"values": {"requests.radarr.url": "http://radarr", "requests.radarr.apikey": "k"}},
+        )
+        fake = SimpleNamespace(
+            quality_profiles=lambda: [{"id": 1, "name": "HD-1080p"}],
+            root_folders=lambda: [{"id": 2, "path": "/movies"}],
+        )
+        monkeypatch.setattr("shortlist.engine.clients.arr.make_arr_client", lambda service, target: fake)
+
+        body = client.get("/api/settings/arr/radarr/options").json()
+
+        assert set(body) == {"quality_profiles", "root_folders"}
+        assert [set(p) for p in body["quality_profiles"]] == [{"id", "name"}]
+        assert [set(f) for f in body["root_folders"]] == [{"id", "path"}]
+        assert body["quality_profiles"] == [{"id": 1, "name": "HD-1080p"}]
+        assert body["root_folders"] == [{"id": 2, "path": "/movies"}]
+
+    def test_arr_options_are_409_before_the_arr_is_connected(self, client: TestClient):
+        assert client.get("/api/settings/arr/sonarr/options").status_code == 409
 
     def test_connection_error_redacts_a_plex_token(self, client: TestClient, monkeypatch):
         # plexapi errors can embed the tokened request URL; the connection-test response must never

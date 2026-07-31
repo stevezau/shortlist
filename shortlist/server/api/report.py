@@ -28,6 +28,12 @@ from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from shortlist.server.api.schemas_runs import (
+    ClearedDeletedRowsOut,
+    DeletedRowOut,
+    EffectivenessReportOut,
+    SyncStartedOut,
+)
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
@@ -43,7 +49,7 @@ from shortlist.server.services.report_service import DEFAULT_WINDOW
 router = APIRouter(prefix="/report", tags=["report"], dependencies=[Depends(require_owner)])
 
 
-@router.post("/sync", status_code=202)
+@router.post("/sync", status_code=202, response_model=SyncStartedOut)
 async def trigger_sync(request: Request) -> dict:
     """Run the daily watch-status sync on demand — refresh every user's watched picks now. Fires in
     the background (it fetches history for all users); the report refreshes once it lands."""
@@ -62,7 +68,7 @@ def _orphaned_slugs(session: Session) -> set[str]:
     return {slug for slug in used if slug not in live}
 
 
-@router.get("/deleted-rows")
+@router.get("/deleted-rows", response_model=list[DeletedRowOut])
 async def deleted_rows(request: Request) -> list[dict]:
     """Pick history belonging to rows that no longer exist, with how much of it there is.
 
@@ -95,7 +101,7 @@ async def deleted_rows(request: Request) -> list[dict]:
         ]
 
 
-@router.delete("/deleted-rows")
+@router.delete("/deleted-rows", response_model=ClearedDeletedRowsOut)
 async def clear_deleted_rows(request: Request, slug: str | None = None) -> dict:
     """Permanently delete the pick history of rows that no longer exist. `slug` clears just one.
 
@@ -147,7 +153,7 @@ async def clear_deleted_rows(request: Request, slug: str | None = None) -> dict:
     return {"cleared": len(targets), "picks": deleted, "slugs": sorted(targets)}
 
 
-@router.get("")
+@router.get("", response_model=EffectivenessReportOut)
 def effectiveness(
     request: Request,
     window: str = Query(DEFAULT_WINDOW, description="Report window in days: 7, 30, 90, or 'all'."),

@@ -1,6 +1,203 @@
 {
   "components": {
     "schemas": {
+      "ApiTokenCreatedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "created_at"
+        ],
+        "title": "ApiTokenCreatedOut",
+        "type": "object"
+      },
+      "ApiTokenRevokedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "ApiTokenRevokedOut",
+        "type": "object"
+      },
+      "ApiTokenStatusOut": {
+        "additionalProperties": true,
+        "description": "`GET /api-token`. No example or default is declared on `token` \u2014 a schema is documentation\nthat ships to the browser, and a credential has no business in one (plex-safety rule 9).",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
+          }
+        },
+        "required": [
+          "enabled",
+          "created_at",
+          "token"
+        ],
+        "title": "ApiTokenStatusOut",
+        "type": "object"
+      },
+      "ArrOptionsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "quality_profiles": {
+            "items": {
+              "$ref": "#/components/schemas/QualityProfileOut"
+            },
+            "title": "Quality Profiles",
+            "type": "array"
+          },
+          "root_folders": {
+            "items": {
+              "$ref": "#/components/schemas/RootFolderOut"
+            },
+            "title": "Root Folders",
+            "type": "array"
+          }
+        },
+        "required": [
+          "quality_profiles",
+          "root_folders"
+        ],
+        "title": "ArrOptionsOut",
+        "type": "object"
+      },
+      "BackupCreatedOut": {
+        "additionalProperties": true,
+        "description": "A manual backup carries no `created_at`: it was just taken, which is the answer.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "size_bytes"
+        ],
+        "title": "BackupCreatedOut",
+        "type": "object"
+      },
+      "BackupOut": {
+        "additionalProperties": true,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "size_bytes",
+          "created_at"
+        ],
+        "title": "BackupOut",
+        "type": "object"
+      },
+      "BackupRestoredOut": {
+        "additionalProperties": true,
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "privacy_note": {
+            "title": "Privacy Note",
+            "type": "string"
+          },
+          "restored": {
+            "title": "Restored",
+            "type": "string"
+          }
+        },
+        "required": [
+          "restored",
+          "message",
+          "privacy_note"
+        ],
+        "title": "BackupRestoredOut",
+        "type": "object"
+      },
+      "BackupScheduleOut": {
+        "additionalProperties": true,
+        "description": "Backups have no \"last ran\" line on the Tools page \u2014 the backup list itself is that answer.",
+        "properties": {
+          "cron": {
+            "title": "Cron",
+            "type": "string"
+          },
+          "max_keep": {
+            "title": "Max Keep",
+            "type": "integer"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next"
+          }
+        },
+        "required": [
+          "next",
+          "cron",
+          "max_keep"
+        ],
+        "title": "BackupScheduleOut",
+        "type": "object"
+      },
       "BlockSeedBody": {
         "properties": {
           "media_type": {
@@ -35,6 +232,60 @@
         "title": "BlockSeedBody",
         "type": "object"
       },
+      "BlockedSeedOut": {
+        "additionalProperties": true,
+        "description": "One blocked seed, always as a RECORD.\n\nThe bare-int list an old install stores is normalised by `blocked_entries` before it reaches here,\nso this shape is what both endpoints return whichever way the prefs are stored \u2014 see\n`shortlist/server/prefs.py`.",
+        "properties": {
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "title",
+          "media_type",
+          "year"
+        ],
+        "title": "BlockedSeedOut",
+        "type": "object"
+      },
+      "BlockedSeedsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "blocked_seeds": {
+            "items": {
+              "$ref": "#/components/schemas/BlockedSeedOut"
+            },
+            "title": "Blocked Seeds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "blocked_seeds"
+        ],
+        "title": "BlockedSeedsOut",
+        "type": "object"
+      },
       "Body_upload_poster_image_api_collections__collection_id__poster_upload_post": {
         "properties": {
           "file": {
@@ -62,6 +313,59 @@
         "title": "BulkEnabled",
         "type": "object"
       },
+      "BulkEnabledOut": {
+        "additionalProperties": true,
+        "description": "What `POST /users/set-enabled` did: how many were touched, and how many had rows removed.",
+        "properties": {
+          "cleaned": {
+            "title": "Cleaned",
+            "type": "integer"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated",
+          "cleaned",
+          "enabled"
+        ],
+        "title": "BulkEnabledOut",
+        "type": "object"
+      },
+      "CleanupOut": {
+        "additionalProperties": true,
+        "description": "What `POST /collections/{id}/cleanup` removed (or would remove, on a dry run).",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "removed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "removed",
+          "dry_run",
+          "message"
+        ],
+        "title": "CleanupOut",
+        "type": "object"
+      },
       "CleanupRequest": {
         "properties": {
           "dry_run": {
@@ -71,6 +375,47 @@
           }
         },
         "title": "CleanupRequest",
+        "type": "object"
+      },
+      "ClearedDeletedRowsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "cleared": {
+            "title": "Cleared",
+            "type": "integer"
+          },
+          "picks": {
+            "title": "Picks",
+            "type": "integer"
+          },
+          "slugs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Slugs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "cleared",
+          "picks",
+          "slugs"
+        ],
+        "title": "ClearedDeletedRowsOut",
+        "type": "object"
+      },
+      "ClearedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "cleared": {
+            "title": "Cleared",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cleared"
+        ],
+        "title": "ClearedOut",
         "type": "object"
       },
       "CollectionIn": {
@@ -286,6 +631,325 @@
         "title": "CollectionIn",
         "type": "object"
       },
+      "CollectionOut": {
+        "additionalProperties": true,
+        "description": "A curated-row definition \u2014 the response shape of :func:`_serialize`.",
+        "properties": {
+          "audience": {
+            "description": "Everyone, or the subset named by audience_user_ids.",
+            "enum": [
+              "everyone",
+              "subset"
+            ],
+            "title": "Audience",
+            "type": "string"
+          },
+          "audience_user_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Audience User Ids",
+            "type": "array"
+          },
+          "build": {
+            "description": "Who the row is built for: one per person, or one shared row.",
+            "enum": [
+              "per_person",
+              "shared"
+            ],
+            "title": "Build",
+            "type": "string"
+          },
+          "candidate_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Candidate Sources",
+            "type": "array"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "freshness": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Freshness"
+          },
+          "hub_anchor": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HubAnchorOut"
+            },
+            "title": "Hub Anchor",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Id"
+          },
+          "library_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Library Keys",
+            "type": "array"
+          },
+          "max_seeds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Seeds"
+          },
+          "media": {
+            "description": "Which library types this row builds in.",
+            "enum": [
+              "both",
+              "movie",
+              "show"
+            ],
+            "title": "Media",
+            "type": "string"
+          },
+          "min_watchers": {
+            "title": "Min Watchers",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "name_template": {
+            "title": "Name Template",
+            "type": "string"
+          },
+          "pin_top": {
+            "title": "Pin Top",
+            "type": "boolean"
+          },
+          "placement": {
+            "description": "Where the OWNER's own collection appears.",
+            "enum": [
+              "both",
+              "home",
+              "library",
+              "off"
+            ],
+            "title": "Placement",
+            "type": "string"
+          },
+          "placement_friends": {
+            "description": "Where each FRIEND's own collection appears.",
+            "enum": [
+              "both",
+              "home",
+              "library",
+              "off"
+            ],
+            "title": "Placement Friends",
+            "type": "string"
+          },
+          "poster": {
+            "$ref": "#/components/schemas/PosterOut"
+          },
+          "recent_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recent Count"
+          },
+          "request_tag": {
+            "title": "Request Tag",
+            "type": "string"
+          },
+          "rewatch": {
+            "title": "Rewatch",
+            "type": "boolean"
+          },
+          "schedule": {
+            "title": "Schedule",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "sort_order": {
+            "title": "Sort Order",
+            "type": "integer"
+          },
+          "unstarted_only": {
+            "title": "Unstarted Only",
+            "type": "boolean"
+          },
+          "watched_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched Pct"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "last_run_id",
+          "build",
+          "audience",
+          "audience_user_ids",
+          "enabled",
+          "schedule",
+          "size",
+          "media",
+          "sort_order",
+          "name_template",
+          "min_watchers",
+          "request_tag",
+          "candidate_sources",
+          "watched_pct",
+          "rewatch",
+          "unstarted_only",
+          "freshness",
+          "recent_count",
+          "max_seeds",
+          "placement",
+          "placement_friends",
+          "pin_top",
+          "hub_anchor",
+          "library_keys",
+          "poster"
+        ],
+        "title": "CollectionOut",
+        "type": "object"
+      },
+      "ConnectionTestOut": {
+        "additionalProperties": true,
+        "description": "`message` is plain English either way \u2014 the success line, or a redacted failure (rule 9).",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "ConnectionTestOut",
+        "type": "object"
+      },
+      "CoverageOut": {
+        "additionalProperties": true,
+        "description": "Who is actually covered. `users_enabled`/`rows_enabled` describe the server as it is NOW and\nare deliberately not windowed.",
+        "properties": {
+          "rows_enabled": {
+            "title": "Rows Enabled",
+            "type": "integer"
+          },
+          "users_enabled": {
+            "title": "Users Enabled",
+            "type": "integer"
+          },
+          "users_total": {
+            "title": "Users Total",
+            "type": "integer"
+          },
+          "users_watched": {
+            "title": "Users Watched",
+            "type": "integer"
+          },
+          "users_watched_delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Users Watched Delta"
+          },
+          "users_with_picks": {
+            "title": "Users With Picks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "users_enabled",
+          "users_total",
+          "users_with_picks",
+          "users_watched",
+          "users_watched_delta",
+          "rows_enabled"
+        ],
+        "title": "CoverageOut",
+        "type": "object"
+      },
+      "CuratorModelsOut": {
+        "additionalProperties": true,
+        "description": "The provider the listing was made for (so a stale reply can be told apart from a live one),\nand its model ids. Best-effort: `models` is empty when the provider cannot be asked.",
+        "properties": {
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "models"
+        ],
+        "title": "CuratorModelsOut",
+        "type": "object"
+      },
       "CuratorModelsRequest": {
         "description": "Optional live overrides from the settings form so the model picker can list the provider being\nedited BEFORE it's saved. Any blank field falls back to the saved setting; a redacted api key\n('\u2022\u2022\u2022\u2022\u2022') means 'use the saved key'. The key is used only to build the client in memory \u2014 never\nlogged (only the exception class is).",
         "properties": {
@@ -326,6 +990,64 @@
         "title": "CuratorModelsRequest",
         "type": "object"
       },
+      "DeletedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "DeletedOut",
+        "type": "object"
+      },
+      "DeletedRowOut": {
+        "additionalProperties": true,
+        "description": "Pick history belonging to a row that no longer exists.",
+        "properties": {
+          "first_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "picks": {
+            "title": "Picks",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "picks",
+          "first_seen",
+          "last_seen"
+        ],
+        "title": "DeletedRowOut",
+        "type": "object"
+      },
       "Dismiss": {
         "properties": {
           "id": {
@@ -339,6 +1061,131 @@
         "title": "Dismiss",
         "type": "object"
       },
+      "DismissedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "DismissedOut",
+        "type": "object"
+      },
+      "EffectivenessReportOut": {
+        "additionalProperties": true,
+        "description": "The dashboard tracking report for one window.",
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/CoverageOut"
+          },
+          "first_pick": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Pick"
+          },
+          "overall": {
+            "$ref": "#/components/schemas/OverallOut"
+          },
+          "per_row": {
+            "items": {
+              "$ref": "#/components/schemas/PerRowOut"
+            },
+            "title": "Per Row",
+            "type": "array"
+          },
+          "per_user": {
+            "items": {
+              "$ref": "#/components/schemas/PerUserOut"
+            },
+            "title": "Per User",
+            "type": "array"
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/RecentWatchOut"
+            },
+            "title": "Recent",
+            "type": "array"
+          },
+          "requests": {
+            "$ref": "#/components/schemas/ReportRequestsOut"
+          },
+          "runs": {
+            "$ref": "#/components/schemas/ReportRunsOut"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "top_titles": {
+            "items": {
+              "$ref": "#/components/schemas/TopTitleOut"
+            },
+            "title": "Top Titles",
+            "type": "array"
+          },
+          "trend": {
+            "items": {
+              "$ref": "#/components/schemas/TrendPointOut"
+            },
+            "title": "Trend",
+            "type": "array"
+          },
+          "watch_sync": {
+            "$ref": "#/components/schemas/WatchSyncOut"
+          },
+          "window": {
+            "title": "Window",
+            "type": "string"
+          },
+          "window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Days"
+          }
+        },
+        "required": [
+          "window",
+          "window_days",
+          "since",
+          "first_pick",
+          "overall",
+          "watch_sync",
+          "coverage",
+          "runs",
+          "requests",
+          "trend",
+          "per_user",
+          "per_row",
+          "top_titles",
+          "recent"
+        ],
+        "title": "EffectivenessReportOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -350,6 +1197,20 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthOut": {
+        "additionalProperties": true,
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "HealthOut",
         "type": "object"
       },
       "HubAnchorIn": {
@@ -373,6 +1234,397 @@
           }
         },
         "title": "HubAnchorIn",
+        "type": "object"
+      },
+      "HubAnchorOut": {
+        "additionalProperties": true,
+        "description": "A stored shelf placement. Defaulted, unlike the rest of these response fields: rows saved\nbefore ``top`` existed have only ``anchor``/``before``, and filling in the same default\n`HubAnchorIn` would have written is what those rows already mean.",
+        "properties": {
+          "anchor": {
+            "default": "",
+            "title": "Anchor",
+            "type": "string"
+          },
+          "before": {
+            "default": false,
+            "title": "Before",
+            "type": "boolean"
+          },
+          "top": {
+            "default": false,
+            "title": "Top",
+            "type": "boolean"
+          }
+        },
+        "title": "HubAnchorOut",
+        "type": "object"
+      },
+      "ImageProviderOut": {
+        "additionalProperties": true,
+        "properties": {
+          "capable": {
+            "title": "Capable",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "capable",
+          "provider",
+          "reason"
+        ],
+        "title": "ImageProviderOut",
+        "type": "object"
+      },
+      "JobCatalogEntryOut": {
+        "additionalProperties": true,
+        "description": "One card on the Jobs page: what the kind does, when it next runs, and how it went last time.",
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "last": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "manual": {
+            "title": "Manual",
+            "type": "boolean"
+          },
+          "next_run": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run"
+          },
+          "queued": {
+            "title": "Queued",
+            "type": "integer"
+          },
+          "running": {
+            "title": "Running",
+            "type": "integer"
+          },
+          "schedule_optional": {
+            "title": "Schedule Optional",
+            "type": "boolean"
+          },
+          "schedule_setting": {
+            "title": "Schedule Setting",
+            "type": "string"
+          },
+          "scheduled": {
+            "title": "Scheduled",
+            "type": "boolean"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "description",
+          "manual",
+          "trigger",
+          "scheduled",
+          "schedule_optional",
+          "schedule_setting",
+          "next_run",
+          "last",
+          "total",
+          "queued",
+          "running",
+          "failed"
+        ],
+        "title": "JobCatalogEntryOut",
+        "type": "object"
+      },
+      "JobOut": {
+        "additionalProperties": true,
+        "description": "One background job row \u2014 the shape `_job_dict` builds, on both `/jobs` and `/jobs/catalog`.",
+        "properties": {
+          "attempts": {
+            "title": "Attempts",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "result": {
+            "additionalProperties": true,
+            "title": "Result",
+            "type": "object"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "attempts",
+          "max_attempts",
+          "detail",
+          "error",
+          "payload",
+          "result",
+          "created_at",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "JobOut",
+        "type": "object"
+      },
+      "JobRunOut": {
+        "additionalProperties": true,
+        "description": "The receipt for `POST /jobs` \u2014 a subset of `JobOut` plus the sync-check preview lists.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "fixed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fixed",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "orphans": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Orphans",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "detail",
+          "error",
+          "fixed",
+          "orphans"
+        ],
+        "title": "JobRunOut",
+        "type": "object"
+      },
+      "LandingOut": {
+        "additionalProperties": true,
+        "description": "The landing rate over a matured cohort \u2014 picks old enough to have had their full 30 days.",
+        "properties": {
+          "cohort_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cohort From"
+          },
+          "cohort_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cohort To"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "matured_days": {
+            "title": "Matured Days",
+            "type": "integer"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate"
+          },
+          "watched": {
+            "title": "Watched",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "delivered",
+          "watched",
+          "rate",
+          "cohort_from",
+          "cohort_to",
+          "matured_days"
+        ],
+        "title": "LandingOut",
+        "type": "object"
+      },
+      "LibraryCollectionOut": {
+        "additionalProperties": true,
+        "description": "A candidate anchor title. Title only \u2014 the shelf is ordered by title, not by rating key.",
+        "properties": {
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "title": "LibraryCollectionOut",
+        "type": "object"
+      },
+      "LibraryOut": {
+        "additionalProperties": true,
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "type"
+        ],
+        "title": "LibraryOut",
         "type": "object"
       },
       "LinkRequest": {
@@ -413,6 +1665,505 @@
         "title": "LinkRequest",
         "type": "object"
       },
+      "LogLineOut": {
+        "additionalProperties": true,
+        "description": "One parsed log entry. `ts` is None for a line the parser could not date (a raw traceback).",
+        "properties": {
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          }
+        },
+        "required": [
+          "ts",
+          "level",
+          "source",
+          "message"
+        ],
+        "title": "LogLineOut",
+        "type": "object"
+      },
+      "LogoutOut": {
+        "additionalProperties": true,
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "LogoutOut",
+        "type": "object"
+      },
+      "LogsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/LogLineOut"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "total_matched": {
+            "title": "Total Matched",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "lines",
+          "total_matched",
+          "truncated",
+          "file"
+        ],
+        "title": "LogsOut",
+        "type": "object"
+      },
+      "NotificationOut": {
+        "additionalProperties": true,
+        "description": "One alert as the React bell renders it \u2014 plain text throughout, no HTML.\n\n``extra=\"allow\"`` (here and on the wrapper) is not optional: a strict Pydantic response model\nsilently DROPS any key it does not declare, so a field missed here would vanish from the payload\ninstead of failing loudly.",
+        "properties": {
+          "action_label": {
+            "title": "Action Label",
+            "type": "string"
+          },
+          "action_url": {
+            "title": "Action Url",
+            "type": "string"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "dismissable": {
+            "title": "Dismissable",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "title",
+          "body",
+          "action_url",
+          "action_label",
+          "dismissable"
+        ],
+        "title": "NotificationOut",
+        "type": "object"
+      },
+      "NotificationsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/NotificationOut"
+            },
+            "title": "Notifications",
+            "type": "array"
+          }
+        },
+        "required": [
+          "notifications"
+        ],
+        "title": "NotificationsOut",
+        "type": "object"
+      },
+      "OverallOut": {
+        "additionalProperties": true,
+        "description": "Headline counts for the window, with the change vs the previous equal period.",
+        "properties": {
+          "avg_days_to_watch": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Days To Watch"
+          },
+          "avg_days_to_watch_delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Days To Watch Delta"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "landing": {
+            "$ref": "#/components/schemas/LandingOut"
+          },
+          "watched": {
+            "title": "Watched",
+            "type": "integer"
+          },
+          "watched_delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched Delta"
+          },
+          "watched_prev": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched Prev"
+          }
+        },
+        "required": [
+          "delivered",
+          "watched",
+          "watched_prev",
+          "watched_delta",
+          "avg_days_to_watch",
+          "avg_days_to_watch_delta",
+          "landing"
+        ],
+        "title": "OverallOut",
+        "type": "object"
+      },
+      "OwnedCollectionOut": {
+        "additionalProperties": true,
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "orphan": {
+            "title": "Orphan",
+            "type": "boolean"
+          },
+          "rating_key": {
+            "title": "Rating Key",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "title",
+          "label",
+          "rating_key",
+          "kind",
+          "slug",
+          "orphan"
+        ],
+        "title": "OwnedCollectionOut",
+        "type": "object"
+      },
+      "OwnedCollectionsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "collections": {
+            "items": {
+              "$ref": "#/components/schemas/OwnedCollectionOut"
+            },
+            "title": "Collections",
+            "type": "array"
+          },
+          "orphans": {
+            "title": "Orphans",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "collections",
+          "total",
+          "orphans"
+        ],
+        "title": "OwnedCollectionsOut",
+        "type": "object"
+      },
+      "PerRowOut": {
+        "additionalProperties": true,
+        "description": "One (row, library) line. A row targeting >1 library is one Plex collection per library.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "watched": {
+            "title": "Watched",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slug",
+          "section_key",
+          "library",
+          "name",
+          "deleted",
+          "delivered",
+          "watched"
+        ],
+        "title": "PerRowOut",
+        "type": "object"
+      },
+      "PerUserOut": {
+        "additionalProperties": true,
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          },
+          "watched": {
+            "title": "Watched",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "username",
+          "display_name",
+          "slug",
+          "delivered",
+          "watched"
+        ],
+        "title": "PerUserOut",
+        "type": "object"
+      },
+      "PickOut": {
+        "additionalProperties": true,
+        "description": "One delivered recommendation, as the run detail lists it.",
+        "properties": {
+          "affinity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Affinity"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "seed_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Title"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rank",
+          "title",
+          "reason",
+          "seed_title",
+          "sources",
+          "affinity"
+        ],
+        "title": "PickOut",
+        "type": "object"
+      },
+      "PinOut": {
+        "additionalProperties": true,
+        "description": "A freshly created plex.tv PIN. The `code` is what the owner types into plex.tv/link \u2014 it is\nshort-lived and useless without the same `client_id`, and it is not a Shortlist credential.\n\n``extra=\"allow\"`` is on every response model in this file: a strict Pydantic response model\nsilently DROPS any key it does not declare, so a field missed here would vanish from the payload\nrather than fail loudly. The model documents the shape; it never filters it.",
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "client_id"
+        ],
+        "title": "PinOut",
+        "type": "object"
+      },
+      "PinStatusOut": {
+        "additionalProperties": true,
+        "description": "The poll result. Until the owner approves in Plex it is `linked: false` and the identity\nfields are null; the Plex auth token is NEVER part of this payload (it is held server-side,\nkeyed to the session, so an XSS in the SPA cannot steal it).",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "linked": {
+            "title": "Linked",
+            "type": "boolean"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "linked"
+        ],
+        "title": "PinStatusOut",
+        "type": "object"
+      },
       "PosterIn": {
         "description": "A row's custom-poster config. ``mode`` \"\" leaves Plex artwork alone; \"upload\" uses the image\nstored via the upload endpoint; \"text\" renders ``title``/``subtitle`` with the built-in Pillow\nengine (no AI); \"ai\" renders them with the curator provider's image model. The text fields share\nthe row-name placeholders ({user}/{library_name}/{top_seed}).",
         "properties": {
@@ -451,6 +2202,68 @@
         "title": "PosterIn",
         "type": "object"
       },
+      "PosterOut": {
+        "additionalProperties": true,
+        "description": "A row's poster config as the editor reads it \u2014 never the image bytes.",
+        "properties": {
+          "has_image": {
+            "title": "Has Image",
+            "type": "boolean"
+          },
+          "mode": {
+            "description": "Poster source; \"\" leaves Plex artwork alone.",
+            "enum": [
+              "",
+              "ai",
+              "generate",
+              "text",
+              "upload"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "style": {
+            "title": "Style",
+            "type": "string"
+          },
+          "subtitle": {
+            "title": "Subtitle",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "title",
+          "subtitle",
+          "style",
+          "has_image"
+        ],
+        "title": "PosterOut",
+        "type": "object"
+      },
+      "PosterUploadOut": {
+        "additionalProperties": true,
+        "properties": {
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "mode"
+        ],
+        "title": "PosterUploadOut",
+        "type": "object"
+      },
       "ProbeRequest": {
         "properties": {
           "plex_url": {
@@ -486,6 +2299,96 @@
         "title": "ProbeRequest",
         "type": "object"
       },
+      "QualityProfileOut": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "QualityProfileOut",
+        "type": "object"
+      },
+      "RecentWatchOut": {
+        "additionalProperties": true,
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "row": {
+            "title": "Row",
+            "type": "string"
+          },
+          "seed_title": {
+            "title": "Seed Title",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          },
+          "watched_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watched At"
+          }
+        },
+        "required": [
+          "username",
+          "display_name",
+          "title",
+          "media_type",
+          "row",
+          "library",
+          "seed_title",
+          "watched_at"
+        ],
+        "title": "RecentWatchOut",
+        "type": "object"
+      },
+      "RejectedOut": {
+        "additionalProperties": true,
+        "description": "How many rows the action actually touched \u2014 not how many ids were sent. Each of the four\ninbox actions skips the statuses it does not own, so the count is the only honest receipt.\n\n``extra=\"allow\"`` is on every response model here (and every nested one): a strict model would\nsilently DROP any key the handler returns but the model has not declared, so a field missed\nhere would vanish from the payload rather than fail loudly.",
+        "properties": {
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rejected"
+        ],
+        "title": "RejectedOut",
+        "type": "object"
+      },
       "RenameRequest": {
         "properties": {
           "dry_run": {
@@ -505,6 +2408,93 @@
           }
         },
         "title": "RenameRequest",
+        "type": "object"
+      },
+      "ReportRequestsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "sent": {
+            "title": "Sent",
+            "type": "integer"
+          },
+          "watched_after_sent": {
+            "title": "Watched After Sent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sent",
+          "pending",
+          "watched_after_sent"
+        ],
+        "title": "ReportRequestsOut",
+        "type": "object"
+      },
+      "ReportRunsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "errors_last": {
+            "title": "Errors Last",
+            "type": "integer"
+          },
+          "in_window": {
+            "title": "In Window",
+            "type": "integer"
+          },
+          "in_window_delta": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Window Delta"
+          },
+          "last_finished": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Finished"
+          },
+          "last_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Status"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "in_window",
+          "in_window_delta",
+          "last_finished",
+          "last_status",
+          "errors_last"
+        ],
+        "title": "ReportRunsOut",
         "type": "object"
       },
       "RequestAction": {
@@ -530,6 +2520,7 @@
         "type": "object"
       },
       "RequestCandidateOut": {
+        "additionalProperties": true,
         "properties": {
           "arr_slug": {
             "anyOf": [
@@ -657,6 +2648,7 @@
         "type": "object"
       },
       "RequestWhyOut": {
+        "additionalProperties": true,
         "properties": {
           "row": {
             "title": "Row",
@@ -695,6 +2687,73 @@
           "name"
         ],
         "title": "RestoreRequest",
+        "type": "object"
+      },
+      "RestoredOut": {
+        "additionalProperties": true,
+        "properties": {
+          "restored": {
+            "title": "Restored",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "restored"
+        ],
+        "title": "RestoredOut",
+        "type": "object"
+      },
+      "RootFolderOut": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "path"
+        ],
+        "title": "RootFolderOut",
+        "type": "object"
+      },
+      "RowOverrideOut": {
+        "additionalProperties": true,
+        "description": "This person's stored tweaks for one row. `None` on either field means \"use the row's own\".",
+        "properties": {
+          "recent_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recent Count"
+          },
+          "row_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Size"
+          }
+        },
+        "required": [
+          "row_size",
+          "recent_count"
+        ],
+        "title": "RowOverrideOut",
         "type": "object"
       },
       "RowOverridePatch": {
@@ -740,6 +2799,166 @@
         "title": "RowOverridePatch",
         "type": "object"
       },
+      "RowOverrideSavedOut": {
+        "additionalProperties": true,
+        "description": "The override as stored, echoed back by the PUT.",
+        "properties": {
+          "collection_id": {
+            "title": "Collection Id",
+            "type": "integer"
+          },
+          "muted": {
+            "title": "Muted",
+            "type": "boolean"
+          },
+          "recent_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recent Count"
+          },
+          "row_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Size"
+          }
+        },
+        "required": [
+          "collection_id",
+          "muted",
+          "row_size",
+          "recent_count"
+        ],
+        "title": "RowOverrideSavedOut",
+        "type": "object"
+      },
+      "RunCancelledOut": {
+        "additionalProperties": true,
+        "properties": {
+          "cancelling": {
+            "title": "Cancelling",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cancelling"
+        ],
+        "title": "RunCancelledOut",
+        "type": "object"
+      },
+      "RunCreatedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "RunCreatedOut",
+        "type": "object"
+      },
+      "RunDetailOut": {
+        "additionalProperties": true,
+        "description": "A run plus every person in it.",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "promotion_blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Promotion Blockers",
+            "type": "array"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "stats": {
+            "additionalProperties": true,
+            "title": "Stats",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          },
+          "users": {
+            "items": {
+              "$ref": "#/components/schemas/RunUserOut"
+            },
+            "title": "Users",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "trigger",
+          "started_at",
+          "finished_at",
+          "status",
+          "dry_run",
+          "stats",
+          "error",
+          "promotion_blockers",
+          "users"
+        ],
+        "title": "RunDetailOut",
+        "type": "object"
+      },
       "RunJobRequest": {
         "properties": {
           "background": {
@@ -762,6 +2981,69 @@
           "kind"
         ],
         "title": "RunJobRequest",
+        "type": "object"
+      },
+      "RunLogLineOut": {
+        "additionalProperties": true,
+        "description": "One line of a run's activity log.\n\nEverything but `seq` is optional because the live in-memory tail hands back exactly what the\nprogress hook pushed, key for key \u2014 only the durable `run_log_lines` read fills every field in.\n`seq` is the exception: the buffer's sink stamps it on the way in, so it is always there.",
+        "properties": {
+          "counts": {
+            "additionalProperties": true,
+            "title": "Counts",
+            "type": "object"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "stage": {
+            "default": "",
+            "title": "Stage",
+            "type": "string"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "user": {
+            "default": "",
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "RunLogLineOut",
         "type": "object"
       },
       "RunRequest": {
@@ -803,6 +3085,595 @@
         "title": "RunRequest",
         "type": "object"
       },
+      "RunSummaryOut": {
+        "additionalProperties": true,
+        "description": "One run, as the Runs list shows it.",
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "promotion_blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Promotion Blockers",
+            "type": "array"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "stats": {
+            "additionalProperties": true,
+            "title": "Stats",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trigger",
+          "started_at",
+          "finished_at",
+          "status",
+          "dry_run",
+          "stats",
+          "error",
+          "promotion_blockers"
+        ],
+        "title": "RunSummaryOut",
+        "type": "object"
+      },
+      "RunUserOut": {
+        "additionalProperties": true,
+        "description": "One person's outcome in a run. Users who haven't finished yet appear with the same keys and\n`status: \"pending\"`, so the shape does not change mid-run.",
+        "properties": {
+          "breakdown": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Breakdown",
+            "type": "array"
+          },
+          "diff": {
+            "additionalProperties": true,
+            "title": "Diff",
+            "type": "object"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "exa_searches": {
+            "title": "Exa Searches",
+            "type": "integer"
+          },
+          "has_trace": {
+            "title": "Has Trace",
+            "type": "boolean"
+          },
+          "llm_tokens": {
+            "title": "Llm Tokens",
+            "type": "integer"
+          },
+          "llm_tokens_by_step": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Llm Tokens By Step",
+            "type": "object"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/PickOut"
+            },
+            "title": "Picks",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "display_name",
+          "slug",
+          "status",
+          "error",
+          "reason",
+          "duration_ms",
+          "llm_tokens",
+          "llm_tokens_by_step",
+          "exa_searches",
+          "diff",
+          "picks",
+          "breakdown",
+          "has_trace"
+        ],
+        "title": "RunUserOut",
+        "type": "object"
+      },
+      "RunUserTraceOut": {
+        "additionalProperties": true,
+        "description": "The full pipeline trace for one user in one run.",
+        "properties": {
+          "breakdown": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Breakdown",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "requests": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TraceRequestOut"
+            },
+            "title": "Requests",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trace": {
+            "additionalProperties": true,
+            "title": "Trace",
+            "type": "object"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "display_name",
+          "status",
+          "error",
+          "reason",
+          "trace",
+          "breakdown",
+          "requests"
+        ],
+        "title": "RunUserTraceOut",
+        "type": "object"
+      },
+      "RunsDeletedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "RunsDeletedOut",
+        "type": "object"
+      },
+      "RunsSummaryOut": {
+        "additionalProperties": true,
+        "description": "Totals for the Runs page header.",
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "integer"
+          },
+          "last_finished": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Finished"
+          },
+          "last_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Status"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "ok",
+          "error",
+          "last_finished",
+          "last_status"
+        ],
+        "title": "RunsSummaryOut",
+        "type": "object"
+      },
+      "ScheduleJobOut": {
+        "additionalProperties": true,
+        "description": "One scheduled job.\n\n``extra=\"allow\"`` is on every model in this file, nested ones included: a strict Pydantic\nresponse model silently DROPS undeclared keys from the payload, so a field missed here would\ndisappear from the response instead of failing loudly. The model documents; it never filters.",
+        "properties": {
+          "cron": {
+            "title": "Cron",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "next_run": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run"
+          },
+          "optional": {
+            "title": "Optional",
+            "type": "boolean"
+          },
+          "setting": {
+            "title": "Setting",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "using_default": {
+            "title": "Using Default",
+            "type": "boolean"
+          },
+          "writes_plex": {
+            "title": "Writes Plex",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type",
+          "kind",
+          "label",
+          "description",
+          "setting",
+          "cron",
+          "using_default",
+          "optional",
+          "writes_plex",
+          "next_run"
+        ],
+        "title": "ScheduleJobOut",
+        "type": "object"
+      },
+      "ScheduleOut": {
+        "additionalProperties": true,
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleJobOut"
+            },
+            "title": "Jobs",
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleRowsOut"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs",
+          "rows"
+        ],
+        "title": "ScheduleOut",
+        "type": "object"
+      },
+      "ScheduleRowOut": {
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name"
+        ],
+        "title": "ScheduleRowOut",
+        "type": "object"
+      },
+      "ScheduleRowsOut": {
+        "additionalProperties": true,
+        "description": "The rows sharing one cron \u2014 ONE trigger that builds all of them, not one entry each.",
+        "properties": {
+          "cron": {
+            "title": "Cron",
+            "type": "string"
+          },
+          "next_run": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduleRowOut"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "cron",
+          "rows",
+          "next_run"
+        ],
+        "title": "ScheduleRowsOut",
+        "type": "object"
+      },
+      "SendOut": {
+        "additionalProperties": true,
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/SendOutcomeOut"
+            },
+            "title": "Outcomes",
+            "type": "array"
+          },
+          "sent": {
+            "title": "Sent",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sent",
+          "dry_run",
+          "outcomes"
+        ],
+        "title": "SendOut",
+        "type": "object"
+      },
+      "SendOutcomeOut": {
+        "additionalProperties": true,
+        "description": "What the Arr said about one title. `status` is the engine's outcome \u2014 \"requested\",\n\"would_request\" on a dry run, or a skip/error reason the owner can act on.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status",
+          "detail"
+        ],
+        "title": "SendOutcomeOut",
+        "type": "object"
+      },
+      "SessionOut": {
+        "additionalProperties": true,
+        "description": "Who the caller is, and whether this instance demands a sign-in at all.\n\nThe signed cookie's contents are spread into the response, so `account_id`/`username` are\npresent only once signed in \u2014 they are declared optional rather than left to `extra`, so the\nSPA gets real types for the two fields it actually reads.",
+        "properties": {
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id"
+          },
+          "authenticated": {
+            "title": "Authenticated",
+            "type": "boolean"
+          },
+          "login_required": {
+            "title": "Login Required",
+            "type": "boolean"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "authenticated",
+          "login_required"
+        ],
+        "title": "SessionOut",
+        "type": "object"
+      },
+      "SettingsOut": {
+        "additionalProperties": true,
+        "description": "The whole settings store, flat: `{\"row.size\": 15, \"plex.url\": \"\u2026\", \u2026}`.\n\nDeliberately declares NO fields. The key set is genuinely dynamic \u2014 `settings_store.DEFAULTS`\nplus whatever rows the database holds, minus `PRIVATE_KEYS` \u2014 so enumerating it here would be a\nsecond copy of `DEFAULTS` that silently goes stale, and a strict model would DROP every key it\nhad not caught up with. ``extra=\"allow\"`` passes all of them through untouched, which is the\nhonest description of this endpoint: an open map, with secrets already redacted to \"\u2022\u2022\u2022\u2022\u2022\" by\n`all_public()`.",
+        "properties": {},
+        "title": "SettingsOut",
+        "type": "object"
+      },
       "SettingsUpdate": {
         "properties": {
           "values": {
@@ -815,6 +3686,246 @@
           "values"
         ],
         "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "SyncStartedOut": {
+        "additionalProperties": true,
+        "properties": {
+          "started": {
+            "title": "Started",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "started"
+        ],
+        "title": "SyncStartedOut",
+        "type": "object"
+      },
+      "SyncStateOut": {
+        "additionalProperties": true,
+        "description": "One sync's schedule summary: when it last ran, when it fires next, and on what cron.",
+        "properties": {
+          "cron": {
+            "title": "Cron",
+            "type": "string"
+          },
+          "last": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next"
+          }
+        },
+        "required": [
+          "last",
+          "next",
+          "cron"
+        ],
+        "title": "SyncStateOut",
+        "type": "object"
+      },
+      "SyncsOut": {
+        "additionalProperties": true,
+        "properties": {
+          "backup": {
+            "$ref": "#/components/schemas/BackupScheduleOut"
+          },
+          "users": {
+            "$ref": "#/components/schemas/SyncStateOut"
+          },
+          "watched": {
+            "$ref": "#/components/schemas/SyncStateOut"
+          }
+        },
+        "required": [
+          "watched",
+          "users",
+          "backup"
+        ],
+        "title": "SyncsOut",
+        "type": "object"
+      },
+      "TitleMatchOut": {
+        "additionalProperties": true,
+        "description": "TMDB's own best guess for a title search, for the \"block a seed\" picker.",
+        "properties": {
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tmdb Id"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "title",
+          "media_type",
+          "year"
+        ],
+        "title": "TitleMatchOut",
+        "type": "object"
+      },
+      "TopTitleOut": {
+        "additionalProperties": true,
+        "properties": {
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "title": "Tmdb Id",
+            "type": "integer"
+          },
+          "watchers": {
+            "title": "Watchers",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tmdb_id",
+          "media_type",
+          "title",
+          "watchers"
+        ],
+        "title": "TopTitleOut",
+        "type": "object"
+      },
+      "TraceRequestOut": {
+        "additionalProperties": true,
+        "description": "What became of one wanted-but-missing title, keyed `\"<tmdb_id>:<media_type>\"` on the trace.",
+        "properties": {
+          "arr_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arr Slug"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "excluded": {
+            "title": "Excluded",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "detail",
+          "arr_slug",
+          "excluded"
+        ],
+        "title": "TraceRequestOut",
+        "type": "object"
+      },
+      "TrendPointOut": {
+        "additionalProperties": true,
+        "properties": {
+          "watched": {
+            "title": "Watched",
+            "type": "integer"
+          },
+          "week": {
+            "title": "Week",
+            "type": "string"
+          }
+        },
+        "required": [
+          "week",
+          "watched"
+        ],
+        "title": "TrendPointOut",
+        "type": "object"
+      },
+      "UninstallOut": {
+        "additionalProperties": true,
+        "properties": {
+          "collections_deleted": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Collections Deleted",
+            "type": "array"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "filters_restored": {
+            "title": "Filters Restored",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "rows_disabled": {
+            "title": "Rows Disabled",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "filters_restored",
+          "collections_deleted",
+          "rows_disabled",
+          "dry_run",
+          "message"
+        ],
+        "title": "UninstallOut",
         "type": "object"
       },
       "UninstallRequest": {
@@ -831,6 +3942,129 @@
           }
         },
         "title": "UninstallRequest",
+        "type": "object"
+      },
+      "UserOut": {
+        "additionalProperties": true,
+        "description": "One person \u2014 the response shape of :func:`user_dict`.",
+        "properties": {
+          "avatar_url": {
+            "title": "Avatar Url",
+            "type": "string"
+          },
+          "cold_start": {
+            "title": "Cold Start",
+            "type": "boolean"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "friendly_name": {
+            "title": "Friendly Name",
+            "type": "string"
+          },
+          "history_depth": {
+            "title": "History Depth",
+            "type": "integer"
+          },
+          "hit_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hit Rate"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "nickname": {
+            "title": "Nickname",
+            "type": "string"
+          },
+          "plex_account_id": {
+            "title": "Plex Account Id",
+            "type": "integer"
+          },
+          "prefs": {
+            "additionalProperties": true,
+            "title": "Prefs",
+            "type": "object"
+          },
+          "preview_titles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Preview Titles",
+            "type": "array"
+          },
+          "request_tag": {
+            "title": "Request Tag",
+            "type": "string"
+          },
+          "restricted": {
+            "title": "Restricted",
+            "type": "boolean"
+          },
+          "restriction_profile": {
+            "title": "Restriction Profile",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "user_type": {
+            "title": "User Type",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "plex_account_id",
+          "username",
+          "slug",
+          "nickname",
+          "friendly_name",
+          "display_name",
+          "avatar_url",
+          "user_type",
+          "restricted",
+          "restriction_profile",
+          "enabled",
+          "cold_start",
+          "request_tag",
+          "prefs",
+          "history_depth",
+          "last_run_at",
+          "hit_rate",
+          "preview_titles"
+        ],
+        "title": "UserOut",
         "type": "object"
       },
       "UserPatch": {
@@ -882,6 +4116,76 @@
           }
         },
         "title": "UserPatch",
+        "type": "object"
+      },
+      "UserPickOut": {
+        "additionalProperties": true,
+        "description": "One delivered pick as the USER pages render it \u2014 the response shape of :func:`pick_dict`.\n\nNot ``PickOut``: the run detail publishes its own, narrower pick shape under that name\n(``api/schemas_runs.py``), and two models sharing a name make FastAPI fall back to\nfully-qualified schema names for both \u2014 which the SPA then generates as\n``shortlist__server__api__serializers__PickOut``.",
+        "properties": {
+          "affinity": {
+            "title": "Affinity",
+            "type": "number"
+          },
+          "collection_slug": {
+            "title": "Collection Slug",
+            "type": "string"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "seed_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seed Title"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rank",
+          "title",
+          "reason",
+          "media_type",
+          "collection_slug",
+          "library",
+          "section_key",
+          "seed_title",
+          "sources",
+          "affinity"
+        ],
+        "title": "UserPickOut",
         "type": "object"
       },
       "UserPrefs": {
@@ -947,6 +4251,218 @@
         "title": "UserPrefs",
         "type": "object"
       },
+      "UserRowOut": {
+        "additionalProperties": true,
+        "description": "One row this person gets, in one library: its effective settings, their override, its picks.",
+        "properties": {
+          "collection_id": {
+            "title": "Collection Id",
+            "type": "integer"
+          },
+          "is_default": {
+            "title": "Is Default",
+            "type": "boolean"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "media": {
+            "title": "Media",
+            "type": "string"
+          },
+          "muted": {
+            "title": "Muted",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "override": {
+            "$ref": "#/components/schemas/RowOverrideOut"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/UserPickOut"
+            },
+            "title": "Picks",
+            "type": "array"
+          },
+          "recent_count": {
+            "title": "Recent Count",
+            "type": "integer"
+          },
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection_id",
+          "slug",
+          "name",
+          "media",
+          "library",
+          "section_key",
+          "size",
+          "recent_count",
+          "is_default",
+          "muted",
+          "override",
+          "picks"
+        ],
+        "title": "UserRowOut",
+        "type": "object"
+      },
+      "UserRunOut": {
+        "additionalProperties": true,
+        "description": "One run as it went for ONE person: their outcome, not the run's.",
+        "properties": {
+          "diff": {
+            "additionalProperties": true,
+            "title": "Diff",
+            "type": "object"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "picks": {
+            "items": {
+              "$ref": "#/components/schemas/UserPickOut"
+            },
+            "title": "Picks",
+            "type": "array"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "run_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Status"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "started_at",
+          "finished_at",
+          "status",
+          "error",
+          "reason",
+          "duration_ms",
+          "run_status",
+          "dry_run",
+          "diff",
+          "picks"
+        ],
+        "title": "UserRunOut",
+        "type": "object"
+      },
+      "UserRunsSummaryOut": {
+        "additionalProperties": true,
+        "properties": {
+          "included": {
+            "title": "Included",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "included",
+          "total"
+        ],
+        "title": "UserRunsSummaryOut",
+        "type": "object"
+      },
+      "UserSyncOut": {
+        "additionalProperties": true,
+        "properties": {
+          "added": {
+            "title": "Added",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "updated": {
+            "title": "Updated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "added",
+          "updated",
+          "total"
+        ],
+        "title": "UserSyncOut",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -985,6 +4501,161 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VersionOut": {
+        "additionalProperties": true,
+        "description": "`GET /version`.\n\n``extra=\"allow\"`` is on EVERY response model in this file, nested ones included, and is not\noptional: a strict Pydantic response model silently DROPS any key the handler returned but the\nmodel does not declare. With it, an undeclared key passes through untouched \u2014 the model\ndocuments the shape without filtering it, so a field missed here cannot vanish from the payload\nand blank out a page.",
+        "properties": {
+          "current_version": {
+            "title": "Current Version",
+            "type": "string"
+          },
+          "install_type": {
+            "title": "Install Type",
+            "type": "string"
+          },
+          "latest_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Version"
+          },
+          "update_available": {
+            "title": "Update Available",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "current_version",
+          "latest_version",
+          "update_available",
+          "install_type"
+        ],
+        "title": "VersionOut",
+        "type": "object"
+      },
+      "WatchItemOut": {
+        "additionalProperties": true,
+        "description": "One recent watch, from the same source recommendations are built from.",
+        "properties": {
+          "episode": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Episode"
+          },
+          "episode_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Episode Title"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "season": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Season"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tmdb Id"
+          },
+          "watched_at": {
+            "title": "Watched At",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "title",
+          "tmdb_id",
+          "media_type",
+          "watched_at",
+          "year",
+          "season",
+          "episode",
+          "episode_title"
+        ],
+        "title": "WatchItemOut",
+        "type": "object"
+      },
+      "WatchSyncOut": {
+        "additionalProperties": true,
+        "properties": {
+          "last": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next"
+          }
+        },
+        "required": [
+          "last",
+          "next"
+        ],
+        "title": "WatchSyncOut",
         "type": "object"
       },
       "WizardState": {
@@ -1027,9 +4698,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Logout Api Auth Logout Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LogoutOut"
                 }
               }
             },
@@ -1050,9 +4719,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Pin Api Auth Pin Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PinOut"
                 }
               }
             },
@@ -1085,9 +4752,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Poll Pin Api Auth Pin  Pin Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PinStatusOut"
                 }
               }
             },
@@ -1118,9 +4783,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Session Api Auth Session Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SessionOut"
                 }
               }
             },
@@ -1142,8 +4805,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/CollectionOut"
                   },
                   "title": "Response List Collections Api Collections Get",
                   "type": "array"
@@ -1175,9 +4837,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Collection Api Collections Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CollectionOut"
                 }
               }
             },
@@ -1263,9 +4923,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Update Collection Api Collections  Collection Id  Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CollectionOut"
                 }
               }
             },
@@ -1318,9 +4976,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cleanup Collection Api Collections  Collection Id  Cleanup Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CleanupOut"
                 }
               }
             },
@@ -1499,9 +5155,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Upload Poster Image Api Collections  Collection Id  Poster Upload Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PosterUploadOut"
                 }
               }
             },
@@ -1686,9 +5340,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Notifications Api Notifications Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NotificationsOut"
                 }
               }
             },
@@ -1720,9 +5372,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Dismiss Api Notifications Dismiss Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DismissedOut"
                 }
               }
             },
@@ -1768,9 +5418,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Effectiveness Api Report Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/EffectivenessReportOut"
                 }
               }
             },
@@ -1820,9 +5468,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Clear Deleted Rows Api Report Deleted Rows Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ClearedDeletedRowsOut"
                 }
               }
             },
@@ -1853,8 +5499,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/DeletedRowOut"
                   },
                   "title": "Response Deleted Rows Api Report Deleted Rows Get",
                   "type": "array"
@@ -1879,9 +5524,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Sync Api Report Sync Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SyncStartedOut"
                 }
               }
             },
@@ -1939,9 +5582,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Clear Requests Api Requests Clear Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ClearedOut"
                 }
               }
             },
@@ -1983,9 +5624,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Requests Api Requests Delete Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DeletedOut"
                 }
               }
             },
@@ -2027,9 +5666,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reject Requests Api Requests Reject Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RejectedOut"
                 }
               }
             },
@@ -2071,9 +5708,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Restore Requests Api Requests Restore Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RestoredOut"
                 }
               }
             },
@@ -2115,9 +5750,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Send Requests Api Requests Send Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SendOut"
                 }
               }
             },
@@ -2182,9 +5815,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Clear Runs Api Runs Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RunsDeletedOut"
                 }
               }
             },
@@ -2251,8 +5882,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/RunSummaryOut"
                   },
                   "title": "Response List Runs Api Runs Get",
                   "type": "array"
@@ -2294,9 +5924,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Trigger Run Api Runs Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RunCreatedOut"
                 }
               }
             },
@@ -2328,9 +5956,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Runs Summary Api Runs Summary Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RunsSummaryOut"
                 }
               }
             },
@@ -2362,9 +5988,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Run Api Runs  Run Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RunDetailOut"
                 }
               }
             },
@@ -2407,9 +6031,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Cancel Run Api Runs  Run Id  Cancel Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RunCancelledOut"
                 }
               }
             },
@@ -2434,7 +6056,7 @@
     },
     "/api/runs/{run_id}/log": {
       "get": {
-        "description": "The run's activity log: per-user stages, then the server-wide phases that follow them.\n\nServed from the live in-memory tail while the run is in flight and from `run_log_lines`\nafterwards, so a run whose process has since restarted still has a readable log.\n\n`after_seq` returns only lines past that sequence number, for topping up without refetching the\nwhole feed. `format=text` renders it as plain text for the download button.",
+        "description": "The run's activity log: per-user stages, then the server-wide phases that follow them.\n\nServed from the live in-memory tail while the run is in flight and from `run_log_lines`\nafterwards, so a run whose process has since restarted still has a readable log.\n\n`after_seq` returns only lines past that sequence number, for topping up without refetching the\nwhole feed. `format=text` renders it as plain text for the download button \u2014 that branch returns\na `Response` directly, which FastAPI hands back untouched, so the schema describes the JSON one.",
         "operationId": "get_run_log_api_runs__run_id__log_get",
         "parameters": [
           {
@@ -2477,7 +6099,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunLogLineOut"
+                  },
+                  "title": "Response Get Run Log Api Runs  Run Id  Log Get",
+                  "type": "array"
+                }
               }
             },
             "description": "Successful Response"
@@ -2528,9 +6156,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Run User Trace Api Runs  Run Id  Users  User Id  Trace Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RunUserTraceOut"
                 }
               }
             },
@@ -2562,9 +6188,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Schedule Api Schedule Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ScheduleOut"
                 }
               }
             },
@@ -2585,9 +6209,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Settings Api Settings Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SettingsOut"
                 }
               }
             },
@@ -2616,9 +6238,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Put Settings Api Settings Put",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SettingsOut"
                 }
               }
             },
@@ -2661,9 +6281,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Arr Options Api Settings Arr  Service  Options Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ArrOptionsOut"
                 }
               }
             },
@@ -2712,9 +6330,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Curator Models Api Settings Curator Models Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CuratorModelsOut"
                 }
               }
             },
@@ -2757,9 +6373,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Test Connection Api Settings Test  Service  Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ConnectionTestOut"
                 }
               }
             },
@@ -2970,9 +6584,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Revoke Api Token Api System Api Token Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ApiTokenRevokedOut"
                 }
               }
             },
@@ -2992,9 +6604,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Api Token Status Api System Api Token Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ApiTokenStatusOut"
                 }
               }
             },
@@ -3014,9 +6624,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Api Token Api System Api Token Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ApiTokenCreatedOut"
                 }
               }
             },
@@ -3037,7 +6645,13 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/BackupOut"
+                  },
+                  "title": "Response Get Backups Api System Backups Get",
+                  "type": "array"
+                }
               }
             },
             "description": "Successful Response"
@@ -3055,7 +6669,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BackupCreatedOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -3085,7 +6701,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BackupRestoredOut"
+                }
               }
             },
             "description": "Successful Response"
@@ -3138,9 +6756,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Health Api System Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthOut"
                 }
               }
             },
@@ -3162,9 +6778,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Image Provider Api System Image Provider Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ImageProviderOut"
                 }
               }
             },
@@ -3233,8 +6847,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/JobOut"
                   },
                   "title": "Response List Jobs Api System Jobs Get",
                   "type": "array"
@@ -3277,9 +6890,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Run Job Api System Jobs Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/JobRunOut"
                 }
               }
             },
@@ -3312,8 +6923,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/JobCatalogEntryOut"
                   },
                   "title": "Response Jobs Catalog Api System Jobs Catalog Get",
                   "type": "array"
@@ -3339,8 +6949,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/LibraryOut"
                   },
                   "title": "Response Libraries Api System Libraries Get",
                   "type": "array"
@@ -3377,8 +6986,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/LibraryCollectionOut"
                   },
                   "title": "Response Library Collections Api System Libraries  Key  Collections Get",
                   "type": "array"
@@ -3445,9 +7053,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Logs Api System Logs Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/LogsOut"
                 }
               }
             },
@@ -3499,9 +7105,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Owned Collections Audit Api System Owned Collections Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/OwnedCollectionsOut"
                 }
               }
             },
@@ -3523,9 +7127,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Syncs Api System Syncs Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SyncsOut"
                 }
               }
             },
@@ -3557,9 +7159,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Uninstall Api System Uninstall Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/UninstallOut"
                 }
               }
             },
@@ -3591,9 +7191,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Version Api System Version Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/VersionOut"
                 }
               }
             },
@@ -3616,8 +7214,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/UserOut"
                   },
                   "title": "Response List Users Api Users Get",
                   "type": "array"
@@ -3664,8 +7261,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/TitleMatchOut"
                   },
                   "title": "Response Search Titles Api Users Search Titles Get",
                   "type": "array"
@@ -3710,9 +7306,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set All Users Enabled Api Users Set Enabled Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BulkEnabledOut"
                 }
               }
             },
@@ -3744,9 +7338,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Sync Users Api Users Sync Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/UserSyncOut"
                 }
               }
             },
@@ -3788,9 +7380,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Patch User Api Users  User Id  Patch",
-                  "type": "object"
+                  "$ref": "#/components/schemas/UserOut"
                 }
               }
             },
@@ -3843,9 +7433,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Block Seed Api Users  User Id  Blocked Seeds Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BlockedSeedsOut"
                 }
               }
             },
@@ -3897,9 +7485,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Unblock Seed Api Users  User Id  Blocked Seeds  Tmdb Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/BlockedSeedsOut"
                 }
               }
             },
@@ -3955,8 +7541,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/WatchItemOut"
                   },
                   "title": "Response User History Api Users  User Id  History Get",
                   "type": "array"
@@ -4003,8 +7588,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/UserRowOut"
                   },
                   "title": "Response User Rows Api Users  User Id  Rows Get",
                   "type": "array"
@@ -4069,9 +7653,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Set User Row Override Api Users  User Id  Rows  Collection Id  Put",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RowOverrideSavedOut"
                 }
               }
             },
@@ -4127,8 +7709,7 @@
               "application/json": {
                 "schema": {
                   "items": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "$ref": "#/components/schemas/UserRunOut"
                   },
                   "title": "Response User Runs Api Users  User Id  Runs Get",
                   "type": "array"
@@ -4174,9 +7755,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response User Runs Summary Api Users  User Id  Runs Summary Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/UserRunsSummaryOut"
                 }
               }
             },

@@ -57,6 +57,9 @@ class RunService:
         self._tasks: set[asyncio.Task] = set()  # strong refs so in-flight runs aren't GC'd
         self._log = RunLogBuffer(session_factory)
         self._watch = WatchSync(session_factory, bus)
+        # `app.state`, assigned by `main.create_app` right after this object exists. Only used to
+        # drain the job queue when a run ends; None in tests that build a RunService directly.
+        self.state = None
 
     # -- run narration (delegated to RunLogBuffer) ---------------------------------------
 
@@ -168,6 +171,30 @@ class RunService:
         self, run_id: int, dry_run: bool, user_ids: list[int] | None, collection_ids: list[int] | None = None
     ) -> None:
         loop = asyncio.get_running_loop()
+        try:
+            await self._run_locked(run_id, dry_run, user_ids, collection_ids, loop)
+        finally:
+            # A run holds the Plex writer lock, so `_plex_busy` parks every writer job behind it.
+            # Nothing used to tell the queue when that ended, leaving jobs idle until the worker's
+            # next 60s tick — measured at 29s of doing nothing on a real server. Draining here is a
+            # latency fix only; the tick stays as the backstop.
+            #
+            # In a `finally`, so a run that ERRORED or was CANCELLED drains too: it released the
+            # lock just the same, and an aborted run is exactly when a `privacy.sync` is most likely
+            # to be queued and most important — that is the leak direction.
+            #
+            # After `_run_locked` returns, so the lock is released and `_cancels` is empty: draining
+            # while `is_running()` is still true would re-park every writer and achieve nothing.
+            await self._drain_jobs_after_run(run_id)
+
+    async def _run_locked(
+        self,
+        run_id: int,
+        dry_run: bool,
+        user_ids: list[int] | None,
+        collection_ids: list[int] | None,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
         async with self._lock:
             self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
             cancel = self._cancels.get(run_id)
@@ -245,6 +272,19 @@ class RunService:
                 {"run_id": run_id, "status": status, "error": None if report.ok else report.error},
             )
 
+    async def _drain_jobs_after_run(self, run_id: int) -> None:
+        """Start whatever this run was blocking, now that it is not. Never raises.
+
+        The queue is durable and the worker re-ticks regardless, so a failure here costs latency and
+        nothing else — it must never turn a finished run into a failed one.
+        """
+        if self.state is None:
+            return
+        try:
+            await jobs.drain_now(self.state, f"run {run_id} finished")
+        except Exception as e:  # defensive: drain_now already swallows, this is the belt
+            logger.warning("run {}: could not drain the job queue ({})", run_id, type(e).__name__)
+
     def is_running(self) -> bool:
         """Is an engine run executing in THIS process right now?
 
@@ -300,10 +340,7 @@ class RunService:
     def _persist_report(self, run_id: int, report, *, status: str | None = None, error: str | None = None) -> None:
         run_persistence.persist_report(self._sessions, run_id, report, status=status, error=error)
 
-    # Retention and the request-inbox write are reached as `RunService._prune_*` /
-    # `RunService._persist_request_queue` by the `maintenance.prune` job handler and by tests that
-    # predate this split. Kept as aliases so the class's public surface is unchanged.
-    _prune_runs = staticmethod(run_persistence.prune_runs)
-    _prune_events = staticmethod(run_persistence.prune_events)
-    _prune_expired_cache = staticmethod(run_persistence.prune_expired_cache)
+    # The retention prunes are NOT aliased here: everything that runs them — the `maintenance.prune`
+    # handler and the tests — calls `run_persistence` directly. The inbox write still is, because
+    # `tests/unit/test_request_queue.py` drives it through the class.
     _persist_request_queue = staticmethod(run_persistence.persist_request_queue)

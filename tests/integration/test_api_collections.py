@@ -14,6 +14,45 @@ from shortlist.server.settings_store import SettingsStore
 
 pytestmark = pytest.mark.integration
 
+# Response KEY SETS, spelled out — see the same note in test_api_users.py. A Pydantic response model
+# FILTERS the payload, so every model here sets `extra="allow"`; naming every key is what fails if
+# that config is ever stripped, or if a default starts inventing a key the handler never sent.
+
+#: Every key `collections._serialize` renders — `GET`, `POST` and `PATCH /api/collections` alike.
+COLLECTION_KEYS = {
+    "id",
+    "slug",
+    "name",
+    "last_run_id",
+    "build",
+    "audience",
+    "audience_user_ids",
+    "enabled",
+    "schedule",
+    "size",
+    "media",
+    "sort_order",
+    "name_template",
+    "min_watchers",
+    "request_tag",
+    "candidate_sources",
+    "watched_pct",
+    "rewatch",
+    "unstarted_only",
+    "freshness",
+    "recent_count",
+    "max_seeds",
+    "placement",
+    "placement_friends",
+    "pin_top",
+    "hub_anchor",
+    "library_keys",
+    "poster",
+}
+
+#: Every key `collections._poster_view` renders, nested under `poster`.
+POSTER_KEYS = {"mode", "title", "subtitle", "style", "has_image"}
+
 
 class TestCollectionsSeed:
     def test_migration_seeds_the_default_picked_row(self, client: TestClient):
@@ -410,9 +449,11 @@ class TestCollectionsSeed:
             files={"file": ("poster.png", png, "image/png")},
         )
         assert upload.status_code == 200 and upload.json()["mode"] == "upload"
+        assert set(upload.json()) == {"ok", "mode"}
 
         # The row is now in upload mode and reports an image; the image endpoint serves it.
         got = next(c for c in client.get("/api/collections").json() if c["id"] == cid)
+        assert set(got["poster"]) == POSTER_KEYS
         assert got["poster"]["mode"] == "upload" and got["poster"]["has_image"] is True
         image = client.get(f"/api/collections/{cid}/poster/image")
         assert image.status_code == 200 and image.headers["content-type"].startswith("image/") and image.content
@@ -464,6 +505,8 @@ class TestCollectionsApi:
     def test_list_starts_with_the_seeded_default(self, client: TestClient):
         cols = client.get("/api/collections").json()
         assert [c["slug"] for c in cols] == ["picked"]
+        assert set(cols[0]) == COLLECTION_KEYS
+        assert set(cols[0]["poster"]) == POSTER_KEYS
 
     def test_an_audience_naming_a_user_who_does_not_exist_is_refused(self, client: TestClient):
         """`CollectionAudience.user_id` is a foreign key with `PRAGMA foreign_keys=ON`, so an unknown
@@ -502,6 +545,7 @@ class TestCollectionsApi:
         )
         assert created.status_code == 201
         cid = created.json()["id"]
+        assert set(created.json()) == COLLECTION_KEYS
         assert created.json()["slug"] == "hidden_gems"
         assert created.json()["build"] == "per_person"
 
@@ -510,6 +554,7 @@ class TestCollectionsApi:
             json={"name": "Hidden Gems", "size": 20, "enabled": False},
         )
         assert updated.status_code == 200
+        assert set(updated.json()) == COLLECTION_KEYS, "the PATCH renders the same row the POST did"
         assert updated.json()["size"] == 20 and updated.json()["enabled"] is False
 
         assert client.delete(f"/api/collections/{cid}").status_code == 204
@@ -632,6 +677,7 @@ class TestCollectionsApi:
 
         r = client.post(f"/api/collections/{cid}/cleanup", json={"dry_run": True})
         assert r.status_code == 200
+        assert set(r.json()) == {"removed", "dry_run", "message"}
         assert r.json()["removed"] == ["🔥 Popular"] and r.json()["dry_run"] is True
         assert deleted == []  # nothing actually removed
 
@@ -1472,6 +1518,7 @@ class TestBlockedSeedsApi:
         )
 
         assert r.status_code == 200
+        assert set(r.json()) == {"blocked_seeds"}
         assert r.json()["blocked_seeds"] == [
             {"tmdb_id": 346648, "title": "Paddington 2", "media_type": "movie", "year": 2017}
         ]
@@ -1496,9 +1543,14 @@ class TestBlockedSeedsApi:
         # Reading: the old ids come back as records with no name rather than being dropped.
         listed = client.post(f"/api/users/{uid}/blocked-seeds", json={"tmdb_id": 333, "title": "New"}).json()
         assert {e["tmdb_id"] for e in listed["blocked_seeds"]} == {111, 222, 333}
+        # A record built from a bare int is still a WHOLE record on the way out — the blank name and
+        # the null year have to survive, or the picker can't tell "no title recorded" from a dropped field.
+        legacy = next(e for e in listed["blocked_seeds"] if e["tmdb_id"] == 111)
+        assert legacy == {"tmdb_id": 111, "title": "", "media_type": "", "year": None}
 
         # Removing one of the OLD ids works too.
         after = client.delete(f"/api/users/{uid}/blocked-seeds/111").json()
+        assert set(after) == {"blocked_seeds"}
         assert {e["tmdb_id"] for e in after["blocked_seeds"]} == {222, 333}
 
     def test_unknown_user_404s_rather_than_writing_nothing_silently(self, client: TestClient):
@@ -1510,6 +1562,31 @@ class TestBlockedSeedsApi:
 
     def test_title_search_of_nothing_is_an_empty_list_not_an_error(self, client: TestClient):
         assert client.get("/api/users/search/titles?q=%20").json() == []
+
+    @pytest.mark.parametrize(
+        ("media_type", "found", "expected"),
+        [
+            ("movie", {"id": 346648, "title": "Paddington 2", "release_date": "2017-11-10"}, 2017),
+            # A show's date field has a different name, and a blank one must read as "no year" rather
+            # than dropping the field the picker renders.
+            ("show", {"id": 95396, "name": "Severance", "first_air_date": ""}, None),
+        ],
+    )
+    def test_title_search_returns_what_the_block_picker_needs(
+        self, client: TestClient, monkeypatch, media_type, found, expected
+    ):
+        tmdb = SimpleNamespace(search=lambda query, mt: found)
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: (None, tmdb))
+
+        body = client.get(f"/api/users/search/titles?q=x&media_type={media_type}").json()
+
+        assert set(body[0]) == {"tmdb_id", "title", "media_type", "year"}
+        assert body[0] == {
+            "tmdb_id": found["id"],
+            "title": found.get("title") or found.get("name"),
+            "media_type": media_type,
+            "year": expected,
+        }
 
 
 class TestClearDeletedRows:

@@ -15,7 +15,8 @@ from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.http_retry import redact
-from shortlist.server.api.serializers import pick_dict, user_dict
+from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.api.serializers import UserOut, UserPickOut, pick_dict, user_dict
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
     PickRow,
@@ -27,8 +28,8 @@ from shortlist.server.db.models import (
 from shortlist.server.prefs import blocked_entries
 from shortlist.server.services import jobs
 from shortlist.server.services.user_sync import (
-    _rename_after_nickname,
     remove_users_rows,
+    rename_after_nickname,
     sync_users_from_state,
 )
 
@@ -70,6 +71,83 @@ class BulkEnabled(BaseModel):
     enabled: bool
 
 
+class BulkEnabledOut(PassthroughModel):
+    """What `POST /users/set-enabled` did: how many were touched, and how many had rows removed."""
+
+    updated: int
+    cleaned: int
+    enabled: bool
+
+
+class BlockedSeedOut(PassthroughModel):
+    """One blocked seed, always as a RECORD.
+
+    The bare-int list an old install stores is normalised by `blocked_entries` before it reaches here,
+    so this shape is what both endpoints return whichever way the prefs are stored — see
+    `shortlist/server/prefs.py`.
+    """
+
+    tmdb_id: int
+    title: str
+    media_type: str
+    year: int | None
+
+
+class BlockedSeedsOut(PassthroughModel):
+    blocked_seeds: list[BlockedSeedOut]
+
+
+class TitleMatchOut(PassthroughModel):
+    """TMDB's own best guess for a title search, for the "block a seed" picker."""
+
+    tmdb_id: int | None  # None if TMDB answered without an id — the caller can't block that one
+    title: str
+    media_type: str
+    year: int | None
+
+
+class UserRunOut(PassthroughModel):
+    """One run as it went for ONE person: their outcome, not the run's."""
+
+    run_id: int
+    started_at: str | None
+    finished_at: str | None
+    status: str
+    error: str | None
+    reason: str
+    duration_ms: int
+    run_status: str | None
+    dry_run: bool
+    # Free-form: `{}` for a user the run left alone, else some subset of added/removed/kept/deleted.
+    # Which keys exist varies by what happened, so a model with defaults would invent the rest.
+    diff: dict
+    picks: list[UserPickOut]
+
+
+class UserRunsSummaryOut(PassthroughModel):
+    included: int
+    total: int
+
+
+class WatchItemOut(PassthroughModel):
+    """One recent watch, from the same source recommendations are built from."""
+
+    title: str
+    tmdb_id: int | None  # None with no tmdb:// GUID — such a watch cannot be blocked as a seed
+    media_type: str
+    watched_at: str
+    year: int | None
+    season: int | None
+    episode: int | None
+    episode_title: str | None
+
+
+class UserSyncOut(PassthroughModel):
+    added: int
+    updated: int
+    total: int
+
+
 def _watch_depths(session) -> dict[int, int]:
     """user_id -> how many DISTINCT watched titles we last read for them.
 
@@ -87,7 +165,7 @@ def _watch_depths(session) -> dict[int, int]:
     return depths
 
 
-@router.get("")
+@router.get("", response_model=list[UserOut])
 def list_users(request: Request) -> list[dict]:
     """Every user with their badges, watch depth, lifetime hit rate and a pick preview.
 
@@ -138,7 +216,7 @@ def list_users(request: Request) -> list[dict]:
         return out
 
 
-@router.post("/set-enabled")
+@router.post("/set-enabled", response_model=BulkEnabledOut)
 async def set_all_users_enabled(body: BulkEnabled, request: Request) -> dict:
     """Enable or disable EVERY user at once. Disabling removes each newly-disabled user's rows from
     Plex now and writes their share filters — the same cleanup the per-user toggle does, so 'off'
@@ -163,7 +241,7 @@ async def set_all_users_enabled(body: BulkEnabled, request: Request) -> dict:
     return {"updated": total, "cleaned": len(to_clean), "enabled": body.enabled}
 
 
-@router.patch("/{user_id}")
+@router.patch("/{user_id}", response_model=UserOut)
 async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
     state = request.app.state
     disabled_slug: str | None = None
@@ -223,11 +301,11 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
     # A nickname changes what `{user}` renders to, so this person's existing collections carry a title
     # no future run will write. Renaming them in place is the same reconcile a row rename uses; without
     # it a multi-row user keeps the old-named copy alongside the new one.
-    await _rename_after_nickname(state, was_called)
+    await rename_after_nickname(state, was_called)
     return result
 
 
-@router.post("/{user_id}/blocked-seeds")
+@router.post("/{user_id}/blocked-seeds", response_model=BlockedSeedsOut)
 async def block_seed(user_id: int, body: BlockSeedBody, request: Request) -> dict:
     """Stop a title being used as a seed for this person's recommendations.
 
@@ -255,7 +333,7 @@ async def block_seed(user_id: int, body: BlockSeedBody, request: Request) -> dic
     return {"blocked_seeds": entries}
 
 
-@router.delete("/{user_id}/blocked-seeds/{tmdb_id}")
+@router.delete("/{user_id}/blocked-seeds/{tmdb_id}", response_model=BlockedSeedsOut)
 async def unblock_seed(user_id: int, tmdb_id: int, request: Request) -> dict:
     """Unblock a title so it can be used as a seed again."""
     with request.app.state.sessions() as session:
@@ -270,7 +348,7 @@ async def unblock_seed(user_id: int, tmdb_id: int, request: Request) -> dict:
     return {"blocked_seeds": entries}
 
 
-@router.get("/search/titles")
+@router.get("/search/titles", response_model=list[TitleMatchOut])
 async def search_titles(request: Request, q: str, media_type: str = "movie") -> list[dict]:
     """Look a title up on TMDB, for the "block a seed" picker.
 
@@ -309,7 +387,7 @@ async def search_titles(request: Request, q: str, media_type: str = "movie") -> 
     ]
 
 
-@router.get("/{user_id}/runs")
+@router.get("/{user_id}/runs", response_model=list[UserRunOut])
 async def user_runs(user_id: int, request: Request, limit: int = Query(15, ge=1, le=50)) -> list[dict]:
     """This user's recent run results — status, what changed, and the picks with their reasons."""
     with request.app.state.sessions() as session:
@@ -347,7 +425,7 @@ async def user_runs(user_id: int, request: Request, limit: int = Query(15, ge=1,
         return out
 
 
-@router.get("/{user_id}/runs/summary")
+@router.get("/{user_id}/runs/summary", response_model=UserRunsSummaryOut)
 async def user_runs_summary(user_id: int, request: Request) -> dict:
     """How many runs included this person, against how many there have been.
 
@@ -362,7 +440,7 @@ async def user_runs_summary(user_id: int, request: Request) -> dict:
         return {"included": included, "total": total}
 
 
-@router.get("/{user_id}/history")
+@router.get("/{user_id}/history", response_model=list[WatchItemOut])
 async def user_history(user_id: int, request: Request, limit: int = Query(25, ge=1, le=100)) -> list[dict]:
     """Recent watch history for this user, from Tautulli/Plex — the same source recommendations use."""
 
@@ -402,7 +480,7 @@ def _reject_display_name_clash(session: Session, user: User, nickname: str) -> N
             )
 
 
-@router.post("/sync")
+@router.post("/sync", response_model=UserSyncOut)
 async def sync_users(request: Request) -> dict:
     """Pull shared + Home users — and the owner — from plex.tv into the users table (idempotent)."""
     return await sync_users_from_state(request.app.state)

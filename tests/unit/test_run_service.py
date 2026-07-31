@@ -626,6 +626,84 @@ class TestSnapshotsForAccountsShortlistDoesNotKnow:
         assert store.get(111) is not None and store.get(222) is not None
 
 
+class TestAFinishedRunStartsTheWorkItWasBlocking:
+    """A run holds the Plex writer lock, so `_plex_busy` parks every writer job behind it.
+
+    Nothing used to tell the queue when that ended, so the jobs sat idle until the worker's next
+    60-second tick — measured at 29 seconds of nothing on the maintainer's server, which is what he
+    noticed when a manual run appeared to do nothing for 10-20s.
+    """
+
+    def _service_with_a_drain_spy(self, sessions, tmp_path, monkeypatch):
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        drained: list[bool] = []
+
+        async def fake_drain(state, reason):
+            # Asserted, not incidental: draining while the run still counts as in-flight would
+            # re-park every writer and buy nothing, which is the whole bug being fixed.
+            drained.append(state.run_service.is_running())
+
+        monkeypatch.setattr(run_service_mod.jobs, "drain_now", fake_drain)
+        service.state = SimpleNamespace(run_service=service)
+        return service, drained
+
+    def test_it_drains_as_soon_as_the_run_finishes(self, sessions, tmp_path, monkeypatch):
+        service, drained = self._service_with_a_drain_spy(sessions, tmp_path, monkeypatch)
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        asyncio.run(scenario())
+
+        assert drained == [False], "expected exactly one drain, with the run no longer in flight"
+
+    def test_it_drains_even_when_the_run_failed(self, sessions, tmp_path, monkeypatch):
+        """The failure path is the one most likely to be missed — and the one that matters most.
+
+        A crashed run released the writer lock just the same, and it is exactly when a `privacy.sync`
+        is most likely to be sitting in the queue: that is the leak direction.
+        """
+        service, drained = self._service_with_a_drain_spy(sessions, tmp_path, monkeypatch)
+
+        def boom(ctx, profiles):
+            raise RuntimeError("plex went away mid-run")
+
+        monkeypatch.setattr(run_service_mod, "engine_run", boom)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+
+        assert run.status == "error"
+        assert drained == [False], "a failed run still owes the queue its turn"
+
+    def test_a_broken_queue_never_fails_an_otherwise_good_run(self, sessions, tmp_path, monkeypatch):
+        """The drain is opportunistic: the queue is durable and the worker re-ticks regardless."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+
+        async def exploding_drain(state, reason):
+            raise RuntimeError("the queue is on fire")
+
+        monkeypatch.setattr(run_service_mod.jobs, "drain_now", exploding_drain)
+        service.state = SimpleNamespace(run_service=service)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+
+        assert run.status == "error"  # fake_report has one errored user; the DRAIN did not cause it
+        assert run.stats["users_ok"] == 1, "the run's own results survived the queue blowing up"
+
+
 class TestRunLogBuffer:
     """The in-memory run activity log: append via the progress sink, replay, and bounded eviction."""
 

@@ -42,6 +42,7 @@ import type {
   SetupState,
   SyncsInfo,
   TestableService,
+  TitleMatch,
   UninstallResult,
   User,
   VersionInfo,
@@ -248,8 +249,12 @@ export const api = {
       method: "DELETE",
     }),
 
-  /** TMDB's best guess for a title, for the "block a seed" picker. */
-  searchTitles: (q: string, mediaType: "movie" | "show"): Promise<BlockedSeed[]> =>
+  /** TMDB's best guess for a title, for the "block a seed" picker. Not a {@link BlockedSeed}: TMDB
+   *  can answer without an id, and a match with `tmdb_id: null` is not blockable. */
+  searchTitles: (
+    q: string,
+    mediaType: "movie" | "show",
+  ): Promise<TitleMatch[]> =>
     request(
       `/api/users/search/titles?q=${encodeURIComponent(q)}&media_type=${mediaType}`,
     ),

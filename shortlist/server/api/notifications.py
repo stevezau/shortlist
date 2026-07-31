@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 
 import shortlist
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.notifications import DISMISSED_KEY, build_notifications
 from shortlist.server.settings_store import SettingsStore
@@ -13,7 +14,28 @@ from shortlist.server.settings_store import SettingsStore
 router = APIRouter(prefix="/notifications", tags=["notifications"], dependencies=[Depends(require_owner)])
 
 
-@router.get("")
+class NotificationOut(PassthroughModel):
+    """One alert as the React bell renders it — plain text throughout, no HTML.
+
+    ``extra="allow"`` (here and on the wrapper) is not optional: a strict Pydantic response model
+    silently DROPS any key it does not declare, so a field missed here would vanish from the payload
+    instead of failing loudly.
+    """
+
+    id: str  # encodes the state it reports (run id, version), so a NEW occurrence re-surfaces
+    severity: str  # info | warning | error
+    title: str
+    body: str
+    action_url: str
+    action_label: str
+    dismissable: bool  # enforced on READ as well as on dismiss — see build_notifications
+
+
+class NotificationsOut(PassthroughModel):
+    notifications: list[NotificationOut]
+
+
+@router.get("", response_model=NotificationsOut)
 async def list_notifications(request: Request) -> dict:
     """Every currently-firing notification (update available, failed/partial run, paused, errors)."""
     with request.app.state.sessions() as session:
@@ -25,7 +47,11 @@ class Dismiss(BaseModel):
     id: str
 
 
-@router.post("/dismiss")
+class DismissedOut(PassthroughModel):
+    ok: bool
+
+
+@router.post("/dismiss", response_model=DismissedOut)
 async def dismiss(body: Dismiss, request: Request) -> dict:
     """Hide a notification by id. The id encodes its state (run id / version), so the SAME condition
     stays hidden but a new failure or a newer release surfaces again on its own."""

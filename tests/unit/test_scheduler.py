@@ -123,6 +123,7 @@ class TestScheduledWorkIsDurable:
             ("watch-sync", "sync.history"),
             ("db-backup", "backup.take"),
             ("privacy-sync", "privacy.sync"),
+            ("maintenance-prune", "maintenance.prune"),
         ],
     )
     def test_each_scheduled_task_lands_on_the_queue(self, app, job_id, kind, monkeypatch):
@@ -144,7 +145,7 @@ class TestScheduledWorkIsDurable:
             # from settings and a dropped `max_keep` would silently prune to the built-in default.
             assert set(queued[0][1]) == {"label", "max_keep"}
 
-    @pytest.mark.parametrize("kind", ["sync.users", "sync.history", "backup.take"])
+    @pytest.mark.parametrize("kind", ["sync.users", "sync.history", "backup.take", "maintenance.prune"])
     def test_each_handler_actually_runs(self, kind):
         """Mocking `enqueue`/`drain_now` proves the scheduler CALLS the queue and nothing more — it
         passes whether the handler exists, is registered, or raises on its first line.
@@ -236,6 +237,30 @@ class TestPrivacySyncSchedule:
         # the whole claim available here — matching how the other schedule tests assert.
         assert job is not None, "the nightly privacy sync is not scheduled"
         assert job.trigger is not None
+
+    def test_the_retention_prune_has_a_timer_of_its_own(self, app):
+        """The prune is queued after every run — which prunes nothing on a server that has stopped
+        running. A row with a blank cron never fires, and neither does anything while `paused_all`
+        is set, so without a schedule of its own `runs`, `events` and the expired cache rows grow
+        forever in the same file the nightly backup copies whole and keeps ten of."""
+        from shortlist.server.scheduler import MAINTENANCE_PRUNE_JOB_ID, build_scheduler
+
+        job = build_scheduler(app).get_job(MAINTENANCE_PRUNE_JOB_ID)
+
+        assert job is not None, "the retention prune has no schedule — it only runs if runs do"
+        assert job.trigger is not None
+
+    def test_the_prune_runs_after_every_other_schedule(self, app):
+        """Order matters: it trims runs and events, so a pass that fired before the night's syncs
+        and drift check would be trimming a database still being appended to."""
+        from shortlist.server.scheduler import DEFAULT_CRONS
+
+        def minutes(cron: str) -> int:
+            minute, hour = cron.split()[:2]
+            return int(hour) * 60 + int(minute)
+
+        others = {key: minutes(cron) for key, cron in DEFAULT_CRONS.items() if key != "maintenance.prune_cron"}
+        assert minutes(DEFAULT_CRONS["maintenance.prune_cron"]) > max(others.values()), others
 
     def test_the_drift_check_runs_nightly_out_of_the_box(self, app):
         """Drift is the failure nobody notices — a row left on the wrong shelf stays there until

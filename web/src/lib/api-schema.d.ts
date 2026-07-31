@@ -697,7 +697,8 @@ export interface paths {
          *     afterwards, so a run whose process has since restarted still has a readable log.
          *
          *     `after_seq` returns only lines past that sequence number, for topping up without refetching the
-         *     whole feed. `format=text` renders it as plain text for the download button.
+         *     whole feed. `format=text` renders it as plain text for the download button — that branch returns
+         *     a `Response` directly, which FastAPI hands back untouched, so the schema describes the JSON one.
          */
         get: operations["get_run_log_api_runs__run_id__log_get"];
         put?: never;
@@ -1560,6 +1561,94 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ApiTokenCreatedOut */
+        ApiTokenCreatedOut: {
+            /** Created At */
+            created_at: string;
+            /** Token */
+            token: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ApiTokenRevokedOut */
+        ApiTokenRevokedOut: {
+            /** Enabled */
+            enabled: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ApiTokenStatusOut
+         * @description `GET /api-token`. No example or default is declared on `token` — a schema is documentation
+         *     that ships to the browser, and a credential has no business in one (plex-safety rule 9).
+         */
+        ApiTokenStatusOut: {
+            /** Created At */
+            created_at: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Token */
+            token: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ArrOptionsOut */
+        ArrOptionsOut: {
+            /** Quality Profiles */
+            quality_profiles: components["schemas"]["QualityProfileOut"][];
+            /** Root Folders */
+            root_folders: components["schemas"]["RootFolderOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * BackupCreatedOut
+         * @description A manual backup carries no `created_at`: it was just taken, which is the answer.
+         */
+        BackupCreatedOut: {
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** BackupOut */
+        BackupOut: {
+            /** Created At */
+            created_at: string;
+            /** Name */
+            name: string;
+            /** Size Bytes */
+            size_bytes: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** BackupRestoredOut */
+        BackupRestoredOut: {
+            /** Message */
+            message: string;
+            /** Privacy Note */
+            privacy_note: string;
+            /** Restored */
+            restored: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * BackupScheduleOut
+         * @description Backups have no "last ran" line on the Tools page — the backup list itself is that answer.
+         */
+        BackupScheduleOut: {
+            /** Cron */
+            cron: string;
+            /** Max Keep */
+            max_keep: number;
+            /** Next */
+            next: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** BlockSeedBody */
         BlockSeedBody: {
             /**
@@ -1577,6 +1666,33 @@ export interface components {
             /** Year */
             year?: number | null;
         };
+        /**
+         * BlockedSeedOut
+         * @description One blocked seed, always as a RECORD.
+         *
+         *     The bare-int list an old install stores is normalised by `blocked_entries` before it reaches here,
+         *     so this shape is what both endpoints return whichever way the prefs are stored — see
+         *     `shortlist/server/prefs.py`.
+         */
+        BlockedSeedOut: {
+            /** Media Type */
+            media_type: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** BlockedSeedsOut */
+        BlockedSeedsOut: {
+            /** Blocked Seeds */
+            blocked_seeds: components["schemas"]["BlockedSeedOut"][];
+        } & {
+            [key: string]: unknown;
+        };
         /** Body_upload_poster_image_api_collections__collection_id__poster_upload_post */
         Body_upload_poster_image_api_collections__collection_id__poster_upload_post: {
             /** File */
@@ -1587,6 +1703,34 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /**
+         * BulkEnabledOut
+         * @description What `POST /users/set-enabled` did: how many were touched, and how many had rows removed.
+         */
+        BulkEnabledOut: {
+            /** Cleaned */
+            cleaned: number;
+            /** Enabled */
+            enabled: boolean;
+            /** Updated */
+            updated: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CleanupOut
+         * @description What `POST /collections/{id}/cleanup` removed (or would remove, on a dry run).
+         */
+        CleanupOut: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Message */
+            message: string;
+            /** Removed */
+            removed: string[];
+        } & {
+            [key: string]: unknown;
+        };
         /** CleanupRequest */
         CleanupRequest: {
             /**
@@ -1594,6 +1738,24 @@ export interface components {
              * @default false
              */
             dry_run: boolean;
+        };
+        /** ClearedDeletedRowsOut */
+        ClearedDeletedRowsOut: {
+            /** Cleared */
+            cleared: number;
+            /** Picks */
+            picks: number;
+            /** Slugs */
+            slugs: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /** ClearedOut */
+        ClearedOut: {
+            /** Cleared */
+            cleared: number;
+        } & {
+            [key: string]: unknown;
         };
         /** CollectionIn */
         CollectionIn: {
@@ -1710,6 +1872,137 @@ export interface components {
             watched_pct?: number | null;
         };
         /**
+         * CollectionOut
+         * @description A curated-row definition — the response shape of :func:`_serialize`.
+         */
+        CollectionOut: {
+            /**
+             * Audience
+             * @description Everyone, or the subset named by audience_user_ids.
+             * @enum {string}
+             */
+            audience: "everyone" | "subset";
+            /** Audience User Ids */
+            audience_user_ids: number[];
+            /**
+             * Build
+             * @description Who the row is built for: one per person, or one shared row.
+             * @enum {string}
+             */
+            build: "per_person" | "shared";
+            /** Candidate Sources */
+            candidate_sources: string[];
+            /** Enabled */
+            enabled: boolean;
+            /** Freshness */
+            freshness: number | null;
+            /** Hub Anchor */
+            hub_anchor: {
+                [key: string]: components["schemas"]["HubAnchorOut"];
+            };
+            /** Id */
+            id: number;
+            /** Last Run Id */
+            last_run_id: number | null;
+            /** Library Keys */
+            library_keys: string[];
+            /** Max Seeds */
+            max_seeds: number | null;
+            /**
+             * Media
+             * @description Which library types this row builds in.
+             * @enum {string}
+             */
+            media: "both" | "movie" | "show";
+            /** Min Watchers */
+            min_watchers: number;
+            /** Name */
+            name: string;
+            /** Name Template */
+            name_template: string;
+            /** Pin Top */
+            pin_top: boolean;
+            /**
+             * Placement
+             * @description Where the OWNER's own collection appears.
+             * @enum {string}
+             */
+            placement: "both" | "home" | "library" | "off";
+            /**
+             * Placement Friends
+             * @description Where each FRIEND's own collection appears.
+             * @enum {string}
+             */
+            placement_friends: "both" | "home" | "library" | "off";
+            poster: components["schemas"]["PosterOut"];
+            /** Recent Count */
+            recent_count: number | null;
+            /** Request Tag */
+            request_tag: string;
+            /** Rewatch */
+            rewatch: boolean;
+            /** Schedule */
+            schedule: string;
+            /** Size */
+            size: number;
+            /** Slug */
+            slug: string;
+            /** Sort Order */
+            sort_order: number;
+            /** Unstarted Only */
+            unstarted_only: boolean;
+            /** Watched Pct */
+            watched_pct: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ConnectionTestOut
+         * @description `message` is plain English either way — the success line, or a redacted failure (rule 9).
+         */
+        ConnectionTestOut: {
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CoverageOut
+         * @description Who is actually covered. `users_enabled`/`rows_enabled` describe the server as it is NOW and
+         *     are deliberately not windowed.
+         */
+        CoverageOut: {
+            /** Rows Enabled */
+            rows_enabled: number;
+            /** Users Enabled */
+            users_enabled: number;
+            /** Users Total */
+            users_total: number;
+            /** Users Watched */
+            users_watched: number;
+            /** Users Watched Delta */
+            users_watched_delta: number | null;
+            /** Users With Picks */
+            users_with_picks: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * CuratorModelsOut
+         * @description The provider the listing was made for (so a stale reply can be told apart from a live one),
+         *     and its model ids. Best-effort: `models` is empty when the provider cannot be asked.
+         */
+        CuratorModelsOut: {
+            /** Models */
+            models: string[];
+            /** Provider */
+            provider: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * CuratorModelsRequest
          * @description Optional live overrides from the settings form so the model picker can list the provider being
          *     edited BEFORE it's saved. Any blank field falls back to the saved setting; a redacted api key
@@ -1724,15 +2017,83 @@ export interface components {
             /** Provider */
             provider?: string | null;
         };
+        /** DeletedOut */
+        DeletedOut: {
+            /** Deleted */
+            deleted: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * DeletedRowOut
+         * @description Pick history belonging to a row that no longer exists.
+         */
+        DeletedRowOut: {
+            /** First Seen */
+            first_seen: string | null;
+            /** Last Seen */
+            last_seen: string | null;
+            /** Picks */
+            picks: number;
+            /** Slug */
+            slug: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** Dismiss */
         Dismiss: {
             /** Id */
             id: string;
         };
+        /** DismissedOut */
+        DismissedOut: {
+            /** Ok */
+            ok: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * EffectivenessReportOut
+         * @description The dashboard tracking report for one window.
+         */
+        EffectivenessReportOut: {
+            coverage: components["schemas"]["CoverageOut"];
+            /** First Pick */
+            first_pick: string | null;
+            overall: components["schemas"]["OverallOut"];
+            /** Per Row */
+            per_row: components["schemas"]["PerRowOut"][];
+            /** Per User */
+            per_user: components["schemas"]["PerUserOut"][];
+            /** Recent */
+            recent: components["schemas"]["RecentWatchOut"][];
+            requests: components["schemas"]["ReportRequestsOut"];
+            runs: components["schemas"]["ReportRunsOut"];
+            /** Since */
+            since: string | null;
+            /** Top Titles */
+            top_titles: components["schemas"]["TopTitleOut"][];
+            /** Trend */
+            trend: components["schemas"]["TrendPointOut"][];
+            watch_sync: components["schemas"]["WatchSyncOut"];
+            /** Window */
+            window: string;
+            /** Window Days */
+            window_days: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HealthOut */
+        HealthOut: {
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * HubAnchorIn
@@ -1755,6 +2116,176 @@ export interface components {
              * @default false
              */
             top: boolean;
+        };
+        /**
+         * HubAnchorOut
+         * @description A stored shelf placement. Defaulted, unlike the rest of these response fields: rows saved
+         *     before ``top`` existed have only ``anchor``/``before``, and filling in the same default
+         *     `HubAnchorIn` would have written is what those rows already mean.
+         */
+        HubAnchorOut: {
+            /**
+             * Anchor
+             * @default
+             */
+            anchor: string;
+            /**
+             * Before
+             * @default false
+             */
+            before: boolean;
+            /**
+             * Top
+             * @default false
+             */
+            top: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ImageProviderOut */
+        ImageProviderOut: {
+            /** Capable */
+            capable: boolean;
+            /** Provider */
+            provider: string;
+            /** Reason */
+            reason: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * JobCatalogEntryOut
+         * @description One card on the Jobs page: what the kind does, when it next runs, and how it went last time.
+         */
+        JobCatalogEntryOut: {
+            /** Description */
+            description: string;
+            /** Failed */
+            failed: number;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            last: components["schemas"]["JobOut"] | null;
+            /** Manual */
+            manual: boolean;
+            /** Next Run */
+            next_run: string | null;
+            /** Queued */
+            queued: number;
+            /** Running */
+            running: number;
+            /** Schedule Optional */
+            schedule_optional: boolean;
+            /** Schedule Setting */
+            schedule_setting: string;
+            /** Scheduled */
+            scheduled: boolean;
+            /** Total */
+            total: number;
+            /** Trigger */
+            trigger: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * JobOut
+         * @description One background job row — the shape `_job_dict` builds, on both `/jobs` and `/jobs/catalog`.
+         */
+        JobOut: {
+            /** Attempts */
+            attempts: number;
+            /** Created At */
+            created_at: string;
+            /** Detail */
+            detail: string;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Max Attempts */
+            max_attempts: number;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            };
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            };
+            /** Started At */
+            started_at: string | null;
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * JobRunOut
+         * @description The receipt for `POST /jobs` — a subset of `JobOut` plus the sync-check preview lists.
+         */
+        JobRunOut: {
+            /** Detail */
+            detail: string;
+            /** Error */
+            error: string | null;
+            /** Fixed */
+            fixed: string[];
+            /** Id */
+            id: number;
+            /** Kind */
+            kind: string;
+            /** Orphans */
+            orphans: string[];
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * LandingOut
+         * @description The landing rate over a matured cohort — picks old enough to have had their full 30 days.
+         */
+        LandingOut: {
+            /** Cohort From */
+            cohort_from: string | null;
+            /** Cohort To */
+            cohort_to: string | null;
+            /** Delivered */
+            delivered: number;
+            /** Matured Days */
+            matured_days: number;
+            /** Rate */
+            rate: number | null;
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * LibraryCollectionOut
+         * @description A candidate anchor title. Title only — the shelf is ordered by title, not by rating key.
+         */
+        LibraryCollectionOut: {
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** LibraryOut */
+        LibraryOut: {
+            /** Key */
+            key: string;
+            /** Title */
+            title: string;
+            /** Type */
+            type: string;
+        } & {
+            [key: string]: unknown;
         };
         /** LinkRequest */
         LinkRequest: {
@@ -1779,6 +2310,218 @@ export interface components {
              * @default
              */
             version: string;
+        };
+        /**
+         * LogLineOut
+         * @description One parsed log entry. `ts` is None for a line the parser could not date (a raw traceback).
+         */
+        LogLineOut: {
+            /** Level */
+            level: string;
+            /** Message */
+            message: string;
+            /** Source */
+            source: string;
+            /** Ts */
+            ts: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** LogoutOut */
+        LogoutOut: {
+            /** Ok */
+            ok: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** LogsOut */
+        LogsOut: {
+            /** File */
+            file: string | null;
+            /** Lines */
+            lines: components["schemas"]["LogLineOut"][];
+            /** Total Matched */
+            total_matched: number;
+            /** Truncated */
+            truncated: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * NotificationOut
+         * @description One alert as the React bell renders it — plain text throughout, no HTML.
+         *
+         *     ``extra="allow"`` (here and on the wrapper) is not optional: a strict Pydantic response model
+         *     silently DROPS any key it does not declare, so a field missed here would vanish from the payload
+         *     instead of failing loudly.
+         */
+        NotificationOut: {
+            /** Action Label */
+            action_label: string;
+            /** Action Url */
+            action_url: string;
+            /** Body */
+            body: string;
+            /** Dismissable */
+            dismissable: boolean;
+            /** Id */
+            id: string;
+            /** Severity */
+            severity: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** NotificationsOut */
+        NotificationsOut: {
+            /** Notifications */
+            notifications: components["schemas"]["NotificationOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * OverallOut
+         * @description Headline counts for the window, with the change vs the previous equal period.
+         */
+        OverallOut: {
+            /** Avg Days To Watch */
+            avg_days_to_watch: number | null;
+            /** Avg Days To Watch Delta */
+            avg_days_to_watch_delta: number | null;
+            /** Delivered */
+            delivered: number;
+            landing: components["schemas"]["LandingOut"];
+            /** Watched */
+            watched: number;
+            /** Watched Delta */
+            watched_delta: number | null;
+            /** Watched Prev */
+            watched_prev: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** OwnedCollectionOut */
+        OwnedCollectionOut: {
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Library */
+            library: string;
+            /** Orphan */
+            orphan: boolean;
+            /** Rating Key */
+            rating_key: number;
+            /** Slug */
+            slug: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** OwnedCollectionsOut */
+        OwnedCollectionsOut: {
+            /** Collections */
+            collections: components["schemas"]["OwnedCollectionOut"][];
+            /** Orphans */
+            orphans: number;
+            /** Total */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PerRowOut
+         * @description One (row, library) line. A row targeting >1 library is one Plex collection per library.
+         */
+        PerRowOut: {
+            /** Deleted */
+            deleted: boolean;
+            /** Delivered */
+            delivered: number;
+            /** Library */
+            library: string;
+            /** Name */
+            name: string;
+            /** Section Key */
+            section_key: string;
+            /** Slug */
+            slug: string;
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** PerUserOut */
+        PerUserOut: {
+            /** Delivered */
+            delivered: number;
+            /** Display Name */
+            display_name: string;
+            /** Slug */
+            slug: string;
+            /** Username */
+            username: string;
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PickOut
+         * @description One delivered recommendation, as the run detail lists it.
+         */
+        PickOut: {
+            /** Affinity */
+            affinity: number | null;
+            /** Rank */
+            rank: number;
+            /** Reason */
+            reason: string;
+            /** Seed Title */
+            seed_title: string | null;
+            /** Sources */
+            sources: string[];
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PinOut
+         * @description A freshly created plex.tv PIN. The `code` is what the owner types into plex.tv/link — it is
+         *     short-lived and useless without the same `client_id`, and it is not a Shortlist credential.
+         *
+         *     ``extra="allow"`` is on every response model in this file: a strict Pydantic response model
+         *     silently DROPS any key it does not declare, so a field missed here would vanish from the payload
+         *     rather than fail loudly. The model documents the shape; it never filters it.
+         */
+        PinOut: {
+            /** Client Id */
+            client_id: string;
+            /** Code */
+            code: string;
+            /** Id */
+            id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * PinStatusOut
+         * @description The poll result. Until the owner approves in Plex it is `linked: false` and the identity
+         *     fields are null; the Plex auth token is NEVER part of this payload (it is held server-side,
+         *     keyed to the session, so an XSS in the SPA cannot steal it).
+         */
+        PinStatusOut: {
+            /** Account Id */
+            account_id?: number | null;
+            /** Linked */
+            linked: boolean;
+            /** Username */
+            username?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /**
          * PosterIn
@@ -1811,6 +2554,37 @@ export interface components {
              */
             title: string;
         };
+        /**
+         * PosterOut
+         * @description A row's poster config as the editor reads it — never the image bytes.
+         */
+        PosterOut: {
+            /** Has Image */
+            has_image: boolean;
+            /**
+             * Mode
+             * @description Poster source; "" leaves Plex artwork alone.
+             * @enum {string}
+             */
+            mode: "" | "ai" | "generate" | "text" | "upload";
+            /** Style */
+            style: string;
+            /** Subtitle */
+            subtitle: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** PosterUploadOut */
+        PosterUploadOut: {
+            /** Mode */
+            mode: string;
+            /** Ok */
+            ok: boolean;
+        } & {
+            [key: string]: unknown;
+        };
         /** ProbeRequest */
         ProbeRequest: {
             /** Plex Url */
@@ -1819,6 +2593,51 @@ export interface components {
             tautulli_apikey?: string | null;
             /** Tautulli Url */
             tautulli_url?: string | null;
+        };
+        /** QualityProfileOut */
+        QualityProfileOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RecentWatchOut */
+        RecentWatchOut: {
+            /** Display Name */
+            display_name: string;
+            /** Library */
+            library: string;
+            /** Media Type */
+            media_type: string;
+            /** Row */
+            row: string;
+            /** Seed Title */
+            seed_title: string;
+            /** Title */
+            title: string;
+            /** Username */
+            username: string;
+            /** Watched At */
+            watched_at: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RejectedOut
+         * @description How many rows the action actually touched — not how many ids were sent. Each of the four
+         *     inbox actions skips the statuses it does not own, so the count is the only honest receipt.
+         *
+         *     ``extra="allow"`` is on every response model here (and every nested one): a strict model would
+         *     silently DROP any key the handler returns but the model has not declared, so a field missed
+         *     here would vanish from the payload rather than fail loudly.
+         */
+        RejectedOut: {
+            /** Rejected */
+            rejected: number;
+        } & {
+            [key: string]: unknown;
         };
         /** RenameRequest */
         RenameRequest: {
@@ -1837,6 +2656,34 @@ export interface components {
              * @default
              */
             old_template: string;
+        };
+        /** ReportRequestsOut */
+        ReportRequestsOut: {
+            /** Pending */
+            pending: number;
+            /** Sent */
+            sent: number;
+            /** Watched After Sent */
+            watched_after_sent: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ReportRunsOut */
+        ReportRunsOut: {
+            /** Errors Last */
+            errors_last: number;
+            /** In Window */
+            in_window: number;
+            /** In Window Delta */
+            in_window_delta: number | null;
+            /** Last Finished */
+            last_finished: string | null;
+            /** Last Status */
+            last_status: string | null;
+            /** Total */
+            total: number;
+        } & {
+            [key: string]: unknown;
         };
         /** RequestAction */
         RequestAction: {
@@ -1895,6 +2742,8 @@ export interface components {
             why: components["schemas"]["RequestWhyOut"][];
             /** Year */
             year: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /** RequestWhyOut */
         RequestWhyOut: {
@@ -1906,11 +2755,41 @@ export interface components {
             source: string;
             /** User */
             user: string;
+        } & {
+            [key: string]: unknown;
         };
         /** RestoreRequest */
         RestoreRequest: {
             /** Name */
             name: string;
+        };
+        /** RestoredOut */
+        RestoredOut: {
+            /** Restored */
+            restored: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RootFolderOut */
+        RootFolderOut: {
+            /** Id */
+            id: number;
+            /** Path */
+            path: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowOverrideOut
+         * @description This person's stored tweaks for one row. `None` on either field means "use the row's own".
+         */
+        RowOverrideOut: {
+            /** Recent Count */
+            recent_count: number | null;
+            /** Row Size */
+            row_size: number | null;
+        } & {
+            [key: string]: unknown;
         };
         /** RowOverridePatch */
         RowOverridePatch: {
@@ -1920,6 +2799,66 @@ export interface components {
             recent_count?: number | null;
             /** Row Size */
             row_size?: number | null;
+        };
+        /**
+         * RowOverrideSavedOut
+         * @description The override as stored, echoed back by the PUT.
+         */
+        RowOverrideSavedOut: {
+            /** Collection Id */
+            collection_id: number;
+            /** Muted */
+            muted: boolean;
+            /** Recent Count */
+            recent_count: number | null;
+            /** Row Size */
+            row_size: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RunCancelledOut */
+        RunCancelledOut: {
+            /** Cancelling */
+            cancelling: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RunCreatedOut */
+        RunCreatedOut: {
+            /** Run Id */
+            run_id: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RunDetailOut
+         * @description A run plus every person in it.
+         */
+        RunDetailOut: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Id */
+            id: number;
+            /** Promotion Blockers */
+            promotion_blockers: string[];
+            /** Started At */
+            started_at: string | null;
+            /** Stats */
+            stats: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status: string;
+            /** Trigger */
+            trigger: string;
+            /** Users */
+            users: components["schemas"]["RunUserOut"][];
+        } & {
+            [key: string]: unknown;
         };
         /** RunJobRequest */
         RunJobRequest: {
@@ -1938,6 +2877,40 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * RunLogLineOut
+         * @description One line of a run's activity log.
+         *
+         *     Everything but `seq` is optional because the live in-memory tail hands back exactly what the
+         *     progress hook pushed, key for key — only the durable `run_log_lines` read fills every field in.
+         *     `seq` is the exception: the buffer's sink stamps it on the way in, so it is always there.
+         */
+        RunLogLineOut: {
+            /** Counts */
+            counts?: {
+                [key: string]: unknown;
+            };
+            /** Reason */
+            reason?: string | null;
+            /** Run Id */
+            run_id?: number | null;
+            /** Seq */
+            seq: number;
+            /**
+             * Stage
+             * @default
+             */
+            stage: string;
+            /** Ts */
+            ts?: string | null;
+            /**
+             * User
+             * @default
+             */
+            user: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** RunRequest */
         RunRequest: {
             /** Collection Ids */
@@ -1950,12 +2923,366 @@ export interface components {
             /** User Ids */
             user_ids?: number[] | null;
         };
+        /**
+         * RunSummaryOut
+         * @description One run, as the Runs list shows it.
+         */
+        RunSummaryOut: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Id */
+            id: number;
+            /** Promotion Blockers */
+            promotion_blockers: string[];
+            /** Started At */
+            started_at: string | null;
+            /** Stats */
+            stats: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status: string;
+            /** Trigger */
+            trigger: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RunUserOut
+         * @description One person's outcome in a run. Users who haven't finished yet appear with the same keys and
+         *     `status: "pending"`, so the shape does not change mid-run.
+         */
+        RunUserOut: {
+            /** Breakdown */
+            breakdown: {
+                [key: string]: unknown;
+            }[];
+            /** Diff */
+            diff: {
+                [key: string]: unknown;
+            };
+            /** Display Name */
+            display_name: string;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Error */
+            error: string | null;
+            /** Exa Searches */
+            exa_searches: number;
+            /** Has Trace */
+            has_trace: boolean;
+            /** Llm Tokens */
+            llm_tokens: number;
+            /** Llm Tokens By Step */
+            llm_tokens_by_step: {
+                [key: string]: number;
+            };
+            /** Picks */
+            picks: components["schemas"]["PickOut"][];
+            /** Reason */
+            reason: string | null;
+            /** Slug */
+            slug: string;
+            /** Status */
+            status: string;
+            /** Username */
+            username: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RunUserTraceOut
+         * @description The full pipeline trace for one user in one run.
+         */
+        RunUserTraceOut: {
+            /** Breakdown */
+            breakdown: {
+                [key: string]: unknown;
+            }[];
+            /** Display Name */
+            display_name: string;
+            /** Error */
+            error: string | null;
+            /** Reason */
+            reason: string | null;
+            /** Requests */
+            requests: {
+                [key: string]: components["schemas"]["TraceRequestOut"];
+            };
+            /** Status */
+            status: string;
+            /** Trace */
+            trace: {
+                [key: string]: unknown;
+            };
+            /** Username */
+            username: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RunsDeletedOut */
+        RunsDeletedOut: {
+            /** Deleted */
+            deleted: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RunsSummaryOut
+         * @description Totals for the Runs page header.
+         */
+        RunsSummaryOut: {
+            /** Error */
+            error: number;
+            /** Last Finished */
+            last_finished: string | null;
+            /** Last Status */
+            last_status: string | null;
+            /** Ok */
+            ok: number;
+            /** Total */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleJobOut
+         * @description One scheduled job.
+         *
+         *     ``extra="allow"`` is on every model in this file, nested ones included: a strict Pydantic
+         *     response model silently DROPS undeclared keys from the payload, so a field missed here would
+         *     disappear from the response instead of failing loudly. The model documents; it never filters.
+         */
+        ScheduleJobOut: {
+            /** Cron */
+            cron: string;
+            /** Description */
+            description: string;
+            /** Kind */
+            kind: string;
+            /** Label */
+            label: string;
+            /** Next Run */
+            next_run: string | null;
+            /** Optional */
+            optional: boolean;
+            /** Setting */
+            setting: string;
+            /** Type */
+            type: string;
+            /** Using Default */
+            using_default: boolean;
+            /** Writes Plex */
+            writes_plex: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ScheduleOut */
+        ScheduleOut: {
+            /** Jobs */
+            jobs: components["schemas"]["ScheduleJobOut"][];
+            /** Rows */
+            rows: components["schemas"]["ScheduleRowsOut"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** ScheduleRowOut */
+        ScheduleRowOut: {
+            /** Id */
+            id: number;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * ScheduleRowsOut
+         * @description The rows sharing one cron — ONE trigger that builds all of them, not one entry each.
+         */
+        ScheduleRowsOut: {
+            /** Cron */
+            cron: string;
+            /** Next Run */
+            next_run: string | null;
+            /** Rows */
+            rows: components["schemas"]["ScheduleRowOut"][];
+            /** Type */
+            type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** SendOut */
+        SendOut: {
+            /** Dry Run */
+            dry_run: boolean;
+            /** Outcomes */
+            outcomes: components["schemas"]["SendOutcomeOut"][];
+            /** Sent */
+            sent: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SendOutcomeOut
+         * @description What the Arr said about one title. `status` is the engine's outcome — "requested",
+         *     "would_request" on a dry run, or a skip/error reason the owner can act on.
+         */
+        SendOutcomeOut: {
+            /** Detail */
+            detail: string;
+            /** Id */
+            id: number;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SessionOut
+         * @description Who the caller is, and whether this instance demands a sign-in at all.
+         *
+         *     The signed cookie's contents are spread into the response, so `account_id`/`username` are
+         *     present only once signed in — they are declared optional rather than left to `extra`, so the
+         *     SPA gets real types for the two fields it actually reads.
+         */
+        SessionOut: {
+            /** Account Id */
+            account_id?: number | null;
+            /** Authenticated */
+            authenticated: boolean;
+            /** Login Required */
+            login_required: boolean;
+            /** Username */
+            username?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SettingsOut
+         * @description The whole settings store, flat: `{"row.size": 15, "plex.url": "…", …}`.
+         *
+         *     Deliberately declares NO fields. The key set is genuinely dynamic — `settings_store.DEFAULTS`
+         *     plus whatever rows the database holds, minus `PRIVATE_KEYS` — so enumerating it here would be a
+         *     second copy of `DEFAULTS` that silently goes stale, and a strict model would DROP every key it
+         *     had not caught up with. ``extra="allow"`` passes all of them through untouched, which is the
+         *     honest description of this endpoint: an open map, with secrets already redacted to "•••••" by
+         *     `all_public()`.
+         */
+        SettingsOut: {
+            [key: string]: unknown;
+        };
         /** SettingsUpdate */
         SettingsUpdate: {
             /** Values */
             values: {
                 [key: string]: unknown;
             };
+        };
+        /** SyncStartedOut */
+        SyncStartedOut: {
+            /** Started */
+            started: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * SyncStateOut
+         * @description One sync's schedule summary: when it last ran, when it fires next, and on what cron.
+         */
+        SyncStateOut: {
+            /** Cron */
+            cron: string;
+            /** Last */
+            last: string | null;
+            /** Next */
+            next: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** SyncsOut */
+        SyncsOut: {
+            backup: components["schemas"]["BackupScheduleOut"];
+            users: components["schemas"]["SyncStateOut"];
+            watched: components["schemas"]["SyncStateOut"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TitleMatchOut
+         * @description TMDB's own best guess for a title search, for the "block a seed" picker.
+         */
+        TitleMatchOut: {
+            /** Media Type */
+            media_type: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number | null;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** TopTitleOut */
+        TopTitleOut: {
+            /** Media Type */
+            media_type: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number;
+            /** Watchers */
+            watchers: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * TraceRequestOut
+         * @description What became of one wanted-but-missing title, keyed `"<tmdb_id>:<media_type>"` on the trace.
+         */
+        TraceRequestOut: {
+            /** Arr Slug */
+            arr_slug: string | null;
+            /** Detail */
+            detail: string;
+            /** Excluded */
+            excluded: boolean;
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** TrendPointOut */
+        TrendPointOut: {
+            /** Watched */
+            watched: number;
+            /** Week */
+            week: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** UninstallOut */
+        UninstallOut: {
+            /** Collections Deleted */
+            collections_deleted: string[];
+            /** Dry Run */
+            dry_run: boolean;
+            /** Filters Restored */
+            filters_restored: number;
+            /** Message */
+            message: string;
+            /** Rows Disabled */
+            rows_disabled: number;
+        } & {
+            [key: string]: unknown;
         };
         /** UninstallRequest */
         UninstallRequest: {
@@ -1970,6 +3297,54 @@ export interface components {
              */
             dry_run: boolean;
         };
+        /**
+         * UserOut
+         * @description One person — the response shape of :func:`user_dict`.
+         */
+        UserOut: {
+            /** Avatar Url */
+            avatar_url: string;
+            /** Cold Start */
+            cold_start: boolean;
+            /** Display Name */
+            display_name: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Friendly Name */
+            friendly_name: string;
+            /** History Depth */
+            history_depth: number;
+            /** Hit Rate */
+            hit_rate: number | null;
+            /** Id */
+            id: number;
+            /** Last Run At */
+            last_run_at: string | null;
+            /** Nickname */
+            nickname: string;
+            /** Plex Account Id */
+            plex_account_id: number;
+            /** Prefs */
+            prefs: {
+                [key: string]: unknown;
+            };
+            /** Preview Titles */
+            preview_titles: string[];
+            /** Request Tag */
+            request_tag: string;
+            /** Restricted */
+            restricted: boolean;
+            /** Restriction Profile */
+            restriction_profile: string;
+            /** Slug */
+            slug: string;
+            /** User Type */
+            user_type: string;
+            /** Username */
+            username: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** UserPatch */
         UserPatch: {
             /** Enabled */
@@ -1979,6 +3354,39 @@ export interface components {
             prefs?: components["schemas"]["UserPrefs"] | null;
             /** Request Tag */
             request_tag?: string | null;
+        };
+        /**
+         * UserPickOut
+         * @description One delivered pick as the USER pages render it — the response shape of :func:`pick_dict`.
+         *
+         *     Not ``PickOut``: the run detail publishes its own, narrower pick shape under that name
+         *     (``api/schemas_runs.py``), and two models sharing a name make FastAPI fall back to
+         *     fully-qualified schema names for both — which the SPA then generates as
+         *     ``shortlist__server__api__serializers__PickOut``.
+         */
+        UserPickOut: {
+            /** Affinity */
+            affinity: number;
+            /** Collection Slug */
+            collection_slug: string;
+            /** Library */
+            library: string;
+            /** Media Type */
+            media_type: string;
+            /** Rank */
+            rank: number;
+            /** Reason */
+            reason: string;
+            /** Section Key */
+            section_key: string;
+            /** Seed Title */
+            seed_title: string | null;
+            /** Sources */
+            sources: string[];
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
         };
         /** UserPrefs */
         UserPrefs: {
@@ -1990,6 +3398,89 @@ export interface components {
             paused?: boolean | null;
             /** Row Name Tpl */
             row_name_tpl?: string | null;
+        };
+        /**
+         * UserRowOut
+         * @description One row this person gets, in one library: its effective settings, their override, its picks.
+         */
+        UserRowOut: {
+            /** Collection Id */
+            collection_id: number;
+            /** Is Default */
+            is_default: boolean;
+            /** Library */
+            library: string;
+            /** Media */
+            media: string;
+            /** Muted */
+            muted: boolean;
+            /** Name */
+            name: string;
+            override: components["schemas"]["RowOverrideOut"];
+            /** Picks */
+            picks: components["schemas"]["UserPickOut"][];
+            /** Recent Count */
+            recent_count: number;
+            /** Section Key */
+            section_key: string;
+            /** Size */
+            size: number;
+            /** Slug */
+            slug: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * UserRunOut
+         * @description One run as it went for ONE person: their outcome, not the run's.
+         */
+        UserRunOut: {
+            /** Diff */
+            diff: {
+                [key: string]: unknown;
+            };
+            /** Dry Run */
+            dry_run: boolean;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Error */
+            error: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Picks */
+            picks: components["schemas"]["UserPickOut"][];
+            /** Reason */
+            reason: string;
+            /** Run Id */
+            run_id: number;
+            /** Run Status */
+            run_status: string | null;
+            /** Started At */
+            started_at: string | null;
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** UserRunsSummaryOut */
+        UserRunsSummaryOut: {
+            /** Included */
+            included: number;
+            /** Total */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** UserSyncOut */
+        UserSyncOut: {
+            /** Added */
+            added: number;
+            /** Total */
+            total: number;
+            /** Updated */
+            updated: number;
+        } & {
+            [key: string]: unknown;
         };
         /** ValidationError */
         ValidationError: {
@@ -2003,6 +3494,61 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * VersionOut
+         * @description `GET /version`.
+         *
+         *     ``extra="allow"`` is on EVERY response model in this file, nested ones included, and is not
+         *     optional: a strict Pydantic response model silently DROPS any key the handler returned but the
+         *     model does not declare. With it, an undeclared key passes through untouched — the model
+         *     documents the shape without filtering it, so a field missed here cannot vanish from the payload
+         *     and blank out a page.
+         */
+        VersionOut: {
+            /** Current Version */
+            current_version: string;
+            /** Install Type */
+            install_type: string;
+            /** Latest Version */
+            latest_version: string | null;
+            /** Update Available */
+            update_available: boolean;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WatchItemOut
+         * @description One recent watch, from the same source recommendations are built from.
+         */
+        WatchItemOut: {
+            /** Episode */
+            episode: number | null;
+            /** Episode Title */
+            episode_title: string | null;
+            /** Media Type */
+            media_type: string;
+            /** Season */
+            season: number | null;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number | null;
+            /** Watched At */
+            watched_at: string;
+            /** Year */
+            year: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** WatchSyncOut */
+        WatchSyncOut: {
+            /** Last */
+            last: string | null;
+            /** Next */
+            next: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /** WizardState */
         WizardState: {
@@ -2045,9 +3591,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["LogoutOut"];
                 };
             };
         };
@@ -2067,9 +3611,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PinOut"];
                 };
             };
         };
@@ -2091,9 +3633,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PinStatusOut"];
                 };
             };
             /** @description Validation Error */
@@ -2122,9 +3662,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SessionOut"];
                 };
             };
         };
@@ -2144,9 +3682,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["CollectionOut"][];
                 };
             };
         };
@@ -2170,9 +3706,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CollectionOut"];
                 };
             };
             /** @description Validation Error */
@@ -2236,9 +3770,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CollectionOut"];
                 };
             };
             /** @description Validation Error */
@@ -2273,9 +3805,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CleanupOut"];
                 };
             };
             /** @description Validation Error */
@@ -2405,9 +3935,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PosterUploadOut"];
                 };
             };
             /** @description Validation Error */
@@ -2526,9 +4054,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["NotificationsOut"];
                 };
             };
         };
@@ -2552,9 +4078,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DismissedOut"];
                 };
             };
             /** @description Validation Error */
@@ -2586,9 +4110,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["EffectivenessReportOut"];
                 };
             };
             /** @description Validation Error */
@@ -2617,9 +4139,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["DeletedRowOut"][];
                 };
             };
         };
@@ -2641,9 +4161,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ClearedDeletedRowsOut"];
                 };
             };
             /** @description Validation Error */
@@ -2672,9 +4190,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SyncStartedOut"];
                 };
             };
         };
@@ -2718,9 +4234,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ClearedOut"];
                 };
             };
             /** @description Validation Error */
@@ -2753,9 +4267,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DeletedOut"];
                 };
             };
             /** @description Validation Error */
@@ -2788,9 +4300,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RejectedOut"];
                 };
             };
             /** @description Validation Error */
@@ -2823,9 +4333,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RestoredOut"];
                 };
             };
             /** @description Validation Error */
@@ -2858,9 +4366,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SendOut"];
                 };
             };
             /** @description Validation Error */
@@ -2915,9 +4421,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["RunSummaryOut"][];
                 };
             };
             /** @description Validation Error */
@@ -2950,9 +4454,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RunCreatedOut"];
                 };
             };
             /** @description Validation Error */
@@ -2981,9 +4483,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RunsDeletedOut"];
                 };
             };
         };
@@ -3003,9 +4503,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RunsSummaryOut"];
                 };
             };
         };
@@ -3027,9 +4525,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RunDetailOut"];
                 };
             };
             /** @description Validation Error */
@@ -3060,9 +4556,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RunCancelledOut"];
                 };
             };
             /** @description Validation Error */
@@ -3096,7 +4590,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["RunLogLineOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3128,9 +4622,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RunUserTraceOut"];
                 };
             };
             /** @description Validation Error */
@@ -3159,9 +4651,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ScheduleOut"];
                 };
             };
         };
@@ -3181,9 +4671,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SettingsOut"];
                 };
             };
         };
@@ -3207,9 +4695,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SettingsOut"];
                 };
             };
             /** @description Validation Error */
@@ -3240,9 +4726,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ArrOptionsOut"];
                 };
             };
             /** @description Validation Error */
@@ -3275,9 +4759,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CuratorModelsOut"];
                 };
             };
             /** @description Validation Error */
@@ -3308,9 +4790,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ConnectionTestOut"];
                 };
             };
             /** @description Validation Error */
@@ -3488,9 +4968,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ApiTokenStatusOut"];
                 };
             };
         };
@@ -3510,9 +4988,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ApiTokenCreatedOut"];
                 };
             };
         };
@@ -3532,9 +5008,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ApiTokenRevokedOut"];
                 };
             };
         };
@@ -3554,7 +5028,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BackupOut"][];
                 };
             };
         };
@@ -3574,7 +5048,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BackupCreatedOut"];
                 };
             };
         };
@@ -3598,7 +5072,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BackupRestoredOut"];
                 };
             };
             /** @description Validation Error */
@@ -3647,9 +5121,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HealthOut"];
                 };
             };
         };
@@ -3669,9 +5141,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ImageProviderOut"];
                 };
             };
         };
@@ -3695,9 +5165,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["JobOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3730,9 +5198,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["JobRunOut"];
                 };
             };
             /** @description Validation Error */
@@ -3761,9 +5227,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["JobCatalogEntryOut"][];
                 };
             };
         };
@@ -3783,9 +5247,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["LibraryOut"][];
                 };
             };
         };
@@ -3807,9 +5269,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["LibraryCollectionOut"][];
                 };
             };
             /** @description Validation Error */
@@ -3842,9 +5302,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["LogsOut"];
                 };
             };
             /** @description Validation Error */
@@ -3893,9 +5351,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OwnedCollectionsOut"];
                 };
             };
         };
@@ -3915,9 +5371,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SyncsOut"];
                 };
             };
         };
@@ -3941,9 +5395,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UninstallOut"];
                 };
             };
             /** @description Validation Error */
@@ -3972,9 +5424,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["VersionOut"];
                 };
             };
         };
@@ -3994,9 +5444,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["UserOut"][];
                 };
             };
         };
@@ -4019,9 +5467,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["TitleMatchOut"][];
                 };
             };
             /** @description Validation Error */
@@ -4054,9 +5500,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BulkEnabledOut"];
                 };
             };
             /** @description Validation Error */
@@ -4085,9 +5529,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UserSyncOut"];
                 };
             };
         };
@@ -4113,9 +5555,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UserOut"];
                 };
             };
             /** @description Validation Error */
@@ -4150,9 +5590,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BlockedSeedsOut"];
                 };
             };
             /** @description Validation Error */
@@ -4184,9 +5622,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["BlockedSeedsOut"];
                 };
             };
             /** @description Validation Error */
@@ -4219,9 +5655,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["WatchItemOut"][];
                 };
             };
             /** @description Validation Error */
@@ -4252,9 +5686,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["UserRowOut"][];
                 };
             };
             /** @description Validation Error */
@@ -4290,9 +5722,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RowOverrideSavedOut"];
                 };
             };
             /** @description Validation Error */
@@ -4325,9 +5755,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["UserRunOut"][];
                 };
             };
             /** @description Validation Error */
@@ -4358,9 +5786,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UserRunsSummaryOut"];
                 };
             };
             /** @description Validation Error */

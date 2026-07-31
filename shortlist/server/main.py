@@ -136,6 +136,11 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         app.state.session_secret = _instance_secret(config_dir, "session.secret")
         app.state.client_id = _instance_secret(config_dir, "client.id")[:32]
         app.state.run_service = RunService(sessions, bus, config_dir, secret_box)
+        # Handed back so a finished run can drain the queue it was blocking, instead of the jobs
+        # waiting out the worker's next 60s tick. Set after construction because `run_pending` needs
+        # the whole state (handlers reach for `run_service`, `secrets`, `sessions`), and that state
+        # is not complete until this line.
+        app.state.run_service.state = app.state
         app.state.started_at = datetime.now(UTC)
         # Plex tokens minted during setup, held server-side only (account_id -> token).
         app.state.pending_plex_tokens = {}

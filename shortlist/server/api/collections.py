@@ -27,6 +27,7 @@ from shortlist.server.api.row_changes import (
     RowChange,
     plan_row_changes,
 )
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Event, PickRow, User
 from shortlist.server.scheduler import rebuild_schedule
@@ -64,6 +65,16 @@ def _closed_set(values: set[str], default: str, description: str) -> Field:
     byte-for-byte, and a set's iteration order is not something to hang that on.
     """
     return Field(default=default, description=description, json_schema_extra={"enum": sorted(values)})
+
+
+def _closed_set_out(values: set[str], description: str) -> Field:
+    """`_closed_set` for a RESPONSE field: same advertised set, no default.
+
+    Required rather than defaulted on purpose. A response model with a default can INVENT the key
+    when a handler stops sending it — the mirror image of the drop that `extra="allow"` prevents —
+    so every field a handler always returns is declared required, and a missing one fails loudly.
+    """
+    return Field(description=description, json_schema_extra={"enum": sorted(values)})
 
 
 class HubAnchorIn(BaseModel):
@@ -123,6 +134,73 @@ class CollectionIn(BaseModel):
     # global default (settings `rows.hub_anchor`).
     hub_anchor: dict[str, HubAnchorIn] = Field(default_factory=dict)
     poster: PosterIn = Field(default_factory=PosterIn)
+
+
+class HubAnchorOut(PassthroughModel):
+    """A stored shelf placement. Defaulted, unlike the rest of these response fields: rows saved
+    before ``top`` existed have only ``anchor``/``before``, and filling in the same default
+    `HubAnchorIn` would have written is what those rows already mean."""
+
+    anchor: str = ""
+    before: bool = False
+    top: bool = False
+
+
+class PosterOut(PassthroughModel):
+    """A row's poster config as the editor reads it — never the image bytes."""
+
+    mode: str = _closed_set_out(POSTER_MODES, 'Poster source; "" leaves Plex artwork alone.')
+    title: str
+    subtitle: str
+    style: str
+    has_image: bool  # whether the image endpoint has something to serve for this row right now
+
+
+class CollectionOut(PassthroughModel):
+    """A curated-row definition — the response shape of :func:`_serialize`."""
+
+    id: int
+    slug: str
+    # The DEFAULT row's title is the global template, not its own stale `name` column — see `_serialize`.
+    name: str
+    last_run_id: int | None  # None until the row has ever built
+    build: str = _closed_set_out(BUILDS, "Who the row is built for: one per person, or one shared row.")
+    audience: str = _closed_set_out(AUDIENCES, "Everyone, or the subset named by audience_user_ids.")
+    audience_user_ids: list[int]
+    enabled: bool
+    schedule: str
+    size: int
+    media: str = _closed_set_out(MEDIA, "Which library types this row builds in.")
+    sort_order: int
+    name_template: str
+    min_watchers: int
+    request_tag: str
+    candidate_sources: list[str]
+    watched_pct: float | None
+    rewatch: bool
+    unstarted_only: bool
+    freshness: float | None
+    recent_count: int | None
+    max_seeds: int | None
+    placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
+    placement_friends: str = _closed_set_out(PLACEMENTS, "Where each FRIEND's own collection appears.")
+    pin_top: bool
+    hub_anchor: dict[str, HubAnchorOut]  # keyed by Plex section key, so the KEYS vary by library
+    library_keys: list[str]
+    poster: PosterOut
+
+
+class CleanupOut(PassthroughModel):
+    """What `POST /collections/{id}/cleanup` removed (or would remove, on a dry run)."""
+
+    removed: list[str]
+    dry_run: bool
+    message: str
+
+
+class PosterUploadOut(PassthroughModel):
+    ok: bool
+    mode: str
 
 
 def _validate(body: CollectionIn) -> None:
@@ -303,14 +381,14 @@ def _set_audience(session, collection: Collection, body: CollectionIn) -> None:
         session.add(CollectionAudience(collection_id=collection.id, user_id=user_id))
 
 
-@router.get("")
+@router.get("", response_model=list[CollectionOut])
 async def list_collections(request: Request) -> list[dict]:
     with request.app.state.sessions() as session:
         collections = session.query(Collection).order_by(Collection.sort_order, Collection.id).all()
         return [_serialize(session, c) for c in collections]
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, response_model=CollectionOut)
 async def create_collection(body: CollectionIn, request: Request) -> dict:
     _validate(body)
     with request.app.state.sessions() as session:
@@ -435,7 +513,7 @@ def _queue_reconcile(
     jobs.enqueue(state.sessions, "row.reconcile", payload)
 
 
-@router.patch("/{collection_id}")
+@router.patch("/{collection_id}", response_model=CollectionOut)
 async def update_collection(collection_id: int, body: CollectionIn, request: Request) -> dict:
     """Edit a row: validate → apply → plan the Plex work → enqueue it → drain.
 
@@ -739,7 +817,7 @@ class CleanupRequest(BaseModel):
     dry_run: bool = False  # preview which collections would be removed (rule 8)
 
 
-@router.post("/{collection_id}/cleanup")
+@router.post("/{collection_id}/cleanup", response_model=CleanupOut)
 async def cleanup_collection(collection_id: int, body: CleanupRequest, request: Request) -> dict:
     """Remove this row's collections from Plex, for everyone who has it, without waiting for a run.
 
@@ -775,7 +853,7 @@ def _require_collection(session, collection_id: int) -> Collection:
     return collection
 
 
-@router.post("/{collection_id}/poster/upload")
+@router.post("/{collection_id}/poster/upload", response_model=PosterUploadOut)
 async def upload_poster_image(collection_id: int, request: Request, file: Annotated[UploadFile, File()]) -> dict:
     """Store an uploaded poster image for a row and switch it into upload mode.
 

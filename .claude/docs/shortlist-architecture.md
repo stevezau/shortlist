@@ -220,22 +220,32 @@ competitor tests.
 
 ## 7. CI/CD
 
-One workflow, `.github/workflows/ci.yml`. Five jobs:
+One workflow, `.github/workflows/ci.yml`. Six jobs:
 
 `lint (ruff)`, `test-python (pytest + codecov)`, `test-web (pnpm lint/vitest/build)` and `e2e`
 (playwright) all run in parallel — `e2e` deliberately does NOT wait on `test-web`'s `web-dist`
 artifact; it builds its own copy of the SPA so it can start at t=0 instead of queuing behind
-`test-web`, trading one extra `vite build` for keeping that wait off the critical path. `docker`
-(buildx, linux/amd64 + linux/arm64) waits on all four and is the publish gate.
+`test-web`, trading one extra `vite build` for keeping that wait off the critical path.
+
+`docker-smoke` is the only job that runs the actual IMAGE. Everything else tests the source — `e2e`
+boots uvicorn in-process — so nothing else would notice the PUID/PGID drop failing, `web/dist`
+landing where the app doesn't look, or a runtime package missing from the image. It builds
+linux/amd64 with `load: true` (no push), boots the container, waits for the Dockerfile's own
+HEALTHCHECK, then asserts `/` serves the SPA and that every provider SDK imports. Those last two
+matter because `/api/system/health` is answered by Python and passes with no SPA in the image at
+all, and because the providers are imported lazily — the container is healthy right up until
+someone picks one, which is how `549631f` shipped.
+
+`docker` (buildx, linux/amd64 + linux/arm64) waits on all five and is the publish gate.
 
 What runs, by event:
 
-| Event         | Jobs               | Publishes                         |
-| ------------- | ------------------ | --------------------------------- |
-| push `dev`    | all five           | `:dev`                            |
-| push `master` | the four test jobs | nothing                           |
-| pull request  | the four test jobs | nothing                           |
-| push tag `v*` | all five           | `:latest` + `:<version>` + `:dev` |
+| Event         | Jobs                | Publishes                         |
+| ------------- | ------------------- | --------------------------------- |
+| push `dev`    | all six             | `:dev`                            |
+| push `master` | the five test jobs  | nothing                           |
+| pull request  | the five test jobs  | nothing                           |
+| push tag `v*` | all six             | `:latest` + `:<version>` + `:dev` |
 
 `docker` is gated on `github.event_name == 'push' && (ref == refs/heads/dev || ref starts with
 refs/tags/v)`. The ref half is load-bearing, not defensive: `master` is a push trigger so the stable

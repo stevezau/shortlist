@@ -76,6 +76,7 @@ describe("useSSE", () => {
     renderHook(() => useSSE({ onRunUserStage, onRunFinished }));
 
     const stage: RunUserStageEvent = {
+      seq: 0,
       user: "sarah",
       stage: "curating",
       counts: { candidates: 40 },

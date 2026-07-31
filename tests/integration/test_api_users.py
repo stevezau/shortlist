@@ -17,19 +17,84 @@ from tests.integration.conftest import OWNER_ID, OWNER_JSON
 
 pytestmark = pytest.mark.integration
 
+# Response KEY SETS, spelled out. These endpoints declare Pydantic response models, and such a model
+# does not merely describe a payload — it FILTERS it: a key the model forgets to declare is dropped
+# on the way out, silently, blanking whatever the page read from it. Which is why every one of them
+# sets `extra="allow"` (see `api/serializers.PASSTHROUGH`), and why these assertions name every key
+# rather than the two fields a test happens to care about: strip that config, or add a default that
+# INVENTS a key the handler never sent, and these are what fail instead of a page in production.
+
+#: Every key `serializers.user_dict` renders — the shape of both `GET /users` and `PATCH /users/{id}`.
+USER_KEYS = {
+    "id",
+    "plex_account_id",
+    "username",
+    "slug",
+    "nickname",
+    "friendly_name",
+    "display_name",
+    "avatar_url",
+    "user_type",
+    "restricted",
+    "restriction_profile",
+    "enabled",
+    "cold_start",
+    "request_tag",
+    "prefs",
+    "history_depth",
+    "last_run_at",
+    "hit_rate",
+    "preview_titles",
+}
+
+#: Every key `serializers.pick_dict` renders — shared by `/users/{id}/runs` and `/users/{id}/rows`.
+PICK_KEYS = {
+    "rank",
+    "title",
+    "reason",
+    "media_type",
+    "collection_slug",
+    "library",
+    "section_key",
+    "seed_title",
+    "sources",
+    "affinity",
+}
+
 
 class TestUsersApi:
     def test_list_and_patch(self, client: TestClient):
         users = client.get("/api/users").json()
         assert [u["username"] for u in users] == ["mike", "sarah"]
+        assert set(users[0]) == USER_KEYS
         target = next(u for u in users if u["username"] == "mike")
         # NB: `row_size`/`max_rating` used to live in prefs and were read by NOTHING. Per-person row
         # size is a row override (PUT /users/{id}/rows/{cid}); a maturity cap filtered no content at
         # all, so it was removed rather than left looking enforced.
         r = client.patch(f"/api/users/{target['id']}", json={"enabled": True, "prefs": {"excluded_genres": ["Horror"]}})
         assert r.status_code == 200
+        assert set(r.json()) == USER_KEYS, "the PATCH renders the same person as the list"
         assert r.json()["enabled"] is True
         assert r.json()["prefs"]["excluded_genres"] == ["Horror"]
+
+    def test_prefs_pass_through_whatever_an_install_has_accrued(self, client: TestClient):
+        """`prefs` is free-form JSON: which keys exist varies by DATA, not by branch (`history_depth`
+        appears after a watch sync, `paused` only once someone is paused, and an old install's
+        `blocked_seeds` is a list of bare ints). The response model must not narrow it — a declared
+        shape here would either drop the keys it doesn't know or invent the ones it does."""
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter_by(username="sarah").one()
+            user.prefs = {"history_depth": 7, "blocked_seeds": [111, 222], "something_new": {"deep": True}}
+            session.commit()
+            user_id = user.id
+
+        listed = next(u for u in client.get("/api/users").json() if u["id"] == user_id)
+
+        assert listed["prefs"] == {
+            "history_depth": 7,
+            "blocked_seeds": [111, 222],  # the legacy bare-int shape survives the round trip
+            "something_new": {"deep": True},
+        }
 
     def test_a_nickname_changes_the_row_title_but_never_the_label(self, client: TestClient):
         """Plex usernames are often a handle nobody uses, and `{user}` put it on a Home screen (#4).
@@ -182,6 +247,49 @@ class TestUsersApi:
     def test_patch_unknown_user_404(self, client: TestClient):
         assert client.patch("/api/users/9999", json={"enabled": True}).status_code == 404
 
+    def test_history_carries_every_field_the_watch_source_records(self, client: TestClient, monkeypatch):
+        """Both media cells: a movie has no season/episode, an episode watch carries all three. The
+        episode detail is the whole reason the list is readable ("S2E4 — The Ceiling"), and `tmdb_id`
+        is the only thing "block this seed" can key on — none of them may be filtered out."""
+        uid = next(u["id"] for u in client.get("/api/users").json() if u["slug"] == "sarah")
+        watches = [
+            {
+                "title": "Paddington 2",
+                "tmdb_id": 346648,
+                "media_type": "movie",
+                "watched_at": "2026-07-30T09:00:00+00:00",
+                "year": 2017,
+                "season": None,
+                "episode": None,
+                "episode_title": None,
+            },
+            {
+                "title": "Severance",
+                "tmdb_id": None,  # nothing with a tmdb:// GUID — the UI must not offer to block it
+                "media_type": "show",
+                "watched_at": "2026-07-29T21:15:00+00:00",
+                "year": 2022,
+                "season": 2,
+                "episode": 4,
+                "episode_title": "Woe's Hollow",
+            },
+        ]
+        monkeypatch.setattr(client.app.state.run_service, "user_history", lambda user_id, limit: watches)
+
+        body = client.get(f"/api/users/{uid}/history").json()
+
+        assert set(body[0]) == {
+            "title",
+            "tmdb_id",
+            "media_type",
+            "watched_at",
+            "year",
+            "season",
+            "episode",
+            "episode_title",
+        }
+        assert body == watches
+
     def test_disabling_a_user_removes_their_rows_from_plex(self, client: TestClient, monkeypatch):
         """Turning a user off deletes every collection under their label — not just stops delivery.
 
@@ -232,6 +340,7 @@ class TestUsersApi:
         # Enable all -> everyone on, and NOTHING removed from Plex.
         r = client.post("/api/users/set-enabled", json={"enabled": True})
         assert r.status_code == 200 and r.json()["enabled"] is True
+        assert set(r.json()) == {"updated", "cleaned", "enabled"}
         assert all(u["enabled"] for u in client.get("/api/users").json())
         assert removed_labels == []  # enabling never triggers a Plex write
 
@@ -284,7 +393,7 @@ class TestUserSync:
             if was_called:  # a no-op call with nothing renamed is not Plex work
                 calls.append(was_called)
 
-        monkeypatch.setattr(user_sync, "_rename_after_nickname", spy)
+        monkeypatch.setattr(user_sync, "rename_after_nickname", spy)
         monkeypatch.setattr(
             user_sync.TautulliClient, "friendly_names", lambda self: {555000100: "Sazza"}, raising=False
         )
@@ -337,7 +446,7 @@ class TestUserSync:
             if was_called:  # a no-op call with nothing renamed is not Plex work
                 calls.append(was_called)
 
-        monkeypatch.setattr(user_sync, "_rename_after_nickname", spy)
+        monkeypatch.setattr(user_sync, "rename_after_nickname", spy)
 
         client.post("/api/users/sync")  # the fixture renames one account, so this one DOES reconcile
         calls.clear()
@@ -521,6 +630,21 @@ class TestUserRowsApi:
         uid = self._sarah_id(client)
         rows = client.get(f"/api/users/{uid}/rows").json()
         assert [r["slug"] for r in rows] == ["picked"]
+        assert set(rows[0]) == {
+            "collection_id",
+            "slug",
+            "name",
+            "media",
+            "library",
+            "section_key",
+            "size",
+            "recent_count",
+            "is_default",
+            "muted",
+            "override",
+            "picks",
+        }
+        assert set(rows[0]["override"]) == {"row_size", "recent_count"}
         assert rows[0]["is_default"] is True
         assert rows[0]["muted"] is False
         assert rows[0]["picks"] == []
@@ -530,6 +654,7 @@ class TestUserRowsApi:
         cid = client.get(f"/api/users/{uid}/rows").json()[0]["collection_id"]
         r = client.put(f"/api/users/{uid}/rows/{cid}", json={"muted": True, "row_size": 20})
         assert r.status_code == 200
+        assert set(r.json()) == {"collection_id", "muted", "row_size", "recent_count"}
         row = client.get(f"/api/users/{uid}/rows").json()[0]
         assert row["muted"] is True
         assert row["override"]["row_size"] == 20
@@ -619,6 +744,58 @@ class TestUserRowsApi:
         assert entry["reason"] == "no watch history yet"
         assert entry["duration_ms"] == 1200
         assert entry["run_status"] == "ok"  # the run itself was fine
+
+    def test_a_users_run_entry_carries_its_diff_and_every_picks_field(self, client: TestClient):
+        """The run entry and its picks are what the user page renders — provenance (`sources`,
+        `affinity`, `seed_title`) included, which is the whole "why is this here?" answer."""
+        from shortlist.server.db.models import PickRow, Run, RunUser
+
+        uid = self._sarah_id(client)
+        with client.app.state.sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=uid, status="ok", diff={"added": ["Arrival"]}))
+            session.add(
+                PickRow(
+                    run_id=run.id,
+                    user_id=uid,
+                    tmdb_id=329865,
+                    media_type="movie",
+                    rating_key=42,
+                    rank=1,
+                    collection_slug="picked",
+                    section_key="1",
+                    library="Movies",
+                    title="Arrival",
+                    reason="because you watched Interstellar",
+                    sources="tmdb_similar,llm_web",
+                    affinity=0.8,
+                    seed_title="Interstellar",
+                )
+            )
+            session.commit()
+
+        entry = client.get(f"/api/users/{uid}/runs").json()[0]
+
+        assert set(entry) == {
+            "run_id",
+            "started_at",
+            "finished_at",
+            "status",
+            "error",
+            "reason",
+            "duration_ms",
+            "run_status",
+            "dry_run",
+            "diff",
+            "picks",
+        }
+        assert entry["diff"] == {"added": ["Arrival"]}, "a free-form diff passes through as stored"
+        assert set(entry["picks"][0]) == PICK_KEYS
+        assert entry["picks"][0]["sources"] == ["tmdb_similar", "llm_web"]
+        assert entry["picks"][0]["affinity"] == 0.8
+        assert entry["picks"][0]["seed_title"] == "Interstellar"
 
     def test_user_runs_summary_counts_the_runs_that_left_them_out(self, client: TestClient):
         """Six entries on a person's page read as "the server ran six times" without this."""

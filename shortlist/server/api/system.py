@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 import shortlist
 from shortlist.logging_config import normalize_level
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import API_TOKEN_KEY, API_TOKEN_PREFIX, require_owner
 from shortlist.server.db.models import Collection, Event, RestrictionSnapshotRow, User, iso_utc
 from shortlist.server.safe_mode import force_dry_run
@@ -47,7 +48,23 @@ _authed = APIRouter(dependencies=[Depends(require_owner)])
 _public = APIRouter()
 
 
-@_authed.get("/version")
+class VersionOut(PassthroughModel):
+    """`GET /version`.
+
+    ``extra="allow"`` is on EVERY response model in this file, nested ones included, and is not
+    optional: a strict Pydantic response model silently DROPS any key the handler returned but the
+    model does not declare. With it, an undeclared key passes through untouched — the model
+    documents the shape without filtering it, so a field missed here cannot vanish from the payload
+    and blank out a page.
+    """
+
+    current_version: str
+    latest_version: str | None
+    update_available: bool
+    install_type: str
+
+
+@_authed.get("/version", response_model=VersionOut)
 async def version(request: Request) -> dict:
     """Current + latest version and whether an update is available."""
     from shortlist.server.version_check import version_info
@@ -55,7 +72,11 @@ async def version(request: Request) -> dict:
     return version_info()
 
 
-@_public.get("/health")
+class HealthOut(PassthroughModel):
+    status: str
+
+
+@_public.get("/health", response_model=HealthOut)
 async def health() -> dict:
     """Liveness only — this is the one unauthenticated endpoint, and Docker's HEALTHCHECK is its
     consumer. The version used to be here too; an unauthenticated caller does not need to know which
@@ -63,7 +84,29 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-@_authed.get("/syncs")
+class SyncStateOut(PassthroughModel):
+    """One sync's schedule summary: when it last ran, when it fires next, and on what cron."""
+
+    last: str | None
+    next: str | None
+    cron: str
+
+
+class BackupScheduleOut(PassthroughModel):
+    """Backups have no "last ran" line on the Tools page — the backup list itself is that answer."""
+
+    next: str | None
+    cron: str
+    max_keep: int
+
+
+class SyncsOut(PassthroughModel):
+    watched: SyncStateOut
+    users: SyncStateOut
+    backup: BackupScheduleOut
+
+
+@_authed.get("/syncs", response_model=SyncsOut)
 async def syncs(request: Request) -> dict:
     """When each sync last ran and when it next fires — for the Tools page "last synced" lines."""
     from shortlist.server.scheduler import BACKUP_JOB_ID, USER_SYNC_JOB_ID, WATCH_SYNC_JOB_ID
@@ -100,7 +143,16 @@ async def syncs(request: Request) -> dict:
     }
 
 
-@_authed.get("/api-token")
+class ApiTokenStatusOut(PassthroughModel):
+    """`GET /api-token`. No example or default is declared on `token` — a schema is documentation
+    that ships to the browser, and a credential has no business in one (plex-safety rule 9)."""
+
+    enabled: bool
+    created_at: str | None
+    token: str | None
+
+
+@_authed.get("/api-token", response_model=ApiTokenStatusOut)
 async def api_token_status(request: Request) -> dict:
     """The owner API token itself (decrypted, for the owner to reveal/copy — like Sonarr/Radarr's key),
     plus whether one exists and when it was made. Owner-gated; never exposed via GET /api/settings."""
@@ -114,7 +166,12 @@ async def api_token_status(request: Request) -> dict:
         }
 
 
-@_authed.post("/api-token")
+class ApiTokenCreatedOut(PassthroughModel):
+    token: str
+    created_at: str
+
+
+@_authed.post("/api-token", response_model=ApiTokenCreatedOut)
 async def create_api_token(request: Request) -> dict:
     """Generate (or replace) the owner API token. Stored encrypted at rest; regenerating invalidates
     the previous token immediately."""
@@ -132,7 +189,11 @@ async def create_api_token(request: Request) -> dict:
     return {"token": token, "created_at": created}
 
 
-@_authed.delete("/api-token")
+class ApiTokenRevokedOut(PassthroughModel):
+    enabled: bool
+
+
+@_authed.delete("/api-token", response_model=ApiTokenRevokedOut)
 async def revoke_api_token(request: Request) -> dict:
     """Revoke the API token — any script still using it starts getting 401s on the next call."""
     with request.app.state.sessions() as session:
@@ -145,7 +206,13 @@ async def revoke_api_token(request: Request) -> dict:
     return {"enabled": False}
 
 
-@_authed.get("/image-provider")
+class ImageProviderOut(PassthroughModel):
+    capable: bool
+    provider: str
+    reason: str  # plain-English, user-facing; "" when capable
+
+
+@_authed.get("/image-provider", response_model=ImageProviderOut)
 async def image_provider(request: Request) -> dict:
     """Whether the configured AI provider can generate poster images (and a plain-English reason if
     not) — so the row editor can enable/disable the "Generate" poster option honestly."""
@@ -157,7 +224,23 @@ async def image_provider(request: Request) -> dict:
         return image_provider_status(store)
 
 
-@_authed.get("/logs")
+class LogLineOut(PassthroughModel):
+    """One parsed log entry. `ts` is None for a line the parser could not date (a raw traceback)."""
+
+    ts: str | None
+    level: str
+    source: str
+    message: str
+
+
+class LogsOut(PassthroughModel):
+    lines: list[LogLineOut]
+    total_matched: int
+    truncated: bool
+    file: str | None  # None when there is no log file yet
+
+
+@_authed.get("/logs", response_model=LogsOut)
 async def logs(request: Request, level: str = "DEBUG", q: str = "", limit: int = 1000) -> dict:
     """The rotating log file, parsed and filtered — so a problem can be diagnosed from the app
     instead of `docker logs`.
@@ -250,7 +333,13 @@ async def debug_bundle(request: Request) -> str:
     return "\n".join(lines)
 
 
-@_authed.get("/libraries")
+class LibraryOut(PassthroughModel):
+    key: str
+    title: str
+    type: str  # Plex section type: "movie" | "show" | anything else the server has
+
+
+@_authed.get("/libraries", response_model=list[LibraryOut])
 async def libraries(request: Request) -> list[dict]:
     """The server's movie/show libraries, so the Rows editor can offer them as delivery targets."""
     from shortlist.engine.clients.plex_pms import PlexClient
@@ -269,7 +358,13 @@ async def libraries(request: Request) -> list[dict]:
     return await asyncio.get_running_loop().run_in_executor(None, read)
 
 
-@_authed.get("/libraries/{key}/collections")
+class LibraryCollectionOut(PassthroughModel):
+    """A candidate anchor title. Title only — the shelf is ordered by title, not by rating key."""
+
+    title: str
+
+
+@_authed.get("/libraries/{key}/collections", response_model=list[LibraryCollectionOut])
 async def library_collections(key: str, request: Request) -> list[dict]:
     """A library's managed (orderable) collections — the candidate ANCHORS for placing Shortlist rows
     in the Recommended shelf. Shortlist's own rows are excluded (you don't anchor a row to itself)."""
@@ -302,7 +397,23 @@ async def library_collections(key: str, request: Request) -> list[dict]:
     return await asyncio.get_running_loop().run_in_executor(None, read)
 
 
-@_authed.get("/owned-collections")
+class OwnedCollectionOut(PassthroughModel):
+    library: str
+    title: str
+    label: str
+    rating_key: int
+    kind: str  # "user" (a per-person row's label) | "shared" (a shared row's own slug)
+    slug: str
+    orphan: bool  # its user or shared row is gone from the app — safe to remove
+
+
+class OwnedCollectionsOut(PassthroughModel):
+    collections: list[OwnedCollectionOut]
+    total: int
+    orphans: int
+
+
+@_authed.get("/owned-collections", response_model=OwnedCollectionsOut)
 async def owned_collections_audit(request: Request) -> dict:
     """Read-only cleanup audit: every Shortlist-labelled collection currently on Plex, one per entry.
     Each is flagged ``orphan`` when the label's owner is gone from the app — the USER for a per-person
@@ -359,7 +470,15 @@ class UninstallRequest(BaseModel):
     dry_run: bool = False  # preview: report what WOULD be restored/deleted (rule 8)
 
 
-@_authed.post("/uninstall")
+class UninstallOut(PassthroughModel):
+    filters_restored: int
+    collections_deleted: list[str]  # titles, so the preview names what would go
+    rows_disabled: int
+    dry_run: bool
+    message: str
+
+
+@_authed.post("/uninstall", response_model=UninstallOut)
 async def uninstall(body: UninstallRequest, request: Request) -> dict:
     """Trust feature: restore every snapshot, delete every shortlist collection, disable every row
     and clear its schedule so nothing rebuilds, and report.
@@ -464,16 +583,29 @@ async def uninstall(body: UninstallRequest, request: Request) -> dict:
 # -- Backups -----------------------------------------------------------------------------------
 
 
-@_authed.get("/backups")
-async def get_backups(request: Request):
+class BackupOut(PassthroughModel):
+    name: str  # the filename, and the id `POST /backups/restore` takes
+    size_bytes: int
+    created_at: str
+
+
+@_authed.get("/backups", response_model=list[BackupOut])
+async def get_backups(request: Request) -> list[dict]:
     """List available DB backups, newest first."""
     from shortlist.server.services.backup import list_backups
 
     return list_backups(request.app.state.config_dir)
 
 
-@_authed.post("/backups")
-async def create_backup(request: Request):
+class BackupCreatedOut(PassthroughModel):
+    """A manual backup carries no `created_at`: it was just taken, which is the answer."""
+
+    name: str
+    size_bytes: int
+
+
+@_authed.post("/backups", response_model=BackupCreatedOut)
+async def create_backup(request: Request) -> dict:
     """Take a manual backup now."""
     from shortlist.server.services.backup import take_backup
 
@@ -489,8 +621,16 @@ class RestoreRequest(BaseModel):
     name: str
 
 
-@_authed.post("/backups/restore")
-async def restore_backup_endpoint(body: RestoreRequest, request: Request):
+class BackupRestoredOut(PassthroughModel):
+    restored: str
+    message: str
+    # Named apart from `message` so the UI renders it as a warning rather than a receipt — a restore
+    # also restores who could see which rows (see the handler).
+    privacy_note: str
+
+
+@_authed.post("/backups/restore", response_model=BackupRestoredOut)
+async def restore_backup_endpoint(body: RestoreRequest, request: Request) -> dict:
     """Restore from a named backup. The app will need to be restarted after.
 
     A restore is not a neutral rollback: the database is what decides WHO MAY SEE WHAT. Restoring a
@@ -534,6 +674,23 @@ async def restore_backup_endpoint(body: RestoreRequest, request: Request):
 _BACKGROUND_DRAINS: set[asyncio.Task] = set()
 
 
+class JobOut(PassthroughModel):
+    """One background job row — the shape `_job_dict` builds, on both `/jobs` and `/jobs/catalog`."""
+
+    id: int
+    kind: str
+    status: str  # queued | running | done | failed
+    attempts: int
+    max_attempts: int
+    detail: str
+    error: str | None
+    payload: dict  # data by design (a slug, a row), never a secret — see `_job_dict`
+    result: dict
+    created_at: str
+    started_at: str | None
+    finished_at: str | None
+
+
 def _job_dict(job) -> dict:
     return {
         "id": job.id,
@@ -554,7 +711,7 @@ def _job_dict(job) -> dict:
     }
 
 
-@_authed.get("/jobs")
+@_authed.get("/jobs", response_model=list[JobOut])
 async def list_jobs(
     request: Request, limit: int = Query(25, ge=1, le=200), kind: str | None = None, before_id: int | None = None
 ) -> list[dict]:
@@ -579,7 +736,26 @@ async def list_jobs(
         return [_job_dict(job) for job in rows]
 
 
-@_authed.get("/jobs/catalog")
+class JobCatalogEntryOut(PassthroughModel):
+    """One card on the Jobs page: what the kind does, when it next runs, and how it went last time."""
+
+    kind: str
+    label: str
+    description: str
+    manual: bool  # may the UI trigger it from a button?
+    trigger: str  # what causes it, for the kinds no button can start
+    scheduled: bool  # "can run on a timer", NOT "currently does" — `next_run` answers that
+    schedule_optional: bool
+    schedule_setting: str  # the settings key holding this kind's cron; "" when it has none
+    next_run: str | None
+    last: JobOut | None
+    total: int
+    queued: int
+    running: int
+    failed: int
+
+
+@_authed.get("/jobs/catalog", response_model=list[JobCatalogEntryOut])
 async def jobs_catalog(request: Request) -> list[dict]:
     """Every job Shortlist can run: what it does, when it next runs, and how it went last time.
 
@@ -653,7 +829,19 @@ class RunJobRequest(BaseModel):
     background: bool = False
 
 
-@_authed.post("/jobs")
+class JobRunOut(PassthroughModel):
+    """The receipt for `POST /jobs` — a subset of `JobOut` plus the sync-check preview lists."""
+
+    id: int
+    kind: str
+    status: str
+    detail: str
+    error: str | None
+    fixed: list[str]  # labels the check corrected (or, on a dry run, would correct)
+    orphans: list[str]  # labels it would DELETE — kept apart from `fixed`, it cannot be undone
+
+
+@_authed.post("/jobs", response_model=JobRunOut)
 async def run_job(body: RunJobRequest, request: Request) -> dict:
     """Queue a maintenance job and drain immediately, so pressing a button still feels instant.
 

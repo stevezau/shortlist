@@ -101,7 +101,7 @@ CATALOG: tuple[JobKind, ...] = (
             "what notices someone leaving."
         ),
         manual=True,
-        # A WRITER, despite the name. The handler calls `_rename_after_nickname` inline, which renames
+        # A WRITER, despite the name. The handler calls `rename_after_nickname` inline, which renames
         # Shortlist collections on the PMS when someone's display name has drifted. Marking it
         # read-only let that rename land in the middle of a run — and the run matches collections by
         # rendered TITLE, so a rename mid-converge can make a live collection look orphaned (converge
@@ -168,12 +168,17 @@ CATALOG: tuple[JobKind, ...] = (
         description=(
             "Delete runs and audit events older than the retention you set in Settings, and drop "
             "expired cache rows. Local database housekeeping — nothing on Plex changes."
+            "\n\nRuns nightly at 06:15 by default, last of the night. It is also queued after every "
+            "run, and the schedule is the floor under that: a server whose rows have no cron — or one "
+            "paused from the Danger Zone — has no runs to queue it, and would never prune again."
         ),
         manual=True,
         writes_plex=False,  # local database only
         # Queued by the run service the moment a run's results are safely persisted. It used to run
         # INSIDE that persist's transaction, so a bulk delete that failed took the whole persist with
         # it — discarding the record of a run that had already written to Plex.
+        schedule_job_id="maintenance-prune",
+        schedule_setting="maintenance.prune_cron",
         trigger="Queued after every run, and runnable by hand.",
     ),
     JobKind(
@@ -783,7 +788,7 @@ def _maintenance_prune(state, payload: dict) -> dict:
     Idempotent by construction: it deletes whatever is currently older than the limit, so replaying
     it after a crash simply finds nothing left to delete.
     """
-    from shortlist.server.services.run_service import RunService
+    from shortlist.server.services.run_persistence import prune_events, prune_expired_cache, prune_runs
 
     with state.sessions() as session:
         store = SettingsStore(session)
@@ -793,9 +798,9 @@ def _maintenance_prune(state, payload: dict) -> dict:
         event_months = int(store.get("events.retention") or 0)
         # Legacy DBs store the old count-based "100" — values beyond the new 24-month max are treated
         # as 0 (keep forever) until the owner visits Settings and sets a real month value.
-        runs = RunService._prune_runs(session, months if 0 < months <= 24 else 0)
-        events = RunService._prune_events(session, event_months if 0 < event_months <= 24 else 0)
-        cached = RunService._prune_expired_cache(session)
+        runs = prune_runs(session, months if 0 < months <= 24 else 0)
+        events = prune_events(session, event_months if 0 < event_months <= 24 else 0)
+        cached = prune_expired_cache(session)
         session.commit()
     return {
         "runs": runs,

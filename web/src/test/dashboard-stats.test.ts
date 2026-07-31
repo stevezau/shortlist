@@ -16,6 +16,14 @@ function makeUser(overrides: Partial<User> = {}): User {
     last_run_at: null,
     request_tag: "",
     hit_rate: null,
+    nickname: "",
+    friendly_name: "",
+    display_name: "",
+    avatar_url: "",
+    plex_account_id: 0,
+    restriction_profile: "",
+    preview_titles: [],
+    prefs: {},
     ...overrides,
   };
 }
@@ -29,6 +37,8 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     status: "ok",
     dry_run: false,
     stats: { users_ok: 3, users_error: 0 },
+    error: null,
+    promotion_blockers: [],
     ...overrides,
   };
 }

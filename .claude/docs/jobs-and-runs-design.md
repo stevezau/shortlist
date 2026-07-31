@@ -72,7 +72,7 @@ Consequences, worst first:
    share-filter merge, and a run no longer stops the whole queue for its duration.
 
    **`sync.users` is a writer** despite its name: the handler renames Shortlist collections on the PMS
-   inline (`_rename_after_nickname`). Runs match collections by rendered *title*, so a rename landing
+   inline (`rename_after_nickname`). Runs match collections by rendered *title*, so a rename landing
    mid-converge can make a live collection look orphaned — and converge deletes orphans.
 7. **Failures find the operator.** Anything that exhausts its retries raises a notification.
 

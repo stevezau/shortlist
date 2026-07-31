@@ -75,7 +75,7 @@ export function RunDuration({ run }: { run: Run }) {
   }, [running]);
 
   if (running) {
-    const started = Date.parse(run.started_at);
+    const started = Date.parse(run.started_at ?? "");
     const elapsed = Number.isNaN(started) ? null : Math.max(0, now - started);
     return (
       <span className="tabular-nums text-muted-foreground" title="Running…">

@@ -15,6 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from loguru import logger
+from pydantic import BaseModel, ConfigDict
 
 PLEXTV = "https://plex.tv"
 PRODUCT = "Shortlist"
@@ -310,7 +311,23 @@ def require_setup_access(request: Request) -> dict:
     return session or {"unclaimed": True}
 
 
-@router.post("/pin")
+class PinOut(BaseModel):
+    """A freshly created plex.tv PIN. The `code` is what the owner types into plex.tv/link — it is
+    short-lived and useless without the same `client_id`, and it is not a Shortlist credential.
+
+    ``extra="allow"`` is on every response model in this file: a strict Pydantic response model
+    silently DROPS any key it does not declare, so a field missed here would vanish from the payload
+    rather than fail loudly. The model documents the shape; it never filters it.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: int
+    code: str
+    client_id: str
+
+
+@router.post("/pin", response_model=PinOut)
 async def create_pin(request: Request) -> dict:
     _rate_limit_pin(request)
     async with httpx.AsyncClient() as client:
@@ -325,7 +342,19 @@ async def create_pin(request: Request) -> dict:
     return {"id": data["id"], "code": data["code"], "client_id": request.app.state.client_id}
 
 
-@router.get("/pin/{pin_id}")
+class PinStatusOut(BaseModel):
+    """The poll result. Until the owner approves in Plex it is `linked: false` and the identity
+    fields are null; the Plex auth token is NEVER part of this payload (it is held server-side,
+    keyed to the session, so an XSS in the SPA cannot steal it)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    linked: bool
+    account_id: int | None = None
+    username: str | None = None
+
+
+@router.get("/pin/{pin_id}", response_model=PinStatusOut)
 async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
     """Poll the PIN; once linked, verify the account is the server owner and set the session."""
     _rate_limit_poll()
@@ -409,7 +438,25 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
     return {"linked": True, "account_id": account_id, "username": payload["username"]}
 
 
-@router.get("/session")
+class SessionOut(BaseModel):
+    """Who the caller is, and whether this instance demands a sign-in at all.
+
+    The signed cookie's contents are spread into the response, so `account_id`/`username` are
+    present only once signed in — they are declared optional rather than left to `extra`, so the
+    SPA gets real types for the two fields it actually reads.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    authenticated: bool
+    # Not "has someone claimed it": an instance holding a Plex token seeded from the environment has
+    # no owner and still holds something worth stealing, so it demands a sign-in too.
+    login_required: bool
+    account_id: int | None = None
+    username: str | None = None
+
+
+@router.get("/session", response_model=SessionOut)
 async def get_session(request: Request) -> dict:
     # `login_required` is what tells the SPA whether to open the wizard or the login screen. It is
     # NOT "has someone claimed it" — an instance with a secret seeded from the environment has no
@@ -421,7 +468,13 @@ async def get_session(request: Request) -> dict:
     return {"authenticated": True, "login_required": login_required, **session}
 
 
-@router.post("/logout")
+class LogoutOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    ok: bool
+
+
+@router.post("/logout", response_model=LogoutOut)
 async def logout(response: Response) -> dict:
     response.delete_cookie(SESSION_COOKIE)
     return {"ok": True}

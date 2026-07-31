@@ -8,9 +8,9 @@ import { Input } from "@/components/ui/input";
 import { api, apiErrorMessage } from "@/lib/api";
 import { useBlockSeed, useUnblockSeed, useUserHistory } from "@/lib/queries";
 import { blockedSeeds } from "@/lib/types";
-import type { BlockedSeed, User } from "@/lib/types";
+import type { BlockedSeed, TitleMatch, User } from "@/lib/types";
 
-function seedLabel(seed: BlockedSeed): string {
+function seedLabel(seed: TitleMatch): string {
   if (!seed.title) return `TMDB ${seed.tmdb_id}`;
   const kind =
     seed.media_type === "show"
@@ -47,7 +47,9 @@ function RecentWatchPicker({
 
   const alreadyBlocked = new Set(blocked.map((seed) => seed.tmdb_id));
   // A watch with no tmdb:// GUID has nothing a block can key on, so it is not offered at all.
-  const candidates = (history.data ?? []).filter((item) => item.tmdb_id !== null);
+  const candidates = (history.data ?? []).filter(
+    (item) => item.tmdb_id !== null,
+  );
   const shown = expanded ? candidates.slice(0, 24) : candidates.slice(0, 8);
 
   if (candidates.length === 0) return null;
@@ -117,7 +119,14 @@ function AddBlockedSeed({ userId }: { userId: number }) {
   const search = useMutation({
     mutationFn: () => api.searchTitles(query.trim(), mediaType),
     onSuccess: (results) => {
-      setFound(results);
+      // TMDB can answer without an id. There is nothing a block could key on, and POSTing null
+      // would 422 — so those matches are simply not offered, the same rule the recent-watch picker
+      // applies to a watch with no tmdb:// GUID.
+      setFound(
+        results.flatMap((match) =>
+          match.tmdb_id === null ? [] : [{ ...match, tmdb_id: match.tmdb_id }],
+        ),
+      );
       setError("");
     },
     onError: (err) =>

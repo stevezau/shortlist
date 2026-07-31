@@ -7,6 +7,16 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 
+from shortlist.server.api.schemas_runs import (
+    RunCancelledOut,
+    RunCreatedOut,
+    RunDetailOut,
+    RunLogLineOut,
+    RunsDeletedOut,
+    RunsSummaryOut,
+    RunSummaryOut,
+    RunUserTraceOut,
+)
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import PickRow, RequestCandidate, Run, RunUser, iso_utc
 
@@ -38,7 +48,7 @@ def _run_summary(run: Run) -> dict:
     }
 
 
-@router.get("")
+@router.get("", response_model=list[RunSummaryOut])
 async def list_runs(
     request: Request,
     limit: int = Query(50, ge=1, le=200),
@@ -63,7 +73,7 @@ async def list_runs(
         return [_run_summary(r) for r in runs]
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=RunsSummaryOut)
 async def runs_summary(request: Request) -> dict:
     """Totals for the Runs page header: how many runs, how many succeeded/failed, and the last one."""
     with request.app.state.sessions() as session:
@@ -80,7 +90,7 @@ async def runs_summary(request: Request) -> dict:
         }
 
 
-@router.delete("")
+@router.delete("", response_model=RunsDeletedOut)
 async def clear_runs(request: Request) -> dict:
     """Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the
     dashboard's lifetime metrics survive — only the browsable history is cleared. Changes nothing
@@ -186,7 +196,7 @@ def _request_outcomes(session, tmdb_ids: set[int]) -> dict[str, dict]:
     }
 
 
-@router.get("/{run_id}")
+@router.get("/{run_id}", response_model=RunDetailOut)
 async def get_run(run_id: int, request: Request) -> dict:
     with request.app.state.sessions() as session:
         run = session.get(Run, run_id)
@@ -261,7 +271,7 @@ async def get_run(run_id: int, request: Request) -> dict:
         return {**_run_summary(run), "users": users + pending}
 
 
-@router.get("/{run_id}/users/{user_id}/trace")
+@router.get("/{run_id}/users/{user_id}/trace", response_model=RunUserTraceOut)
 async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dict:
     """The full pipeline trace for one user in one run: seeds derived, each candidate source's
     queries and returns, the web-search / RAG prompts, and the titles proposed. Fetched on demand
@@ -297,7 +307,7 @@ async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dic
         }
 
 
-@router.get("/{run_id}/log", response_model=None)
+@router.get("/{run_id}/log", response_model=list[RunLogLineOut])
 async def get_run_log(
     run_id: int,
     request: Request,
@@ -310,7 +320,8 @@ async def get_run_log(
     afterwards, so a run whose process has since restarted still has a readable log.
 
     `after_seq` returns only lines past that sequence number, for topping up without refetching the
-    whole feed. `format=text` renders it as plain text for the download button.
+    whole feed. `format=text` renders it as plain text for the download button — that branch returns
+    a `Response` directly, which FastAPI hands back untouched, so the schema describes the JSON one.
     """
     lines = request.app.state.run_service.run_log(run_id, after_seq=after_seq)
     if format == "text":
@@ -331,7 +342,7 @@ def _log_as_text(lines: list[dict]) -> str:
     return "\n".join(out) + ("\n" if out else "")
 
 
-@router.post("", status_code=202)
+@router.post("", status_code=202, response_model=RunCreatedOut)
 async def trigger_run(body: RunRequest, request: Request) -> dict:
     run_id = await request.app.state.run_service.start_run(
         trigger="manual", dry_run=body.dry_run, user_ids=body.user_ids, collection_ids=body.collection_ids
@@ -339,7 +350,7 @@ async def trigger_run(body: RunRequest, request: Request) -> dict:
     return {"run_id": run_id}
 
 
-@router.post("/{run_id}/cancel")
+@router.post("/{run_id}/cancel", response_model=RunCancelledOut)
 async def cancel_run(run_id: int, request: Request) -> dict:
     """Ask the in-flight run to stop. Cooperative — it finishes the person it's on, then stops, and
     still merges the privacy filters + promotes everyone delivered so far. 409 if it isn't running."""

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from shortlist.engine.models import MediaType, MissingTitle
 from shortlist.engine.requests import request_titles
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Event, RequestCandidate, iso_utc
 
@@ -26,14 +27,14 @@ router = APIRouter(prefix="/requests", tags=["requests"], dependencies=[Depends(
 _STATUS_ORDER = {"pending": 0, "sent": 1, "rejected": 2}
 
 
-class RequestWhyOut(BaseModel):
+class RequestWhyOut(PassthroughModel):
     user: str  # whose taste surfaced it
     row: str  # the row that wanted it (the name the user sees)
     seed: str  # the history title behind it ("because you watched …"); "" for seedless sources
     source: str  # the candidate source that produced it
 
 
-class RequestCandidateOut(BaseModel):
+class RequestCandidateOut(PassthroughModel):
     id: int
     tmdb_id: int
     media_type: str
@@ -113,7 +114,19 @@ def list_requests(request: Request) -> list[RequestCandidateOut]:
     ]
 
 
-@router.post("/reject")
+class RejectedOut(PassthroughModel):
+    """How many rows the action actually touched — not how many ids were sent. Each of the four
+    inbox actions skips the statuses it does not own, so the count is the only honest receipt.
+
+    ``extra="allow"`` is on every response model here (and every nested one): a strict model would
+    silently DROP any key the handler returns but the model has not declared, so a field missed
+    here would vanish from the payload rather than fail loudly.
+    """
+
+    rejected: int
+
+
+@router.post("/reject", response_model=RejectedOut)
 def reject_requests(body: RequestAction, request: Request) -> dict:
     """Permanently dismiss the given titles.
 
@@ -131,7 +144,11 @@ def reject_requests(body: RequestAction, request: Request) -> dict:
     return {"rejected": len(rows)}
 
 
-@router.post("/restore")
+class RestoredOut(PassthroughModel):
+    restored: int
+
+
+@router.post("/restore", response_model=RestoredOut)
 def restore_requests(body: RequestAction, request: Request) -> dict:
     """Un-reject: move rejected titles back to the pending queue (Waiting) so they can be sent again.
 
@@ -152,7 +169,11 @@ def restore_requests(body: RequestAction, request: Request) -> dict:
     return {"restored": len(rows)}
 
 
-@router.post("/delete")
+class DeletedOut(PassthroughModel):
+    deleted: int
+
+
+@router.post("/delete", response_model=DeletedOut)
 def delete_requests(body: RequestAction, request: Request) -> dict:
     """Remove the given titles from the inbox entirely, leaving no trace.
 
@@ -178,7 +199,11 @@ def delete_requests(body: RequestAction, request: Request) -> dict:
     return {"deleted": count}
 
 
-@router.post("/clear")
+class ClearedOut(PassthroughModel):
+    cleared: int
+
+
+@router.post("/clear", response_model=ClearedOut)
 def clear_requests(body: RequestAction, request: Request) -> dict:
     """Clear the given SENT titles from the send log — hide them, don't delete them.
 
@@ -272,7 +297,23 @@ async def get_arr_status(request: Request) -> dict[int, str | None]:
     return await asyncio.get_running_loop().run_in_executor(None, _fetch_statuses)
 
 
-@router.post("/send")
+class SendOutcomeOut(PassthroughModel):
+    """What the Arr said about one title. `status` is the engine's outcome — "requested",
+    "would_request" on a dry run, or a skip/error reason the owner can act on."""
+
+    id: int
+    title: str
+    status: str
+    detail: str
+
+
+class SendOut(PassthroughModel):
+    sent: int  # counts "would_request" too, so a dry run still reports what it would have done
+    dry_run: bool
+    outcomes: list[SendOutcomeOut]
+
+
+@router.post("/send", response_model=SendOut)
 async def send_requests(body: RequestAction, request: Request) -> dict:
     """Ask Sonarr/Radarr for the chosen pending titles.
 

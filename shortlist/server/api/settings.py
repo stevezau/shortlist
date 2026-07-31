@@ -9,6 +9,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from shortlist.engine.clients.http_retry import redact
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Server
 from shortlist.server.net_guard import BlockedUrl, check_url
@@ -244,13 +245,25 @@ async def _reject_a_different_server(state, values: dict[str, object]) -> None:
         )
 
 
-@router.get("")
+class SettingsOut(PassthroughModel):
+    """The whole settings store, flat: `{"row.size": 15, "plex.url": "…", …}`.
+
+    Deliberately declares NO fields. The key set is genuinely dynamic — `settings_store.DEFAULTS`
+    plus whatever rows the database holds, minus `PRIVATE_KEYS` — so enumerating it here would be a
+    second copy of `DEFAULTS` that silently goes stale, and a strict model would DROP every key it
+    had not caught up with. ``extra="allow"`` passes all of them through untouched, which is the
+    honest description of this endpoint: an open map, with secrets already redacted to "•••••" by
+    `all_public()`.
+    """
+
+
+@router.get("", response_model=SettingsOut)
 async def get_settings(request: Request) -> dict:
     with request.app.state.sessions() as session:
         return SettingsStore(session, request.app.state.secrets).all_public()
 
 
-@router.put("")
+@router.put("", response_model=SettingsOut)
 async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     unknown = set(update.values) - KNOWN_KEYS
     if unknown:
@@ -307,7 +320,14 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
 _TESTABLE_SERVICES = frozenset({"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "llm"})
 
 
-@router.post("/test/{service}")
+class ConnectionTestOut(PassthroughModel):
+    """`message` is plain English either way — the success line, or a redacted failure (rule 9)."""
+
+    ok: bool
+    message: str
+
+
+@router.post("/test/{service}", response_model=ConnectionTestOut)
 async def test_connection(service: str, request: Request) -> dict:
     """One tiny call per service; returns plain-English ok/error (design: everything re-testable)."""
     state = request.app.state
@@ -387,7 +407,22 @@ async def test_connection(service: str, request: Request) -> dict:
         return {"ok": False, "message": redact(f"{type(e).__name__}: {e}")}
 
 
-@router.get("/arr/{service}/options")
+class QualityProfileOut(PassthroughModel):
+    id: int
+    name: str
+
+
+class RootFolderOut(PassthroughModel):
+    id: int
+    path: str
+
+
+class ArrOptionsOut(PassthroughModel):
+    quality_profiles: list[QualityProfileOut]
+    root_folders: list[RootFolderOut]
+
+
+@router.get("/arr/{service}/options", response_model=ArrOptionsOut)
 async def arr_options(service: str, request: Request) -> dict:
     """Quality profiles + root folders for a connected Sonarr/Radarr, so the UI offers dropdowns
     rather than asking a non-technical owner to hunt down numeric profile ids and server paths."""
@@ -415,7 +450,15 @@ async def arr_options(service: str, request: Request) -> dict:
         raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
 
 
-@router.post("/curator/models")
+class CuratorModelsOut(PassthroughModel):
+    """The provider the listing was made for (so a stale reply can be told apart from a live one),
+    and its model ids. Best-effort: `models` is empty when the provider cannot be asked."""
+
+    provider: str
+    models: list[str]
+
+
+@router.post("/curator/models", response_model=CuratorModelsOut)
 async def curator_models(request: Request, body: CuratorModelsRequest | None = None) -> dict:
     """Model ids an AI provider offers, for the model picker.
 

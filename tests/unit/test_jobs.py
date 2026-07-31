@@ -438,6 +438,7 @@ class TestHandlers:
             scheduler.BACKUP_JOB_ID,
             scheduler.PRIVACY_SYNC_JOB_ID,
             scheduler.SYNC_CHECK_JOB_ID,
+            scheduler.MAINTENANCE_PRUNE_JOB_ID,
         }
         scheduled = {e.schedule_job_id for e in jobs.CATALOG if e.schedule_job_id}
         assert scheduled == ids
@@ -483,7 +484,7 @@ class TestHandlers:
         # The reason, asserted rather than trusted: if the rename ever moves out of this handler the
         # flag can be revisited, and this points at where to look.
         source = inspect.getsource(users_api.sync_users_from_state)
-        assert "_rename_after_nickname" in source
+        assert "rename_after_nickname" in source
 
     def test_hiding_a_paused_user_takes_every_row_off_every_surface(self, sessions):
         """Pause keeps the collection and its label — so everyone else's exclude still matches, and

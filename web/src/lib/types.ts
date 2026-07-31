@@ -1,22 +1,27 @@
 /**
  * The seam between the generated OpenAPI types and the UI.
  *
- * `.claude/rules/frontend.md`: request/response types are GENERATED, never hand-written. That is now
- * true for everything the FastAPI app actually declares — see "Generated" below, which re-exports
+ * `.claude/rules/frontend.md`: request/response types are GENERATED, never hand-written. The API now
+ * declares a Pydantic model on 65 of its routes (115 schemas), so that rule finally holds for nearly
+ * everything here — "Generated" below derives every request body AND every declared response from
  * `api-schema.d.ts` (built by `pnpm -C web gen:api` from `openapi.snapshot.json`, itself guarded
  * against drift by `tests/unit/test_openapi_snapshot.py`).
  *
- * The catch: across the API's 68 paths, exactly ONE JSON response declares a model
- * (`GET /api/requests` → `RequestCandidateOut`). 67 handlers are annotated `dict`/`list[dict]`, so
- * their generated type is `{ [key: string]: unknown }` — true, useless, and impossible to build a UI
- * on; four more (`GET /api/runs/{id}/log`, and the three `/api/system/backups` operations) declare no
- * response content at all. Those shapes stay hand-written below, under "Hand-written". Each one is a
- * place where the contract lives in this file instead of in the server, and the real fix is a
- * Pydantic response model on the Python side; until then, treat every hand-written interface here as
- * an ASSUMPTION about the API, not a guarantee from it.
+ * What is left hand-written is a short, principled list, under "Hand-written":
  *
- * Third group: "Frontend-only" — view models and unions the UI invents, which have no server
- * counterpart and are not supposed to have one.
+ *   - Engine-owned JSON blobs the server deliberately declares as an open map (`Run.stats`, a run
+ *     user's `diff`/`breakdown`, the whole trace). Their keys vary by DATA, not by branch, they have
+ *     changed repeatedly, and they are thinner on legacy rows — so a model would either invent the
+ *     absent keys or go stale, and the UI's own account of them is the more useful one.
+ *   - The four `/api/setup` shapes whose handlers still return a bare `dict`.
+ *   - The SSE payloads, which OpenAPI cannot describe at all (`text/event-stream` has no schema).
+ *
+ * Each carries a one-line reason. Treat every one as an ASSUMPTION about the API, not a guarantee
+ * from it; a Pydantic response model on the Python side is what retires it.
+ *
+ * Third group: "Frontend-only" — unions the UI narrows on top of a server field typed bare `str`,
+ * and the aliases components import. A value outside one of these is a UI bug, not an API change,
+ * and the real fix for each is a `Literal[...]` on the Python side.
  */
 
 import type { components, paths } from "./api-schema";
@@ -29,59 +34,104 @@ type Schemas = components["schemas"];
 // ---------------------------------------------------------------------------
 
 /*
- * A note on `Partial<>` / `Required<>` below. `gen:api` runs openapi-typescript with its default
+ * Two conventions run through the derivations below.
+ *
+ * `Partial<>` / `Required<>`, on a REQUEST body. `gen:api` runs openapi-typescript with its default
  * `--default-non-nullable`, which marks any field carrying a default as REQUIRED — right for a
  * response (the server always sends it), wrong for a request body (the client never has to). Where
  * that matters the wrapper restores what the schema's own `required` list says.
+ *
+ * `{ narrowed } & Schemas[…]`, narrow side FIRST, on a RESPONSE. Every response model is
+ * `extra="allow"`, so its generated type ends in `& { [key: string]: unknown }` — which makes
+ * `keyof` collapse to `string`, and therefore makes `Omit<>` return the index signature ALONE,
+ * silently dropping every declared field. Intersecting is the only override that survives it. The
+ * order matters for array fields: on `A[] & B[]`, `.map()` resolves to the FIRST constituent's
+ * signature, so the narrowed type has to lead or the callback parameter comes back as `unknown`.
  */
 
+// --- Settings / connections ---
+
 /** GET /api/settings — the settings store is genuinely free-form on the server, so this is the
- *  endpoint's declared shape rather than a stand-in for one. */
+ *  endpoint's declared shape (`SettingsOut`, an open map) rather than a stand-in for one. */
 export type Settings =
   paths["/api/settings"]["get"]["responses"][200]["content"]["application/json"];
 
+/** POST /api/settings/test/{service} response. */
+export type ConnectionTestResult = Schemas["ConnectionTestOut"];
+
+/** GET /api/settings/arr/{service}/options — dropdown data for a connected Sonarr/Radarr. */
+export type ArrOptions = Schemas["ArrOptionsOut"];
+
+// --- Rows / collections ---
+
 /** Where a row sits in a library's Recommended shelf, keyed by library (section) key. A `top` entry
  *  means the very top; otherwise `anchor` places it after/before that collection.
- *  Every field is optional server-side (`HubAnchorIn` has no `required` list). */
+ *
+ *  The EDITOR's working shape: `Partial<>` because the control builds an entry a field at a time and
+ *  every field is optional server-side (`HubAnchorIn` has no `required` list). What a saved row
+ *  carries back is {@link Collection.hub_anchor}, whose values are the fully-defaulted
+ *  `HubAnchorOut`. */
 export type HubAnchorMap = Record<string, Partial<Schemas["HubAnchorIn"]>>;
 
 /** Poster fields sent on save (no image bytes — those go through the upload endpoint). */
 export type PosterInput = Schemas["PosterIn"];
+
+/** A row's custom collection poster as the API returns it — never the image bytes. */
+export type Poster = Schemas["PosterOut"];
+
+/**
+ * Which of Plex's two surfaces one side of a row claims: the Home screen, the library's Recommended
+ * shelf, both, or neither. Held once per audience (`placement` / `placement_friends`) because every
+ * person gets their own Plex collection, so each flag is set per collection.
+ */
+export type Placement = NonNullable<Schemas["CollectionIn"]["placement"]>;
+
+/** A poster mode. "" = Plex default, "upload" = your image, "text" = built-in renderer, "ai" = image
+ *  model. "generate" is the legacy name for "ai", still returned for rows saved before the split. */
+export type PosterMode = NonNullable<Schemas["PosterIn"]["mode"]>;
 
 /**
  * The row editor's working state. `Required<>` because `blankInput()`/`toInput()` fill every field,
  * so the editor never has to reason about `undefined` — the API itself only requires `name`, which
  * is what {@link CollectionBody} expresses.
  *
- * The closed-set fields (`build`, `audience`, `media`, `placement`, `placement_friends`) now carry
- * their unions FROM the schema — the server advertises each set's members, so these are a contract
- * rather than an assumption the UI restates.
+ * The closed-set fields (`build`, `audience`, `media`, `placement`, `placement_friends`) carry their
+ * unions FROM the schema — the server advertises each set's members, so these are a contract rather
+ * than an assumption the UI restates.
  */
 export type CollectionInput = Omit<
   Required<Schemas["CollectionIn"]>,
-  | "audience"
-  | "build"
-  | "hub_anchor"
-  | "media"
-  | "placement"
-  | "placement_friends"
+  "hub_anchor"
 > & {
-  audience: Collection["audience"];
-  build: Collection["build"];
-  hub_anchor: Collection["hub_anchor"];
-  media: Collection["media"];
-  placement: Collection["placement"];
-  placement_friends: Collection["placement_friends"];
+  hub_anchor: HubAnchorMap;
 };
 
 /** POST /api/collections and PATCH /api/collections/{id} body. Only `name` is required; every other
  *  field falls back to the row's stored value (PATCH) or the server default (POST). */
 export type CollectionBody = Partial<CollectionInput> & { name: string };
 
-/** One blocked seed: a title that must never shape this person's recommendations.
- *  This is the POST /api/users/{id}/blocked-seeds body; the search and list endpoints that return
- *  the same four fields declare no model of their own. */
-export type BlockedSeed = Omit<Required<Schemas["BlockSeedBody"]>, "year"> & { year: number | null };
+/** A curated-row definition (GET/POST/PATCH /api/collections).
+ *
+ *  `hub_anchor` needs no override: its dynamic keys are Plex section keys, which the schema already
+ *  expresses as an index signature, and its VALUES are modelled (`HubAnchorOut`). */
+export type Collection = Schemas["CollectionOut"];
+
+/** A Plex library on the server (GET /api/system/libraries). */
+export type PlexLibrary = Schemas["LibraryOut"];
+
+/** One shortlist-labelled collection found on Plex by the cleanup audit. */
+export type OwnedCollection = Schemas["OwnedCollectionOut"];
+
+/** GET /api/system/owned-collections — the cleanup audit result. */
+export type OwnedCollectionsAudit = Schemas["OwnedCollectionsOut"];
+
+/** POST /api/collections/{id}/cleanup — remove a row's collections from Plex. */
+export type CleanupResult = Schemas["CleanupOut"];
+
+/** Whether the configured AI provider can generate images (GET /api/system/image-provider). */
+export type ImageProviderStatus = Schemas["ImageProviderOut"];
+
+// --- Users ---
 
 /**
  * PATCH /api/users/{id} — per-user overrides.
@@ -96,11 +146,135 @@ export type UserPatch = Omit<Schemas["UserPatch"], "prefs"> & {
   prefs?: UserPrefs | null;
 };
 
+/** One blocked seed: a title that must never shape this person's recommendations. Both the list and
+ *  the block/unblock endpoints return it normalised to a record, whichever way prefs are stored. */
+export type BlockedSeed = Schemas["BlockedSeedOut"];
+
+/** GET /api/users/search/titles — TMDB's own best guess for a title search. NOT a {@link BlockedSeed}:
+ *  TMDB can answer without an id, so `tmdb_id` is nullable and such a match cannot be blocked. */
+export type TitleMatch = Schemas["TitleMatchOut"];
+
+/** GET /api/users — one row per Plex user Shortlist knows about.
+ *
+ *  `prefs` is narrowed to what a client may WRITE; what is STORED is an open map, so read
+ *  `blocked_seeds` through {@link blockedSeeds} rather than trusting its declared shape. */
+export type User = {
+  user_type: UserType;
+  prefs: UserPrefs;
+} & Schemas["UserOut"];
+
+/** GET /api/users/{id}/rows — one row this user gets, with their override and latest picks. */
+export type UserRow = Schemas["UserRowOut"];
+
 /** PUT /api/users/{id}/rows/{collection_id} body. */
 export type RowOverridePatch = Schemas["RowOverridePatch"];
 
+/** GET /api/users/{id}/history — one recent watch. */
+export type WatchItem = Schemas["WatchItemOut"];
+
+/** `prefs.blocked_seeds` as records, whatever shape it is stored in. Mirrors the server's
+ *  `blocked_entries` — an old install's bare-int list is valid data and keeps working. */
+export function blockedSeeds(prefs: UserPrefs | undefined): BlockedSeed[] {
+  return (prefs?.blocked_seeds ?? []).map((entry) =>
+    typeof entry === "number"
+      ? { tmdb_id: entry, title: "", media_type: "", year: null }
+      : // `year` is optional on the wire but always present here, so a caller never has to tell
+        // "no year recorded" apart from "field absent" — they mean the same thing.
+        { ...entry, year: entry.year ?? null },
+  );
+}
+
+// --- Runs ---
+
+/**
+ * One delivered recommendation.
+ *
+ * Two server models feed this one renderer: the run detail sends `PickOut`, while the USER pages
+ * send `UserPickOut`, which adds four placement fields. They are optional here so `PickList` and the
+ * run panel can render either. NB: this name shadows TypeScript's built-in `Pick<T, K>` inside this
+ * module — use an explicit object literal here rather than the utility type.
+ */
+export type Pick = Schemas["PickOut"] & {
+  /** Which row this pick belongs to (Collection slug). */
+  collection_slug?: Schemas["UserPickOut"]["collection_slug"];
+  library?: Schemas["UserPickOut"]["library"];
+  media_type?: Schemas["UserPickOut"]["media_type"];
+  section_key?: Schemas["UserPickOut"]["section_key"];
+};
+
 /** POST /api/runs body — every field is optional (`RunRequest` has no `required` list). */
 export type RunRequest = Partial<Schemas["RunRequest"]>;
+
+/** GET /api/runs — one row per pipeline run. */
+export type Run = {
+  stats: RunStats;
+  trigger: RunTrigger;
+} & Schemas["RunSummaryOut"];
+
+/** Per-user slice of GET /api/runs/{id}. `duration_ms` is null while a user is still pending. */
+export type RunUserResult = {
+  diff: RunDiff;
+  breakdown: RunLibraryBreakdown[];
+} & Schemas["RunUserOut"];
+
+/** GET /api/runs/{id} — the run plus its per-user results. */
+export type RunDetail = {
+  stats: RunStats;
+  trigger: RunTrigger;
+  users: RunUserResult[];
+} & Schemas["RunDetailOut"];
+
+/** POST /api/runs — the queued run's id. */
+export type RunCreated = Schemas["RunCreatedOut"];
+
+/** GET /api/runs/summary — totals for the Runs page header. */
+export type RunsSummary = Schemas["RunsSummaryOut"];
+
+/** GET /api/users/{id}/runs — one of this user's recent run results. */
+export type UserRunSummary = { diff: RunDiff } & Schemas["UserRunOut"];
+
+/** GET /api/users/{id}/runs/summary — how many runs included this person, of how many exist. */
+export type UserRunsCount = Schemas["UserRunsSummaryOut"];
+
+/** One line of a run's activity log (GET /api/runs/{id}/log + the SSE stage stream).
+ *
+ *  `counts` is an engine-owned tally the server declares as an open map — see {@link RunStats} for
+ *  why those stay described here. `seq` is the dedup key: several lines land in the same
+ *  millisecond, so a timestamp alone collapsed "1/5" and "2/5" into one entry. */
+export type RunLogEntry = {
+  counts?: Record<string, number | string>;
+} & Schemas["RunLogLineOut"];
+
+/** What the request subsystem did with a wanted-but-missing title (Sonarr/Radarr). Overlaid onto a
+ *  "not in your libraries" fate so a drop reads "→ requested from Radarr" instead of a dead end.
+ *  pending = queued for the owner's approval; sent = asked of Sonarr/Radarr; rejected = dismissed. */
+export type TraceRequestOutcome = {
+  status: "pending" | "sent" | "rejected";
+} & Schemas["TraceRequestOut"];
+
+/** GET /api/runs/{id}/users/{uid}/trace response. */
+export type RunUserTraceResponse = {
+  trace: RunUserTrace;
+  breakdown: RunLibraryBreakdown[];
+  /** Keyed "<tmdb_id>:<media_type>" — the trace overlays it onto "not in your libraries" drops. */
+  requests: Record<string, TraceRequestOutcome>;
+} & Schemas["RunUserTraceOut"];
+
+// --- Requests inbox (Sonarr/Radarr) ---
+
+/** GET /api/requests — one wanted-but-missing title in the Sonarr/Radarr approval inbox. */
+export type RequestCandidate = Schemas["RequestCandidateOut"];
+
+/** One reason a missing title is in the inbox: a person, the row that wanted it, and what suggested it. */
+export type RequestWhy = Schemas["RequestWhyOut"];
+
+/** One title's result from POST /api/requests/send. */
+export type RequestSendOutcome = Schemas["SendOutcomeOut"];
+
+/** POST /api/requests/send response. */
+export type RequestSendResult = Schemas["SendOut"];
+
+// --- Setup wizard / auth ---
 
 /** POST /api/setup/probe body. */
 export type ProbeRequest = Schemas["ProbeRequest"];
@@ -111,204 +285,107 @@ export type LinkRequest = Schemas["LinkRequest"];
 /** GET/PUT /api/setup/state — wizard progress, persisted per step change. */
 export type SetupState = Schemas["WizardState"];
 
-/** GET /api/requests — one wanted-but-missing title in the Sonarr/Radarr approval inbox.
- *  The only endpoint in the API with a declared response model. */
-export type RequestCandidate = Schemas["RequestCandidateOut"];
+/** POST /api/auth/pin. */
+export type PinCreated = Schemas["PinOut"];
 
-/** One reason a missing title is in the inbox: a person, the row that wanted it, and what suggested it. */
-export type RequestWhy = Schemas["RequestWhyOut"];
+/**
+ * GET /api/auth/pin/{id}. The Plex token is deliberately NOT here: the backend holds it
+ * server-side for the setup session, so an XSS anywhere in this UI cannot steal it.
+ */
+export type PinStatus = Schemas["PinStatusOut"];
 
-/** `prefs.blocked_seeds` as records, whatever shape it is stored in. Mirrors the server's
- *  `blocked_entries` — an old install's bare-int list is valid data and keeps working. */
-export function blockedSeeds(prefs: UserPrefs | undefined): BlockedSeed[] {
-  return (prefs?.blocked_seeds ?? []).map((entry) =>
-    typeof entry === "number"
-      ? { tmdb_id: entry, title: "", media_type: "", year: null }
-      // `year` is optional on the wire but always present here, so a caller never has to tell
-      // "no year recorded" apart from "field absent" — they mean the same thing.
-      : { ...entry, year: entry.year ?? null },
-  );
-}
+/** GET /api/auth/session. `login_required` answers "does this instance have anything worth
+ *  protecting yet" — if not, the wizard opens without a login and connecting Plex claims it. */
+export type Session = Schemas["SessionOut"];
+
+/** Owner API-token status. The token is revealable (stored encrypted at rest), so the owner-gated
+ *  endpoint returns it in plaintext for the owner to unhide/copy — like Sonarr/Radarr's key. */
+export type ApiTokenStatus = Schemas["ApiTokenStatusOut"];
+
+/** The response to generating a token. */
+export type ApiTokenCreated = Schemas["ApiTokenCreatedOut"];
+
+// --- Dashboard / report ---
+
+/** One alert in the bell menu (GET /api/notifications). */
+export type AppNotification = {
+  severity: "info" | "warning" | "error";
+} & Schemas["NotificationOut"];
+
+/**
+ * The dashboard effectiveness report — did delivered picks get watched?
+ *
+ * `overall.watched` counts picks WATCHED in the window, which is deliberately not the same set as
+ * `overall.delivered`: a pick delivered last month and watched this week is a watch this week. The
+ * one surviving ratio is `overall.landing`, measured over a MATURED cohort so its numerator and
+ * denominator describe the same picks. `per_user` carries counts and no rate — at these sample sizes
+ * a percentage is noise dressed as precision, and sorting by it put 1/31 above 3/103.
+ */
+export type EffectivenessReport = {
+  window: ReportWindow;
+} & Schemas["EffectivenessReportOut"];
+
+/** GET /api/report/deleted-rows — pick history left behind by a row that no longer exists. */
+export type DeletedRowHistory = Schemas["DeletedRowOut"];
+
+// --- System (logs, backups, jobs, schedule) ---
+
+/** One parsed line from the rotating log file (GET /api/system/logs). A traceback is folded into
+ *  the entry it belongs to, so `message` can span several lines. */
+export type LogLine = Schemas["LogLineOut"];
+
+export type LogPage = Schemas["LogsOut"];
+
+/** Sync schedule info for the Tools page — when each sync last ran and next fires. */
+export type SyncsInfo = Schemas["SyncsOut"];
+
+export type Backup = Schemas["BackupOut"];
+
+export type VersionInfo = Schemas["VersionOut"];
+
+/** One background maintenance job (GET /api/system/jobs). Runs are NOT jobs — they have their own
+ *  page. `queued` after a failure means it will be retried. */
+export type Job = {
+  status: "queued" | "running" | "done" | "failed";
+} & Schemas["JobOut"];
+
+/** GET /api/system/jobs/catalog — one entry per job kind Shortlist knows how to run.
+ *
+ *  The Jobs page is organised by JOB, not by chronology: "is the roster sync healthy?" can't be
+ *  answered from a flat list of the last 25 rows with every kind mixed together. */
+export type JobCatalogEntry = {
+  last: Job | null;
+} & Schemas["JobCatalogEntryOut"];
+
+/** POST /api/system/jobs — the job as it stood after the inline drain. `fixed`/`orphans` are the
+ *  sync.check preview lists (and empty for every other kind); `orphans` is kept apart from `fixed`
+ *  because deleting a departed user's collection is the one action that cannot be undone. */
+export type JobResult = { status: Job["status"] } & Schemas["JobRunOut"];
+
+/** GET /api/schedule — one recurring thing, discriminated by `type`: a job, or the group of rows
+ *  sharing one cron (ONE trigger builds all of them, not one entry each). */
+export type ScheduleEntry =
+  Schemas["ScheduleJobOut"] | Schemas["ScheduleRowsOut"];
+
+export type ScheduleResponse = Schemas["ScheduleOut"];
+
+/** POST /api/system/uninstall response (also returned for dry-run previews). `rows_disabled` counts
+ *  rows switched off so the next scheduled run can't rebuild what uninstall removed. */
+export type UninstallResult = Schemas["UninstallOut"];
 
 // ---------------------------------------------------------------------------
-// Hand-written — response shapes the API does not declare.
+// Hand-written — the shapes the schema genuinely cannot describe.
 //
-// Every interface below describes a handler annotated `-> dict` / `-> list[dict]`, whose generated
-// type is therefore `{ [key: string]: unknown }`. They are the UI's best account of what the server
-// sends, kept in the same thematic order as the API. Adding a Pydantic response model on the Python
-// side is what retires each one.
+// Three kinds only, each noted below: engine-owned JSON blobs the server declares as an open map,
+// the `/api/setup` handlers that still return a bare `dict`, and the SSE payloads (`text/event-stream`
+// has no OpenAPI schema at all). Everything else is generated above.
 // ---------------------------------------------------------------------------
 
-// --- Users (GET /api/users, /api/users/{id}/...) ---
+// --- Engine-owned blobs (declared `dict` server-side, on purpose) ---
 
-/** GET /api/users — one row per Plex user Shortlist knows about. */
-export interface User {
-  id: number;
-  username: string;
-  slug: string;
-  /** The owner's override for what to call them in a row title; "" = fall back. */
-  nickname?: string;
-  /** What Tautulli calls them, when it has its own name for them. The blank-nickname fallback. */
-  friendly_name?: string;
-  /** nickname → friendly_name → username, resolved server-side. */
-  display_name?: string;
-  user_type: UserType;
-  restricted: boolean;
-  /** Plex parental preset on a managed account: "little_kid" | "older_kid" | "teen", "" for none.
-   *  `restricted` is true for BOTH — only this says whether Plex actually hides anything. */
-  restriction_profile?: string;
-  enabled: boolean;
-  cold_start: boolean;
-  history_depth: number;
-  last_run_at: string | null;
-  /** Tag added in Sonarr/Radarr to titles requested for this user (layered onto the global + row tags). */
-  request_tag: string;
-  /** 0..1 fraction of recommended items watched within 30 days, or null before first measurement. */
-  hit_rate: number | null;
-  /** A few of their most recent pick titles, for the dashboard card's preview strip. */
-  preview_titles?: string[];
-  /** Saved per-user overrides — the same shape PATCH accepts. */
-  prefs?: UserPrefs;
-}
-
-/** GET /api/users/{id}/rows — one row this user gets, with their override and latest picks. */
-export interface UserRow {
-  collection_id: number;
-  slug: string;
-  name: string;
-  media: string;
-  /** Which Plex library this card represents (e.g. "Movies", "TV Shows"). Empty for legacy/single-lib rows. */
-  library: string;
-  section_key: string;
-  size: number;
-  /** The row's effective recent-watches depth (its own, else the global) — what an override falls back to. */
-  recent_count: number;
-  is_default: boolean;
-  muted: boolean;
-  override: {
-    row_size: number | null;
-    recent_count: number | null;
-  };
-  picks: Pick[];
-}
-
-/** GET /api/users/{id}/history — one recent watch. */
-export interface WatchItem {
-  title: string;
-  /** null when the title has no tmdb:// GUID — such a watch cannot be blocked as a seed. */
-  tmdb_id: number | null;
-  media_type: string;
-  watched_at: string;
-  year: number | null;
-  /** For a show watch, the specific episode (title is the show name). Null for movies. */
-  season: number | null;
-  episode: number | null;
-  episode_title: string | null;
-}
-
-// --- Rows / collections (GET /api/collections, /api/system/...) ---
-
-/** A curated-row definition (GET/POST/PATCH /api/collections). */
-export interface Collection {
-  id: number;
-  slug: string;
-  name: string;
-  /** The most recent run that built this row, for a "last run" link; null until it's ever run. */
-  last_run_id: number | null;
-  build: "per_person" | "shared";
-  audience: "everyone" | "subset";
-  audience_user_ids: number[];
-  enabled: boolean;
-  /** This row's own run schedule as a cron string; "" = never runs on a schedule (manual only). */
-  schedule: string;
-  size: number;
-  media: "movie" | "show" | "both";
-  sort_order: number;
-  name_template: string;
-  min_watchers: number;
-  /** Tag added in Sonarr/Radarr to titles requested because they surfaced in this row. */
-  request_tag: string;
-  /** Per-row discovery sources; [] inherits the global candidates.sources setting. */
-  candidate_sources: string[];
-  /** Specific Plex library section keys to build in; [] = every library of the row's media type. */
-  library_keys: string[];
-  /** Max fraction of the row that may be already-watched (0..1); null inherits the global cap. */
-  watched_pct: number | null;
-  /** Lead the row with already-finished titles — a rewatch shelf. */
-  rewatch: boolean;
-  /** Shows only: drop every series this person has started, not just the finished ones. */
-  unstarted_only: boolean;
-  /** Day-to-day variability (0..1); null inherits the global freshness. */
-  freshness: number | null;
-  /** Recent watches the web-search source searches (1..25); null inherits the global recent_count. */
-  recent_count: number | null;
-  /** Watched titles this row is built FROM (1..100); null inherits the engine default (30). */
-  max_seeds: number | null;
-  /** Surfaces the OWNER's own collection appears on; "off" = neither (Collections tab only). */
-  placement: Placement;
-  /** Surfaces each FRIEND's own collection appears on; "home" means Friends' Home here. */
-  placement_friends: Placement;
-  /** Pin the row to the top of its library's Recommended shelf (server-wide, not per viewer). */
-  pin_top: boolean;
-  /** Per-library Recommended-shelf override for THIS row; {} inherits the global default. */
-  hub_anchor: HubAnchorMap;
-  /** This row's custom poster; mode "" leaves Plex's own artwork alone. */
-  poster: Poster;
-}
-
-/** A row's custom collection poster (as returned by the API — never the image bytes). */
-export interface Poster {
-  mode: PosterMode;
-  /** Text-poster fields; support {user}/{library_name}/{top_seed} placeholders. */
-  title: string;
-  subtitle: string;
-  style: string;
-  /** True when an image is viewable for this row (uploaded, a text poster, or a cached AI one). */
-  has_image: boolean;
-}
-
-/** Whether the configured AI provider can generate images (GET /api/system/image-provider). */
-export interface ImageProviderStatus {
-  capable: boolean;
-  provider: string;
-  reason: string;
-}
-
-/** A Plex library on the server (GET /api/system/libraries). */
-export interface PlexLibrary {
-  key: string;
-  title: string;
-  type: "movie" | "show";
-}
-
-/** One shortlist-labelled collection found on Plex by the cleanup audit. */
-export interface OwnedCollection {
-  library: string;
-  title: string;
-  label: string;
-  rating_key: number;
-  kind: "user" | "shared";
-  slug: string;
-  /** Its user (per-person) or shared row is gone from the app — drift a cleanup would remove. */
-  orphan: boolean;
-}
-
-/** GET /api/system/owned-collections — the cleanup audit result. */
-export interface OwnedCollectionsAudit {
-  collections: OwnedCollection[];
-  total: number;
-  orphans: number;
-}
-
-/** POST /api/collections/{id}/cleanup — remove a row's collections from Plex. */
-export interface CleanupResult {
-  removed: string[];
-  dry_run: boolean;
-  message: string;
-}
-
-// --- Runs (GET /api/runs, /api/runs/{id}, traces) ---
-
+/** `Run.stats`. An open map on the server: which keys exist varies by DATA (Exa counts only when
+ *  web search ran) and by AGE (legacy runs predate the token totals), so a model would either
+ *  invent the absent ones or go stale. */
 export interface RunStats {
   users_ok: number;
   users_error: number;
@@ -332,41 +409,11 @@ export interface RunStats {
   exa_cache_hits?: number;
 }
 
-/** GET /api/runs — one row per pipeline run. */
-export interface Run {
-  id: number;
-  trigger: RunTrigger;
-  started_at: string;
-  finished_at: string | null;
-  status: string;
-  dry_run: boolean;
-  stats: RunStats;
-  /** Why the run failed, when the failure belongs to no single person. Null on a clean run. */
-  error?: string | null;
-  /** Accounts whose share filter Plex refused — the reason nothing was promoted. */
-  promotion_blockers?: string[];
-}
-
-/** One delivered recommendation. NB: this name shadows TypeScript's built-in `Pick<T, K>` inside
- *  this module — use an explicit object literal here rather than the utility type. */
-export interface Pick {
-  rank: number;
-  title: string;
-  reason: string;
-  /** Which watched title produced this pick, when the pipeline knows it. */
-  seed_title?: string;
-  /** Candidate source ids that surfaced this pick; empty on picks written before provenance existed. */
-  sources?: string[];
-  /** 0..1, how near the top of the suggesting source's list it sat. 1.0 also means "unranked source". */
-  affinity?: number;
-  media_type?: string;
-  /** Which row this pick belongs to (Collection slug). */
-  collection_slug?: string;
-}
-
 /**
- * A user's collection diff. Every field is optional: the API returns `{}` for a user the run
- * left alone (no picks produced, so no row was touched), not a diff of three empty lists.
+ * A user's collection diff (`RunUserOut.diff` / `UserRunOut.diff`, an open map server-side).
+ *
+ * Every field is optional: the API returns `{}` for a user the run left alone (no picks produced, so
+ * no row was touched), not a diff of three empty lists.
  */
 export interface RunDiff {
   added?: string[];
@@ -376,7 +423,9 @@ export interface RunDiff {
   deleted?: string[];
 }
 
-/** One (row, library) slice of a user's run result: what changed in that library + its own picks. */
+/** One (row, library) slice of a user's run result: what changed in that library + its own picks.
+ *  An element of `RunUserOut.breakdown`, which the server declares as a list of open maps — the
+ *  engine owns the blob and it is empty on legacy runs. */
 export interface RunLibraryBreakdown {
   row_slug: string;
   row_title: string;
@@ -390,71 +439,6 @@ export interface RunLibraryBreakdown {
   picks: Pick[];
   /** AI tokens the curate call for this (row, library) cost. Absent on legacy runs. */
   llm_tokens?: number;
-}
-
-/** Per-user slice of GET /api/runs/{id}. */
-export interface RunUserResult {
-  username: string;
-  /** nickname → friendly_name → username, resolved server-side (same as User.display_name). */
-  display_name?: string;
-  slug: string;
-  status: string;
-  error: string | null;
-  /** Why a `skipped` result happened, in plain English. Null unless skipped (and on legacy runs). */
-  reason: string | null;
-  duration_ms: number;
-  llm_tokens: number;
-  /** This user's AI tokens split by where they went: { curate, llm_web, llm_library }. */
-  llm_tokens_by_step?: Record<string, number>;
-  /** Exa web searches run for this user (billed per search, not per token). */
-  exa_searches?: number;
-  diff: RunDiff;
-  picks: Pick[];
-  /** Per-(row, library) breakdown; empty on legacy runs (render the merged diff + picks instead). */
-  breakdown: RunLibraryBreakdown[];
-  /** Whether a full pipeline trace was recorded for this user (fetch it from the trace endpoint). */
-  has_trace?: boolean;
-}
-
-/** GET /api/runs/{id} — the run plus its per-user results. */
-export interface RunDetail extends Run {
-  users: RunUserResult[];
-}
-
-/** GET /api/users/{id}/runs — one of this user's recent run results. */
-export interface UserRunSummary {
-  run_id: number;
-  started_at: string | null;
-  finished_at: string | null;
-  /** THIS person's outcome in the run: ok | cold_start | skipped | error | pending. Not the run's. */
-  status: string;
-  error: string | null;
-  /** Why a non-failing outcome happened ("no watch history yet"). Blank when there's nothing to say. */
-  reason: string;
-  duration_ms: number | null;
-  /** The run's own status, for when the run failed around this person rather than because of them. */
-  run_status: string | null;
-  dry_run: boolean;
-  diff: RunDiff;
-  picks: Pick[];
-}
-
-/** GET /api/users/{id}/runs/summary — how many runs included this person, of how many exist. */
-export interface UserRunsCount {
-  included: number;
-  total: number;
-}
-
-export interface RunCreated {
-  run_id: number;
-}
-
-export interface RunsSummary {
-  total: number;
-  ok: number;
-  error: number;
-  last_finished: string | null;
-  last_status: string | null;
 }
 
 /** One recent watch shown in a trace. */
@@ -549,20 +533,10 @@ export interface TraceGather {
   web?: TraceWeb;
 }
 
-/** What the request subsystem did with a wanted-but-missing title (Sonarr/Radarr). Overlaid onto a
- *  "not in your libraries" fate so a drop reads "→ requested from Radarr" instead of a dead end. */
-export interface TraceRequestOutcome {
-  /** pending = queued for the owner's approval; sent = asked of Sonarr/Radarr; rejected = dismissed. */
-  status: "pending" | "sent" | "rejected";
-  /** The send outcome, or why it's queued. */
-  detail: string;
-  /** Sonarr/Radarr titleSlug once sent, for a deep link (null when queued/before this was recorded). */
-  arr_slug: string | null;
-  /** On the arr's import-exclusion list — approving it is a no-op until the owner clears it. */
-  excluded: boolean;
-}
-
-/** The full pipeline trace for one user in one run (GET /api/runs/{id}/users/{uid}/trace). */
+/** The full pipeline trace for one user in one run (`RunUserTraceOut.trace`, an open map).
+ *
+ *  The engine owns this blob outright: stages have been added several times and every field is
+ *  absent on runs recorded before it existed, which is exactly why the server does not model it. */
 export interface RunUserTrace {
   history?: {
     total: number;
@@ -577,111 +551,7 @@ export interface RunUserTrace {
   gathers?: TraceGather[];
 }
 
-/** GET /api/runs/{id}/users/{uid}/trace response. */
-export interface RunUserTraceResponse {
-  username: string;
-  display_name?: string;
-  status: string;
-  /** Why the run failed for this person (null unless status is "error"). */
-  error: string | null;
-  /** Plain-English reason a non-failing person was skipped (null otherwise). */
-  reason: string | null;
-  trace: RunUserTrace;
-  /** The delivered ending: per-(row, library) picks with reasons. [] on legacy runs. */
-  breakdown: RunLibraryBreakdown[];
-  /** What the request subsystem did with each wanted-but-missing title, keyed "<tmdb_id>:<media_type>"
-   *  — the trace overlays it onto "not in your libraries" drops. {} when requests are off/legacy. */
-  requests?: Record<string, TraceRequestOutcome>;
-}
-
-// --- Requests inbox (Sonarr/Radarr) ---
-
-/** One title's result from POST /api/requests/send. */
-export interface RequestSendOutcome {
-  id: number;
-  title: string;
-  status: string;
-  detail: string;
-}
-
-/** POST /api/requests/send response. */
-export interface RequestSendResult {
-  sent: number;
-  dry_run: boolean;
-  outcomes: RequestSendOutcome[];
-}
-
-// --- Settings / connections ---
-
-/** POST /api/settings/test/{service} response. */
-export interface ConnectionTestResult {
-  ok: boolean;
-  message: string;
-}
-
-/** GET /api/settings/arr/{service}/options — dropdown data for a connected Sonarr/Radarr. */
-export interface ArrOptions {
-  quality_profiles: { id: number; name: string }[];
-  root_folders: { id: number; path: string }[];
-}
-
-/** POST /api/system/uninstall response (also returned for dry-run previews). */
-export interface UninstallResult {
-  filters_restored: number;
-  collections_deleted: string[];
-  /** Rows switched off so the next scheduled run can't rebuild what uninstall removed. */
-  rows_disabled: number;
-  dry_run: boolean;
-  message: string;
-}
-
-// --- Auth (Plex PIN login) ---
-
-/** POST /api/auth/pin. */
-export interface PinCreated {
-  id: number;
-  code: string;
-  client_id: string;
-}
-
-/**
- * GET /api/auth/pin/{id}. The Plex token is deliberately NOT here: the backend holds it
- * server-side for the setup session, so an XSS anywhere in this UI cannot steal it.
- */
-export interface PinStatus {
-  linked: boolean;
-  account_id?: number;
-  username?: string;
-}
-
-/** GET /api/auth/session. */
-export interface Session {
-  authenticated: boolean;
-  /**
-   * Does this instance have anything worth protecting yet — a linked server, OR a Plex token
-   * seeded from the environment? If not, the wizard opens without a login; connecting Plex is
-   * step 1, and it is what claims the instance.
-   */
-  login_required: boolean;
-  account_id?: number;
-  username?: string;
-}
-
-/** Owner API-token status. The token is revealable (stored encrypted at rest), so the owner-gated
- *  endpoint returns it in plaintext for the owner to unhide/copy — like Sonarr/Radarr's key. */
-export interface ApiTokenStatus {
-  enabled: boolean;
-  created_at: string | null;
-  token: string | null;
-}
-
-/** The response to generating a token. */
-export interface ApiTokenCreated {
-  token: string;
-  created_at: string;
-}
-
-// --- Setup wizard ---
+// --- Setup probe (POST /api/setup/probe, GET /api/setup/servers still return bare `dict`) ---
 
 export interface ProbeCheck {
   ok: boolean;
@@ -727,285 +597,15 @@ export interface PlexServer {
   }[];
 }
 
-// --- Dashboard / report ---
-
-export interface AppNotification {
-  id: string;
-  severity: "info" | "warning" | "error";
-  title: string;
-  body: string;
-  action_url: string;
-  action_label: string;
-  dismissable: boolean;
-}
-
-/** The dashboard effectiveness report — did delivered picks get watched? */
-export interface EffectivenessReport {
-  window: ReportWindow;
-  /** null for "all". */
-  window_days: number | null;
-  /** Start of the window (ISO), null for "all". */
-  since: string | null;
-  /** Oldest pick on record (ISO), null when there are none. Lets the UI explain a window selector
-   *  that appears to do nothing because every window already covers all of the data. */
-  first_pick: string | null;
-  overall: {
-    /** Picks DELIVERED in the window. */
-    delivered: number;
-    /** Picks WATCHED in the window — not the same set as `delivered`, deliberately: a pick
-     *  delivered last month and watched this week is a watch this week. Counts, never a ratio. */
-    watched: number;
-    watched_prev: number | null;
-    watched_delta: number | null;
-    avg_days_to_watch: number | null;
-    avg_days_to_watch_delta: number | null;
-    /** The one surviving ratio, over a MATURED cohort: picks delivered in the window that are also
-     *  old enough to have had their full `matured_days` to be watched. Numerator and denominator
-     *  describe the same picks, which is what makes it mean anything. */
-    landing: {
-      delivered: number;
-      watched: number;
-      rate: number | null;
-      cohort_from: string | null;
-      cohort_to: string;
-      matured_days: number;
-    };
-  };
-  /** The daily watch-status sync: when it last ran and next fires (ISO), so the report reads as live. */
-  watch_sync: { last: string | null; next: string | null };
-  coverage: {
-    /** Current server state, deliberately NOT windowed — "3 of 11 people" only reads if 11 is now. */
-    users_enabled: number;
-    users_total: number;
-    /** People delivered a pick in the window. */
-    users_with_picks: number;
-    /** People who watched a pick in the window. */
-    users_watched: number;
-    users_watched_delta: number | null;
-    rows_enabled: number;
-  };
-  runs: {
-    /** All-time odometer. */
-    total: number;
-    in_window: number;
-    in_window_delta: number | null;
-    last_finished: string | null;
-    last_status: string | null;
-    errors_last: number;
-  };
-  requests: { sent: number; pending: number; watched_after_sent: number };
-  top_titles: {
-    tmdb_id: number;
-    media_type: string;
-    title: string;
-    watchers: number;
-  }[];
-  trend: { week: string; watched: number }[];
-  /** Counts for the window, sorted by watched desc. No per-person rate: at these sample sizes a
-   *  percentage is noise dressed as precision, and sorting by it put 1/31 above 3/103. */
-  per_user: {
-    username: string;
-    /** nickname → friendly_name → username, resolved server-side. */
-    display_name?: string;
-    slug: string;
-    delivered: number;
-    watched: number;
-  }[];
-  /** One line per (row × library): a row targeting >1 library is a separate Plex collection in each.
-   *  `section_key` disambiguates rows sharing a slug. */
-  per_row: {
-    slug: string;
-    section_key: string;
-    library: string;
-    name: string;
-    /** History from a row that has since been deleted — `name` is its slug, all it has left. */
-    deleted?: boolean;
-    delivered: number;
-    watched: number;
-  }[];
-  recent: {
-    username: string;
-    /** nickname → friendly_name → username, resolved server-side. */
-    display_name?: string;
-    title: string;
-    media_type: string;
-    row: string;
-    library: string;
-    seed_title: string;
-    watched_at: string | null;
-  }[];
-}
-
-/** GET /api/report/deleted-rows — pick history left behind by a row that no longer exists. */
-export interface DeletedRowHistory {
-  slug: string;
-  picks: number;
-  first_seen: string | null;
-  last_seen: string | null;
-}
-
-// --- System (logs, backups, jobs, schedule) ---
-
-/** One parsed line from the rotating log file (GET /api/system/logs). A traceback is folded into
- *  the entry it belongs to, so `message` can span several lines. */
-export interface LogLine {
-  ts: string | null;
-  level: string;
-  source: string;
-  message: string;
-}
-
-export interface LogPage {
-  lines: LogLine[];
-  /** How many lines matched the filter before the newest-N cap was applied. */
-  total_matched: number;
-  truncated: boolean;
-  /** The file these came from, or null when the instance has not written any logs yet. */
-  file: string | null;
-}
-
-/** Sync schedule info for the Tools page — when each sync last ran and next fires. */
-export interface SyncsInfo {
-  watched: { last: string | null; next: string | null; cron: string };
-  users: { last: string | null; next: string | null; cron: string };
-  backup: { next: string | null; cron: string; max_keep: number };
-}
-
-export interface Backup {
-  name: string;
-  size_bytes: number;
-  created_at: string;
-}
-
-export interface VersionInfo {
-  current_version: string;
-  latest_version: string | null;
-  update_available: boolean;
-  install_type: string;
-}
-
-/** One background maintenance job (GET /api/system/jobs). Runs are NOT jobs — they have their own page. */
-export interface Job {
-  id: number;
-  kind: string;
-  /** queued -> running -> done | failed. `queued` after a failure means it will be retried. */
-  status: "queued" | "running" | "done" | "failed";
-  attempts: number;
-  max_attempts: number;
-  /** Human-readable outcome, e.g. "Checked every row; corrected 3". */
-  detail: string;
-  error: string | null;
-  /** What the job was asked to do (a slug, a row). Data by design, never a secret — kinds that
-   *  touch tokens read them from the settings store at run time. */
-  payload?: Record<string, unknown>;
-  /** Structured outcome, e.g. `{fixed: [...], orphans: [...]}`. */
-  result?: Record<string, unknown>;
-  created_at: string | null;
-  started_at: string | null;
-  finished_at: string | null;
-}
-
-/** GET /api/system/jobs/catalog — one entry per job kind Shortlist knows how to run.
- *
- *  The Jobs page is organised by JOB, not by chronology: "is the roster sync healthy?" can't be
- *  answered from a flat list of the last 25 rows with every kind mixed together. */
-export interface JobCatalogEntry {
-  kind: string;
-  label: string;
-  description: string;
-  /** Can the owner start it from a button? False for the kinds that take a target and delete
-   *  or hide that target's rows — those are queued by the mutation that knows the target. */
-  manual: boolean;
-  /** For an automatic job, what causes it to be queued. */
-  trigger: string;
-  /** Whether this kind CAN run on a timer — not whether it currently does. `next_run` answers that. */
-  scheduled: boolean;
-  /** True when the schedule is opt-in, so a blank cron means "off by choice" rather than "broken". */
-  schedule_optional: boolean;
-  /** Settings key holding this job's cron, or "" when it has no schedule of its own. */
-  schedule_setting: string;
-  /** ISO time of the next scheduled firing, when this kind runs on a timer. */
-  next_run: string | null;
-  /** The most recent job of this kind, or null if it has never run. */
-  last: Job | null;
-  total: number;
-  queued: number;
-  running: number;
-  failed: number;
-}
-
-/** POST /api/system/jobs — the job as it stood after the inline drain. */
-export interface JobResult {
-  id: number;
-  kind: string;
-  status: Job["status"];
-  detail: string;
-  error: string | null;
-  /** sync.check only: the row labels it corrected (or, in a dry run, would correct). */
-  fixed?: string[];
-  /** sync.check only: collections DELETED (or, in a dry run, that would be) because their user is
-   *  gone. Kept apart from `fixed` — this is the one action that cannot be undone. */
-  orphans?: string[];
-}
-
-/** GET /api/schedule — one recurring thing, whether it is a job or a group of rows. */
-export interface ScheduleEntry {
-  type: "job" | "rows";
-  cron: string;
-  next_run: string | null;
-  /** Jobs only. */
-  kind?: string;
-  label?: string;
-  description?: string;
-  /** The settings key that holds this job's cron — what the UI writes to change it. */
-  setting?: string;
-  /** True when `cron` came from the built-in default rather than something the owner set — so the UI
-   *  can say so instead of implying they chose it. */
-  using_default?: boolean;
-  /** Blank cron means "off" rather than "use the default". Only the opt-in kinds. */
-  optional?: boolean;
-  writes_plex?: boolean;
-  /** Row groups only: every enabled row sharing this cron. One trigger builds all of them. */
-  rows?: { id: number; slug: string; name: string }[];
-}
-
-export interface ScheduleResponse {
-  jobs: ScheduleEntry[];
-  rows: ScheduleEntry[];
-}
-
 // --- SSE payloads (GET /api/events) ---
 //
 // The event stream is `text/event-stream`, so OpenAPI describes none of it: these are the only
 // account of the payload shapes anywhere on the client side.
 
-/** Event `run.user.stage`. */
-export interface RunUserStageEvent {
-  user: string;
-  stage: string;
-  counts: Record<string, number>;
-  /** Why this user was skipped — kept out of `counts`, which is a tally of numbers. */
-  reason?: string | null;
-  /** Present on run-scoped stage events; lets a run page ignore other runs' events. */
-  run_id?: number | null;
-  /** ISO timestamp the server stamped the stage, when available. */
-  ts?: string | null;
-}
-
-/** One line of a run's activity log (GET /api/runs/{id}/log + the SSE stage stream). */
-export interface RunLogEntry {
-  /** Monotonic per-run counter stamped server-side. The dedup key: several lines land in the same
-   *  millisecond, so a timestamp alone collapsed "1/5" and "2/5" into one entry. Absent on entries
-   *  from a server that predates it. */
-  seq?: number;
-  ts?: string | null;
-  run_id?: number | null;
-  /** A user slug, or "Shortlist" for the server-wide phases. */
-  user: string;
-  stage: string;
-  counts: Record<string, number | string>;
-  reason?: string | null;
-}
+/** Event `run.user.stage` — the SAME object the activity log carries. The buffer's sink stamps `seq`
+ *  on the entry in place before the bus publishes it, so this is that type rather than a second,
+ *  drifting declaration of it. */
+export type RunUserStageEvent = RunLogEntry;
 
 /** Event `run.finished`. */
 export interface RunFinishedEvent {
@@ -1053,27 +653,18 @@ export interface SyncFinishedEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Frontend-only — unions and view models the UI invents.
+// Frontend-only — unions and aliases the UI invents.
 //
 // The server types every one of these fields as a bare `str`, so the schema cannot narrow them:
 // these are the UI's own vocabulary for the values it knows the engine produces, and a value
-// outside a union here is a UI bug, not an API change.
+// outside a union here is a UI bug, not an API change. Each could be retired by a `Literal[...]`
+// on the Python side. (The same applies to the unions written inline above, on `Job.status`,
+// `AppNotification.severity` and `TraceRequestOutcome.status`.)
 // ---------------------------------------------------------------------------
 
 export type UserType = "owner" | "shared" | "managed";
 
 export type RunTrigger = "schedule" | "manual" | "wizard";
-
-/**
- * Which of Plex's two surfaces one side of a row claims: the Home screen, the library's Recommended
- * shelf, both, or neither. Held once per audience (`placement` / `placement_friends`) because every
- * person gets their own Plex collection, so each flag is set per collection.
- */
-export type Placement = NonNullable<Schemas["CollectionIn"]["placement"]>;
-
-/** A poster mode. "" = Plex default, "upload" = your image, "text" = built-in renderer, "ai" = image
- *  model. "generate" is the legacy name for "ai", still returned for rows saved before the split. */
-export type PosterMode = NonNullable<Schemas["PosterIn"]["mode"]>;
 
 /** What happened to a candidate a source returned: kept into the pool, or dropped and why. */
 export type TraceFate =

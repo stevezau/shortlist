@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
+import { queuedReason, useRunActive, useWritesPlex } from "@/lib/job-activity";
 import { queryKeys, useSettings, useSaveSettings } from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
 import type {
@@ -291,6 +292,16 @@ export function JobsPage() {
     .filter(Boolean)
     .join(" · ");
 
+  // The same "why is this queued" explanation the activity popover gives, on the row's status
+  // chip — the maintainer looks at both, and a queued job used to say nothing more than "Queued"
+  // in either place.
+  const writesPlexFor = useWritesPlex();
+  const runActive = useRunActive(totals.queued > 0);
+  const queuedTitleFor = (kind: string): string | undefined =>
+    entryFor(kind).queued > 0
+      ? queuedReason(writesPlexFor(kind), runActive).title
+      : undefined;
+
   const watchedRunning = watchedProgress !== null;
   const drifted =
     driftPreview.data?.status === "done" ? (driftPreview.data.fixed ?? []) : [];
@@ -373,6 +384,7 @@ export function JobsPage() {
               <JobRow
                 first
                 entry={entryFor("sync.users")}
+                queuedTitle={queuedTitleFor("sync.users")}
                 icon={UsersIcon}
                 action={{
                   label: "Run",
@@ -441,6 +453,7 @@ export function JobsPage() {
 
               <JobRow
                 entry={entryFor("sync.history")}
+                queuedTitle={queuedTitleFor("sync.history")}
                 icon={RefreshCw}
                 action={{
                   label: "Run",
@@ -522,6 +535,7 @@ export function JobsPage() {
 
               <JobRow
                 entry={entryFor("sync.check")}
+                queuedTitle={queuedTitleFor("sync.check")}
                 icon={ShieldCheck}
                 panel={<SchedulePanel entry={entryFor("sync.check")} />}
                 action={{
@@ -607,6 +621,7 @@ export function JobsPage() {
 
               <JobRow
                 entry={entryFor("privacy.sync")}
+                queuedTitle={queuedTitleFor("privacy.sync")}
                 icon={Lock}
                 panel={<SchedulePanel entry={entryFor("privacy.sync")} />}
                 action={{
@@ -627,6 +642,7 @@ export function JobsPage() {
 
               <JobRow
                 entry={entryFor("backup.take")}
+                queuedTitle={queuedTitleFor("backup.take")}
                 icon={Database}
                 action={{
                   label: "Back up now",
@@ -676,6 +692,7 @@ export function JobsPage() {
                     key={entry.kind}
                     first={index === 0}
                     entry={entry}
+                    queuedTitle={queuedTitleFor(entry.kind)}
                     icon={Cog}
                   />
                 ))}

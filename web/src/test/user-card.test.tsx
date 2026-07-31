@@ -19,6 +19,14 @@ function makeUser(overrides: Partial<User> = {}): User {
     last_run_at: new Date(Date.now() - 6 * 3600 * 1000).toISOString(),
     request_tag: "",
     hit_rate: 0.4,
+    nickname: "",
+    friendly_name: "",
+    display_name: "",
+    avatar_url: "",
+    plex_account_id: 0,
+    restriction_profile: "",
+    preview_titles: [],
+    prefs: {},
     ...overrides,
   };
 }

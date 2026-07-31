@@ -36,10 +36,57 @@ class TestJobsApi:
         assert r.json()["kind"] == "sync.check"
         # Drained inline, so the button feels instant rather than leaving a queued row behind.
         assert r.json()["status"] in {"done", "failed", "queued"}
+        # Spelled out because both endpoints now declare Pydantic response models, and a model that
+        # missed a key would DROP it from the payload with nothing failing — `fixed`/`orphans` are
+        # the sync-check preview an operator reads before authorising a real, deleting pass.
+        assert set(r.json()) == {"id", "kind", "status", "detail", "error", "fixed", "orphans"}
 
         listed = client.get("/api/system/jobs").json()
         assert [j["kind"] for j in listed] == ["sync.check"]
         assert listed[0]["created_at"]
+        assert set(listed[0]) == {
+            "id",
+            "kind",
+            "status",
+            "attempts",
+            "max_attempts",
+            "detail",
+            "error",
+            "payload",
+            "result",
+            "created_at",
+            "started_at",
+            "finished_at",
+        }
+
+    def test_the_job_catalogue_carries_a_whole_card_per_kind(self, client: TestClient):
+        """The Jobs page renders a card per kind from this one request; a dropped key is a card that
+        silently loses its schedule, its counts or its last result."""
+        client.post("/api/system/jobs", json={"kind": "sync.check"})
+
+        entries = client.get("/api/system/jobs/catalog").json()
+
+        by_kind = {e["kind"]: e for e in entries}
+        for entry in entries:
+            assert set(entry) == {
+                "kind",
+                "label",
+                "description",
+                "manual",
+                "trigger",
+                "scheduled",
+                "schedule_optional",
+                "schedule_setting",
+                "next_run",
+                "last",
+                "total",
+                "queued",
+                "running",
+                "failed",
+            }, entry["kind"]
+        # `last` is a nested job, and null for a kind that has never run — both branches, one request.
+        assert set(by_kind["sync.check"]["last"]) == set(client.get("/api/system/jobs").json()[0])
+        assert by_kind["backup.take"]["last"] is None
 
     def test_an_unknown_kind_is_rejected(self, client: TestClient):
         assert client.post("/api/system/jobs", json={"kind": "nope"}).status_code == 422
@@ -393,6 +440,7 @@ class TestBackupRestoreSaysWhatItChanges:
         created = client.post("/api/system/backups", json={})
         assert created.status_code in (200, 201), created.text
         name = created.json()["name"]
+        assert set(created.json()) == {"name", "size_bytes"}
 
         r = client.post("/api/system/backups/restore", json={"name": name})
 
@@ -400,10 +448,25 @@ class TestBackupRestoreSaysWhatItChanges:
         note = r.json()["privacy_note"]
         # Separate from `message` so the UI can render it as a warning rather than a receipt.
         assert "see" in note.lower() and "row" in note.lower()
+        # These three endpoints declared no response content at all before, so the key sets are
+        # spelled out: a response model that dropped `privacy_note` would turn the one warning the
+        # owner gets about a visibility change back into a silent restore.
+        assert set(r.json()) == {"restored", "message", "privacy_note"}
         with client.app.state.sessions() as session:
             audit = session.query(Event).filter_by(scope="backup.restore").one()
         assert audit.message["backup"] == name
         assert audit.level == "warning"
+
+    def test_the_backup_list_names_each_file_with_its_size_and_age(self, client: TestClient):
+        client.post("/api/system/backups", json={})
+
+        listed = client.get("/api/system/backups").json()
+
+        assert [set(b) for b in listed] == [{"name", "size_bytes", "created_at"}]
+        assert listed[0]["name"].endswith(".db") and listed[0]["size_bytes"] > 0
+
+    def test_an_empty_backup_directory_is_an_empty_list(self, client: TestClient):
+        assert client.get("/api/system/backups").json() == []
 
     def test_a_missing_backup_is_a_404_and_audits_nothing(self, client: TestClient):
         from shortlist.server.db.models import Event
@@ -459,9 +522,25 @@ class TestScheduleApi:
         kinds = {entry["kind"]: entry for entry in body["jobs"]}
 
         assert {"sync.users", "sync.history", "backup.take", "privacy.sync", "sync.check"} <= set(kinds)
+        assert set(body) == {"jobs", "rows"}
         for entry in body["jobs"]:
             # Without the settings key the UI would need a hard-coded kind -> key map to save a change.
             assert entry["setting"], entry["kind"]
+            # Spelled out: the endpoint declares a response model now, and `writes_plex` — the flag
+            # that tells the owner which of these touches other people's servers unattended — is
+            # exactly the kind of field a model that forgot it would drop without a word.
+            assert set(entry) == {
+                "type",
+                "kind",
+                "label",
+                "description",
+                "setting",
+                "cron",
+                "using_default",
+                "optional",
+                "writes_plex",
+                "next_run",
+            }, entry["kind"]
 
     def test_the_privacy_sync_is_scheduled_by_default(self, client: TestClient):
         """The automatic Privacy Check was removed on 2026-07-16, so nothing verifies hiding after
@@ -520,6 +599,8 @@ class TestScheduleApi:
         assert set(by_cron) == {"30 3 * * *", "0 5 * * *"}
         assert len(by_cron["30 3 * * *"]["rows"]) >= 1
         assert by_cron["0 5 * * *"]["rows"][0]["slug"] == "late"
+        assert set(by_cron["0 5 * * *"]) == {"type", "cron", "rows", "next_run"}
+        assert set(by_cron["0 5 * * *"]["rows"][0]) == {"id", "slug", "name"}
 
     def test_a_disabled_row_is_not_on_the_schedule(self, client: TestClient):
         from shortlist.server.db.models import Collection

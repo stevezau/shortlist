@@ -1,19 +1,29 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ActivityIndicator } from "@/components/layout/activity-indicator";
-import type { Job } from "@/lib/types";
+import type { Job, Run } from "@/lib/types";
 
-const { getJobs, getJobCatalog, toastLoading, toastSuccess, toastError } =
-  vi.hoisted(() => ({
-    getJobs: vi.fn(),
-    getJobCatalog: vi.fn(),
-    toastLoading: vi.fn(),
-    toastSuccess: vi.fn(),
-    toastError: vi.fn(),
-  }));
+const {
+  getJobs,
+  getJobCatalog,
+  getRuns,
+  getSchedule,
+  toastLoading,
+  toastSuccess,
+  toastError,
+} = vi.hoisted(() => ({
+  getJobs: vi.fn(),
+  getJobCatalog: vi.fn(),
+  getRuns: vi.fn(),
+  getSchedule: vi.fn(),
+  toastLoading: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
+}));
 
 vi.mock("sonner", () => ({
   toast: { loading: toastLoading, success: toastSuccess, error: toastError },
@@ -23,8 +33,22 @@ vi.mock("@/lib/api", () => ({
   api: {
     getJobs: (kind?: string, limit?: number) => getJobs(kind, limit),
     getJobCatalog: () => getJobCatalog(),
+    getRuns: (collection?: string, beforeId?: number, limit?: number) =>
+      getRuns(collection, beforeId, limit),
+    getSchedule: () => getSchedule(),
   },
 }));
+
+function run(patch: Partial<Run> & { id: number; status: string }): Run {
+  return {
+    trigger: "manual",
+    started_at: "2026-07-30T06:00:00Z",
+    finished_at: null,
+    dry_run: false,
+    stats: { users_ok: 0, users_error: 0 },
+    ...patch,
+  } as Run;
+}
 
 function job(patch: Partial<Job> & { id: number }): Job {
   return {
@@ -36,11 +60,15 @@ function job(patch: Partial<Job> & { id: number }): Job {
     max_attempts: 3,
     detail: "",
     error: null,
-    created_at: null,
+    payload: {},
+    result: {},
+    // `JobOut.created_at` is not nullable — the row is stamped on insert. The fixture used to say
+    // null, which the `as Job` cast hid.
+    created_at: "2026-07-28T10:00:00Z",
     started_at: null,
     finished_at: null,
     ...patch,
-  } as Job;
+  };
 }
 
 /** Renders the indicator and returns a way to make the next poll return something different.
@@ -89,6 +117,10 @@ describe("ActivityIndicator toasts", () => {
     getJobCatalog.mockResolvedValue([
       { kind: "backup.take", label: "Remove someone's rows" },
     ]);
+    getRuns.mockReset();
+    getRuns.mockResolvedValue([]);
+    getSchedule.mockReset();
+    getSchedule.mockResolvedValue({ jobs: [], rows: [] });
     toastLoading.mockClear();
     toastSuccess.mockClear();
     toastError.mockClear();
@@ -161,6 +193,10 @@ describe("ActivityIndicator — not announcing the same decision twice", () => {
     getJobCatalog.mockResolvedValue([
       { kind: "user.cleanup", label: "Remove a disabled person's rows" },
     ]);
+    getRuns.mockReset();
+    getRuns.mockResolvedValue([]);
+    getSchedule.mockReset();
+    getSchedule.mockResolvedValue({ jobs: [], rows: [] });
     toastLoading.mockClear();
     toastSuccess.mockClear();
     toastError.mockClear();
@@ -172,7 +208,14 @@ describe("ActivityIndicator — not announcing the same decision twice", () => {
     // decision, naming the machinery instead of the person.
     const { poll } = await renderIndicator();
 
-    await poll([job({ id: 5, kind: "user.cleanup", status: "done", detail: "Removed 0 row(s)" })]);
+    await poll([
+      job({
+        id: 5,
+        kind: "user.cleanup",
+        status: "done",
+        detail: "Removed 0 row(s)",
+      }),
+    ]);
 
     expect(toastSuccess).not.toHaveBeenCalled();
   });
@@ -182,9 +225,114 @@ describe("ActivityIndicator — not announcing the same decision twice", () => {
     const { poll } = await renderIndicator();
 
     await poll([
-      job({ id: 6, kind: "user.cleanup", status: "failed", error: "Plex is down" }),
+      job({
+        id: 6,
+        kind: "user.cleanup",
+        status: "failed",
+        error: "Plex is down",
+      }),
     ]);
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
+  });
+});
+
+describe("ActivityIndicator — queued vs running", () => {
+  beforeEach(() => {
+    getJobs.mockReset();
+    getJobCatalog.mockReset();
+    getJobCatalog.mockResolvedValue([
+      { kind: "privacy.sync", label: "Privacy sync" },
+      { kind: "backup.take", label: "Back up the database" },
+    ]);
+    getRuns.mockReset();
+    getSchedule.mockReset();
+    getSchedule.mockResolvedValue({
+      jobs: [
+        {
+          type: "job",
+          kind: "privacy.sync",
+          writes_plex: true,
+          cron: "",
+          next_run: null,
+        },
+        {
+          type: "job",
+          kind: "backup.take",
+          writes_plex: false,
+          cron: "",
+          next_run: null,
+        },
+      ],
+      rows: [],
+    });
+    toastLoading.mockClear();
+    toastSuccess.mockClear();
+    toastError.mockClear();
+  });
+
+  async function open() {
+    await userEvent.click(
+      await screen.findByRole("button", { name: /background work/i }),
+    );
+  }
+
+  it("puts a RUNNING job under Running, with no 'waiting' text", async () => {
+    getRuns.mockResolvedValue([]);
+    await renderIndicator([
+      job({ id: 1, kind: "privacy.sync", status: "running" }),
+    ]);
+    await open();
+
+    expect(await screen.findByText("Running")).toBeInTheDocument();
+    expect(screen.queryByText("Queued")).not.toBeInTheDocument();
+    expect(screen.queryByText(/waiting/i)).not.toBeInTheDocument();
+  });
+
+  it("tells a queued Plex-writing job it's waiting on the run, when one is active", async () => {
+    getRuns.mockResolvedValue([run({ id: 50, status: "running" })]);
+    await renderIndicator([
+      job({ id: 2, kind: "privacy.sync", status: "queued" }),
+    ]);
+    await open();
+
+    expect(await screen.findByText("Queued")).toBeInTheDocument();
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(/waiting for the run to finish/i),
+    ).toBeInTheDocument();
+  });
+
+  it("does not blame a run for a queued job when no run is active", async () => {
+    getRuns.mockResolvedValue([
+      run({ id: 51, status: "ok", finished_at: "2026-07-30T05:00:00Z" }),
+    ]);
+    await renderIndicator([
+      job({ id: 3, kind: "privacy.sync", status: "queued" }),
+    ]);
+    await open();
+
+    expect(await screen.findByText("Queued")).toBeInTheDocument();
+    expect(screen.getByText(/waiting its turn/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/waiting for the run to finish/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("gives a read-only queued job a reason that isn't the run, even while one is active", async () => {
+    // Only Plex-writing jobs wait on a run (services/jobs.py::_claimable) — a read-only job queued
+    // during a run is queued for the parallel-reader cap instead, and must not be told otherwise.
+    getRuns.mockResolvedValue([run({ id: 52, status: "running" })]);
+    await renderIndicator([
+      job({ id: 4, kind: "backup.take", status: "queued" }),
+    ]);
+    await open();
+
+    expect(
+      await screen.findByText(/waiting for a free slot/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/waiting for the run to finish/i),
+    ).not.toBeInTheDocument();
   });
 });

@@ -5,6 +5,7 @@ import type { RunLogEntry } from "@/lib/types";
 
 function entry(patch: Partial<RunLogEntry>): RunLogEntry {
   return {
+    seq: 0,
     ts: "2026-07-15T04:18:00Z",
     run_id: 2,
     user: "sarah",
@@ -12,6 +13,15 @@ function entry(patch: Partial<RunLogEntry>): RunLogEntry {
     counts: {},
     ...patch,
   };
+}
+
+/**
+ * An entry from a server old enough not to stamp `seq`. Both sources the log merges — the durable
+ * `RunLogLineOut` read and the SSE stage stream — always carry one now, so the legacy shape has to
+ * be built deliberately; without it `logKey`'s ts|user|stage fallback would go unasserted.
+ */
+function legacyEntry(patch: Partial<RunLogEntry>): RunLogEntry {
+  return { ...entry(patch), seq: undefined } as unknown as RunLogEntry;
 }
 
 describe("mergeRunLog", () => {
@@ -41,8 +51,8 @@ describe("mergeRunLog", () => {
   });
 
   it("orders merged events by timestamp regardless of arrival order", () => {
-    const live = entry({ ts: "2026-07-15T04:18:05Z", stage: "delivering" });
-    const seededLater = entry({
+    const live = legacyEntry({ ts: "2026-07-15T04:18:05Z", stage: "delivering" });
+    const seededLater = legacyEntry({
       ts: "2026-07-15T04:18:04Z",
       stage: "curating",
     });
@@ -78,7 +88,7 @@ describe("mergeRunLog", () => {
       2,
     );
     expect(out).toHaveLength(2);
-    expect(out.map((e) => e.counts.done)).toEqual([1, 2]);
+    expect(out.map((e) => e.counts?.done)).toEqual([1, 2]);
   });
 
   it("still dedupes the same seq arriving from both the seed fetch and SSE", () => {
@@ -128,6 +138,6 @@ describe("latestSeq", () => {
 
   it("is null when nothing carries a seq, meaning fetch the whole log", () => {
     expect(latestSeq([])).toBeNull();
-    expect(latestSeq([entry({})])).toBeNull();
+    expect(latestSeq([legacyEntry({})])).toBeNull();
   });
 });

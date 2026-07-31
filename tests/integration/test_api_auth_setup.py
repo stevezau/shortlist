@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import Setting, User
 from shortlist.server.settings_store import SettingsStore
+from tests.integration.conftest import OWNER_ID, OWNER_JSON
 
 pytestmark = pytest.mark.integration
 
@@ -18,7 +21,11 @@ class TestAuthBoundary:
         with fresh:
             r = fresh.get("/api/system/health")
             assert r.status_code == 200
-            assert r.json()["status"] == "ok"
+            assert r.json() == {"status": "ok"}
+            # Docker's HEALTHCHECK is the consumer, so the body stays exactly this — and the version
+            # stays OFF it: an unauthenticated caller doesn't need to know which build to look up
+            # advisories for.
+            assert set(r.json()) == {"status"}
 
     def test_users_requires_session(self, client: TestClient):
         client.cookies.delete(SESSION_COOKIE)
@@ -94,6 +101,73 @@ class TestAuthBoundary:
             assert anonymous.post("/api/system/uninstall", json={"confirm": "UNINSTALL"}).status_code == 403
 
 
+class TestAuthResponses:
+    """`/api/auth` decides which screen the SPA opens, so a key silently dropped by a response model
+    here is a login loop or a wizard nobody can reach.
+    """
+
+    def test_a_signed_in_session_names_the_account(self, client: TestClient):
+        body = client.get("/api/auth/session").json()
+
+        assert set(body) == {"authenticated", "login_required", "account_id", "username"}
+        assert body["authenticated"] is True
+        assert body["account_id"] == OWNER_ID
+        assert body["login_required"] is True  # a linked server means this instance demands a login
+
+    def test_an_anonymous_session_keeps_the_same_shape(self, client: TestClient):
+        """The other branch: no cookie, so the identity fields are null rather than absent — the SPA
+        reads `authenticated`/`login_required` on both, and they must never go missing."""
+        anonymous = TestClient(client.app)
+        with anonymous:
+            body = anonymous.get("/api/auth/session").json()
+
+        assert set(body) == {"authenticated", "login_required", "account_id", "username"}
+        assert body["authenticated"] is False and body["login_required"] is True
+        assert body["account_id"] is None and body["username"] is None
+
+    def test_logout_confirms_and_clears_the_cookie(self, client: TestClient):
+        r = client.post("/api/auth/logout")
+
+        assert r.json() == {"ok": True}
+        assert set(r.json()) == {"ok"}
+
+    def test_creating_a_pin_returns_the_code_and_the_client_id(self, client: TestClient):
+        """`client_id` is on the response because plex.tv only honours the PIN for the same client —
+        dropping it would make every login fail at the poll with nothing to explain why."""
+        with respx.mock:
+            respx.post("https://plex.tv/api/v2/pins").mock(
+                return_value=httpx.Response(201, json={"id": 42, "code": "ABCD"})
+            )
+            body = client.post("/api/auth/pin").json()
+
+        assert set(body) == {"id", "code", "client_id"}
+        assert body["id"] == 42 and body["code"] == "ABCD"
+        assert body["client_id"] == client.app.state.client_id
+
+    def test_polling_an_unapproved_pin_reports_not_linked(self, client: TestClient):
+        with respx.mock:
+            respx.get("https://plex.tv/api/v2/pins/42").mock(return_value=httpx.Response(200, json={"authToken": None}))
+            body = client.get("/api/auth/pin/42").json()
+
+        # The identity fields are null until the owner approves in Plex; the token is never here.
+        assert set(body) == {"linked", "account_id", "username"}
+        assert body == {"linked": False, "account_id": None, "username": None}
+
+    def test_polling_an_approved_pin_signs_the_owner_in(self, client: TestClient):
+        with respx.mock:
+            respx.get("https://plex.tv/api/v2/pins/42").mock(
+                return_value=httpx.Response(200, json={"authToken": "plex-auth-token"})
+            )
+            respx.get("https://plex.tv/api/v2/user").mock(return_value=httpx.Response(200, json=dict(OWNER_JSON)))
+            r = client.get("/api/auth/pin/42")
+
+        body = r.json()
+        assert set(body) == {"linked", "account_id", "username"}
+        assert body == {"linked": True, "account_id": OWNER_ID, "username": "steve"}
+        # The Plex auth token must never reach the browser — not in the body, not in the cookie jar.
+        assert "plex-auth-token" not in r.text
+
+
 class TestApiToken:
     """The owner API token: generate once, authenticate with Bearer, revoke — and the hash never
     leaks through the settings endpoint."""
@@ -103,12 +177,16 @@ class TestApiToken:
         assert made.status_code == 200
         token = made.json()["token"]
         assert token.startswith("shl_")
+        assert set(made.json()) == {"token", "created_at"}
 
         # The owner can read the token back (revealable, like Sonarr/Radarr) — encrypted at rest but
         # returned in plaintext to the authenticated owner on this dedicated, owner-gated endpoint.
         status = client.get("/api/system/api-token").json()
         assert status["enabled"] is True
         assert status["token"] == token
+        # All three key sets spelled out: these endpoints declare response models now, and dropping
+        # `token` here would make the reveal button show nothing while still reporting "enabled".
+        assert set(status) == {"enabled", "created_at", "token"}
 
         # …but it must NEVER surface via the general settings endpoint (private + secret).
         settings = client.get("/api/settings").json()
@@ -124,9 +202,13 @@ class TestApiToken:
         assert bare.get("/api/users", headers={"Authorization": "Bearer shl_wrong"}).status_code == 401
 
         # Revoke → the previously-valid token stops working immediately.
-        assert client.delete("/api/system/api-token").status_code == 200
+        revoked = client.delete("/api/system/api-token")
+        assert revoked.status_code == 200
+        assert revoked.json() == {"enabled": False}
         assert bare.get("/api/users", headers={"Authorization": f"Bearer {token}"}).status_code == 401
-        assert client.get("/api/system/api-token").json()["enabled"] is False
+        # The unset branch of the status shape: same three keys, nothing to reveal.
+        after = client.get("/api/system/api-token").json()
+        assert after == {"enabled": False, "created_at": None, "token": None}
 
     def test_a_bad_bearer_fails_closed_even_with_a_valid_owner_cookie(self, client: TestClient):
         # `client` carries a valid owner cookie + CSRF. A wrong Bearer must NOT fall through to it —
@@ -178,6 +260,29 @@ class TestUninstall:
         r = client.post("/api/system/uninstall", json={"confirm": "yes"})
         assert r.status_code == 422
 
+    def test_the_dry_run_reports_the_whole_plan_and_changes_nothing(self, client: TestClient, monkeypatch):
+        """The preview is what the owner reads before pressing the one deliberately scary button, so
+        every line of it has to survive the response model — a dropped `collections_deleted` would
+        show "nothing to remove" for a server full of rows."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        collection = MagicMock(title="Picked for You", labels=[SimpleNamespace(tag="shortlist_sarah")])
+        plex = MagicMock()
+        plex.sections.return_value = [SimpleNamespace(collections=lambda: [collection])]
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_context", lambda **kw: SimpleNamespace(plex=plex, plextv=MagicMock())
+        )
+
+        r = client.post("/api/system/uninstall", json={"dry_run": True})
+
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body) == {"filters_restored", "collections_deleted", "rows_disabled", "dry_run", "message"}
+        assert body["dry_run"] is True
+        assert body["collections_deleted"] == ["Picked for You"]
+        plex.delete_owned_collection.assert_not_called()  # a preview deletes nothing
+
     def test_owned_collections_audit_lists_plex_rows_and_flags_orphans(self, client: TestClient, monkeypatch):
         """The cleanup audit lists every shortlist-labelled collection ON PLEX (not from the DB) and
         flags any whose user/row no longer exists — the drift a cleanup exists to catch."""
@@ -205,6 +310,12 @@ class TestUninstall:
 
         data = client.get("/api/system/owned-collections").json()
         assert data["total"] == 3
+        assert set(data) == {"collections", "total", "orphans"}
+        # Nested key set too: `orphan` is the flag the cleanup page acts on, and `rating_key` is how
+        # the owner finds the collection on Plex — a model that dropped either would be invisible.
+        assert [set(c) for c in data["collections"]] == [
+            {"library", "title", "label", "rating_key", "kind", "slug", "orphan"}
+        ] * 3
         by_slug = {c["slug"]: c for c in data["collections"]}
         assert by_slug["sarah"]["orphan"] is False and by_slug["sarah"]["kind"] == "user"
         assert by_slug["ghost"]["orphan"] is True  # no such user -> drift, safe to remove
