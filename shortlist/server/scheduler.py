@@ -142,14 +142,19 @@ def _resolve_cron(app, key: str, fallback: str, *, blank_means_off: bool = False
     # which is the whole distinction `blank_means_off` exists to make.
     with app.state.sessions() as session:
         row = session.get(Setting, key)
-    custom = row.value["v"] if row is not None else None
+    # `.get`, not `["v"]`: a settings row whose JSON is not shaped {"v": ...} would raise here, and
+    # this runs inside `build_scheduler` at BOOT — the one place the docstring below promises a bad
+    # value can never crash-loop the container.
+    custom = (row.value or {}).get("v") if row is not None else None
     if custom and isinstance(custom, str) and custom.strip():
         try:
             CronTrigger.from_crontab(custom.strip())
             return custom.strip()
         except ValueError:
             logger.warning("invalid {} {!r} — falling back to default", key, custom)
-            return fallback
+            # For an off-able schedule the fallback direction is OFF, not on. These are the jobs that
+            # WRITE to Plex, so a typo in the box must not quietly schedule one at the built-in time.
+            return "" if blank_means_off else fallback
     # Stored, and empty: an explicit "off" rather than an absent setting.
     if blank_means_off and isinstance(custom, str):
         return ""

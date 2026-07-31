@@ -292,3 +292,40 @@ class TestPrivacySyncSchedule:
 
         job = build_scheduler(app).get_job(PRIVACY_SYNC_JOB_ID)
         assert job is not None and job.trigger is not None
+
+
+class TestCronResolverEdges:
+    """The two ways a settings row can be wrong, both of which run at BOOT."""
+
+    def test_a_malformed_settings_row_does_not_crash_the_container(self, app):
+        """`build_scheduler` runs during startup, so anything that raises here is a crash loop — the
+        one outcome the resolver's own docstring promises can never happen."""
+        from shortlist.server.db.models import Setting
+        from shortlist.server.scheduler import build_scheduler
+
+        with app.state.sessions() as session:
+            session.add(Setting(key="backup.cron", value={"wrong": "shape"}))
+            session.commit()
+
+        assert build_scheduler(app) is not None
+
+    def test_a_typo_leaves_an_off_able_plex_writer_OFF(self, app):
+        """The off-able schedules are the ones that WRITE to Plex. Falling back to the built-in time
+        on a typo would schedule an unattended write the owner never asked for."""
+        from shortlist.server.scheduler import SYNC_CHECK_JOB_ID, build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            SettingsStore(session).set("sync.check_cron", "not a cron")
+
+        assert build_scheduler(app).get_job(SYNC_CHECK_JOB_ID) is None
+
+    def test_a_typo_on_a_normal_schedule_still_falls_back_to_its_default(self, app):
+        """Only the off-able keys change direction — a broken backup cron must still back up."""
+        from shortlist.server.scheduler import BACKUP_JOB_ID, build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            SettingsStore(session).set("backup.cron", "not a cron")
+
+        assert build_scheduler(app).get_job(BACKUP_JOB_ID) is not None

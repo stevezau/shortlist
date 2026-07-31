@@ -16,6 +16,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from datetime import UTC, datetime
+from itertools import pairwise
 
 import requests
 from loguru import logger
@@ -169,6 +170,24 @@ def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: in
                 delay,
             )
             time.sleep(delay)
+
+
+def _is_newest_first(entries: list) -> bool:
+    """Are this page's `lastViewedAt` stamps in non-increasing order?
+
+    Rows without the attribute are ignored rather than treated as 1970 — a data gap is not evidence
+    that the sort broke, and treating it as such would throw away the incremental read for everyone.
+    """
+    stamps: list[int] = []
+    for el in entries:
+        raw = el.get("lastViewedAt")
+        if raw is None:
+            continue
+        try:
+            stamps.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return all(a >= b for a, b in pairwise(stamps))
 
 
 class PlexClient:
@@ -798,11 +817,31 @@ class PlexClient:
         while True:
             root = self._read_watched_page(section_key, plex_type, token, start, since=since)
             entries = list(root)
+            # Validate the ORDER before trusting the early stop, not while walking it. The stop is
+            # only sound while the server honours `sort=lastViewedAt:desc` — and `lastViewedAt>=` was
+            # also documented as supported and is silently ignored by this PMS, so the sort earns the
+            # same suspicion. Checked up front because an ascending page puts its OLDEST row first:
+            # detecting mid-walk is too late, the stop has already fired and truncated the read to
+            # something that looks exactly like a quiet night.
+            if since is not None and not _is_newest_first(entries):
+                logger.warning(
+                    "PMS returned watched items out of order for section {} — the incremental sort "
+                    "was not honoured, so this read falls back to a complete one",
+                    section_key,
+                )
+                since = None
             for el in entries:
                 item = self._watched_item(el, media_type)
                 if item is None:
                     continue
                 if since is not None and item.watched_at < since:
+                    # An item with NO `lastViewedAt` is stamped 1970 by `_watched_item`, so it looks
+                    # older than any cutoff. Treating that as "everything after this is older" would
+                    # end the walk on a data gap and silently drop every title behind it — the read
+                    # would look like a quiet night rather than a truncation. Skip it and keep going;
+                    # only a real timestamp may end the walk.
+                    if el.get("lastViewedAt") is None:
+                        continue
                     # Sorted newest-first, so everything from here on is older. Stop reading — this
                     # is where the saving actually comes from, since the server ignores the filter.
                     reached_cutoff = True

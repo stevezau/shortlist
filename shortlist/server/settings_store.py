@@ -197,6 +197,13 @@ class SettingsStore:
         row = self._session.get(Setting, key)
         if row is None:
             return DEFAULTS.get(key, default)
+        # `.get`, not `["v"]`. Every setting is written as {"v": ...}, but a row that is somehow not
+        # that shape — a hand-edited database, a half-written migration, a future format — must read
+        # as "unset" and fall back, not raise. This is read during boot (the scheduler resolves every
+        # cron here), so an exception is a crash loop rather than one broken setting.
+        if not isinstance(row.value, dict) or "v" not in row.value:
+            logger.warning("setting {!r} has an unreadable value — using the default", key)
+            return DEFAULTS.get(key, default)
         value = row.value["v"]
         if key in SECRET_KEYS and value and self._secrets:
             return self._secrets.decrypt(value)

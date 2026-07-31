@@ -883,6 +883,85 @@ class TestWatchedTitles:
         )
         return f'<MediaContainer size="{len(rows)}" totalSize="{len(rows)}">{videos}</MediaContainer>'
 
+    @staticmethod
+    def _watched_xml_raw(body: str, size: int) -> str:
+        return f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>'
+
+    @respx.mock
+    def test_a_title_with_no_lastViewedAt_does_not_end_the_walk(self, mock_plex: PlexClient):
+        """A missing `lastViewedAt` is stamped 1970, so it looks older than any cutoff. Ending the
+        walk on it would drop every title BEHIND it and return a truncated history that looks exactly
+        like a quiet night — the cache would then advance its cursor past titles it never read."""
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        # DESCENDING on purpose, so the order guard is satisfied and this test isolates the gap. With
+        # ascending data the order guard rescues the read and the test would pass either way.
+        recent = '<Video ratingKey="1" title="Recent" year="2000" viewCount="1" lastViewedAt="1785000002"><Guid id="tmdb://1"/></Video>'
+        # No lastViewedAt at all — the data gap.
+        gap = '<Video ratingKey="2" title="No Timestamp" year="2000" viewCount="1"><Guid id="tmdb://2"/></Video>'
+        behind = '<Video ratingKey="3" title="Also Recent" year="2000" viewCount="1" lastViewedAt="1785000001"><Guid id="tmdb://3"/></Video>'
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=self._watched_xml_raw(recent + gap + behind, 3))
+        )
+
+        items = mock_plex.watched_titles(
+            "1", MediaType.MOVIE, token="SARAH-TOK", since=datetime(2026, 7, 1, tzinfo=UTC)
+        )
+
+        titles = [i.title for i in items]
+        assert "Also Recent" in titles, f"the walk stopped on a missing timestamp: {titles}"
+
+    @respx.mock
+    def test_an_out_of_order_page_abandons_the_early_stop(self, mock_plex: PlexClient):
+        """The early stop is only sound while the server honours `sort=lastViewedAt:desc`.
+
+        `lastViewedAt>=` was also documented as supported and is silently ignored by this PMS, so the
+        sort earns the same suspicion: if it stops being honoured, a truncated read would look like a
+        quiet night for up to a week (until the next full read).
+        """
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        # Ascending — the opposite of what the sort promises.
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(
+                200,
+                text=self._watched_xml((1, "Older", 1784000000), (2, "Newer", 1785000000), (3, "Newest", 1785000002)),
+            )
+        )
+
+        items = mock_plex.watched_titles(
+            "1", MediaType.MOVIE, token="SARAH-TOK", since=datetime(2026, 7, 20, tzinfo=UTC)
+        )
+
+        # "Older" is before the cutoff and legitimately dropped; the point is the walk did not STOP
+        # there and still returned the two newer titles behind it.
+        assert {i.title for i in items} >= {"Newer", "Newest"}, [i.title for i in items]
+
+    @respx.mock
+    def test_an_incremental_read_works_for_SHOWS_not_just_movies(self, mock_plex: PlexClient):
+        """`media_type` is a branch variable with two shapes — `<Video>` vs `<Directory>`, type=1 vs
+        type=2 — and every other incremental test covers only movies. Shows are also where
+        `lastViewedAt` is most likely to be absent or populated differently."""
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        shows = (
+            '<Directory ratingKey="10" title="Recent Show" year="2020" viewedLeafCount="3" '
+            'leafCount="10" lastViewedAt="1785000000"><Guid id="tmdb://10"/></Directory>'
+            '<Directory ratingKey="11" title="Old Show" year="2001" viewedLeafCount="1" '
+            'leafCount="10" lastViewedAt="1700000000"><Guid id="tmdb://11"/></Directory>'
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._watched_xml_raw(shows, 2)))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, token="SARAH-TOK", since=datetime(2026, 7, 1, tzinfo=UTC))
+
+        assert [i.title for i in items] == ["Recent Show"], "the cutoff must work for shows too"
+        assert items[0].media_type is MediaType.SHOW
+        assert items[0].viewed_leaf_count == 3 and items[0].leaf_count == 10
+        assert respx.calls.last.request.url.params["type"] == "2"
+
     @respx.mock
     def test_an_incremental_read_sorts_newest_first_and_never_sends_a_filter(self, mock_plex: PlexClient):
         """The saving comes from ORDERING plus an early stop, not from a server-side filter.
