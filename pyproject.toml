@@ -50,10 +50,6 @@ dev = [
     "respx>=0.21",
     "playwright>=1.45",
     "pytest-rerunfailures>=14.0",
-    # Splits the suite into equal-DURATION shards for CI. GitHub runners are 2-core, so `-n auto`
-    # gets two workers and the suite that takes ~35s locally takes ~2m20 there — the fix is more
-    # runners, not less work.
-    "pytest-split>=0.9",
     "pillow>=10.0",  # so the poster text-renderer + upload-normalization tests run in CI
 
     # Local commit guard: runs the same ruff check + ruff format CI enforces, so a format slip is

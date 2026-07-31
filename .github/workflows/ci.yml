@@ -70,16 +70,8 @@ jobs:
           print(f"lock covers all {len(want)} declared runtime dependencies")
           PY
 
-  # SHARDED across three runners. The suite takes ~35s on a dev machine and took 2m20 here, because a
-  # GitHub runner has 2 cores — `-n auto` gets two workers, not ten. The fix is more runners, not less
-  # work. Split by recorded DURATION (`.test_durations`), not by test count: by count the shards came
-  # out 28s/13s/10s, because a handful of integration tests cost more than a thousand unit ones.
   test-python:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       # 3.12 only, deliberately: the shipped artifact is a single Docker image built
@@ -97,44 +89,15 @@ jobs:
       # different dependency versions than production actually runs.
       - run: uv pip install --system -r requirements.lock
       - run: uv pip install --system -e ".[dev]"
-      # `--cov-fail-under=0` because a THIRD of the suite cannot meet the 80% gate on its own — the
-      # gate belongs to the whole, and is enforced by the `coverage` job once the shards are combined.
-      - run: pytest --splits 3 --group ${{ matrix.shard }} --cov-fail-under=0 --cov-report=
-      - uses: actions/upload-artifact@v7
-        with:
-          name: coverage-${{ matrix.shard }}
-          path: .coverage
-          include-hidden-files: true
-
-  # The 80% gate, applied to the whole suite rather than to any one shard.
-  coverage:
-    runs-on: ubuntu-latest
-    needs: [test-python]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - run: uv pip install --system coverage
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: coverage-*
-          path: coverage-parts
-      # Each shard's file arrives as coverage-N/.coverage; `combine` needs them side by side under
-      # distinct names or it overwrites its own input.
-      - run: |
-          set -euo pipefail
-          i=0
-          for f in coverage-parts/coverage-*/.coverage; do
-            i=$((i + 1))
-            cp "$f" ".coverage.$i"
-          done
-          coverage combine
-          coverage report --fail-under=80
-          coverage xml
+      # --cov-report=xml adds an XML report on top of the term-missing one in
+      # pyproject addopts, so Codecov has a file to ingest (badge stays "unknown"
+      # without it).
+      #
+      # NOT sharded across a matrix. It was, briefly: three duration-balanced shards took this job
+      # from 2m52 to 1m31 — and the whole workflow from 4m17 to 4m03, because the critical path is
+      # e2e + docker and this job is no longer on it. Fourteen seconds did not justify a split
+      # dependency, a committed durations file, a coverage-combine job and artifact plumbing.
+      - run: pytest --cov-report=xml
       - uses: codecov/codecov-action@v7
         continue-on-error: true
         with:
