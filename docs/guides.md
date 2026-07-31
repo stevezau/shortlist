@@ -104,8 +104,12 @@ Two jobs are worth knowing about there:
 - **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
   builds, delivers and promotes nothing — so it can only ever make your server _more_ private. It is
   the cheapest safety net against drift.
-- **Sync check** is **off** by default. Unlike the privacy sync it _writes corrections_ to Plex, so
-  turning it on unattended is a choice to make rather than a default to inherit.
+- **Sync check** runs nightly at **05:45** — after the rows build and after the privacy pass, so it
+  checks the state those actually left behind. Drift is the failure nobody notices: a row left on the
+  wrong shelf stays there until somebody happens to look, so the thing that repairs it is on by
+  default. It is also the **only** schedule you can switch off completely — it _writes corrections_
+  to Plex, so clearing its box means off, not "fall back to the default" the way every other blank
+  cron does.
 
 **Every row runs on its own schedule** — there is no single server-wide one. Open a row (Rows → edit)
 and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for

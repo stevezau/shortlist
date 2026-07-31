@@ -691,12 +691,15 @@ describe("RunDetail — where the phase breakdown lives", () => {
 
     renderDetail("?tab=log");
 
-    // The headline answers "why did it take so long after everyone finished" on its own — 03:30:00
-    // to 03:32:00 is two minutes. The bars are for the one time in ten that number is surprising.
-    const headline = await screen.findByText(/After everyone finished: 2m/i);
+    // The number says what it measures — the tail — rather than competing with the run's own
+    // Duration tile for "the" total. 03:30:00 to 03:32:00 is two minutes.
+    const headline = await screen.findByText(/after the last person finished/i);
     // Scoped to the card: the log panel below renders the same stage labels for its own lines, so an
     // unscoped query matches those and proves nothing about this card.
     const card = headline.closest("div[class*='rounded']") as HTMLElement;
+    // users_done 03:30:00 -> finished 03:32:00. The number is the whole point of the collapsed state,
+    // so assert the value, not just that some text is present.
+    expect(within(card).getByText("2m")).toBeInTheDocument();
     expect(within(card).queryByText(/ordering rows/i)).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: /time went/i }));
@@ -710,7 +713,7 @@ describe("RunDetail — where the phase breakdown lives", () => {
 
     renderDetail("?tab=log");
 
-    const headline = await screen.findByText(/After everyone finished/i);
+    const headline = await screen.findByText(/after the last person finished/i);
     const card = headline.closest("div[class*='rounded']") as HTMLElement;
     await userEvent.click(screen.getByRole("button", { name: /time went/i }));
 

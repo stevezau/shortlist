@@ -237,21 +237,50 @@ class TestPrivacySyncSchedule:
         assert job is not None, "the nightly privacy sync is not scheduled"
         assert job.trigger is not None
 
-    def test_the_drift_check_stays_off_until_a_cron_is_set(self, app):
-        """Unlike the privacy sync it WRITES corrections to Plex, so running it unattended is a
-        choice to make rather than a default to inherit."""
+    def test_the_drift_check_runs_nightly_out_of_the_box(self, app):
+        """Drift is the failure nobody notices — a row left on the wrong shelf stays there until
+        someone happens to look. Shipping the thing that repairs it switched off meant the repair
+        never happened on the servers that needed it most."""
         from shortlist.server.scheduler import SYNC_CHECK_JOB_ID, build_scheduler
 
-        assert build_scheduler(app).get_job(SYNC_CHECK_JOB_ID) is None
+        assert build_scheduler(app).get_job(SYNC_CHECK_JOB_ID) is not None
 
-    def test_setting_a_cron_turns_the_drift_check_on(self, app):
+    def test_setting_a_cron_moves_the_drift_check(self, app):
         from shortlist.server.scheduler import SYNC_CHECK_JOB_ID, build_scheduler
         from shortlist.server.settings_store import SettingsStore
 
         with app.state.sessions() as session:
             SettingsStore(session).set("sync.check_cron", "0 6 * * *")
 
-        assert build_scheduler(app).get_job(SYNC_CHECK_JOB_ID) is not None
+        job = build_scheduler(app).get_job(SYNC_CHECK_JOB_ID)
+        assert job is not None
+        assert "hour='6'" in str(job.trigger)
+
+    def test_clearing_the_drift_check_cron_really_turns_it_off(self, app):
+        """The one schedule the UI offers to disable, so "cleared" must not mean "inherit".
+
+        For every other key a blank value means "use the built-in default" — if that applied here the
+        "Turn this schedule off" button would write "" and the next resolve would put the job straight
+        back, so the switch would silently do nothing.
+        """
+        from shortlist.server.scheduler import SYNC_CHECK_JOB_ID, build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            SettingsStore(session).set("sync.check_cron", "")
+
+        assert build_scheduler(app).get_job(SYNC_CHECK_JOB_ID) is None
+
+    def test_a_blank_cron_still_means_inherit_for_every_other_schedule(self, app):
+        """The off-switch semantics are scoped to the drift check. Applying them everywhere would turn
+        a blank `backup.cron` — which has always meant "use the default" — into "never back up"."""
+        from shortlist.server.scheduler import BACKUP_JOB_ID, build_scheduler
+        from shortlist.server.settings_store import SettingsStore
+
+        with app.state.sessions() as session:
+            SettingsStore(session).set("backup.cron", "")
+
+        assert build_scheduler(app).get_job(BACKUP_JOB_ID) is not None
 
     def test_a_bad_cron_falls_back_instead_of_crash_looping_the_container(self, app):
         """A typo in a settings box must never stop the app booting."""

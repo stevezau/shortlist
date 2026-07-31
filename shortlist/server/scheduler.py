@@ -30,6 +30,8 @@ SYNC_CHECK_JOB_ID = "sync-check"
 # 05:15 — after the watch (04:17) and user (04:47) syncs, so it merges filters for a roster that has
 # already been refreshed. Only ever makes the server MORE private, so a daily pass costs nothing.
 _PRIVACY_SYNC_CRON = "15 5 * * *"
+# After the privacy pass, so the drift check sees the state the night's work actually left behind.
+_SYNC_CHECK_CRON = "45 5 * * *"
 
 
 #: The built-in cron for each schedulable settings key. A BLANK setting means "use this" for every
@@ -41,15 +43,23 @@ DEFAULT_CRONS: dict[str, str] = {
     "sync.users_cron": _USER_SYNC_CRON,
     "backup.cron": _BACKUP_CRON,
     "privacy.sync_cron": _PRIVACY_SYNC_CRON,
-    "sync.check_cron": "",  # opt-in: blank means off, not "use a default"
+    # 05:45 — after the rows build (03:30), the syncs, and the privacy pass (05:15), so it checks the
+    # state those actually left behind. Still turn-off-able: clearing the box stores "" and
+    # `blank_means_off` keeps it off rather than falling back to this.
+    "sync.check_cron": _SYNC_CHECK_CRON,
 }
+
+
+#: Schedules the owner can switch off entirely. For these, a stored blank means OFF; for every other
+#: key it means "inherit the built-in default".
+_OFF_ABLE = {"sync.check_cron"}
 
 
 def effective_cron(app, key: str) -> str:
     """The cron this key ACTUALLY runs on — the stored value, or the built-in default it falls back
     to, or "" when the schedule is genuinely off. Resolved exactly as the scheduler resolves it, so
     the UI and the running triggers cannot disagree."""
-    return _resolve_cron(app, key, DEFAULT_CRONS.get(key, ""))
+    return _resolve_cron(app, key, DEFAULT_CRONS.get(key, ""), blank_means_off=key in _OFF_ABLE)
 
 
 def _job_id(cron: str) -> str:
@@ -114,22 +124,35 @@ async def _queue_and_drain(app, kind: str, payload: dict | None = None) -> None:
     await jobs.drain_now(app.state, f"scheduled {kind}")
 
 
-def _resolve_cron(app, key: str, fallback: str) -> str:
+def _resolve_cron(app, key: str, fallback: str, *, blank_means_off: bool = False) -> str:
     """A cron from settings, falling back to the built-in default.
 
     A bad expression must never crash-loop the container, so an invalid value is logged and the
     default used — the schedule keeps running rather than the app failing to boot.
-    """
-    from shortlist.server.settings_store import SettingsStore
 
+    ``blank_means_off`` separates "never configured" from "deliberately cleared", which are the same
+    thing for most jobs and must not be for a turn-off-able one: without it, the schedule editor's
+    "Turn this schedule off" writes "" and the very next resolve falls straight back to the default,
+    so the off switch silently does nothing. Only set it for schedules the UI offers to disable.
+    """
+    from shortlist.server.db.models import Setting
+
+    # The RAW row, not SettingsStore.get: that folds `DEFAULTS` in, so an unset key and a key the
+    # owner deliberately cleared both come back as "" and the two become impossible to tell apart —
+    # which is the whole distinction `blank_means_off` exists to make.
     with app.state.sessions() as session:
-        custom = SettingsStore(session).get(key)
+        row = session.get(Setting, key)
+    custom = row.value["v"] if row is not None else None
     if custom and isinstance(custom, str) and custom.strip():
         try:
             CronTrigger.from_crontab(custom.strip())
             return custom.strip()
         except ValueError:
             logger.warning("invalid {} {!r} — falling back to default", key, custom)
+            return fallback
+    # Stored, and empty: an explicit "off" rather than an absent setting.
+    if blank_means_off and isinstance(custom, str):
+        return ""
     return fallback
 
 
@@ -226,7 +249,7 @@ def _register_sync_check(scheduler: AsyncIOScheduler, app) -> None:
     Off by default and deliberately so: unlike the privacy sync it WRITES corrections to Plex, so
     running it unattended is a choice to make rather than a default to inherit.
     """
-    cron = _resolve_cron(app, "sync.check_cron", "")
+    cron = _resolve_cron(app, "sync.check_cron", _SYNC_CHECK_CRON, blank_means_off=True)
     if not cron:
         # Remove any trigger left from a previous setting, so clearing the box really turns it off.
         if scheduler.get_job(SYNC_CHECK_JOB_ID):

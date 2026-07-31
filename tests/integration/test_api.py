@@ -4511,13 +4511,24 @@ class TestScheduleApi:
         assert backup["cron"] == "0 4 * * *"
         assert backup["using_default"] is False
 
-    def test_the_drift_check_is_off_until_asked_for(self, client: TestClient):
-        """Unlike the privacy sync it WRITES corrections to Plex, so running it unattended is a
-        choice to make rather than a default to inherit."""
+    def test_the_drift_check_is_scheduled_by_default_but_can_be_switched_off(self, client: TestClient):
+        """Drift is the failure nobody notices, so the thing that repairs it ships switched ON.
+
+        It stays the one schedule that can be turned OFF entirely — it writes corrections to Plex, so
+        an owner who wants to review drift before it is fixed must be able to say so, and clearing the
+        box has to mean off rather than "inherit the default".
+        """
+        from shortlist.server.settings_store import SettingsStore
+
         check = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
-        # The one kind whose blank genuinely means OFF — it has no built-in default to fall back to.
-        assert check["cron"] == ""
+        assert check["cron"] == "45 5 * * *", "runs after the rows build and the privacy pass"
         assert check["optional"] is True
+
+        with client.app.state.sessions() as session:
+            SettingsStore(session).set("sync.check_cron", "")
+
+        cleared = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
+        assert cleared["cron"] == "", "cleared must mean off, not fall back to the default"
 
     def test_rows_sharing_a_cron_are_one_entry_not_three(self, client: TestClient):
         """Three rows on `30 3 * * *` are ONE trigger that builds all three — listing them as three

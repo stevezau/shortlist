@@ -87,7 +87,9 @@ DEFAULTS: dict[str, Any] = {
     "privacy.sync_cron": "15 5 * * *",
     # The cron for the drift check. Blank = off; it is a converge-to-desired-state pass that is safe
     # to schedule, but it WRITES to Plex, so turning it on is a deliberate choice.
-    "sync.check_cron": "",
+    # Nightly at 05:45 — see scheduler._SYNC_CHECK_CRON. Clearing it in the UI stores an empty
+    # row, which the scheduler reads as an explicit "off" rather than "inherit this".
+    "sync.check_cron": "45 5 * * *",
     # Backup schedule. Blank cron = the default (daily 03:00). max_keep = number of backups to retain.
     "backup.cron": "",
     "backup.max_keep": 10,

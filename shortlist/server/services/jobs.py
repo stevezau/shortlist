@@ -129,10 +129,11 @@ CATALOG: tuple[JobKind, ...] = (
             "drifted. Rows fall out of step when a run doesn't finish, when the container restarts "
             "mid-write, or when someone was paused or disabled while their row was already live — a "
             "run only updates the people in that run, so everyone else keeps whatever they last had."
-            "\n\nNot scheduled by default. Unlike Privacy sync — which only ever makes the server "
-            "more private — this one WRITES corrections to Plex and changes what people see, so "
-            "letting it run unattended is a decision to make rather than a default to inherit. "
-            "Give it a schedule here once you trust what it reports."
+            "\n\nRuns nightly at 05:45 by default — after the rows build and after the privacy pass, "
+            "so it checks the state those actually left behind. Unlike Privacy sync, which only ever "
+            "makes the server more private, this one WRITES corrections to Plex and changes what "
+            "people see, so it is the one schedule you can switch off completely: clear the box and "
+            "it stays off rather than falling back to the default."
         ),
         manual=True,
         schedule_job_id="sync-check",
