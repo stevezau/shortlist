@@ -434,7 +434,9 @@ class TestUserSync:
         # The finish event carries the same numbers the HTTP response does, so the bar can settle on them.
         finished = next(d for e, d in events if e == "sync.finished")
         assert finished["ok"] is True
-        assert {k: finished[k] for k in ("added", "updated", "total")} == body
+        assert {k: finished[k] for k in ("added", "updated", "total")} == {
+            k: body[k] for k in ("added", "updated", "total")
+        }
 
         # These payloads are declared in `api/schemas_events.py` so the SPA can generate them rather
         # than hand-write them — and nothing validates an SSE frame at runtime, so the declaration is
@@ -476,7 +478,13 @@ class TestUserSync:
         """
         client.post("/api/users/sync")  # first sync -> the whole roster is new
 
-        assert [j["kind"] for j in client.get("/api/system/jobs").json()] == ["privacy.sync"]
+        # `sync.users` is in the list because the endpoint goes through the queue now — that is the
+        # point: it is a WRITER, so it must take the writer lock and defer to an in-flight run like
+        # every other writer. `privacy.sync` is the pass it queues on finding new accounts.
+        assert sorted(j["kind"] for j in client.get("/api/system/jobs").json()) == [
+            "privacy.sync",
+            "sync.users",
+        ]
 
     def test_a_sync_that_adds_nobody_writes_no_filters(self, client: TestClient, plextv, monkeypatch):
         """Filter writes are throttled plex.tv traffic across every account — a routine no-change
@@ -537,13 +545,43 @@ class TestUserSync:
             kid = session.query(User).filter_by(plex_account_id=555000200).one()
             assert kid.restriction_profile == "little_kid", "a failed read must not erase a known profile"
 
+    def test_a_sync_pressed_during_a_run_waits_instead_of_renaming_mid_converge(self, client: TestClient, monkeypatch):
+        """`sync.users` is a WRITER — it renames Shortlist collections when a display name drifts.
+
+        This endpoint used to call it directly, bypassing the two things that make it safe: the claim
+        gate that refuses to start a writer while a run is in flight, and the writer lock. A rename
+        landing mid-converge makes a live collection look orphaned to a run matching by rendered
+        title, and converge DELETES orphans (jobs-and-runs-design.md §12).
+        """
+        from shortlist.server.db.models import Job
+
+        # Exactly what `_plex_busy` reads.
+        monkeypatch.setattr(client.app.state.run_service, "is_running", lambda: True)
+
+        r = client.post("/api/users/sync")
+
+        assert r.status_code == 200
+        assert r.json()["queued"] is True, "a sync pressed during a run must defer, not run now"
+        with client.app.state.sessions() as session:
+            job = session.query(Job).filter(Job.kind == "sync.users").one()
+        assert job.status == "queued", "the job must still be waiting, not have run against a live run"
+        assert job.started_at is None
+
     def test_sync_adds_the_owner_disabled_and_badged(self, client: TestClient, plextv):
         r = client.post("/api/users/sync")
         assert r.status_code == 200
         # Two of the fixture's three accounts are already in the DB (sarah, and 555000200 whom
         # plex.tv now calls "kid"). ADDED are the owner plex.tv never returns, plus 555000300 —
         # the issue-#20 account: managed with no parental profile.
-        assert r.json() == {"added": 2, "updated": 2, "total": 4}
+        # `detail` and `queued` come from the JOB the endpoint now goes through — the counts are
+        # unchanged, and `queued: False` says the sync actually ran rather than deferring behind a run.
+        assert r.json() == {
+            "added": 2,
+            "updated": 2,
+            "total": 4,
+            "detail": "Synced 4 account(s) — 2 new, 2 updated",
+            "queued": False,
+        }
 
         owner = self._users(client)["steve"]
         assert owner["user_type"] == "owner"

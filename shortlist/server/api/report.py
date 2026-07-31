@@ -51,10 +51,25 @@ router = APIRouter(prefix="/report", tags=["report"], dependencies=[Depends(requ
 
 @router.post("/sync", status_code=202, response_model=SyncStartedOut)
 async def trigger_sync(request: Request) -> dict:
-    """Run the daily watch-status sync on demand — refresh every user's watched picks now. Fires in
-    the background (it fetches history for all users); the report refreshes once it lands."""
-    request.app.state.run_service.sync_watched_background()
-    return {"started": True}
+    """Run the daily watch-status sync on demand — refresh every user's watched picks now.
+
+    Queued as a real `sync.history` JOB, the same one the Jobs page runs, rather than the bare
+    background task this used to be. That task did the work but left no `jobs` row, so nothing that
+    tracks jobs could see it: no toast, nothing in the header's activity popover, nothing in Jobs →
+    Activity. The Jobs page appeared to show it only because its progress bar listens to the SSE
+    `sync.progress` stream — a second, unrelated channel. One button, two mechanisms, and only one of
+    them visible.
+
+    Going through the queue also means it is durable and retried, which fire-and-forget never was.
+    """
+    from shortlist.server.services.jobs import drain_now, enqueue
+
+    state = request.app.state
+    job_id = enqueue(state.sessions, "sync.history")
+    # Drained inline so pressing the button still feels instant; if it cannot run right now (a run
+    # holds the lock) the row stays queued and the worker picks it up.
+    await drain_now(state, "watch sync requested from the dashboard")
+    return {"started": True, "job_id": job_id}
 
 
 def _orphaned_slugs(session: Session) -> set[str]:

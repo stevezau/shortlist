@@ -112,6 +112,20 @@ export function UsersPage() {
   // roster again — so someone newly invited to Plex, and the owner's own row, never appeared.
   const sync = useMutation({
     mutationFn: api.syncUsers,
+    // A sync is a Plex WRITER (it renames collections when a nickname changes), so it waits for a
+    // run to finish rather than writing underneath it. Without this the button would just stop
+    // spinning and nothing would visibly change — the roster is unchanged because it has not run yet.
+    onSuccess: (result) =>
+      result.queued
+        ? toast.success("Sync queued", {
+            description:
+              "A run is using Plex right now, so this will happen the moment it finishes.",
+          })
+        : toast.success(
+            result.added || result.updated
+              ? `Synced — ${result.added} new, ${result.updated} updated`
+              : "Synced — no changes",
+          ),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.users }),
   });

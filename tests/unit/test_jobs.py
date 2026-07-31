@@ -478,12 +478,12 @@ class TestHandlers:
         """
         import inspect
 
-        from shortlist.server.api import users as users_api
+        from shortlist.server.services import user_sync
 
         assert jobs.BY_KIND["sync.users"].writes_plex is True
         # The reason, asserted rather than trusted: if the rename ever moves out of this handler the
         # flag can be revisited, and this points at where to look.
-        source = inspect.getsource(users_api.sync_users_from_state)
+        source = inspect.getsource(user_sync.sync_users_from_state)
         assert "rename_after_nickname" in source
 
     def test_hiding_a_paused_user_takes_every_row_off_every_surface(self, sessions):

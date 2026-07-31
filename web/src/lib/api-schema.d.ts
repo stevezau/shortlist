@@ -399,8 +399,16 @@ export interface paths {
         put?: never;
         /**
          * Trigger Sync
-         * @description Run the daily watch-status sync on demand — refresh every user's watched picks now. Fires in
-         *     the background (it fetches history for all users); the report refreshes once it lands.
+         * @description Run the daily watch-status sync on demand — refresh every user's watched picks now.
+         *
+         *     Queued as a real `sync.history` JOB, the same one the Jobs page runs, rather than the bare
+         *     background task this used to be. That task did the work but left no `jobs` row, so nothing that
+         *     tracks jobs could see it: no toast, nothing in the header's activity popover, nothing in Jobs →
+         *     Activity. The Jobs page appeared to show it only because its progress bar listens to the SSE
+         *     `sync.progress` stream — a second, unrelated channel. One button, two mechanisms, and only one of
+         *     them visible.
+         *
+         *     Going through the queue also means it is durable and retried, which fire-and-forget never was.
          */
         post: operations["trigger_sync_api_report_sync_post"];
         delete?: never;
@@ -1386,6 +1394,18 @@ export interface paths {
         /**
          * Sync Users
          * @description Pull shared + Home users — and the owner — from plex.tv into the users table (idempotent).
+         *
+         *     Queued as a `sync.users` JOB and drained inline, rather than called directly. `sync.users` is a
+         *     WRITER despite its name — it renames Shortlist collections on the PMS when a display name has
+         *     drifted — and both things that make that safe live in the job runner, not in the function:
+         *     `_claimable` refuses to start a writer while a run is in flight, and the runner holds
+         *     `plex_writer_lock()` for the duration. Calling it straight from here bypassed both, so pressing
+         *     "Sync from Plex" mid-run could rename a collection the run was converging against. The run
+         *     matches collections by rendered TITLE, so that makes a live row look orphaned — and converge
+         *     deletes orphans. (jobs-and-runs-design.md §12; the CATALOG entry for this kind spells out the
+         *     same failure.)
+         *
+         *     Drained inline so the button still returns the counts it always has.
          */
         post: operations["sync_users_api_users_sync_post"];
         delete?: never;
@@ -3415,6 +3435,8 @@ export interface components {
         };
         /** SyncStartedOut */
         SyncStartedOut: {
+            /** Job Id */
+            job_id: number;
             /** Started */
             started: boolean;
         } & {

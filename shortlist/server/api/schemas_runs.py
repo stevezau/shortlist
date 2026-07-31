@@ -298,3 +298,5 @@ class ClearedDeletedRowsOut(PassthroughModel):
 
 class SyncStartedOut(PassthroughModel):
     started: bool
+    #: The queued `sync.history` job, so the caller can follow it like any other job.
+    job_id: int

@@ -9,12 +9,23 @@ import { ApiError } from "@/lib/api";
 import type { User, UserPatch } from "@/lib/types";
 import { UsersPage } from "@/pages/users";
 
+const { toastSuccess } = vi.hoisted(() => ({ toastSuccess: vi.fn() }));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: toastSuccess,
+    loading: vi.fn(),
+    error: vi.fn(),
+    dismiss: vi.fn(),
+  },
+}));
+
 const { getUsers, patchUser, setAllUsersEnabled, syncUsers } = vi.hoisted(
   () => ({
     getUsers: vi.fn(),
     patchUser: vi.fn(),
     syncUsers: vi.fn(() =>
-      Promise.resolve({ added: 1, updated: 48, total: 49 }),
+      Promise.resolve({ added: 1, updated: 48, total: 49, queued: false }),
     ),
     setAllUsersEnabled: vi.fn((_enabled: boolean) =>
       Promise.resolve({ updated: 1, cleaned: 0, enabled: true }),
@@ -212,6 +223,31 @@ describe("UsersPage — pulling the roster again", () => {
 
     await waitFor(() => expect(syncUsers).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("steve")).toBeInTheDocument();
+  });
+
+  it("says a sync is queued when a run is holding Plex, rather than looking like nothing happened", async () => {
+    // Sync from Plex is a WRITER (it renames collections when a nickname drifts), so it defers to an
+    // in-flight run. The page shows no counts, so without this the button would simply stop spinning
+    // and the roster would be unchanged — indistinguishable from a broken button.
+    getUsers.mockResolvedValue([SARAH]);
+    syncUsers.mockResolvedValueOnce({
+      added: 0,
+      updated: 0,
+      total: 0,
+      queued: true,
+    });
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Sync/ }));
+
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(
+        "Sync queued",
+        expect.objectContaining({
+          description: expect.stringContaining("the moment it finishes"),
+        }),
+      ),
+    );
   });
 
   it("says plex.tv couldn’t be reached rather than silently doing nothing", async () => {

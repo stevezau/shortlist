@@ -30,7 +30,6 @@ from shortlist.server.services import jobs
 from shortlist.server.services.user_sync import (
     remove_users_rows,
     rename_after_nickname,
-    sync_users_from_state,
 )
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
@@ -482,8 +481,36 @@ def _reject_display_name_clash(session: Session, user: User, nickname: str) -> N
 
 @router.post("/sync", response_model=UserSyncOut)
 async def sync_users(request: Request) -> dict:
-    """Pull shared + Home users — and the owner — from plex.tv into the users table (idempotent)."""
-    return await sync_users_from_state(request.app.state)
+    """Pull shared + Home users — and the owner — from plex.tv into the users table (idempotent).
+
+    Queued as a `sync.users` JOB and drained inline, rather than called directly. `sync.users` is a
+    WRITER despite its name — it renames Shortlist collections on the PMS when a display name has
+    drifted — and both things that make that safe live in the job runner, not in the function:
+    `_claimable` refuses to start a writer while a run is in flight, and the runner holds
+    `plex_writer_lock()` for the duration. Calling it straight from here bypassed both, so pressing
+    "Sync from Plex" mid-run could rename a collection the run was converging against. The run
+    matches collections by rendered TITLE, so that makes a live row look orphaned — and converge
+    deletes orphans. (jobs-and-runs-design.md §12; the CATALOG entry for this kind spells out the
+    same failure.)
+
+    Drained inline so the button still returns the counts it always has.
+    """
+    from shortlist.server.db.models import Job
+    from shortlist.server.services.jobs import enqueue, run_pending
+
+    state = request.app.state
+    job_id = enqueue(state.sessions, "sync.users")
+    await run_pending(state)
+    with state.sessions() as session:
+        job = session.get(Job, job_id)
+        result = dict(job.result or {})
+    # Still queued means a run holds the writer lock. The row stays, the worker retries — say so
+    # rather than reporting a sync that has not happened yet.
+    result.setdefault("added", 0)
+    result.setdefault("updated", 0)
+    result.setdefault("total", 0)
+    result["queued"] = job.status in ("queued", "running")
+    return result
 
 
 async def _hide_paused_users_rows(state, user_slug: str) -> None:

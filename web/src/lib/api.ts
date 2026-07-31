@@ -204,7 +204,13 @@ export const api = {
 
   /** Re-pull shared + Home users (and the owner) from plex.tv/Tautulli. Returns how many rows the
    *  sync added vs. updated, and the total roster size, so the UI can report a real result. */
-  syncUsers: (): Promise<{ added: number; updated: number; total: number }> =>
+  syncUsers: (): Promise<{
+    added: number;
+    updated: number;
+    total: number;
+    /** True when a run held the writer lock, so the sync is queued rather than done. */
+    queued: boolean;
+  }> =>
     request("/api/users/sync", { method: "POST" }),
 
   // --- Background jobs ---

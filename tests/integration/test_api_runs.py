@@ -69,6 +69,10 @@ REPORT_KEYS = {
 }
 
 
+async def _noop_async(*_args, **_kwargs) -> None:
+    """Stands in for the real watch sync, which would reach Plex."""
+
+
 class TestRunsApi:
     def test_empty_list_then_trigger(self, client: TestClient):
         assert client.get("/api/runs").json() == []
@@ -1321,17 +1325,27 @@ class TestRunsApi:
         # The line carries the time of the watch, not of any one delivery.
         assert recent[0]["watched_at"].startswith((now - timedelta(minutes=40)).strftime("%Y-%m-%dT%H:%M"))
 
-    def test_report_sync_answers_that_it_started_and_fires_in_the_background(self, client: TestClient, monkeypatch):
-        """The dashboard's "sync now" button. It returns immediately (202) — the sync itself fetches
-        history for every user, so it cannot be awaited on the request."""
-        calls = []
-        monkeypatch.setattr(client.app.state.run_service, "sync_watched_background", lambda: calls.append(1))
+    def test_report_sync_queues_a_real_job_so_the_ui_can_see_it(self, client: TestClient, monkeypatch):
+        """The dashboard's "sync now" button. It returns immediately (202) — the sync fetches history
+        for every user, so it cannot be awaited on the request.
+
+        It must leave a `jobs` ROW behind. It used to call `sync_watched_background()` directly, which
+        did the work but recorded nothing: no toast, nothing in the header's activity popover, nothing
+        in Jobs -> Activity. The Jobs page only seemed to show it because its progress bar listens to
+        the SSE stream instead. Asserting on the row is what stops that divergence coming back.
+        """
+        from shortlist.server.db.models import Job
+
+        monkeypatch.setattr(client.app.state.run_service, "sync_watched", _noop_async, raising=False)
 
         r = client.post("/api/report/sync")
 
         assert r.status_code == 202
-        assert r.json() == {"started": True}
-        assert calls == [1]
+        assert r.json()["started"] is True
+        with client.app.state.sessions() as session:
+            queued = session.query(Job).filter(Job.kind == "sync.history").all()
+        assert len(queued) == 1, "the dashboard button must go through the job queue like every other"
+        assert r.json()["job_id"] == queued[0].id
 
     def test_deleted_rows_lists_orphaned_history_and_says_what_clearing_it_removed(self, client: TestClient):
         """Both endpoints of the one destructive action on the dashboard, and both branches of the

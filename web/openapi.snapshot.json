@@ -4141,13 +4141,18 @@
       "SyncStartedOut": {
         "additionalProperties": true,
         "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "integer"
+          },
           "started": {
             "title": "Started",
             "type": "boolean"
           }
         },
         "required": [
-          "started"
+          "started",
+          "job_id"
         ],
         "title": "SyncStartedOut",
         "type": "object"
@@ -6086,7 +6091,7 @@
     },
     "/api/report/sync": {
       "post": {
-        "description": "Run the daily watch-status sync on demand \u2014 refresh every user's watched picks now. Fires in\nthe background (it fetches history for all users); the report refreshes once it lands.",
+        "description": "Run the daily watch-status sync on demand \u2014 refresh every user's watched picks now.\n\nQueued as a real `sync.history` JOB, the same one the Jobs page runs, rather than the bare\nbackground task this used to be. That task did the work but left no `jobs` row, so nothing that\ntracks jobs could see it: no toast, nothing in the header's activity popover, nothing in Jobs \u2192\nActivity. The Jobs page appeared to show it only because its progress bar listens to the SSE\n`sync.progress` stream \u2014 a second, unrelated channel. One button, two mechanisms, and only one of\nthem visible.\n\nGoing through the queue also means it is durable and retried, which fire-and-forget never was.",
         "operationId": "trigger_sync_api_report_sync_post",
         "responses": {
           "202": {
@@ -7891,7 +7896,7 @@
     },
     "/api/users/sync": {
       "post": {
-        "description": "Pull shared + Home users \u2014 and the owner \u2014 from plex.tv into the users table (idempotent).",
+        "description": "Pull shared + Home users \u2014 and the owner \u2014 from plex.tv into the users table (idempotent).\n\nQueued as a `sync.users` JOB and drained inline, rather than called directly. `sync.users` is a\nWRITER despite its name \u2014 it renames Shortlist collections on the PMS when a display name has\ndrifted \u2014 and both things that make that safe live in the job runner, not in the function:\n`_claimable` refuses to start a writer while a run is in flight, and the runner holds\n`plex_writer_lock()` for the duration. Calling it straight from here bypassed both, so pressing\n\"Sync from Plex\" mid-run could rename a collection the run was converging against. The run\nmatches collections by rendered TITLE, so that makes a live row look orphaned \u2014 and converge\ndeletes orphans. (jobs-and-runs-design.md \u00a712; the CATALOG entry for this kind spells out the\nsame failure.)\n\nDrained inline so the button still returns the counts it always has.",
         "operationId": "sync_users_api_users_sync_post",
         "responses": {
           "200": {
