@@ -3,11 +3,11 @@ import { useId, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export const MAX_SEEDS_MIN = 1;
-export const MAX_SEEDS_MAX = 100;
+const MAX_SEEDS_MIN = 1;
+const MAX_SEEDS_MAX = 100;
 
 /** Clamp any number to the valid seed-budget range (matches the API's 1..100 bound). */
-export function clampMaxSeeds(n: number): number {
+function clampMaxSeeds(n: number): number {
   if (Number.isNaN(n)) return MAX_SEEDS_MIN;
   return Math.max(MAX_SEEDS_MIN, Math.min(MAX_SEEDS_MAX, Math.round(n)));
 }

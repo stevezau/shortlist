@@ -15,7 +15,6 @@ import { UserAvatar } from "@/components/user-avatar";
 import {
   ColdStartBadge,
   RestrictedBadge,
-  profileName,
   UserTypeBadge,
 } from "@/components/user-badges";
 import { Button } from "@/components/ui/button";
@@ -38,6 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { profileName } from "@/lib/user-profile";
 import type { User } from "@/lib/types";
 import { formatHitRate, timeAgo } from "@/lib/format";
 import {

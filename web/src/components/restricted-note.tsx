@@ -1,6 +1,6 @@
 import { ShieldAlert } from "lucide-react";
 
-import { profileName } from "@/components/user-badges";
+import { profileName } from "@/lib/user-profile";
 import type { User } from "@/lib/types";
 
 /**

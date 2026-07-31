@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { profileName } from "@/lib/user-profile";
 import type { User } from "@/lib/types";
 
 /**
@@ -39,17 +40,7 @@ export function UserTypeBadge({ user }: { user: User }) {
   );
 }
 
-/** The human name of a Plex restriction preset, for copy that names what the owner actually set. */
-const PROFILE_NAMES: Record<string, string> = {
-  little_kid: "Younger Kid",
-  older_kid: "Older Kid",
-  teen: "Teen",
-};
 
-export function profileName(user: User): string {
-  const key = user.restriction_profile ?? "";
-  return PROFILE_NAMES[key] ?? key;
-}
 
 /**
  * Only for an account Plex genuinely hides everything from — one with a parental PRESET.

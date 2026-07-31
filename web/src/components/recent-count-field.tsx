@@ -3,11 +3,11 @@ import { useId, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export const RECENT_COUNT_MIN = 1;
-export const RECENT_COUNT_MAX = 25;
+const RECENT_COUNT_MIN = 1;
+const RECENT_COUNT_MAX = 25;
 
 /** Clamp any number to the valid recent-watches range (matches the API's 1..25 bound). */
-export function clampRecentCount(n: number): number {
+function clampRecentCount(n: number): number {
   if (Number.isNaN(n)) return RECENT_COUNT_MIN;
   return Math.max(RECENT_COUNT_MIN, Math.min(RECENT_COUNT_MAX, Math.round(n)));
 }
