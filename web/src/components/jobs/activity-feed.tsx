@@ -5,6 +5,7 @@ import { useState } from "react";
 import { JobDetail } from "@/components/jobs/job-history";
 import { QueryBoundary } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { jobStatusLabel, timeAgo } from "@/lib/format";
@@ -77,14 +78,23 @@ function ActivityRow({
  * "what has my server actually been doing?" — which no amount of opening nine separate collapsibles
  * gets you. Both views exist because they are genuinely different questions.
  */
+/** How many job rows one page shows, and how many each "Show more" adds. */
+const PAGE = 100;
+
 export function ActivityFeed({ catalog }: { catalog: JobCatalogEntry[] }) {
   const [filter, setFilter] = useState<Filter>("all");
+  // Every background job the server has ever run lands here, so the list only grows. A flat cap
+  // silently hid everything past it — "every background job this server has run" was a promise the
+  // view stopped keeping the moment you passed 100. Raise the ceiling on demand instead.
+  const [limit, setLimit] = useState(PAGE);
   const jobs = useQuery({
-    queryKey: ["jobs", "activity"],
-    queryFn: () => api.getJobs(undefined, 100),
+    queryKey: ["jobs", "activity", limit],
+    queryFn: () => api.getJobs(undefined, limit),
     refetchInterval: (query) =>
       (query.state.data ?? []).some(isActiveJob) ? 3_000 : false,
   });
+  // A full page back means there is probably more; a short one means we reached the end.
+  const maybeMore = (jobs.data ?? []).length >= limit;
 
   const labels = Object.fromEntries(catalog.map((e) => [e.kind, e.label]));
 
@@ -139,16 +149,30 @@ export function ActivityFeed({ catalog }: { catalog: JobCatalogEntry[] }) {
             );
           }
           return (
-            <div className="overflow-hidden rounded-md border">
-              {shown.map((job, index) => (
-                <ActivityRow
-                  key={job.id}
-                  job={job}
-                  label={labels[job.kind] ?? job.kind}
-                  first={index === 0}
-                />
-              ))}
-            </div>
+            <>
+              <div className="overflow-hidden rounded-md border">
+                {shown.map((job, index) => (
+                  <ActivityRow
+                    key={job.id}
+                    job={job}
+                    label={labels[job.kind] ?? job.kind}
+                    first={index === 0}
+                  />
+                ))}
+              </div>
+              {maybeMore && (
+                <div className="flex justify-center pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    loading={jobs.isFetching}
+                    onClick={() => setLimit((n) => n + PAGE)}
+                  >
+                    Show older
+                  </Button>
+                </div>
+              )}
+            </>
           );
         }}
       </QueryBoundary>

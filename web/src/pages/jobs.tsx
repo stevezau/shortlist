@@ -17,7 +17,7 @@ import { ActivityFeed } from "@/components/jobs/activity-feed";
 import { JobRow } from "@/components/jobs/job-row";
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
-import { ScheduleTimeline } from "@/components/jobs/schedule-timeline";
+import { RowSchedules } from "@/components/jobs/row-schedules";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { ProgressBar } from "@/components/ui/progress-bar";
@@ -347,14 +347,14 @@ function Succeeded({ children }: { children: React.ReactNode }) {
  * screen: nine of those was ~1800px of scrolling, four of them jobs you can never start, and no
  * cross-job feed at all.
  */
-type JobsView = "jobs" | "timeline" | "activity";
+type JobsView = "jobs" | "activity";
 
 export function JobsPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab");
-  const view: JobsView =
-    tab === "activity" || tab === "timeline" ? tab : "jobs";
+  // `timeline` still resolves — the tab is gone, but /schedule redirects to it and links exist.
+  const view: JobsView = tab === "activity" ? "activity" : "jobs";
 
   const catalog = useQuery({
     queryKey: ["jobs", "catalog"],
@@ -492,7 +492,6 @@ export function JobsPage() {
           }
           options={[
             { value: "jobs", label: "Jobs" },
-            { value: "timeline", label: "Timeline" },
             { value: "activity", label: "Activity" },
           ]}
         />
@@ -528,8 +527,6 @@ export function JobsPage() {
 
       {view === "activity" ? (
         <ActivityFeed catalog={entries} />
-      ) : view === "timeline" ? (
-        <ScheduleTimeline />
       ) : catalog.isPending ? (
         <Skeleton className="h-72 w-full" />
       ) : (
@@ -818,6 +815,11 @@ export function JobsPage() {
               />
             </div>
           </section>
+
+          {/* Row schedules were the ONLY thing the separate Timeline tab showed that this list didn't
+              — every job already carries its own next-run. Listing them here makes Jobs the single
+              answer to "what runs on a timer", instead of two pages that each held half of it. */}
+          <RowSchedules />
 
           {automatic.length > 0 && (
             <section className="space-y-2">

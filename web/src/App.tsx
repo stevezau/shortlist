@@ -130,7 +130,7 @@ export default function App() {
                 and may be bookmarked, and a 404 would read as the feature being gone. */}
             <Route
               path="schedule"
-              element={<Navigate to="/jobs?tab=timeline" replace />}
+              element={<Navigate to="/jobs" replace />}
             />
             {/* The page was /tools until the nav started calling it Jobs. Kept as a redirect:
                 bookmarks and the `action_url` baked into notifications already in the DB. */}

@@ -311,6 +311,10 @@ class ContextBuilder:
         return [
             {
                 "title": w.title,
+                # Carried so the UI can block a seed straight from a watch. It is the ONLY identifier
+                # a block can key on, and it is None for anything with no tmdb:// GUID — the caller
+                # must treat "no id" as "not blockable from here" rather than inventing one.
+                "tmdb_id": w.tmdb_id,
                 "media_type": w.media_type.value,
                 "watched_at": w.watched_at.isoformat(),
                 "year": w.year,

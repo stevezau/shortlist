@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import { RunDetailPage } from "@/pages/run-detail";
-import type { RunDetail } from "@/lib/types";
+import type { RunLogEntry, RunDetail } from "@/lib/types";
 
 const { getRun, getUsers, getRunLog } = vi.hoisted(() => ({
   getRun: vi.fn(),
@@ -640,5 +640,50 @@ describe("RunDetail — a failed run says why", () => {
     // The tiles only render once a run has finished — wait for one, then assert no alarm.
     expect(await screen.findByText("all succeeded")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("RunDetail — where the phase breakdown lives", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getRunLog.mockReset();
+    getUsers.mockResolvedValue([]);
+    // Real TAIL_STAGES with a gap between them — the breakdown renders nothing without them.
+    getRunLog.mockResolvedValue([
+      {
+        seq: 1,
+        ts: "2026-07-30T03:30:00Z",
+        level: "info",
+        message: "run · Shortlist · users_done",
+        stage: "users_done",
+      },
+      {
+        seq: 2,
+        ts: "2026-07-30T03:32:00Z",
+        level: "info",
+        message: "run · Shortlist · finished",
+        stage: "finished",
+      },
+    ] as unknown as RunLogEntry[]);
+  });
+
+  it("keeps the headline tiles on the People tab but not the phase breakdown", async () => {
+    // The tiles are the run's summary. "Where the time went" is read off the log's own timings and
+    // answers a question you're asking while reading the log — not while scanning people.
+    getRun.mockResolvedValue(run([]));
+
+    renderDetail("?tab=users");
+
+    await screen.findByRole("button", { name: /Log/i });
+    expect(screen.queryByText(/Where the time went/i)).toBeNull();
+  });
+
+  it("shows the phase breakdown on the Log tab", async () => {
+    getRun.mockResolvedValue(run([]));
+
+    renderDetail("?tab=log");
+
+    expect(await screen.findByText(/Where the time went/i)).toBeInTheDocument();
   });
 });

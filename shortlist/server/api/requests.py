@@ -62,16 +62,28 @@ class RequestAction(BaseModel):
     dry_run: bool = False
 
 
+#: Hard ceiling on one inbox read. The sent log only grows — every run that wants a title the library
+#: lacks adds a row — so an unbounded read is a query that gets slower for ever and eventually times
+#: out the page. Pending is what the owner acts on and is self-limiting (you clear it); the tail is
+#: history, and the sort puts pending first, so a cap can only ever truncate the oldest history.
+MAX_INBOX = 500
+
+
 @router.get("")
 def list_requests(request: Request) -> list[RequestCandidateOut]:
     """The whole inbox: pending first (most-wanted, best-rated on top), then sent, then rejected.
 
     Rows the owner cleared from the Sent log (``hidden``) are excluded — they stay in the DB as sent
     tombstones (so the title isn't re-requested) but never show in the UI again.
+
+    Capped at :data:`MAX_INBOX`. The cap is applied AFTER the status sort, in Python, because the
+    ordering is by (status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows
+    rather than the oldest history.
     """
     with request.app.state.sessions() as session:
         rows = session.query(RequestCandidate).filter(~RequestCandidate.hidden).all()
     rows.sort(key=lambda r: (_STATUS_ORDER.get(r.status, 9), -r.demand, -r.rating))
+    rows = rows[:MAX_INBOX]
     return [
         RequestCandidateOut(
             id=r.id,

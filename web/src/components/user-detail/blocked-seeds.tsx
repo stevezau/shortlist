@@ -1,12 +1,12 @@
 import { useMutation } from "@tanstack/react-query";
-import { Plus, Search, X } from "lucide-react";
+import { Check, Plus, Search, X } from "lucide-react";
 import { useState } from "react";
 
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, apiErrorMessage } from "@/lib/api";
-import { useBlockSeed, useUnblockSeed } from "@/lib/queries";
+import { useBlockSeed, useUnblockSeed, useUserHistory } from "@/lib/queries";
 import { blockedSeeds } from "@/lib/types";
 import type { BlockedSeed, User } from "@/lib/types";
 
@@ -20,6 +20,90 @@ function seedLabel(seed: BlockedSeed): string {
         : "";
   const parts = [kind, seed.year ? String(seed.year) : ""].filter(Boolean);
   return parts.length ? `${seed.title} · ${parts.join(" · ")}` : seed.title;
+}
+
+/**
+ * Their own recent watches, one tap to block.
+ *
+ * A blocked seed is nearly always a reaction to something they just watched — the film someone put on
+ * for a friend, the sport, the kids' thing. Making the owner type that title into a TMDB search to
+ * find a title Shortlist ALREADY KNOWS they watched is busywork, and worse, TMDB search can return a
+ * different edition than the one in their library.
+ *
+ * Deliberately not the whole history: a wall of hundreds of titles is its own kind of useless. It
+ * shows the most recent handful, already-blocked ones are marked rather than hidden (so a second
+ * click isn't wasted, and you can see it worked), and the search below stays for anything older.
+ */
+function RecentWatchPicker({
+  userId,
+  blocked,
+}: {
+  userId: number;
+  blocked: BlockedSeed[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const history = useUserHistory(userId);
+  const block = useBlockSeed(userId);
+
+  const alreadyBlocked = new Set(blocked.map((seed) => seed.tmdb_id));
+  // A watch with no tmdb:// GUID has nothing a block can key on, so it is not offered at all.
+  const candidates = (history.data ?? []).filter((item) => item.tmdb_id !== null);
+  const shown = expanded ? candidates.slice(0, 24) : candidates.slice(0, 8);
+
+  if (candidates.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <p className="text-sm text-muted-foreground">
+        Recently watched &mdash; tap one to stop it shaping their picks.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {shown.map((item) => {
+          const isBlocked = alreadyBlocked.has(item.tmdb_id as number);
+          return (
+            <Button
+              key={`${item.tmdb_id}-${item.watched_at}`}
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={isBlocked || block.isPending}
+              className={isBlocked ? "opacity-50" : undefined}
+              title={isBlocked ? "Already blocked" : `Block ${item.title}`}
+              onClick={() =>
+                block.mutate({
+                  tmdbId: item.tmdb_id as number,
+                  title: item.title,
+                  mediaType: item.media_type,
+                  year: item.year ?? undefined,
+                })
+              }
+            >
+              {isBlocked ? (
+                <Check className="h-3 w-3" aria-hidden />
+              ) : (
+                <Plus className="h-3 w-3" aria-hidden />
+              )}
+              <span className="max-w-[16rem] truncate">{item.title}</span>
+              {item.year && (
+                <span className="text-muted-foreground">{item.year}</span>
+              )}
+            </Button>
+          );
+        })}
+      </div>
+      {candidates.length > 8 && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs text-muted-foreground"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "Show fewer" : `Show more (${candidates.length - 8})`}
+        </Button>
+      )}
+    </div>
+  );
 }
 
 /** Find a title on TMDB and block it, for a seed you want gone but can't reach from a trace page. */
@@ -141,7 +225,8 @@ export function BlockedSeedsList({ user }: { user: User }) {
   const unblock = useUnblockSeed(user.id);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      <RecentWatchPicker userId={user.id} blocked={blocked} />
       <AddBlockedSeed userId={user.id} />
 
       {blocked.length === 0 ? (

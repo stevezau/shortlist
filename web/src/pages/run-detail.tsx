@@ -915,13 +915,10 @@ export function RunDetailPage() {
               <RunFailureBanner run={run} />
 
               {/* Stats are only finalized once a run ends; while it's live we show the why-slow note instead. */}
-              {/* Always on, both tabs: the numbers are the run's summary, not one view of it. */}
-              {run.finished_at && (
-                <>
-                  <RunStatTiles run={run} />
-                  <RunPhaseTimeline entries={liveLog} />
-                </>
-              )}
+              {/* The TILES stay on both tabs — they are the run's summary, not one view of it. The
+                  phase breakdown does not: "where the time went" is read off the log's own timings and
+                  answers a question you are asking while reading the log, not while scanning people. */}
+              {run.finished_at && <RunStatTiles run={run} />}
 
               {/* A peek at the tail while a live run's People tab is open — the full thing is one
                   tab away, and on the Log tab it would be a duplicate. */}
@@ -1127,6 +1124,10 @@ export function RunDetailPage() {
                     );
                   })()
                 ))}
+
+              {tab === "log" && run.finished_at && (
+                <RunPhaseTimeline entries={liveLog} />
+              )}
 
               {tab === "log" && (
                 <RunLogPanel

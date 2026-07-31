@@ -600,7 +600,7 @@ describe("JobsPage — sync check", () => {
   });
 });
 
-describe("JobsPage — the three views of background work", () => {
+describe("JobsPage — one place for everything on a timer", () => {
   beforeEach(() => {
     getJobs.mockReset();
     getJobs.mockResolvedValue([]);
@@ -608,53 +608,47 @@ describe("JobsPage — the three views of background work", () => {
     getJobCatalog.mockResolvedValue(CATALOG);
     getSchedule.mockReset();
     getSchedule.mockResolvedValue({
-      jobs: [
+      jobs: [],
+      rows: [
         {
-          type: "job",
-          kind: "backup.take",
-          label: "Back up the database",
-          description: "Copy the database to /config/backups.",
-          setting: "backup.cron",
-          cron: "0 3 * * *",
-          optional: false,
-          writes_plex: false,
-          using_default: true,
-          next_run: "2026-07-31T03:00:00Z",
+          type: "rows",
+          cron: "30 3 * * *",
+          next_run: "2026-08-01T03:30:00Z",
+          rows: [
+            { id: 1, name: "✨ Picked for You" },
+            { id: 2, name: "🍿 Movie night" },
+          ],
         },
       ],
-      rows: [],
     });
     FakeEventSource.latest = null;
   });
 
-  it("offers Jobs, Timeline and Activity — the schedule is not its own page", async () => {
+  it("offers Jobs and Activity — the schedule is not a third view", async () => {
+    // Row schedules were the only thing Timeline showed that this list didn't: every job already
+    // carries its own next-run, so a separate tab meant two places each holding half the answer.
     renderPage();
 
-    for (const label of ["Jobs", "Timeline", "Activity"]) {
-      expect(
-        await screen.findByRole("button", { name: label }),
-      ).toBeInTheDocument();
-    }
+    expect(
+      await screen.findByRole("button", { name: "Jobs" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Activity" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Timeline" })).toBeNull();
   });
 
-  it("shows the schedule on the Timeline tab", async () => {
-    // "What background work exists" and "when does it run" were two pages that each listed every job,
-    // so neither could answer a whole question on its own.
+  it("lists row schedules in the Jobs list itself", async () => {
+    renderPage();
+
+    expect(await screen.findByText(/Picked for You/)).toBeInTheDocument();
+    // Grouped by shared cron, exactly as the scheduler groups them — one trigger builds both rows,
+    // so listing them separately would imply two timers where there is one.
+    expect(screen.getByText(/Movie night/)).toBeInTheDocument();
+  });
+
+  it("still lands somewhere sensible for an old ?tab=timeline link", async () => {
     renderPage("/jobs?tab=timeline");
 
-    expect(await screen.findByText(/Back up the database/)).toBeInTheDocument();
-    expect(
-      screen.getByText(/in the order they fire/i),
-    ).toBeInTheDocument();
-  });
-
-  it("switching to Timeline loads the schedule, not the job catalogue alone", async () => {
-    renderPage();
-    await screen.findByRole("button", { name: "Timeline" });
-    expect(getSchedule).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole("button", { name: "Timeline" }));
-
-    expect(await screen.findByText(/Back up the database/)).toBeInTheDocument();
+    // Falls back to the Jobs list rather than rendering an empty view.
+    expect(await screen.findByText(/Picked for You/)).toBeInTheDocument();
   });
 });

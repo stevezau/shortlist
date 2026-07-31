@@ -330,6 +330,8 @@ export interface UserRunsCount {
 /** GET /api/users/{id}/history — one recent watch. */
 export interface WatchItem {
   title: string;
+  /** null when the title has no tmdb:// GUID — such a watch cannot be blocked as a seed. */
+  tmdb_id: number | null;
   media_type: string;
   watched_at: string;
   year: number | null;
