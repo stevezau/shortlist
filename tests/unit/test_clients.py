@@ -228,15 +228,21 @@ class TestPlexTvClient:
     def test_429_slows_the_adaptive_pace_then_succeeds(self, monkeypatch):
         sleeps = []
         monkeypatch.setattr(plextv_mod.time, "sleep", sleeps.append)
+        # The CLOCK is frozen too, not just sleep. `throttle()` waits `pace - elapsed`, so with a
+        # live clock this asserted on how long the test itself took to get here: it wanted >= 0.9
+        # and got 0.74 on a loaded CI runner that had spent 0.26s between the two writes. Freezing
+        # monotonic makes the wait exactly the pace, which is the thing under test — the old version
+        # was passing by luck on fast machines.
+        monkeypatch.setattr(plextv_mod.time, "monotonic", lambda: 0.0)
         route = respx.put("https://plex.tv/api/users/100")
         route.side_effect = [httpx.Response(429), httpx.Response(200)]
         client = self._client()
         assert client._pace == 0.0  # starts fast — no fixed 1/s
         client.update_user_filters(100, {"filterMovies": "x=y"})
         assert len(route.calls) == 2  # the 429 was retried to success
-        # The 429 widened the pace to ~1s and the retry waited that long; the clean write then eased
-        # it partway back — so it ends above the floor but below the 1s it jumped to.
-        assert max(sleeps, default=0) >= 0.9
+        # The 429 widened the pace to >= 1s (plex-safety rule 6) and the retry waited exactly that;
+        # the clean write then eased it partway back, so it ends above the floor but below the jump.
+        assert max(sleeps, default=0) >= 1.0
         assert 0.0 < client._pace < 1.0
 
     @respx.mock
