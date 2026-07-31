@@ -34,3 +34,20 @@ class TestConfigureLogging:
             # Leave loguru clean (stderr only) so a later test never writes to the tmp file sink.
             lc._log_file = None
             configure_logging("INFO")
+
+
+def test_apscheduler_per_firing_chatter_is_silenced():
+    """APScheduler logs TWO INFO lines for every firing of every job. The job-queue drain ticks on an
+    interval, so at INFO that alone buried every real event in the operator's log — the maintainer hit
+    exactly this in production. Real failures still surface: APScheduler logs a raising job at ERROR,
+    and each Shortlist job records its own outcome to the `jobs` table."""
+    import logging
+
+    from shortlist.logging_config import configure_logging
+
+    configure_logging("INFO")
+
+    for name in ("apscheduler.executors.default", "apscheduler.scheduler"):
+        assert logging.getLogger(name).level >= logging.WARNING, name
+        # ERROR must still get through — silencing a failing job would be worse than the noise.
+        assert logging.getLogger(name).isEnabledFor(logging.ERROR), name

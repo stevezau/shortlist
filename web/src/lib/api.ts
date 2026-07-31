@@ -1,9 +1,14 @@
 import type {
+  Job,
+  JobCatalogEntry,
+  JobResult,
   ApiTokenCreated,
   ApiTokenStatus,
   AppNotification,
   ArrOptions,
   Backup,
+  BlockedSeed,
+  DeletedRowHistory,
   EffectivenessReport,
   OwnedCollectionsAudit,
   PlexLibrary,
@@ -12,7 +17,7 @@ import type {
   PinCreated,
   CleanupResult,
   Collection,
-  CollectionInput,
+  CollectionBody,
   ImageProviderStatus,
   PosterInput,
   PinStatus,
@@ -27,7 +32,9 @@ import type {
   RunLogEntry,
   LogPage,
   RunRequest,
+  ReportWindow,
   RunsSummary,
+  ScheduleResponse,
   RunUserTraceResponse,
   RowOverridePatch,
   Session,
@@ -35,11 +42,13 @@ import type {
   SetupState,
   SyncsInfo,
   TestableService,
+  TitleMatch,
   UninstallResult,
   User,
   VersionInfo,
   UserPatch,
   UserRow,
+  UserRunsCount,
   UserRunSummary,
   WatchItem,
 } from "./types";
@@ -195,26 +204,66 @@ export const api = {
 
   /** Re-pull shared + Home users (and the owner) from plex.tv/Tautulli. Returns how many rows the
    *  sync added vs. updated, and the total roster size, so the UI can report a real result. */
-  syncUsers: (): Promise<{ added: number; updated: number; total: number }> =>
+  syncUsers: (): Promise<{
+    added: number;
+    updated: number;
+    total: number;
+    /** True when a run held the writer lock, so the sync is queued rather than done. */
+    queued: boolean;
+  }> =>
     request("/api/users/sync", { method: "POST" }),
+
+  // --- Background jobs ---
+  getJobs: (kind?: string, limit = 25): Promise<Job[]> =>
+    request(
+      `/api/system/jobs?limit=${limit}${kind ? `&kind=${encodeURIComponent(kind)}` : ""}`,
+    ),
+
+  /** Every job Shortlist can run, with its schedule and how it went last time. */
+  getJobCatalog: (): Promise<JobCatalogEntry[]> =>
+    request("/api/system/jobs/catalog"),
+
+  runJob: (
+    kind: string,
+    payload: Record<string, unknown> = {},
+    background = false,
+  ): Promise<JobResult> =>
+    request("/api/system/jobs", {
+      method: "POST",
+      body: JSON.stringify({ kind, payload, background }),
+    }),
 
   blockSeed: (
     userId: number,
-    tmdbId: number,
-    title: string,
-  ): Promise<{ blocked_seeds: number[] }> =>
+    seed: { tmdbId: number; title: string; mediaType?: string; year?: number },
+  ): Promise<{ blocked_seeds: BlockedSeed[] }> =>
     request(`/api/users/${userId}/blocked-seeds`, {
       method: "POST",
-      body: JSON.stringify({ tmdb_id: tmdbId, title }),
+      body: JSON.stringify({
+        tmdb_id: seed.tmdbId,
+        title: seed.title,
+        media_type: seed.mediaType ?? "",
+        year: seed.year ?? null,
+      }),
     }),
 
   unblockSeed: (
     userId: number,
     tmdbId: number,
-  ): Promise<{ blocked_seeds: number[] }> =>
+  ): Promise<{ blocked_seeds: BlockedSeed[] }> =>
     request(`/api/users/${userId}/blocked-seeds/${tmdbId}`, {
       method: "DELETE",
     }),
+
+  /** TMDB's best guess for a title, for the "block a seed" picker. Not a {@link BlockedSeed}: TMDB
+   *  can answer without an id, and a match with `tmdb_id: null` is not blockable. */
+  searchTitles: (
+    q: string,
+    mediaType: "movie" | "show",
+  ): Promise<TitleMatch[]> =>
+    request(
+      `/api/users/search/titles?q=${encodeURIComponent(q)}&media_type=${mediaType}`,
+    ),
 
   getUserRows: (id: number): Promise<UserRow[]> =>
     request(`/api/users/${id}/rows`),
@@ -232,17 +281,27 @@ export const api = {
   getUserRuns: (id: number): Promise<UserRunSummary[]> =>
     request(`/api/users/${id}/runs`),
 
+  getUserRunsSummary: (id: number): Promise<UserRunsCount> =>
+    request(`/api/users/${id}/runs/summary`),
+
   getUserHistory: (id: number): Promise<WatchItem[]> =>
     request(`/api/users/${id}/history`),
 
   // --- Runs ---
-  /** Recent runs; pass a row slug to get only the runs that built that row. */
-  getRuns: (collection?: string): Promise<Run[]> =>
-    request(
-      collection
-        ? `/api/runs?collection=${encodeURIComponent(collection)}`
-        : "/api/runs",
-    ),
+  /** Recent runs; pass a row slug to get only the runs that built that row. `beforeId` pages
+   *  backwards — the id of the oldest run you already have. */
+  getRuns: (
+    collection?: string,
+    beforeId?: number,
+    limit?: number,
+  ): Promise<Run[]> => {
+    const params = new URLSearchParams();
+    if (collection) params.set("collection", collection);
+    if (beforeId !== undefined) params.set("before_id", String(beforeId));
+    if (limit !== undefined) params.set("limit", String(limit));
+    const query = params.toString();
+    return request(query ? `/api/runs?${query}` : "/api/runs");
+  },
 
   getRun: (id: number): Promise<RunDetail> => request(`/api/runs/${id}`),
 
@@ -255,6 +314,9 @@ export const api = {
 
   /** Totals for the Runs page header (count, succeeded/failed, last run). */
   getRunsSummary: (): Promise<RunsSummary> => request("/api/runs/summary"),
+
+  /** Everything on a timer — rows and jobs together, for the Schedule page. */
+  getSchedule: (): Promise<ScheduleResponse> => request("/api/schedule"),
 
   /** Delete ALL run history (runs, per-user rows, picks — and thus the report). Irreversible. */
   clearRuns: (): Promise<{ deleted: number }> =>
@@ -361,7 +423,23 @@ export const api = {
   getSyncs: (): Promise<SyncsInfo> => request("/api/system/syncs"),
 
   /** The effectiveness report: delivered-vs-watched hit rates + a recent-watches feed. */
-  getReport: (): Promise<EffectivenessReport> => request("/api/report"),
+  getReport: (window: ReportWindow = "30"): Promise<EffectivenessReport> =>
+    request(`/api/report?window=${window}`),
+
+  /** Pick history belonging to rows that no longer exist, and how much of it there is. */
+  getDeletedRows: (): Promise<DeletedRowHistory[]> =>
+    request("/api/report/deleted-rows"),
+
+  /** Permanently delete that history. Omit `slug` to clear every deleted row at once. */
+  clearDeletedRows: (
+    slug?: string,
+  ): Promise<{ cleared: number; picks: number; slugs: string[] }> =>
+    request(
+      slug
+        ? `/api/report/deleted-rows?slug=${encodeURIComponent(slug)}`
+        : "/api/report/deleted-rows",
+      { method: "DELETE" },
+    ),
 
   /** Run the daily watch-status sync on demand (fires in the background). */
   syncWatched: (): Promise<{ started: boolean }> =>
@@ -378,10 +456,10 @@ export const api = {
   // --- Collections (rows) ---
   listCollections: (): Promise<Collection[]> => request("/api/collections"),
 
-  createCollection: (body: CollectionInput): Promise<Collection> =>
+  createCollection: (body: CollectionBody): Promise<Collection> =>
     request("/api/collections", { method: "POST", body: JSON.stringify(body) }),
 
-  updateCollection: (id: number, body: CollectionInput): Promise<Collection> =>
+  updateCollection: (id: number, body: CollectionBody): Promise<Collection> =>
     request(`/api/collections/${id}`, {
       method: "PATCH",
       body: JSON.stringify(body),
@@ -508,7 +586,7 @@ export const api = {
 
   restoreBackup: (
     name: string,
-  ): Promise<{ restored: string; message: string }> =>
+  ): Promise<{ restored: string; message: string; privacy_note?: string }> =>
     request("/api/system/backups/restore", {
       method: "POST",
       body: JSON.stringify({ name }),

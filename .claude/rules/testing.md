@@ -15,7 +15,7 @@ globs: "tests/**/*.py"
 
 - `mock_plex` — Plex client mock (library sections, collections, accounts)
 - `mock_plextv` — plex.tv client mock (pins, users, share filters)
-- `mock_tautulli` / `mock_tmdb` / `mock_curator` — remaining boundary mocks
+- `mock_tmdb` / `mock_curator` — remaining boundary mocks
 - `engine_config` — pre-built engine config dataclass with sensible defaults
 - `tmp_path` — pytest built-in
 - Recorded real API responses live in `tests/fixtures/` (PMS XML, plex.tv XML, TMDB JSON) — prefer
@@ -28,7 +28,7 @@ globs: "tests/**/*.py"
 @pytest.mark.integration  # Crosses module boundaries
 @pytest.mark.plex         # Requires a real Plex server (skipped in CI)
 @pytest.mark.slow         # Long-running
-@pytest.mark.e2e          # Playwright vs built image + fake_plex
+@pytest.mark.e2e          # Playwright vs an in-process app (uvicorn + built SPA) + fake_plex
 ```
 
 ## Rules
@@ -64,7 +64,10 @@ produces different downstream behavior — not just the happy path. Shortlist's 
 variables, each of which needs its full matrix:
 
 - `user_type`: shared / managed / owner
-- history source: tautulli / plex
+- watch-history token acquisition: owner (admin token) / shared (own roster token) / managed (roster
+  miss, switched to a canary-exchanged token) — the one `HistorySource` implementation
+  (`history.py:34`) branches on this, not on which history backend is in play; see
+  `test_history.py:31,41,61,74`
 - curator provider: anthropic / openai / google / ollama / null
 - filter state: empty / shortlist-only / pre-existing-foreign-filters / mixed
 

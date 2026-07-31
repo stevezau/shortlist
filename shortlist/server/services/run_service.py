@@ -1,59 +1,43 @@
-"""Run service — the server's run orchestrator.
+"""Run service — the server's run orchestrator, and nothing else.
 
-Executes runs in a worker thread (the engine is sync), persists
-runs/run_users/picks/events rows, and emits SSE progress. A `runs` row is inserted BEFORE
-execution so a container restart can see and abort orphaned runs. Context assembly (clients,
-config, profiles) lives in ``context_builder.ContextBuilder``; this module is only orchestration.
+Executes runs in a worker thread (the engine is sync) and emits SSE progress. A `runs` row is
+inserted BEFORE execution so a container restart can see and abort orphaned runs. Cancellation,
+the one-run-at-a-time lock and the Plex writer lock live here; everything a run *needs* is a
+collaborator this module owns and delegates to:
+
+* ``context_builder.ContextBuilder`` — clients, engine config, user profiles.
+* ``run_log.RunLogBuffer`` — the live narration tail and its batched durable writes.
+* ``watch_sync.WatchSync`` — the watched-set cache top-up and the nightly read-only sweep.
+* ``run_persistence`` — run/run_user/pick/event rows, the approval inbox, and retention.
+
+The thin methods below those section banners exist because `RunService` is the public surface:
+`app.state.run_service` is how the API layer, the job queue and the scheduler reach all of this.
 """
 
 from __future__ import annotations
 
 import asyncio
 import threading
-from collections import OrderedDict, deque
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
-from shortlist.engine.models import SHARED_SLUG_PREFIX
-from shortlist.engine.pipeline import EngineContext
+from shortlist.engine.context import EngineContext
 from shortlist.engine.pipeline import run as engine_run
-from shortlist.server.db.models import Event, PickRow, RequestCandidate, Run, RunUser, User
+from shortlist.server.db.models import Run
 from shortlist.server.safe_mode import force_dry_run
+from shortlist.server.services import jobs, run_persistence
 from shortlist.server.services.context_builder import ContextBuilder
+from shortlist.server.services.run_log import RunLogBuffer
+from shortlist.server.services.run_persistence import HIT_WINDOW_DAYS  # noqa: F401  (re-export)
 from shortlist.server.services.sse import EventBus
+from shortlist.server.services.watch_sync import WatchSync
 
-HIT_WINDOW_DAYS = 30  # a pick counts as a hit if it is watched within 30 days of being recommended
-
-
-def _why_json(why) -> list[dict]:
-    """Serialize a missing title's provenance for storage + the API: [{user, row, seed, source}]."""
-    return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source} for w in why]
-
-
-def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
-    """One inbox row for a missing title, in whichever state the run left it."""
-    return RequestCandidate(
-        tmdb_id=m.tmdb_id,
-        media_type=m.media_type.value,
-        title=m.title,
-        year=m.year,
-        imdb_id=m.imdb_id,
-        rating=m.rating,
-        vote_count=m.vote_count,
-        demand=m.demand,
-        tags=sorted(m.tags),
-        wanters=sorted(m.wanters),
-        why=_why_json(m.why),
-        status=status,
-        detail=m.detail,  # a failed auto-send carries WHY it didn't land, shown as "Last attempt: …"
-        excluded=m.excluded,  # on a Sonarr/Radarr exclusion list — flagged in the inbox
-        arr_slug=m.arr_slug,  # set for auto-sent titles, so the inbox deep-links to the arr page
-        first_seen_run_id=run_id,
-    )
+# HIT_WINDOW_DAYS moved to `run_persistence` with the hit-rate reconcile that owns it, and is
+# re-exported above because `services/report_service.py` imports it from here.
 
 
 class RunService:
@@ -71,24 +55,22 @@ class RunService:
         # to stop. The engine checks it before each user (cooperative), so an in-flight user finishes.
         self._cancels: dict[int, threading.Event] = {}
         self._tasks: set[asyncio.Task] = set()  # strong refs so in-flight runs aren't GC'd
-        # run_id -> the run's stage activity log, in memory so a page reload can replay it. Bounded
-        # per run and to the last few runs (the per-user RESULTS are the durable record; this is the
-        # live/recent debugging feed). Lost on restart, which is fine — it's not an audit trail.
-        self._run_logs: OrderedDict[int, deque[dict]] = OrderedDict()
-        self._run_log_runs = 10  # keep the activity log for this many most-recent runs
+        self._log = RunLogBuffer(session_factory)
+        self._watch = WatchSync(session_factory, bus)
+        # `app.state`, assigned by `main.create_app` right after this object exists. Only used to
+        # drain the job queue when a run ends; None in tests that build a RunService directly.
+        self.state = None
+
+    # -- run narration (delegated to RunLogBuffer) ---------------------------------------
 
     def _new_run_log(self, run_id: int) -> Callable[[dict], None]:
-        """Start (or reset) a run's activity buffer and return an append sink for the progress hook."""
-        log: deque[dict] = deque(maxlen=2000)
-        self._run_logs[run_id] = log
-        self._run_logs.move_to_end(run_id)
-        while len(self._run_logs) > self._run_log_runs:
-            self._run_logs.popitem(last=False)
-        return log.append
+        return self._log.start(run_id)
 
-    def run_log(self, run_id: int) -> list[dict]:
-        """The in-memory stage activity log for a run (empty if evicted or never run this process)."""
-        return list(self._run_logs.get(run_id, ()))
+    def flush_run_log(self, run_id: int) -> None:
+        self._log.flush(run_id)
+
+    def run_log(self, run_id: int, after_seq: int | None = None) -> list[dict]:
+        return self._log.lines(run_id, after_seq)
 
     # -- context assembly (delegated to ContextBuilder) ----------------------------------
 
@@ -100,12 +82,21 @@ class RunService:
         run_id: int | None = None,
         log_sink: Callable[[dict], None] | None = None,
         collection_ids: list[int] | None = None,
+        plex_only: bool = False,
     ) -> EngineContext:
+        """The engine context for any Plex-touching path.
+
+        ``plex_only`` builds just the PMS + plex.tv + history source (see
+        ``ContextBuilder.build_plex_only``) — for the handlers that only walk collections under a
+        label and would otherwise be coupled to TMDB, the LLM provider and the poster studio.
+        """
         # Safe-mode chokepoint: EVERY Plex-touching path (runs AND the manual row
         # delete/rename/poster-reset/disable-user reconciles) gets its context here, so forcing
         # dry-run on the built context makes SHORTLIST_DRY_RUN cover all of them. Callers read the
         # effective value back off `ctx.config.dry_run`.
         dry_run = force_dry_run() or dry_run
+        if plex_only:
+            return self._ctx.build_plex_only(dry_run=dry_run)
         return self._ctx.build(
             dry_run=dry_run, loop=loop, run_id=run_id, log_sink=log_sink, collection_ids=collection_ids
         )
@@ -120,6 +111,14 @@ class RunService:
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         return self._ctx.user_history(user_id, limit=limit)
 
+    # -- watch-cache orchestration (delegated to WatchSync) -------------------------------
+
+    def refresh_watched(self, ctx, profile, *, incremental: bool = True, force_full: bool = False) -> list:
+        return self._watch.refresh_watched(ctx, profile, incremental=incremental, force_full=force_full)
+
+    def _has_a_row_in_scope(self, ctx, profile) -> bool:
+        return self._watch.has_a_row_in_scope(ctx, profile)
+
     def sync_watched_background(self) -> None:
         """Fire sync_watched as a tracked background task (the reference is kept so it isn't GC'd) —
         for the dashboard's manual 'Sync now'."""
@@ -128,50 +127,15 @@ class RunService:
         task.add_done_callback(self._tasks.discard)
 
     async def sync_watched(self) -> None:
-        """Refresh every enabled user's ``watched_at`` from their current watch history WITHOUT
-        rebuilding rows or writing to Plex — a read-only reconcile so the effectiveness report stays
-        fresh daily even when a row's own cron is weekly (or a user has no scheduled row at all).
-
-        Skips quietly if Plex isn't configured (build_context raises), and a per-user history-fetch
-        failure is logged and skipped rather than aborting the sweep. Serialized against runs by the
-        same lock, so it never overlaps a live run's per-user writes.
-
-        Streams ``sync.progress`` per user (done/total) and a final ``sync.finished`` over the SSE bus
-        so the Tools page can show a live bar. Harmless on the nightly schedule (no subscribers)."""
-        loop = asyncio.get_running_loop()
-
-        def emit(event: str, data: dict) -> None:
-            # work() runs in an executor thread; publish must hop back to the loop (see system.py).
-            loop.call_soon_threadsafe(self._bus.publish, event, {"kind": "watched", **data})
-
-        def work() -> int:
-            from shortlist.server.settings_store import SettingsStore
-
-            ctx = self.build_context(dry_run=True)  # dry: builds clients, writes nothing to Plex
-            with self._sessions() as session:
-                profiles = self.enabled_profiles(session)
-            total = len(profiles)
-            emit("sync.progress", {"done": 0, "total": total})
-            for i, profile in enumerate(profiles, start=1):
-                try:
-                    profile.history = ctx.history_source.fetch(profile, min_completion=ctx.config.min_completion)
-                except Exception as e:
-                    logger.warning("watch-sync: history fetch failed for {}: {}", profile.slug, type(e).__name__)
-                emit("sync.progress", {"done": i, "total": total})
-            self._reconcile_watched(profiles)
-            with self._sessions() as session:
-                # Stamp the sync so the dashboard can show "watch status synced N ago".
-                SettingsStore(session).set("report.watch_synced_at", datetime.now(UTC).isoformat())
-            return total
-
-        async with self._lock:
-            try:
-                count = await loop.run_in_executor(None, work)
-                logger.info("watch-sync: refreshed watch status for {} user(s)", count)
-                self._bus.publish("sync.finished", {"kind": "watched", "ok": True, "count": count})
-            except Exception as e:  # e.g. Plex not configured yet — never crash the scheduler
-                logger.info("watch-sync skipped: {}", type(e).__name__)
-                self._bus.publish("sync.finished", {"kind": "watched", "ok": False, "error": type(e).__name__})
+        """The nightly read-only watch sweep. The four collaborators are resolved HERE, per call, not
+        captured when `WatchSync` was built — `build_context` in particular is replaced wholesale by
+        tests and by nothing else owning it."""
+        await self._watch.sync_watched(
+            build_context=self.build_context,
+            enabled_profiles=self.enabled_profiles,
+            reconcile_watched=self._reconcile_watched,
+            run_lock=self._lock,
+        )
 
     # -- execution -----------------------------------------------------------------------
 
@@ -207,6 +171,30 @@ class RunService:
         self, run_id: int, dry_run: bool, user_ids: list[int] | None, collection_ids: list[int] | None = None
     ) -> None:
         loop = asyncio.get_running_loop()
+        try:
+            await self._run_locked(run_id, dry_run, user_ids, collection_ids, loop)
+        finally:
+            # A run holds the Plex writer lock, so `_plex_busy` parks every writer job behind it.
+            # Nothing used to tell the queue when that ended, leaving jobs idle until the worker's
+            # next 60s tick — measured at 29s of doing nothing on a real server. Draining here is a
+            # latency fix only; the tick stays as the backstop.
+            #
+            # In a `finally`, so a run that ERRORED or was CANCELLED drains too: it released the
+            # lock just the same, and an aborted run is exactly when a `privacy.sync` is most likely
+            # to be queued and most important — that is the leak direction.
+            #
+            # After `_run_locked` returns, so the lock is released and `_cancels` is empty: draining
+            # while `is_running()` is still true would re-park every writer and achieve nothing.
+            await self._drain_jobs_after_run(run_id)
+
+    async def _run_locked(
+        self,
+        run_id: int,
+        dry_run: bool,
+        user_ids: list[int] | None,
+        collection_ids: list[int] | None,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
         async with self._lock:
             self._bus.publish("run.progress", {"run_id": run_id, "status": "running"})
             cancel = self._cancels.get(run_id)
@@ -246,7 +234,17 @@ class RunService:
                 ctx.on_user_done = lambda profile, user_report: self._persist_user_live(
                     run_id, profile, user_report, dry_run
                 )
-                report = await loop.run_in_executor(None, engine_run, ctx, profiles)
+                # Fill each person's history from the cache BEFORE the engine runs. The run used to
+                # do its own complete per-user read — the same read the nightly sync had already
+                # done hours earlier — which was half the total cost of a night.
+                await loop.run_in_executor(None, self._watch.prefill_history, ctx, profiles, run_id)  # scoped inside
+                # The ONE-WRITER lock, held for the whole engine run (plex-safety rule 3 + design
+                # doc §2 principle 6). Jobs deferring to runs via `_plex_busy` is only half of it:
+                # without this, a writer job already mid-flight kept merging share filters straight
+                # through the start of a run, and the second of two read-modify-write merges drops
+                # the first's `label!=shortlist_<slug>` excludes with nothing left to catch it.
+                async with jobs.plex_writer_lock():
+                    report = await loop.run_in_executor(None, engine_run, ctx, profiles)
                 aborted = cancel is not None and cancel.is_set()
                 self._persist_report(run_id, report, status="aborted" if aborted else None)
                 # The engine filled each profile's history in place, so this is the one moment we hold
@@ -264,12 +262,48 @@ class RunService:
                 return
             finally:
                 self._cancels.pop(run_id, None)
+                # In the `finally` so a crashed run still leaves its narration behind — that is
+                # exactly the run whose log someone will want to read.
+                self.flush_run_log(run_id)
             # Carry the reason on failure so the UI (e.g. the wizard's first run) can show it inline
             # rather than only pointing at the Runs page.
             self._bus.publish(
                 "run.finished",
                 {"run_id": run_id, "status": status, "error": None if report.ok else report.error},
             )
+
+    async def _drain_jobs_after_run(self, run_id: int) -> None:
+        """Start whatever this run was blocking, now that it is not. Never raises.
+
+        The queue is durable and the worker re-ticks regardless, so a failure here costs latency and
+        nothing else — it must never turn a finished run into a failed one.
+        """
+        if self.state is None:
+            return
+        try:
+            await jobs.drain_now(self.state, f"run {run_id} finished")
+        except Exception as e:  # defensive: drain_now already swallows, this is the belt
+            logger.warning("run {}: could not drain the job queue ({})", run_id, type(e).__name__)
+
+    def is_running(self) -> bool:
+        """Is an engine run executing in THIS process right now?
+
+        Read by the job queue: runs and jobs are separate systems but share one Plex and one
+        throttled plex.tv, and interleaving their writes risks a job merging a share filter from a
+        roster snapshot a run is halfway through changing. `_cancels` holds exactly the runs this
+        process is executing — an entry is added the moment a run is QUEUED (`start_run`, so /cancel
+        works before execution begins) and removed when it finishes — so it is the authoritative
+        in-flight set, unlike the DB status (which a crashed process leaves stale until the boot
+        reap). Counting a queued run as running is deliberately conservative: it is about to take the
+        writer lock, and letting a job in first only to have it lose the race achieves nothing.
+
+        A CANCELLED run still counts. Cancellation is cooperative: the engine stops taking new users
+        but then falls through to the privacy merge and promote for everyone already delivered.
+        Treating "cancel requested" as "finished" would open the job queue precisely inside the
+        merge→promote window that rule 1 exists to protect, letting a second share-filter writer
+        clobber an exclude the run had just added.
+        """
+        return bool(self._cancels)
 
     def cancel_run(self, run_id: int) -> bool:
         """Ask the in-flight run to stop. Returns True if a running run was signalled, False if that
@@ -295,455 +329,18 @@ class RunService:
             run.stats = stats
             session.commit()
 
-    def _merge_run_stats(self, run_id: int, extra: dict) -> None:
-        with self._sessions() as session:
-            run = session.get(Run, run_id)
-            run.stats = {**(run.stats or {}), **extra}
-            session.commit()
-
-    # -- persistence ---------------------------------------------------------------------
+    # -- persistence + audit (delegated to run_persistence) -------------------------------
 
     def _reconcile_watched(self, profiles) -> None:
-        """Mark the picks a person actually watched — the hit rate, and the whole point of the app.
-
-        `picks.watched_at` was declared, migrated and read by the hit-rate query, but never WRITTEN:
-        every user's hit rate was structurally 0%, while the docs promised "expect 20-40%".
-
-        A pick counts as a hit only when the watch happened AFTER we recommended it (the run that
-        produced it) and within 30 days — recommending something they had already seen isn't a hit,
-        and neither is a watch a year later. `history_depth` is refreshed here too; it was likewise
-        surfaced in the UI and written nowhere, so every user read "0 titles watched".
-        """
-        with self._sessions() as session:
-            for profile in profiles:
-                user = session.query(User).filter_by(slug=profile.slug).first()
-                if user is None:
-                    continue
-                user.prefs = {**(user.prefs or {}), "history_depth": len(profile.history)}
-
-                latest_watch: dict[tuple[int, str], datetime] = {}
-                for item in profile.history:
-                    if item.tmdb_id is None:
-                        continue
-                    key = (item.tmdb_id, str(item.media_type))
-                    when = item.watched_at if item.watched_at.tzinfo else item.watched_at.replace(tzinfo=UTC)
-                    if key not in latest_watch or when > latest_watch[key]:
-                        latest_watch[key] = when
-                if not latest_watch:
-                    continue
-
-                # Only picks recent enough to still be creditable: a pick older than the window can
-                # never become a hit, so scanning every unwatched pick ever recorded is dead work
-                # that grows without bound. Uses the pick's own created_at (when it was delivered),
-                # not the run's started_at — so picks that outlive their run (after clear/prune) are
-                # still creditable.
-                cutoff = datetime.now(UTC) - timedelta(days=HIT_WINDOW_DAYS)
-                unwatched = (
-                    session.query(PickRow)
-                    .filter(
-                        PickRow.user_id == user.id,
-                        PickRow.watched_at.is_(None),
-                        PickRow.created_at >= cutoff,
-                    )
-                    .all()
-                )
-                for pick in unwatched:
-                    watched = latest_watch.get((pick.tmdb_id, pick.media_type))
-                    if watched is None:
-                        continue
-                    since = pick.created_at if pick.created_at.tzinfo else pick.created_at.replace(tzinfo=UTC)
-                    if since <= watched <= since + timedelta(days=HIT_WINDOW_DAYS):
-                        pick.watched_at = watched
-            session.commit()
+        run_persistence.reconcile_watched(self._sessions, profiles)
 
     def _persist_user_live(self, run_id: int, profile, user_report, dry_run: bool) -> None:
-        """Persist ONE user's results as they finish (called from the engine's worker threads), so the
-        run page shows each person on completion rather than the whole roster only at run's end. Its
-        commits are serialized (SQLite single-writer) and it never re-writes a user already stored, so
-        the end-of-run `_persist_report` stays a safe backstop + reconciler. A shared-row/unknown slug
-        has no user row here and is handled only at run end."""
-        with self._persist_lock, self._sessions() as session:
-            user = session.query(User).filter_by(slug=profile.slug).first()
-            if user is None:
-                return
-            if session.query(RunUser).filter_by(run_id=run_id, user_id=user.id).first() is not None:
-                return
-            self._persist_user_report(session, run_id, user, user_report, dry_run)
-            session.commit()
+        run_persistence.persist_user_live(self._sessions, self._persist_lock, run_id, profile, user_report, dry_run)
 
     def _persist_report(self, run_id: int, report, *, status: str | None = None, error: str | None = None) -> None:
-        """Persist a run's outcome. `status`/`error` override what the report says — the gated
-        path uses them so a refused run is never even momentarily written as a success."""
-        with self._sessions() as session:
-            run = session.get(Run, run_id)
-            users_by_slug = {u.slug: u for u in session.query(User).all()}
-            # Skipped is its OWN outcome, not a success: a skipped user built nothing, and folding
-            # them into `ok` made a run where every single person was skipped report "3 succeeded ·
-            # all succeeded" above three rows badged "Skipped".
-            ok = errors = skipped = 0
-            for user_report in report.users:
-                user = users_by_slug.get(user_report.slug)
-                if user is None:
-                    # A SHARED row files its report under `shared_<slug>`, which is nobody's user
-                    # slug — so this `continue` silently dropped it: a real Plex collection was
-                    # created, labelled and promoted with no run record and NO AUDIT EVENT at all
-                    # (plex-safety rule 10), and a failed shared row produced an errored run with
-                    # nothing to show for it.
-                    if user_report.slug.startswith(f"{SHARED_SLUG_PREFIX}_"):
-                        if user_report.status == "error":
-                            errors += 1
-                        elif user_report.status == "skipped":
-                            skipped += 1
-                        self._emit_shared_row_event(session, run_id, user_report, report.dry_run)
-                    continue
-                if user_report.status == "error":
-                    errors += 1
-                elif user_report.status == "skipped":
-                    skipped += 1
-                else:
-                    ok += 1
-                # Skip anyone already written by the live per-user persist — still counted above for
-                # the finalize stats. This backstops users the live path missed (e.g. it errored).
-                if session.query(RunUser).filter_by(run_id=run_id, user_id=user.id).first() is None:
-                    self._persist_user_report(session, run_id, user, user_report, report.dry_run)
-            self._emit_sweep_event(session, run_id, report)
-            self._emit_privacy_sync_events(session, run_id, report)
-            self._emit_hub_ordering_events(session, run_id, report)
-            self._emit_request_events(session, run_id, report)
-            self._persist_request_queue(session, run_id, report)
-            if report.error:
-                self._add_event(session, "run", "error", run_id, error=report.error)
-            self._finalize_run(run, report, status, error, ok, errors, skipped)
-            from shortlist.server.settings_store import SettingsStore
+        run_persistence.persist_report(self._sessions, run_id, report, status=status, error=error)
 
-            months = int(SettingsStore(session).get("runs.retention"))
-            # Legacy DBs store the old count-based "100" — values beyond the new 24-month max are
-            # treated as 0 (keep forever) until the owner visits Settings and sets a real month value.
-            self._prune_runs(session, months if 0 < months <= 24 else 0)
-            session.commit()
-
-    @staticmethod
-    def _prune_runs(session: Session, retention_months: int) -> None:
-        """Delete runs older than `retention_months`. 0 = keep everything forever.
-
-        Picks are KEPT (their run_id is nulled) so the dashboard's lifetime metrics survive. Only the
-        run history (the Runs list, per-user detail/trace) is pruned — those are the storage hog
-        (~100 KB per user per run in trace blobs).
-        """
-        if retention_months <= 0:
-            return
-        cutoff = datetime.now(UTC) - timedelta(days=retention_months * 30)
-        old = session.query(Run.id).filter(Run.started_at < cutoff).all()
-        old_ids = [rid for (rid,) in old]
-        if not old_ids:
-            return
-        session.query(PickRow).filter(PickRow.run_id.in_(old_ids)).update(
-            {PickRow.run_id: None}, synchronize_session=False
-        )
-        session.query(RunUser).filter(RunUser.run_id.in_(old_ids)).delete(synchronize_session=False)
-        session.query(Run).filter(Run.id.in_(old_ids)).delete(synchronize_session=False)
-
-    @staticmethod
-    def _add_event(session: Session, scope: str, level: str, run_id: int, *, dry_run: bool | None = None, **fields):
-        """Append one audit Event, injecting the run_id (and dry_run, where relevant) that every
-        emitter shares (plex-safety rule 10). Callers pass only their distinctive message fields."""
-        message: dict = {"run_id": run_id}
-        if dry_run is not None:
-            message["dry_run"] = dry_run
-        message.update(fields)
-        session.add(Event(scope=scope, level=level, message=message))
-
-    @classmethod
-    def _emit_shared_row_event(cls, session: Session, run_id: int, user_report, dry_run: bool) -> None:
-        """The audit record for a shared row — it has no user, so it gets no RunUser row.
-
-        Rule 10: every write, real or dry-run, leaves a structured event with its diff. "What changed
-        on the shared row at 03:31" must be answerable from the UI.
-        """
-        cls._add_event(
-            session,
-            "run.shared",
-            "error" if user_report.status == "error" else "info",
-            run_id,
-            dry_run=dry_run,
-            row=user_report.slug,
-            status=user_report.status,
-            picks=len(user_report.picks),
-            error=user_report.error,
-            # A shared row gets no RunUser row, so this event is the ONLY place its outcome is
-            # recorded — without the reason, "why did my shared row build nothing" is answerable
-            # from the container log and nowhere else (issue #3).
-            reason=user_report.reason,
-            diff=user_report.diff.__dict__ if user_report.diff else {},
-        )
-
-    @staticmethod
-    def _persist_user_report(session: Session, run_id: int, user: User, user_report, dry_run: bool) -> None:
-        """One user's RunUser row, their picks (non-dry-run only), and their run.user audit event."""
-        user.cold_start = user_report.status == "cold_start"
-        session.add(
-            RunUser(
-                run_id=run_id,
-                user_id=user.id,
-                status=user_report.status,
-                error=user_report.error,
-                reason=user_report.reason,
-                duration_ms=int(user_report.duration_s * 1000),
-                llm_tokens=user_report.llm_tokens,
-                llm_tokens_by_step=dict(user_report.llm_tokens_by_step),
-                exa_searches=user_report.exa_searches,
-                diff=user_report.diff.__dict__ if user_report.diff else {},
-                breakdown=user_report.breakdown,
-                trace=user_report.trace,
-            )
-        )
-        if not dry_run:
-            for pick in user_report.picks:
-                session.add(
-                    PickRow(
-                        run_id=run_id,
-                        user_id=user.id,
-                        tmdb_id=pick.tmdb_id,
-                        media_type=pick.media_type.value,
-                        rating_key=pick.rating_key,
-                        rank=pick.rank,
-                        collection_slug=pick.collection_slug,
-                        section_key=pick.section_key,
-                        library=pick.library,
-                        title=pick.title,
-                        reason=pick.reason,
-                        sources=",".join(pick.sources),
-                        affinity=pick.affinity,
-                        seed_tmdb_id=pick.seed_tmdb_id,
-                        seed_title=pick.seed_title,
-                    )
-                )
-        session.add(
-            Event(
-                scope="run.user",
-                level="error" if user_report.status == "error" else "info",
-                message={
-                    "run_id": run_id,
-                    "user": user_report.slug,
-                    "status": user_report.status,
-                    "dry_run": dry_run,
-                    "diff": user_report.diff.__dict__ if user_report.diff else {},
-                    "privacy_synced": user_report.privacy_synced,
-                    "llm_tokens": user_report.llm_tokens,
-                    "exa_searches": user_report.exa_searches,
-                    "error": user_report.error,
-                },
-            )
-        )
-
-    @classmethod
-    def _emit_sweep_event(cls, session: Session, run_id: int, report) -> None:
-        # Rows deleted because Plex could not hide them. This is a SERVER-wide sweep, so it
-        # can touch users who were not in this run at all (paused, disabled) — those have no
-        # RunUser row to carry the audit, and deleting someone's row is the most destructive
-        # thing a run does. It gets its own event (plex-safety rule 10).
-        if not report.swept_rows:
-            return
-        cls._add_event(
-            session,
-            "run.sweep",
-            "warning",
-            run_id,
-            dry_run=report.dry_run,
-            reason="row was broken beyond repair-in-place — no share filter could hide it (wrong "
-            "type for its library, or no shortlist label at all — an orphan from an interrupted "
-            "run), or it shared a collection tag with other users' rows and held their picks",
-            deleted=report.swept_rows,
-        )
-
-    @classmethod
-    def _emit_privacy_sync_events(cls, session: Session, run_id: int, report) -> None:
-        # Share-filter writes. Most of these accounts are NOT in this run's user list — they
-        # are simply people the server is shared with — so they have no RunUser row to carry
-        # the audit. Changing someone's Plex share permissions is the most sensitive thing
-        # Shortlist does; "what changed on whose share at 03:31" has to be answerable for every
-        # one of them (plex-safety rule 10).
-        for account_id, write in report.filter_writes.items():
-            cls._add_event(
-                session,
-                "run.privacy_sync",
-                "info",
-                run_id,
-                dry_run=report.dry_run,
-                plex_account_id=account_id,
-                username=write["username"],
-                fields={
-                    field: {"before": before, "after": after} for field, (before, after) in write["fields"].items()
-                },
-            )
-
-    @classmethod
-    def _emit_hub_ordering_events(cls, session: Session, run_id: int, report) -> None:
-        # Recommended-shelf reorders. Moving a managed hub shifts every collection's position on a
-        # server-wide shelf that a co-managing tool (Kometa) also cares about, so each library we
-        # actually moved rows in is audited — "what changed on the shelf at 03:31" (plex-safety rule 10).
-        for entry in report.hub_orderings:
-            cls._add_event(
-                session,
-                "run.hub_order",
-                "info",
-                run_id,
-                dry_run=report.dry_run,
-                library=entry.get("library"),
-                anchor=entry.get("anchor"),
-                moved=entry.get("moved", []),
-            )
-
-    @classmethod
-    def _emit_request_events(cls, session: Session, run_id: int, report) -> None:
-        # Sonarr/Radarr requests. Adding a title to a download app is a real outward-facing
-        # write (it consumes disk and bandwidth), so every request — and every skip — is audited
-        # with the app's own outcome message, dry-run included (plex-safety rule 10 spirit).
-        # A separate, always-checked signal (independent of whether any title was sent): MDBList ran
-        # out of quota mid-run, so ratings fell back to TMDB. Drives the owner's quota notification.
-        if report.requests is not None and report.requests.warnings:
-            for msg in report.requests.warnings:
-                cls._add_event(
-                    session, "requests.incomplete_config", "warning", run_id, dry_run=report.dry_run, detail=msg
-                )
-        if report.requests is not None and report.requests.ratings_rate_limited:
-            cls._add_event(session, "requests.rate_limited", "warning", run_id, dry_run=report.dry_run)
-        if report.requests is None or not report.requests.outcomes:
-            return
-        cls._add_event(
-            session,
-            "run.requests",
-            "info",
-            run_id,
-            dry_run=report.dry_run,
-            considered=report.requests.considered,
-            outcomes=[
-                {
-                    "tmdb_id": o.tmdb_id,
-                    "title": o.title,
-                    "media_type": o.media_type.value,
-                    "status": o.status,
-                    "detail": o.detail,
-                }
-                for o in report.requests.outcomes
-            ],
-        )
-
-    @staticmethod
-    def _persist_request_queue(session: Session, run_id: int, report) -> None:
-        """Save the titles a run wanted but did not auto-send, for the owner to approve by hand.
-
-        Real runs only — a dry run is a preview and must not mutate the inbox. One row per
-        (tmdb_id, media_type): a re-surfaced title refreshes the live facts of a still-pending row;
-        a title already sent or rejected is left alone, so a download-in-progress isn't re-queued and
-        a dismissed suggestion can't reappear every night.
-
-        A pending title that has since ARRIVED in the library (grabbed elsewhere) is dropped, so the
-        inbox never lingers on titles the owner already has. Same for one an ARR now tracks (added
-        by hand, by another tool, or before the sent-ledger existed): while it downloads — or
-        forever, if unaired — it's absent from Plex, so only the arr-presence prune can catch it.
-        """
-        if report.requests is None or report.dry_run:
-            return
-        existing = {(r.tmdb_id, r.media_type): r for r in session.query(RequestCandidate).all()}
-        # Drop pending candidates the library now holds; leave sent/rejected alone (owner-actioned).
-        present = {(tid, mt.value) for tid, mt in report.library_present}
-        present |= report.requests.arr_present  # best-effort; empty when a check was skipped/failed
-        for key in [k for k, r in existing.items() if r.status == "pending" and k in present]:
-            session.delete(existing.pop(key))
-        for m in report.requests.queued:
-            row = existing.get((m.tmdb_id, m.media_type.value))
-            if row is None:
-                session.add(_candidate_row(m, run_id, status="pending"))
-            elif row.status == "pending":
-                (
-                    row.title,
-                    row.year,
-                    row.imdb_id,
-                    row.rating,
-                    row.vote_count,
-                    row.demand,
-                    row.tags,
-                    row.wanters,
-                    row.why,
-                    row.detail,
-                    row.excluded,
-                ) = (
-                    m.title,
-                    m.year,
-                    m.imdb_id or row.imdb_id,  # keep a known id if a later run couldn't re-fetch it
-                    m.rating,
-                    m.vote_count,
-                    m.demand,
-                    sorted(m.tags),
-                    sorted(m.wanters),
-                    _why_json(m.why),
-                    m.detail or row.detail,  # keep the last failure reason if this pass didn't set one
-                    m.excluded,  # refresh the exclusion flag each run (a removed exclusion clears it)
-                )
-
-        # The titles this run AUTO-SENT are filed as `sent` too. Without this the ledger only knew
-        # about titles the owner sent by hand, so an auto-sent title still downloading was "missing"
-        # again tomorrow: it out-ranked everything by demand, re-consumed one of `max_per_run` every
-        # single night, and the queue starved on the same few titles forever.
-        # The Arr's answer per auto-sent title, so the sent log records the outcome ("requested",
-        # "already in Radarr", …), not just that it went.
-        auto_outcomes = {(o.tmdb_id, o.media_type.value): o for o in report.requests.outcomes}
-        for m in report.requests.sent:
-            row = existing.get((m.tmdb_id, m.media_type.value))
-            outcome = auto_outcomes.get((m.tmdb_id, m.media_type.value))
-            if row is None:
-                new_row = _candidate_row(m, run_id, status="sent")
-                if outcome is not None:
-                    new_row.detail = outcome.detail
-                session.add(new_row)
-            else:
-                row.status = "sent"
-                if outcome is not None:
-                    row.detail = outcome.detail
-                if m.arr_slug:  # keep an existing slug if this pass somehow didn't resolve one
-                    row.arr_slug = m.arr_slug
-
-    @staticmethod
-    def _finalize_run(
-        run: Run, report, status: str | None, error: str | None, ok: int, errors: int, skipped: int = 0
-    ) -> None:
-        # `report.ok` — not `errors == 0`. A run-level failure (the sweep could not run, so we
-        # refused to write) has no per-user error to count, and must never report success.
-        run.status = status or ("ok" if report.ok else "error")
-        run.finished_at = datetime.now(UTC)
-        # Run-total AI cost, summed from every user (real + shared). by_step merges each user's
-        # {llm_web: n} so the run header can show WHERE the tokens went. (Since the curate step was
-        # removed, llm_web — web-search title discovery — is the only paid AI path left.)
-        tokens_by_step: dict[str, int] = {}
-        for user_report in report.users:
-            for step, n in user_report.llm_tokens_by_step.items():
-                tokens_by_step[step] = tokens_by_step.get(step, 0) + n
-        # Titles added to / rotated out of everyone's rows this run (summed across users' diffs), so
-        # the runs list can show at a glance how much actually changed on Plex.
-        titles_added = sum(len(u.diff.added) for u in report.users if u.diff)
-        titles_removed = sum(len(u.diff.removed) for u in report.users if u.diff)
-        run.stats = {
-            "users_ok": ok,
-            "users_error": errors,
-            # Built nothing, but nothing went wrong — see RunUser.reason for which case it was.
-            "users_skipped": skipped,
-            "dry_run": report.dry_run,
-            "rows_swept": sum(len(titles) for titles in report.swept_rows.values()),
-            "shares_updated": len(report.filter_writes),
-            "titles_added": titles_added,
-            "titles_removed": titles_removed,
-            "titles_requested": report.requests.requested if report.requests else 0,
-            "requests_warnings": report.requests.warnings if report.requests else [],
-            "llm_tokens": sum(u.llm_tokens for u in report.users),
-            "llm_tokens_by_step": tokens_by_step,
-            "exa_searches": sum(u.exa_searches for u in report.users),
-            # Cache hits served from the shared 14-day web-search cache. Reported so the UI can read
-            # "1 searched · N from cache" — without it a fully-cached run shows a bare exa_searches:1
-            # and looks like the source did nothing (it didn't: the cache did the work).
-            "exa_cache_hits": sum(u.exa_cache_hits for u in report.users),
-            "error": error or report.error,
-            # Every account whose share filter Plex refused this run. These are the reason nothing
-            # was promoted, so the UI can say so instead of leaving "Failed" unexplained (issue #1).
-            "promotion_blockers": list(report.promotion_blockers),
-        }
+    # The retention prunes are NOT aliased here: everything that runs them — the `maintenance.prune`
+    # handler and the tests — calls `run_persistence` directly. The inbox write still is, because
+    # `tests/unit/test_request_queue.py` drives it through the class.
+    _persist_request_queue = staticmethod(run_persistence.persist_request_queue)

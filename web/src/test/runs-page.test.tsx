@@ -1,16 +1,19 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import { ApiError } from "@/lib/api";
 import { RunsPage } from "@/pages/runs";
 
-const { getRuns, startRun } = vi.hoisted(() => ({
+const { getRuns, startRun, getJobs } = vi.hoisted(() => ({
   getRuns: vi.fn(),
   startRun: vi.fn(),
+  // The page also renders the background-jobs history; unmocked it would error and put a second
+  // alert on screen, which is not what these tests are about.
+  getJobs: vi.fn(async () => []),
 }));
 
 // Only the transport is faked — ApiError and apiErrorMessage stay real, because the whole point is
@@ -22,6 +25,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       getRuns: () => getRuns(),
       startRun: (body: unknown) => startRun(body),
+      getJobs: () => getJobs(),
     },
   };
 });

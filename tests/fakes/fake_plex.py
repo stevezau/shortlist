@@ -100,6 +100,9 @@ class FakeUser:
     username: str
     home: bool = False
     restricted: bool = False
+    # The Plex parental preset ("little_kid"|"older_kid"|"teen", "" for none). Only /api/home/users
+    # reports it, and it is what decides whether Plex accepts a label restriction at all (#20).
+    restriction_profile: str = ""
     protected: bool = False
     uuid: str = ""
     filters: dict[str, str] = field(default_factory=lambda: dict.fromkeys(FILTER_FIELDS, ""))
@@ -524,6 +527,13 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             account_id = state.watched_account_id(request.headers.get("X-Plex-Token", ""))
             watched = state.watched_keys(account_id) if account_id is not None else set()
             listing = [item for item in _sorted_items(list(items.values()), None) if item.rating_key in watched]
+            # The INCREMENTAL read asks for `sort=lastViewedAt:desc` and stops client-side at the
+            # first title older than its cutoff. It deliberately does NOT send a `lastViewedAt>=`
+            # filter: real PMS 1.43.3 silently ignores that (live-probed 2026-07-30), and a fake that
+            # honoured a filter the real server drops would make the e2e suite prove the opposite of
+            # the truth. So honour the SORT — which the real server does — and nothing else.
+            if query.get("sort") == "lastViewedAt:desc" and account_id is not None:
+                listing = sorted(listing, key=lambda i: state.last_viewed_at(account_id, i.rating_key), reverse=True)
             start, size = _page(request, len(listing))
             page = listing[start : start + size]
             root = _container(size=len(page), totalSize=len(listing), librarySectionID=section_id)
@@ -705,7 +715,11 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             {"key": "/hubs/home/continueWatching", "title": "Continue Watching", "type": "mixed", "promoted": True}
         ]
         for collection in state.collections.values():
-            promoted = collection.promoted_own_home if user is None or user.home else collection.promoted_shared_home
+            # Plex splits Home by OWNER vs everyone-else, NOT by Plex-Home membership:
+            # `promotedToOwnHome` "applies to the server owner", `promotedToSharedHome` "applies to
+            # all shared users, including managed users" —
+            # https://support.plex.tv/articles/manage-recommendations/. `user is None` is the owner.
+            promoted = collection.promoted_own_home if user is None else collection.promoted_shared_home
             if not promoted:
                 continue
             excluded = bool({label.lower() for label in collection.labels} & excludes)
@@ -836,6 +850,27 @@ def make_fake_plextv(state: FakePlexState) -> FastAPI:
             if fieldname in request.query_params:
                 user.filters[fieldname] = request.query_params[fieldname]
         return Response(status_code=200, content="<Response code='200'/>", media_type="text/xml")
+
+    @app.get("/api/home/users")
+    def home_users_v1() -> Response:
+        """The v1 XML surface, which is the ONLY one carrying `restrictionProfile`.
+
+        Served because `PlexTvClient.list_users()` reads it to tell a parental-controlled managed
+        account from a plain one — the distinction issue #20 turns on. Without it here, every
+        full-stack test took the fail-open branch and the enrichment was never exercised at all.
+        """
+        rows = "".join(
+            f'<User id="{u.id}" title="{u.username}" restricted="{int(u.restricted)}"'
+            + (f' restrictionProfile="{u.restriction_profile}"' if u.restriction_profile else "")
+            + ' protected="0"/>'
+            for u in state.users.values()
+            if u.home
+        )
+        return Response(
+            status_code=200,
+            content=f'<?xml version="1.0" encoding="UTF-8"?><MediaContainer>{rows}</MediaContainer>',
+            media_type="text/xml",
+        )
 
     @app.get("/api/v2/home/users")
     def home_users() -> JSONResponse:

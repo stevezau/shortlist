@@ -3,15 +3,18 @@ and the leak-safe ordering (deliver unpromoted → sync filters → promote last
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
 
 import shortlist.engine.picker as picker_mod
 import shortlist.engine.pipeline as pipeline_mod
+from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.tmdb import NullCache
+from shortlist.engine.context import EngineContext
+from shortlist.engine.delivery import render_row_name, resolve_row_template, row_marker
 from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec, UserType
-from shortlist.engine.pipeline import EngineContext
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
 
@@ -213,35 +216,239 @@ class TestRun:
         assert not report.ok
         ctx.plex.promote.assert_not_called()
 
-    def test_filter_write_refused_on_restricted_account_does_not_block_promotion(self, ctx: EngineContext, mock_plextv):
-        """A restricted account gets a 422 from plex.tv — this must NOT block promotion for everyone
-        else. The restricted account is simply skipped (live-verified: they see 0 collections)."""
+    def _managed_remote(self, profile: str):
+        """A Plex Home account. `restricted` is True either way — only the PROFILE says whether Plex
+        will accept a label filter, or hides anything at all (#20)."""
         from shortlist.engine.clients.plextv import PlexTvUser
 
-        sarah = make_profile("sarah", account_id=100)
-        kid = make_profile("kid", account_id=500)
-        sarah_remote = plextv_user(100, "sarah")
-        kid_remote = PlexTvUser(
+        return PlexTvUser(
             id=500,
             username="kid",
             user_type=UserType.MANAGED,
             home=True,
             restricted=True,
             protected=False,
-            filters={
-                "filterAll": "",
-                "filterMovies": "",
-                "filterTelevision": "",
-                "filterMusic": "",
-                "filterPhotos": "",
-            },
+            restriction_profile=profile,
+            filters=dict.fromkeys(("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos"), ""),
         )
-        mock_plextv.users = [sarah_remote, kid_remote]
+
+    def test_a_parental_profile_account_never_reaches_the_write_and_promotion_proceeds(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """`little_kid` is skipped in privacy.py before the write fires, so one such account cannot
+        block promotion for the whole server (#14). Without the profile set this test passed for the
+        WRONG reason — no refusal happened at all, because the write simply succeeded."""
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("little_kid")]
 
         report = pipeline_mod.run(ctx, [sarah, kid])
 
-        # Promotion proceeds (the restricted kid is skipped in privacy.py before the write even fires).
         assert report.ok
+        assert not report.promotion_blockers
+        # The kid is never written to; sarah is.
+        assert [c.args[0] for c in mock_plextv.update_user_filters.call_args_list] == [100]
+
+    def test_a_422_on_a_managed_account_with_NO_profile_BLOCKS_promotion(self, ctx: EngineContext, mock_plextv):
+        """The branch the #20 fix opens. Profile-less managed accounts now get write attempts, so they
+        reach the 422 handler for the first time. Treating that as a known-safe skip would promote every
+        private row while this account holds no excludes at all — #20's leak, with the check that should
+        catch it switched off."""
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+
+        assert report.promotion_blockers, "a 422 with no parental profile is an UNKNOWN failure"
+        assert any("500" in b for b in report.promotion_blockers)
+        # `promotion_blockers` IS the consequence here: `_promote_phase` skips every user when it is
+        # non-empty. Asserting `promote` was not called would prove nothing in this fixture — these
+        # users deliver no collections, so it is never called either way.
+
+    def test_when_profiles_cannot_be_read_a_restricted_422_does_not_block_the_server(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The permanent-outage case. `restrictionProfile` comes from the v1 `/api/home/users` surface;
+        if that ever goes away, every profiled account reads as "no profile", 422s on the write, and
+        would be treated as an unknown failure — blocking promotion for the WHOLE server, every night,
+        until somebody disabled those users by hand. That is #14's shape, one endpoint removal away.
+
+        So "we could not find out" is kept distinct from "no profile", and falls back to trusting
+        `restricted` exactly as the code did before #20."""
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
+        mock_plextv.home_profile_known.return_value = False  # the endpoint could not be read
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+
+        assert not report.promotion_blockers, "one restricted account must not stop the whole server"
+        # sarah's filters were still written — the run carried on rather than aborting on the kid.
+        assert 100 in [c.args[0] for c in mock_plextv.update_user_filters.call_args_list]
+
+    def test_the_tail_phases_narrate_themselves(self, ctx: EngineContext, mock_plextv):
+        """Everything after the last user — filters, promotion, ordering — used to emit nothing.
+
+        The sidebar activity pill shows the most recent stage event, so it froze on the last user's
+        last stage for the whole tail. On a real server that was ~25 minutes reading
+        "kateystreet — gathering candidates" while the run was actually ordering collections: a
+        healthy run indistinguishable from a wedged one.
+        """
+        stages: list[tuple[str, str]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: stages.append((slug, stage))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        tail = [stage for slug, stage in stages if slug == "Shortlist"]
+        assert "filters" in tail, "the share-filter merge is invisible"
+        assert "promoting" in tail, "promotion is invisible"
+        assert "ordering" in tail, "the long ordering pass is invisible"
+        # And they come after the per-user work, not before it.
+        assert stages.index(("Shortlist", "ordering")) > stages.index(("Shortlist", "filters"))
+
+    def test_every_tail_phase_narrates_itself_including_converge(self, ctx: EngineContext, mock_plextv):
+        """The third time this bug has appeared, so this asserts the WHOLE tail, not a sample.
+
+        Converge, the shelf reorder and the requests pass emitted nothing at all — they ran after
+        every per-user card was already terminal, so the feed's last line stayed on whoever finished
+        last while minutes of real work went by. Add a phase to `run()` without an `_emit` and this
+        fails.
+        """
+        stages: list[tuple[str, str]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: stages.append((slug, stage))
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        tail = [stage for slug, stage in stages if slug == "Shortlist"]
+        for stage in ("users_done", "converging", "converged", "shelves", "finished"):
+            assert stage in tail, f"the {stage} phase is invisible in the activity feed"
+        # "all users done" must land before the server-wide tail, and "finished" must be last —
+        # that pair is what makes "is it still going?" answerable from the feed alone.
+        assert tail.index("users_done") < tail.index("filters")
+        assert tail[-1] == "finished"
+
+    def test_the_narration_counts_out_the_long_per_account_phases(self, ctx: EngineContext, mock_plextv):
+        """One plex.tv write per account, throttled — a bare "filters" line sits there for minutes."""
+        emitted: list[tuple[str, dict]] = []
+        ctx.progress = lambda slug, stage, counts, reason=None: emitted.append((stage, counts))
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(101, "mike")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=101)])
+
+        progress = [counts for stage, counts in emitted if stage == "filters" and counts]
+        assert progress, "the share-filter merge reports no progress at all"
+        assert progress[-1]["done"] == progress[-1]["total"], "the count never reaches its total"
+
+    def test_a_roster_that_omits_someone_is_not_knowledge_about_them(self, ctx: EngineContext, mock_plextv):
+        """A 200 is not the same as a complete answer.
+
+        `/api/home/users` returning an empty `<MediaContainer>` — or simply omitting an account —
+        used to satisfy a single global "the read succeeded" flag. A genuinely profiled child then
+        read as having NO profile, so their 422 looked unexpected, and promotion was blocked for
+        EVERY user on the server, every night, behind a green suite. That is #14's shape re-created
+        by the very guard added to prevent it.
+
+        Knowledge is per account: somebody the roster never mentioned is unknown, whatever the
+        status code was, and falls back to trusting `restricted` like any other unknown.
+        """
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
+        # The read SUCCEEDED, but the roster covered sarah and never mentioned the kid.
+        mock_plextv.home_profile_known.side_effect = lambda account_id: account_id != 500
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+
+        assert not report.promotion_blockers, "an account the Home roster omitted must not stop the server"
+        assert 100 in [c.args[0] for c in mock_plextv.update_user_filters.call_args_list]
+
+    def test_a_covered_account_with_no_profile_still_blocks_on_a_422(self, ctx: EngineContext, mock_plextv):
+        """The other side of the same coin, and the reason the guard exists at all.
+
+        When the roster DID cover the account and reported no profile, a 422 is genuinely
+        unexpected — that account holds no excludes, so promoting anything would publish private
+        rows to them. Blocking is correct here and must survive the per-account change above.
+        """
+        from shortlist.engine.clients.plextv import FilterWriteRefused
+
+        sarah = make_profile("sarah", account_id=100)
+        kid = make_profile("kid", account_id=500)
+        mock_plextv.users = [plextv_user(100, "sarah"), self._managed_remote("")]
+        mock_plextv.home_profile_known.return_value = True  # covered, and reported no profile
+
+        def refuse_the_kid(account_id, fields):
+            if account_id == 500:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 500: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_kid
+
+        report = pipeline_mod.run(ctx, [sarah, kid])
+        assert report.promotion_blockers, "a 422 on an account with a KNOWN-absent profile must block"
+
+    def test_a_profile_on_a_NON_restricted_account_keeps_its_excludes_and_never_blocks(
+        self, ctx: EngineContext, mock_plextv
+    ):
+        """The cell both guards exist for, and the only one that reaches the handler's skip branch.
+
+        `restricted` and `restrictionProfile` come from different endpoints and nothing enforces a
+        relationship between them. An account plex.tv calls unrestricted while reporting a profile is
+        typed SHARED and used to receive excludes — so the skip must not swallow it (privacy.py
+        requires BOTH flags), and if plex.tv then refuses the write that refusal is a known-safe one.
+        """
+        from shortlist.engine.clients.plextv import FilterWriteRefused, PlexTvUser
+
+        sarah = make_profile("sarah", account_id=100)
+        odd = make_profile("odd", account_id=700)
+        odd_remote = PlexTvUser(
+            id=700,
+            username="odd",
+            user_type=UserType.SHARED,
+            home=False,
+            restricted=False,  # plex.tv says unrestricted...
+            protected=False,
+            restriction_profile="teen",  # ...while reporting a profile
+            filters=dict.fromkeys(("filterAll", "filterMovies", "filterTelevision", "filterMusic", "filterPhotos"), ""),
+        )
+        mock_plextv.users = [plextv_user(100, "sarah"), odd_remote]
+
+        def refuse_the_odd_one(account_id, fields):
+            if account_id == 700:
+                raise FilterWriteRefused("plex.tv rejected the share-filter update for account 700: HTTP 422")
+
+        mock_plextv.update_user_filters.side_effect = refuse_the_odd_one
+
+        report = pipeline_mod.run(ctx, [sarah, odd])
+
+        # The write was ATTEMPTED — the subset guard means this account never silently loses excludes.
+        assert 700 in [c.args[0] for c in mock_plextv.update_user_filters.call_args_list]
+        # And the 422 is treated as expected, so one odd account cannot stop the server (#14).
         assert not report.promotion_blockers
 
     def test_filter_write_refused_on_non_restricted_account_blocks_promotion(self, ctx: EngineContext, mock_plextv):
@@ -497,6 +704,319 @@ class TestPerRowOverrides:
 
         assert seen == [3]  # the person's override, beating the row's 8 and the global 10
 
+    def test_per_row_max_seeds_caps_the_seeds_the_row_is_built_from(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        # max_seeds decides how many watched titles a row is derived from — what EVERY source searches
+        # from, not just the web one. A row's own value must beat the global (issue #57: a
+        # `{top_seed}` row named after one watch was still built from thirty).
+        seen: list[int] = []
+        real_derive = pipeline_mod.rows.derive_seeds
+
+        def spy_derive(*args, **kwargs):
+            seen.append(kwargs["max_seeds"])
+            return real_derive(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_mod.rows, "derive_seeds", spy_derive)
+        ctx.config.max_seeds = 10  # the global budget this row must override
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, max_seeds=2)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert seen == [2]
+
+    def test_two_rows_differing_only_in_max_seeds_do_not_share_seeds(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        # Both rows target the same media and libraries, so they hit the same memo key on every
+        # other axis. If max_seeds were left out of that key the second row would silently reuse the
+        # first row's seed set — and its own setting would do nothing at all.
+        seen: list[int] = []
+        real_derive = pipeline_mod.rows.derive_seeds
+
+        def spy_derive(*args, **kwargs):
+            seen.append(kwargs["max_seeds"])
+            return real_derive(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_mod.rows, "derive_seeds", spy_derive)
+        ctx.config.max_seeds = 10
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=5, max_seeds=1),
+            RowSpec(slug="deep", name_template="Deep", size=5, max_seeds=4),
+            RowSpec(slug="default", name_template="Default", size=5),  # inherits the global 10
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert sorted(seen) == [1, 4, 10]
+
+    def test_rows_with_different_max_seeds_gather_separately(self, ctx: EngineContext, mock_plextv):
+        # The OUTCOME test, not a spy: the two above pass even with `max_seeds` removed from
+        # `pool_key`, because the up-front `counts.seeds` loop calls seeds_for for every spec whatever
+        # the pools then do. Without that key entry the rows SHARE one pool — whichever reaches
+        # pools_for first builds it — and the second row's budget is silently inert. Which is issue
+        # #57 shipping "fixed" and not fixed.
+        ctx.history_source.fetch.return_value = [
+            make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)
+        ]
+        ctx.config.max_seeds = 10
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=5, max_seeds=4),
+            RowSpec(slug="because", name_template="Because {top_seed}", size=5, max_seeds=1),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        # One suggestions() call per seed: 4 + 1 across two pools. A shared pool would be 4.
+        assert ctx.tmdb.suggestions.call_count == 5
+
+    def test_a_rewatch_row_keeps_finished_titles_that_a_normal_row_drops(self, ctx: EngineContext, mock_plextv):
+        """The OUTCOME test for `excludes_finished` in `pool_key`.
+
+        A normal row at watched_pct 0 has finished titles removed from its POOL; a rewatch row must
+        keep them. If the two rows shared one pool — whichever built it first would win — the rewatch
+        row could never deliver a rewatch, and the flag would look implemented while doing nothing.
+        """
+        # Seeds come from the default Fargo watches (tmdb 900, via the library index). Candidate 10 is
+        # ALSO something they have watched, but is not a seed — seeds are excluded from every pool, so a
+        # title cannot be both the seed and the rewatch under test.
+        ctx.history_source.fetch.return_value = [
+            *[make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)],
+            make_watched("Candidate Ten", days_ago=6, tmdb_id=10),
+        ]
+        # max_seeds 1: seeds are excluded from every pool, so the watched title under test must NOT be
+        # one. Only the most recent watch (the Fargo/Seed row) seeds; the older one stays a candidate.
+        ctx.config.max_seeds = 1
+        ctx.config.rows = [
+            RowSpec(slug="fresh", name_template="Fresh", size=2),
+            RowSpec(slug="again", name_template="Again", size=2, rewatch=True),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        by_row: dict[str, set[int]] = {}
+        for pick in report.users[0].picks:
+            by_row.setdefault(pick.collection_slug, set()).add(pick.tmdb_id)
+        assert by_row, "the run produced no picks at all — the test fixture, not the feature"
+        assert 10 not in by_row.get("fresh", set()), "a normal row must not deliver a finished title"
+        assert 10 in by_row.get("again", set()), "the rewatch row must be able to deliver one"
+
+    def test_a_rewatch_row_leads_with_the_rewatch(self, ctx: EngineContext, mock_plextv):
+        """Not just present — FIRST. `watched_pct` alone could admit it at the bottom of the row."""
+        ctx.history_source.fetch.return_value = [
+            *[make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)],
+            # 20 is the lower-rated candidate, so ranking puts it AFTER 10 only if rewatch reorders.
+            make_watched("Candidate Twenty", days_ago=6, tmdb_id=20),
+        ]
+        # max_seeds 1: seeds are excluded from every pool, so the watched title under test must NOT be
+        # one. Only the most recent watch (the Fargo/Seed row) seeds; the older one stays a candidate.
+        ctx.config.max_seeds = 1
+        ctx.config.rows = [RowSpec(slug="again", name_template="Again", size=2, rewatch=True)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        assert delivered[0] == 20, f"the already-watched title must lead the row, got {delivered}"
+
+    def test_an_unstarted_only_row_drops_a_barely_started_show(self, ctx: EngineContext, mock_plextv):
+        """Stricter than the finished filter, and its own pool.
+
+        A show 1 episode into 40 is NOT finished, so every other row may still offer it. An
+        "unstarted only" row must not — that is the whole claim of "a series to start".
+        """
+        show_section = MagicMock()
+        show_section.type = "show"
+        show_section.title = "TV Shows"
+        show_section.collections.return_value = []
+        ctx.plex.sections.return_value = [show_section]
+        ctx.plex.sections_by_type.return_value = {MediaType.SHOW: show_section}
+        ctx.plex.build_library_index.return_value = {900: 999, 30: 1030, 40: 1040}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 30, "name": "Started Show", "genre_ids": [], "vote_average": 8.0},
+                {"id": 40, "name": "Never Opened", "genre_ids": [], "vote_average": 7.0},
+            ]
+        )
+        # The seed show (900) plus show 30 at ONE episode of forty: started, nowhere near finished.
+        ctx.history_source.fetch.return_value = [
+            *[
+                make_watched("Seed Show", days_ago=i, rating_key=999, media_type=MediaType.SHOW, leaf_count=10)
+                for i in range(1, 5)
+            ],
+            make_watched(
+                "Started Show",
+                days_ago=6,
+                media_type=MediaType.SHOW,
+                tmdb_id=30,
+                viewed_leaf_count=1,
+                leaf_count=40,
+            ),
+        ]
+        # max_seeds 1: seeds are excluded from every pool, so the watched title under test must NOT be
+        # one. Only the most recent watch (the Fargo/Seed row) seeds; the older one stays a candidate.
+        ctx.config.max_seeds = 1
+        ctx.config.rows = [
+            RowSpec(slug="anything", name_template="Anything", size=2, media=MediaType.SHOW),
+            RowSpec(slug="tostart", name_template="To start", size=2, media=MediaType.SHOW, unstarted_only=True),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        by_row: dict[str, set[int]] = {}
+        for pick in report.users[0].picks:
+            by_row.setdefault(pick.collection_slug, set()).add(pick.tmdb_id)
+        assert by_row, "the run produced no picks at all — the test fixture, not the feature"
+        assert 30 in by_row.get("anything", set()), "a part-watched show is fair game for a normal row"
+        assert 30 not in by_row.get("tostart", set()), "a started series must never reach an unstarted row"
+        assert 40 in by_row.get("tostart", set()), "the never-opened one is exactly what it wants"
+
+    def test_a_rewatch_row_shares_the_pool_of_a_watched_pct_row(self, ctx: EngineContext, mock_plextv):
+        """The OTHER direction of `excludes_finished`, which no membership assertion can catch.
+
+        Both rows want finished titles kept in the pool, so they must share ONE gather. Without this,
+        `excludes_finished` could regress to keying on the raw percentage — splitting the pool and
+        paying a second time for every rate-limited/LLM source — and every other test still passes.
+        """
+        ctx.config.max_seeds = 1
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=i, rating_key=999) for i in range(1, 5)]
+        ctx.config.rows = [
+            RowSpec(slug="again", name_template="Again", size=2, rewatch=True),
+            RowSpec(slug="capped", name_template="Capped", size=2, watched_pct=0.5),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        # One suggestions() call per seed per pool. One seed, one shared pool = exactly one call.
+        assert ctx.tmdb.suggestions.call_count == 1, "a rewatch row and a >0 row must share one pool"
+
+    def test_rewatch_works_for_shows_where_finished_is_a_different_predicate(self, ctx: EngineContext, mock_plextv):
+        """For movies "finished" is any watch; for shows it is the `watched_show_pct` fraction plus a
+        length-scaled floor (`_watched_titles`) — a different predicate, so a different cell."""
+        show_section = MagicMock()
+        show_section.type = "show"
+        show_section.title = "TV Shows"
+        show_section.collections.return_value = []
+        ctx.plex.sections.return_value = [show_section]
+        ctx.plex.sections_by_type.return_value = {MediaType.SHOW: show_section}
+        ctx.plex.build_library_index.return_value = {900: 999, 30: 1030, 40: 1040}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 30, "name": "Finished Show", "genre_ids": [], "vote_average": 6.0},
+                {"id": 40, "name": "Never Opened", "genre_ids": [], "vote_average": 9.0},
+            ]
+        )
+        ctx.config.max_seeds = 1
+        ctx.history_source.fetch.return_value = [
+            *[
+                make_watched("Seed Show", days_ago=i, rating_key=999, media_type=MediaType.SHOW, leaf_count=10)
+                for i in range(1, 5)
+            ],
+            # 10 of 10 episodes: finished by any measure, so it belongs in a rewatch row.
+            make_watched(
+                "Finished Show",
+                days_ago=6,
+                media_type=MediaType.SHOW,
+                tmdb_id=30,
+                viewed_leaf_count=10,
+                leaf_count=10,
+            ),
+        ]
+        ctx.config.rows = [
+            RowSpec(slug="again", name_template="Again", size=2, media=MediaType.SHOW, rewatch=True),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        # 40 is rated higher, so only the rewatch preference can put the finished show first.
+        assert delivered and delivered[0] == 30, f"the finished SHOW must lead the row, got {delivered}"
+
+    def test_unstarted_only_applies_on_a_both_media_row_not_just_a_shows_row(self, ctx: EngineContext, mock_plextv):
+        """`media="both"` is its own cell: the filter must not be gated on the row being shows-only.
+
+        Movie immunity is asserted at the unit level instead (`TestStartedShows` — `_started_shows`
+        yields only SHOW keys, so nothing it returns can match a movie candidate). Doing it here would
+        need a second seed of the other type, because candidates inherit their SEED's media type — so
+        a movie-seeded gather types even a TV title as a movie and the test would pass for the wrong
+        reason.
+        """
+        show_section, movie_section = MagicMock(), MagicMock()
+        show_section.type, show_section.title = "show", "TV Shows"
+        movie_section.type, movie_section.title = "movie", "Movies"
+        for sec in (show_section, movie_section):
+            sec.collections.return_value = []
+        ctx.plex.sections.return_value = [movie_section, show_section]
+        ctx.plex.sections_by_type.return_value = {
+            MediaType.MOVIE: movie_section,
+            MediaType.SHOW: show_section,
+        }
+        ctx.plex.build_library_index.return_value = {900: 999, 30: 1030, 40: 1040}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 30, "name": "Started Show", "genre_ids": [], "vote_average": 9.0},
+                {"id": 40, "name": "Never Opened", "genre_ids": [], "vote_average": 7.0},
+            ]
+        )
+        ctx.config.max_seeds = 1
+        ctx.history_source.fetch.return_value = [
+            *[
+                make_watched("Seed Show", days_ago=i, rating_key=999, media_type=MediaType.SHOW, leaf_count=10)
+                for i in range(1, 5)
+            ],
+            make_watched(
+                "Started Show", days_ago=6, media_type=MediaType.SHOW, tmdb_id=30, viewed_leaf_count=1, leaf_count=40
+            ),
+        ]
+        # media defaults to "both" — deliberately NOT narrowed to shows.
+        ctx.config.rows = [RowSpec(slug="mixed", name_template="Mixed", size=3, unstarted_only=True)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = {p.tmdb_id for p in report.users[0].picks}
+        assert delivered, "no picks at all — the fixture, not the feature"
+        assert 30 not in delivered, "the started series must be excluded on a both-media row too"
+        assert 40 in delivered
+
+    def test_pools_that_differ_only_in_seed_count_are_labelled_apart(self, ctx: EngineContext, mock_plextv):
+        # The trace labels a gather by media + sources. Two rows differing only in max_seeds share
+        # both, so without the seed count they record under two IDENTICAL names and the trace cannot
+        # say which gather belonged to which row. (The "How we picked" page doesn't render the label
+        # today — it merges a library's gathers into one source list — so this is about the stored
+        # record, not the screen.) The media prefix must stay first: `poolCoversMedia` splits on
+        # " · " to place a gather in a library.
+        ctx.history_source.fetch.return_value = [
+            make_watched(f"Film{i}", days_ago=i + 1, rating_key=999) for i in range(5)
+        ]
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=5, max_seeds=4),
+            RowSpec(slug="because", name_template="Because {top_seed}", size=5, max_seeds=1),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        labels = [g["pool"] for g in report.users[0].trace["gathers"]]
+        assert len(set(labels)) == 2, labels
+        assert all(lbl.startswith("movie · ") or lbl.startswith("both · ") for lbl in labels), labels
+        assert any("1 seed" in lbl for lbl in labels) and any("4 seeds" in lbl for lbl in labels), labels
+
+    def test_a_single_pool_is_not_labelled_with_a_seed_count(self, ctx: EngineContext, mock_plextv):
+        # The count is noise when nothing differs — every row inheriting the default is the common
+        # case, and its trace should read exactly as it did before per-row budgets existed.
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert all("seed" not in g["pool"] for g in report.users[0].trace["gathers"])
+
     def test_per_row_candidate_sources_gate_which_apis_run(self, ctx: EngineContext, mock_plextv):
         # A row pinned to tmdb_discover only must query discover and NOT the tmdb_similar endpoint —
         # per-row sources override the global set for that row.
@@ -705,7 +1225,11 @@ class TestPerRowOverrides:
 
         pipeline_mod.run(ctx, [sarah])
 
-        ctx.plex.create_collection.assert_called()  # the synthesized "Picked for You"
+        ctx.plex.create_collection.assert_called_once()
+        section, title, items = ctx.plex.create_collection.call_args.args
+        assert section.type == "movie"  # the only library this ctx fixture configures
+        assert title == "✨ Movies Picked for You" + row_marker(100)  # the synthesized default row's title
+        assert len(items) == 2  # both mocked TMDB candidates (Candidate Ten, Candidate Twenty) — not empty, not more
 
     def test_a_both_row_fills_each_library_to_its_own_size(self, ctx: EngineContext, mock_plextv):
         """A 'both' row delivers a movie collection AND a show collection, and each library fills to
@@ -898,6 +1422,49 @@ class TestPerRowOverrides:
         shared_report = next(u for u in report.users if u.slug == "shared_popular")
         assert shared_report.breakdown, "the shared row records a breakdown"
         assert all(e["row_slug"] == "popular" for e in shared_report.breakdown)
+
+    def test_a_shared_row_honours_the_server_wide_block_list(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """The shared path called `derive_seeds` with no `blocked` at all, so blocks simply did not
+        apply to public rows.
+
+        Asserted on the ARGUMENT rather than on the resulting picks: the picks depend on what TMDB
+        returns for the surviving seeds, so a "no picks" assertion passes for a dozen reasons that
+        have nothing to do with blocking (verified — it passed with the fix removed).
+        """
+        import shortlist.engine.rows as rows_mod
+
+        captured: list[set[int] | None] = []
+        real = rows_mod.derive_seeds
+
+        def spy(*args, **kwargs):
+            captured.append(kwargs.get("blocked"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(rows_mod, "derive_seeds", spy)
+
+        ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
+        ctx.config.blocked_shared_seeds = {4242}
+        sarah = make_profile("sarah", account_id=100)
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999, tmdb_id=4242)]
+
+        pipeline_mod.run(ctx, [sarah, mike])
+
+        assert {4242} in captured, "the shared row derived its seeds without the server-wide block list"
+
+    def test_one_persons_block_does_not_reshape_the_shared_row(self, ctx: EngineContext, mock_plextv):
+        ctx.config.rows = [RowSpec(slug="popular", name_template="Popular", size=5, shared=True, min_watchers=2)]
+        sarah = make_profile("sarah", account_id=100)
+        sarah.blocked_seeds = {4242}  # sarah's own preference
+        mike = make_profile("mike", account_id=200)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999, tmdb_id=4242)]
+
+        report = pipeline_mod.run(ctx, [sarah, mike])
+
+        shared_report = next(u for u in report.users if u.slug == "shared_popular")
+        assert shared_report.status != "skipped", "sarah's private block silently emptied a public row"
 
     def test_per_person_tokens_come_from_the_web_search_source_and_land_under_its_step(
         self, ctx: EngineContext, mock_plextv
@@ -1232,14 +1799,239 @@ class TestPlacement:
             "pin_top": True,
         }
 
-    def test_unmatched_collection_falls_back_to_everywhere(self, ctx: EngineContext):
-        """A collection whose title we can't map to a row must still be hidden from browse and shown —
-        never left half-promoted (browse-visible). The legacy everywhere-visible call is the safe default."""
+    def test_recommended_is_chosen_per_collection_not_ored_across_audiences(self, ctx: EngineContext):
+        """The Recommended flag comes from WHOSE row the collection is (issue #6).
+
+        Everyone gets their OWN collection, so Plex's single `promotedToRecommended` is set per
+        collection and the owner/friends split is real. The old code OR'd both placements into one
+        flag, so "friends: Recommended on" silently dragged the owner's row onto the shelf too —
+        and left the owner with no way to un-clutter their own shelf.
+        """
+        from shortlist.engine.models import RowSpec, UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, placement="home", placement_friends="both")
+
+        _promote_one(ctx, MagicMock(), spec, UserType.OWNER)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": True,
+            "recommended": False,
+            "pin_top": False,
+        }
+
+        _promote_one(ctx, MagicMock(), spec, UserType.SHARED)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": True,
+            "home": False,
+            "recommended": True,
+            "pin_top": False,
+        }
+
+    def test_owner_keeps_the_shelf_while_friends_rows_stay_off_it(self, ctx: EngineContext):
+        """The inverse split: the owner's row on their Recommended shelf, friends' rows only on
+        Friends' Home. This is the config that keeps the owner's shelf to just their own row."""
+        from shortlist.engine.models import RowSpec, UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, placement="both", placement_friends="home")
+
+        _promote_one(ctx, MagicMock(), spec, UserType.OWNER)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": True,
+            "recommended": True,
+            "pin_top": False,
+        }
+
+        _promote_one(ctx, MagicMock(), spec, UserType.SHARED)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": True,
+            "home": False,
+            "recommended": False,
+            "pin_top": False,
+        }
+
+    def test_a_managed_user_collection_uses_the_friends_side(self, ctx: EngineContext):
+        """A managed user takes the FRIENDS-side flags, never the owner's.
+
+        Plex's docs are explicit: Home (``promotedToOwnHome``) "applies to the server owner", while
+        Shared Users' Home (``promotedToSharedHome``) "applies to all shared users, including
+        managed users" — https://support.plex.tv/articles/manage-recommendations/. Routing a managed
+        user through the owner flag hides their row from them and puts it on the OWNER's Home.
+
+        The owner side is deliberately "off" here, so reading the wrong side is unmissable.
+        """
+        from shortlist.engine.models import RowSpec, UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, placement="off", placement_friends="both")
+
+        _promote_one(ctx, MagicMock(), spec, UserType.MANAGED)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": True,
+            "home": False,
+            "recommended": True,
+            "pin_top": False,
+        }
+
+        # The owner, on the same spec, gets nothing — proving the two sides really are independent.
+        _promote_one(ctx, MagicMock(), spec, UserType.OWNER)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": False,
+            "recommended": False,
+            "pin_top": False,
+        }
+
+    def test_an_unmapped_managed_collection_never_lands_on_the_owners_home(self, ctx: EngineContext):
+        """The no-spec fallback must respect the same split — it used to hand MANAGED `home=True`,
+        which is the owner's shelf."""
+        from shortlist.engine.models import UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        collection = MagicMock()
+        _promote_one(ctx, collection, None, UserType.MANAGED)
+        ctx.plex.promote.assert_called_with(collection, shared=True, home=False, recommended=False)
+
+    def test_promotion_reaches_a_library_this_run_no_longer_targets(self, ctx: EngineContext):
+        """`delivery_sections` is narrowed to libraries some row currently targets, so a row whose
+        `library_keys` was narrowed left its old collection stranded in the dropped library — never
+        re-promoted (out of scope) and never demoted either, keeping its surfaces indefinitely."""
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import RowSpec, RunReport, UserProfile, UserRunReport, UserType
+        from shortlist.engine.pipeline import _promote_phase
+
+        user = UserProfile(username="sarah", plex_account_id=100, user_type=UserType.SHARED, slug="sarah")
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        dropped = MagicMock(type="movie", key="2", title="4K Movies")  # no row targets this any more
+        ctx.plex.sections.return_value = [movies, dropped]
+        ctx.delivery_sections = [movies]
+        ctx.config.rows = [RowSpec(slug="gems", name_template="Hidden Gems", size=5, library_keys=["1"])]
+        ctx.config.dry_run = False
+        stranded = MagicMock(title="Hidden Gems (left behind)")
+        ctx.plex.find_owned_collections.side_effect = lambda s, label: [stranded] if s is dropped else []
+        report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
+
+        _promote_phase(ctx, [user], [], filters_ok=True, report=report)
+
+        ctx.plex.promote.assert_called_once()  # reached despite living outside delivery_sections
+        assert ctx.plex.promote.call_args.args[0] is stranded  # promoted the STRANDED collection, not a fallback
+
+    def test_a_stranded_collection_resolves_to_its_row_rather_than_the_fallback(self, ctx: EngineContext):
+        """Regression: widening promotion to every library made this WORSE before it made it better.
+
+        The fallback title map used to be rendered only for the libraries a row targets NOW, so a
+        collection left in a de-targeted library could be reached but never identified — and took the
+        no-spec fallback on EVERY run, turning Friends' Home on for a row switched fully off. The map
+        is now rendered across every library of the row's media type.
+        """
+        from datetime import UTC, datetime
+
+        from shortlist.engine.delivery import row_marker
+        from shortlist.engine.models import RowSpec, RunReport, UserProfile, UserRunReport, UserType
+        from shortlist.engine.pipeline import _promote_phase
+
+        user = UserProfile(username="sarah", plex_account_id=100, user_type=UserType.SHARED, slug="sarah")
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        dropped = MagicMock(type="movie", key="2", title="4K Movies")  # row no longer targets this
+        ctx.plex.sections.return_value = [movies, dropped]
+        ctx.delivery_sections = [movies]
+        ctx.config.rows = [
+            RowSpec(
+                slug="gems",
+                name_template="{library_name} Gems",
+                size=5,
+                library_keys=["1"],
+                placement="off",
+                placement_friends="off",
+            )
+        ]
+        ctx.config.dry_run = False
+        stranded = MagicMock(title="4K Movies Gems" + row_marker(100))
+        ctx.plex.find_owned_collections.side_effect = lambda s, label: [stranded] if s is dropped else []
+        report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
+
+        _promote_phase(ctx, [user], [], filters_ok=True, report=report)
+
+        # Its real spec is off/off, so it claims nothing — NOT the fallback's shared=True.
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": False,
+            "recommended": False,
+            "pin_top": False,
+        }
+
+    def test_the_no_spec_fallback_never_forces_a_row_onto_the_recommended_shelf(self, ctx: EngineContext):
+        """A row whose title can't be mapped back to its spec takes the fallback, which used to
+        default `recommended=True`.
+
+        That is the one surface where the OWNER sees every row — no share filter can hide it from
+        them — so defaulting it on put rows the operator had switched fully off onto the owner's
+        shelf. The Home flags stay on by design: this branch is common, not rare, and turning them
+        off there made every row in the full-stack suite disappear.
+        """
+        from shortlist.engine.models import UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        collection = MagicMock()
+        for user_type in (UserType.OWNER, UserType.MANAGED, UserType.SHARED, None):
+            _promote_one(ctx, collection, None, user_type)
+            assert ctx.plex.promote.call_args.kwargs.get("recommended") is False, user_type
+
+        # And it still never puts someone else's row on the owner's Home.
+        for user_type in (UserType.MANAGED, UserType.SHARED):
+            _promote_one(ctx, collection, None, user_type)
+            assert ctx.plex.promote.call_args.kwargs.get("home") is False, user_type
+
+    def test_off_placement_claims_no_surface(self, ctx: EngineContext):
+        """ "off" turns every surface off for that audience. The collection still exists and is still
+        browse-hidden by promote()'s unconditional modeUpdate, so it lives in the Collections tab."""
+        from shortlist.engine.models import RowSpec, UserType
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, placement="off", placement_friends="off")
+
+        for user_type in (UserType.OWNER, UserType.MANAGED, UserType.SHARED):
+            _promote_one(ctx, MagicMock(), spec, user_type)
+            assert ctx.plex.promote.call_args.kwargs == {
+                "shared": False,
+                "home": False,
+                "recommended": False,
+                "pin_top": False,
+            }, user_type
+
+    def test_a_shared_row_unions_both_audiences(self, ctx: EngineContext):
+        """A SHARED row is ONE public collection rather than one per person, so there is no "whose
+        row is this" to split on — it takes both Home flags and either side's Recommended."""
+        from shortlist.engine.models import RowSpec
+        from shortlist.engine.pipeline import _promote_one
+
+        spec = RowSpec(slug="x", name_template="", size=10, shared=True, placement="home", placement_friends="library")
+
+        _promote_one(ctx, MagicMock(), spec)
+        assert ctx.plex.promote.call_args.kwargs == {
+            "shared": False,
+            "home": True,
+            "recommended": True,
+            "pin_top": False,
+        }
+
+    def test_an_unmatched_collection_is_hidden_from_browse_and_claims_nothing_else(self, ctx: EngineContext):
+        """A collection whose title we can't map to a row must still be browse-hidden — never left
+        half-promoted and visible to everyone.
+
+        It claims NO other surface: the fallback used to default `recommended=True`, which forced a
+        row onto the Recommended shelf regardless of its placement, so a row the operator had
+        switched fully off reappeared there. Under-showing a row for one run is recoverable;
+        silently overriding "off" is not.
+        """
         from shortlist.engine.pipeline import _promote_one
 
         collection = MagicMock()
         _promote_one(ctx, collection, None)
-        ctx.plex.promote.assert_called_once_with(collection, shared=True)
+        ctx.plex.promote.assert_called_once_with(collection, shared=True, recommended=False)
 
     def test_undelivered_static_library_only_row_keeps_its_placement(self, ctx: EngineContext):
         """INT-3: a STATIC-titled 'Library only' row that exists but got no picks this run keeps its
@@ -1256,6 +2048,7 @@ class TestPlacement:
         ctx.config.dry_run = False
         section = MagicMock(type="movie", key="1", title="Movies")
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         coll = MagicMock(title=render_row_name("Hidden Gems", user, []) + row_marker(100))  # exists, no picks
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
         report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
@@ -1286,6 +2079,7 @@ class TestPlacement:
         movies = MagicMock(type="movie", key="1", title="Movies")
         shows = MagicMock(type="show", key="2", title="TV Shows")
         ctx.delivery_sections = [movies, shows]
+        ctx.plex.sections.return_value = [movies, shows]
         colls = {
             movies: MagicMock(title=render_row_name(tpl, user, [], library_name="Movies") + row_marker(100)),
             shows: MagicMock(title=render_row_name(tpl, user, [], library_name="TV Shows") + row_marker(100)),
@@ -1300,9 +2094,15 @@ class TestPlacement:
             # placement="library" -> hidden from Home, shown only in the library's Recommended shelf.
             assert call.kwargs == {"shared": False, "home": False, "recommended": True, "pin_top": False}
 
-    def test_undelivered_dynamic_titled_row_keeps_the_safe_everywhere_fallback(self, ctx: EngineContext):
-        """A {top_seed} row's title can't be predicted without picks, so an un-delivered one keeps the
-        hide-everywhere fallback (privacy-safe) rather than risk mis-mapping to the wrong placement."""
+    def test_an_undelivered_dynamic_titled_row_keeps_the_safe_fallback(self, ctx: EngineContext):
+        """A {top_seed} row's title can't be predicted without picks, so an un-delivered one has no
+        entry in the title map and takes the no-spec fallback.
+
+        That is the right outcome, not a gap: the fallback browse-hides, gives each audience its own
+        Home flag, and — crucially — does NOT claim the Recommended shelf, the one surface the owner
+        cannot filter. Resolving it by label instead would mis-map a DISABLED row's leftover
+        collection onto whichever row the user still has enabled.
+        """
         from datetime import UTC, datetime
 
         from shortlist.engine.models import RowSpec, RunReport, UserProfile, UserRunReport, UserType
@@ -1315,15 +2115,45 @@ class TestPlacement:
         ctx.config.dry_run = False
         section = MagicMock()
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         coll = MagicMock(title="Because you watched Dune (from a prior run)")
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
         report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
 
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
-        ctx.plex.promote.assert_called_once_with(
-            coll, shared=True, home=False
-        )  # unmapped dynamic → safe fallback; friend → no home
+        ctx.plex.promote.assert_called_once_with(coll, shared=True, home=False, recommended=False)
+
+    def test_an_unmanaged_rows_config_still_resolves_its_default_row(self, ctx: EngineContext):
+        """With no rows configured the engine synthesizes a legacy default spec, and every other
+        phase builds from it. Promotion used to read the RAW `config.rows` instead, so the title map
+        was empty, every lookup missed, and placement was silently ignored for the whole server."""
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import RunReport, UserProfile, UserRunReport, UserType
+        from shortlist.engine.pipeline import _promote_phase
+
+        user = UserProfile(username="sarah", plex_account_id=100, user_type=UserType.SHARED, slug="sarah")
+        ctx.config.rows = []
+        ctx.config.rows_defined = False  # unmanaged -> default_row_spec() is synthesized
+        ctx.config.dry_run = False
+        section = MagicMock()
+        section.title = "Movies"
+        ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
+        default_spec = ctx.config.per_person_rows()[0]
+        title = render_row_name(
+            resolve_row_template(default_spec, user, ctx.config), user, [], library_name="Movies"
+        ) + row_marker(user.plex_account_id)
+        coll = MagicMock(title=title)
+        ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
+        report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
+
+        _promote_phase(ctx, [user], [], filters_ok=True, report=report)
+
+        # Resolved to the real spec (default placement "both") — NOT the no-spec fallback, which
+        # would have withheld the Recommended shelf.
+        assert ctx.plex.promote.call_args.kwargs["recommended"] is True
 
     def test_fallback_skips_a_row_this_user_is_not_in_the_audience_for(self, ctx: EngineContext):
         """Audience is honoured by the no-picks fallback: a per-person row this user is excluded from
@@ -1342,6 +2172,7 @@ class TestPlacement:
         ctx.config.dry_run = False
         section = MagicMock()
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         coll = MagicMock(title=render_row_name("Hidden Gems", user, []) + row_marker(100))
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
         report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
@@ -1349,7 +2180,7 @@ class TestPlacement:
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
         ctx.plex.promote.assert_called_once_with(
-            coll, shared=True, home=False
+            coll, shared=True, home=False, recommended=False
         )  # excluded → NOT mapped; friend → no home
 
     def test_fallback_leaves_shared_rows_to_the_shared_promote_loop(self, ctx: EngineContext):
@@ -1370,6 +2201,7 @@ class TestPlacement:
         ctx.config.dry_run = False
         section = MagicMock()
         ctx.delivery_sections = [section]
+        ctx.plex.sections.return_value = [section]
         coll = MagicMock(title=render_row_name("Everyone's Picks", user, []) + row_marker(100))
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [coll] if s is section else []
         report = RunReport(started_at=datetime.now(UTC), users=[UserRunReport(username="sarah", slug="sarah")])
@@ -1377,7 +2209,7 @@ class TestPlacement:
         _promote_phase(ctx, [user], [], filters_ok=True, report=report)
 
         ctx.plex.promote.assert_called_once_with(
-            coll, shared=True, home=False
+            coll, shared=True, home=False, recommended=False
         )  # shared spec skipped → NOT mapped; friend → no home
 
     def test_a_top_seed_row_records_a_placement_title_per_library(self, ctx: EngineContext, mock_plextv):
@@ -1483,8 +2315,10 @@ class TestLibraryScoping:
 
         movies = MagicMock(type="movie", key="1", title="Movies")
         old_lib = MagicMock(type="movie", key="2", title="4K Movies")  # row no longer targets this
+        # sections() deliberately WIDER than delivery_sections: the point is that cleanup reaches a
+        # library this run no longer targets.
         ctx.plex.sections.return_value = [movies, old_lib]
-        ctx.delivery_sections = [movies]  # this run only scoped in Movies
+        ctx.delivery_sections = [movies]
         ctx.config.rows = [RowSpec(slug="gems", name_template="Hidden Gems", size=5, media="movie", library_keys=["1"])]
         ctx.config.rows_defined = True
         ctx.config.dry_run = False
@@ -1763,3 +2597,320 @@ class TestCollectionOrderPhase:
 
         ctx.plex.order_owned_hubs.assert_not_called()
         assert report.hub_orderings == []
+
+
+class TestConverge:
+    """The converge phase: rows the promote phase never reaches must still come off the owner's Home.
+
+    Promotion is write-only and only visits users in tonight's run, so anyone paused, disabled,
+    deselected, errored or promoted by an older build keeps stale flags for ever. This is the pass
+    that catches them — and `promotedToOwnHome` is the one surface no share filter can hide.
+    """
+
+    def _collection(self, rating_key: int, label: str, *, on_owner_home: bool = True):
+        collection = MagicMock()
+        collection.ratingKey = rating_key
+        collection.title = f"row-{rating_key}"
+        collection.labels = [MagicMock(tag=label)]
+        hub = collection.visibility.return_value
+        hub.promotedToOwnHome = on_owner_home
+        hub.promotedToRecommended = True
+        hub.promotedToSharedHome = True
+        return collection
+
+    def _run(
+        self,
+        ctx: EngineContext,
+        collections: list,
+        promoted: set[int],
+        owner_slug: str = "steve",
+        paused: set[str] | None = None,
+    ):
+        from shortlist.engine.models import RunReport
+        from shortlist.engine.pipeline import _converge_phase
+
+        ctx.owner_slug = owner_slug
+        ctx.paused_slugs = paused or set()
+        ctx.plex.sections.return_value[0].collections.return_value = collections
+        ctx.plex.demote_all.side_effect = lambda c, **kw: PlexClient.demote_all(ctx.plex, c, **kw)
+        ctx.plex.claims_any_surface.side_effect = lambda c: PlexClient.claims_any_surface(ctx.plex, c)
+        # Exercise the REAL demote, so the test covers the read-then-write contract, not a stub.
+        ctx.plex.demote_own_home.side_effect = lambda c: PlexClient.demote_own_home(ctx.plex, c)
+        ctx.plex.reads_as_on_owner_home.side_effect = lambda c: PlexClient.reads_as_on_owner_home(ctx.plex, c)
+        report = RunReport(started_at=datetime.now(UTC))
+        _converge_phase(ctx, promoted, report)
+        return report
+
+    def test_a_stranded_row_is_taken_off_the_owners_home(self, ctx: EngineContext):
+        """The SFLIX case: a shared user's row left on the owner's Home by an older build, whose
+        owner is not in tonight's run so promote never revisits it."""
+        stranded = self._collection(1, "Shortlist_gemnath")
+        report = self._run(ctx, [stranded], promoted=set())
+
+        stranded.visibility.return_value.updateVisibility.assert_called_once_with(
+            recommended=True, home=False, shared=True
+        )
+        assert report.converged == ["Shortlist_gemnath"]
+
+    def test_the_owners_own_row_is_left_alone(self, ctx: EngineContext):
+        """The owner's row belongs on the owner's Home — converge must not strip it."""
+        owned = self._collection(1, "Shortlist_steve")
+        report = self._run(ctx, [owned], promoted=set())
+
+        owned.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == []
+
+    def test_a_row_promoted_this_run_is_skipped(self, ctx: EngineContext):
+        """Promote already set this one correctly; re-reading it would be pure churn."""
+        fresh = self._collection(7, "Shortlist_sarah")
+        report = self._run(ctx, [fresh], promoted={7})
+
+        fresh.visibility.assert_not_called()
+        assert report.converged == []
+
+    def test_a_foreign_collection_is_never_touched(self, ctx: EngineContext):
+        """Kometa and friends share these libraries — rule 4."""
+        foreign = self._collection(1, "Kometa_Marvel")
+        self._run(ctx, [foreign], promoted=set())
+
+        foreign.visibility.return_value.updateVisibility.assert_not_called()
+
+    def test_an_already_correct_row_is_not_rewritten(self, ctx: EngineContext):
+        """Idempotence: a nightly converge over hundreds of rows must cost reads, not writes."""
+        settled = self._collection(1, "Shortlist_sarah", on_owner_home=False)
+        report = self._run(ctx, [settled], promoted=set())
+
+        settled.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == []
+
+    def test_nothing_happens_when_the_owner_is_unknown(self, ctx: EngineContext):
+        """Without an owner slug every label looks foreign, including the owner's own row. Guessing
+        would strip the owner's row off their own Home, so converge must decline instead."""
+        anything = self._collection(1, "Shortlist_sarah")
+        report = self._run(ctx, [anything], promoted=set(), owner_slug="")
+
+        anything.visibility.assert_not_called()
+        assert report.converged == []
+
+    def test_dry_run_writes_nothing_but_still_reports_the_real_list(self, ctx: EngineContext):
+        """The preview an operator reads before authorising the live pass must be the ACTUAL list.
+
+        Reporting nothing (or every candidate considered) makes the preview useless: a dry-run
+        sync check would answer "corrected 0" forever, whatever the server actually holds.
+        """
+        ctx.config.dry_run = True
+        stranded = self._collection(1, "Shortlist_gemnath")
+        settled = self._collection(2, "Shortlist_sarah", on_owner_home=False)
+
+        report = self._run(ctx, [stranded, settled], promoted=set())
+
+        stranded.visibility.return_value.updateVisibility.assert_not_called()
+        settled.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == ["Shortlist_gemnath"]  # only the one actually stranded
+
+    def test_a_shared_row_is_left_on_the_owners_home(self, ctx: EngineContext):
+        """A SHARED row is ONE public collection labelled `shortlist__shared_<row>`, and it belongs on
+        the owner's Home whenever its placement asks for it. Matching only the owner's own label
+        demoted every shared row on every pass that did not rebuild it — a no-user run, a scoped cron
+        run, a cancelled run, a sync check. That is most passes.
+        """
+        from shortlist.engine.models import RowSpec
+
+        ctx.config.rows = [RowSpec(slug="trending", name_template="Trending", size=10, shared=True, placement="both")]
+        shared = self._collection(1, "Shortlist__shared_trending")
+
+        report = self._run(ctx, [shared], promoted=set())
+
+        shared.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == []
+
+    def test_a_shared_row_that_does_not_want_home_is_still_converged(self, ctx: EngineContext):
+        """The allowance is per-row, not "any shared label" — a shared row set to Library-only has no
+        business on the owner's Home either."""
+        from shortlist.engine.models import RowSpec
+
+        ctx.config.rows = [
+            RowSpec(slug="trending", name_template="Trending", size=10, shared=True, placement="library")
+        ]
+        shared = self._collection(1, "Shortlist__shared_trending")
+
+        report = self._run(ctx, [shared], promoted=set())
+
+        assert report.converged == ["Shortlist__shared_trending"]
+
+    def test_a_paused_users_row_comes_off_every_surface(self, ctx: EngineContext):
+        """Pause means "stop showing it". A paused person is absent from every run by definition, so
+        converge is the only pass that can act on them — without this their row stays up for ever."""
+        paused = self._collection(1, "Shortlist_sarah")
+        report = self._run(ctx, [paused], promoted=set(), paused={"sarah"})
+
+        paused.visibility.return_value.updateVisibility.assert_called_once_with(
+            recommended=False, home=False, shared=False
+        )
+        assert report.converged == ["Shortlist_sarah"]
+
+    def test_an_active_users_row_is_not_stripped_by_the_pause_path(self, ctx: EngineContext):
+        """Only the paused person's own label. Stripping an active user's row off every surface would
+        make their row vanish for no reason."""
+        active = self._collection(1, "Shortlist_mike")
+        self._run(ctx, [active], promoted=set(), paused={"sarah"})
+
+        # Not the all-surfaces call — at most the own-home demote, since it is not the owner's label.
+        assert active.visibility.return_value.updateVisibility.call_args.kwargs != {
+            "recommended": False,
+            "home": False,
+            "shared": False,
+        }
+
+    def test_a_paused_row_already_hidden_is_not_rewritten(self, ctx: EngineContext):
+        """Idempotence: converge runs every night over every collection."""
+        settled = self._collection(1, "Shortlist_sarah", on_owner_home=False)
+        settled.visibility.return_value.promotedToRecommended = False
+        settled.visibility.return_value.promotedToSharedHome = False
+        report = self._run(ctx, [settled], promoted=set(), paused={"sarah"})
+
+        settled.visibility.return_value.updateVisibility.assert_not_called()
+        assert report.converged == []
+
+    def test_a_switched_off_shared_row_is_retired(self, ctx: EngineContext):
+        """`retired_rows` only covers PER-PERSON rows (rows.py filters `not s.shared`), so switching a
+        shared row off left its collection claiming Friends' Home and the Recommended shelf for ever.
+        Non-owners stop seeing it — their filter excludes any label the config no longer declares
+        shared — but the OWNER has no filter, so it sat on their server unchanged."""
+        from shortlist.engine.models import RowSpec
+
+        ctx.config.rows = [RowSpec(slug="live", name_template="Live", size=10, shared=True, placement="both")]
+        gone = self._collection(1, "Shortlist__shared_retired")
+
+        report = self._run(ctx, [gone], promoted=set())
+
+        gone.visibility.return_value.updateVisibility.assert_called_once_with(
+            recommended=False, home=False, shared=False
+        )
+        assert report.converged == ["Shortlist__shared_retired"]
+
+    def test_a_dry_run_does_not_offer_to_fix_a_paused_row_already_down(self, ctx: EngineContext):
+        """Caught on the live server: the preview said 2 and the live pass corrected 0, because the
+        paused branch reported every candidate without reading whether it claimed anything. The Tools
+        button then offered to "fix" rows that were already hidden."""
+        ctx.config.dry_run = True
+        settled = self._collection(1, "Shortlist_sarah", on_owner_home=False)
+        settled.visibility.return_value.promotedToRecommended = False
+        settled.visibility.return_value.promotedToSharedHome = False
+
+        report = self._run(ctx, [settled], promoted=set(), paused={"sarah"})
+
+        assert report.converged == []
+
+    def test_a_pms_failure_never_fails_the_run(self, ctx: EngineContext):
+        """Converge runs after the real work and only ever removes visibility — a wobble here must
+        not sink a run that already delivered everyone's rows. Next run retries."""
+        exploding = self._collection(1, "Shortlist_gemnath")
+        exploding.visibility.side_effect = RuntimeError("PMS timeout")
+
+        report = self._run(ctx, [exploding], promoted=set())  # must not raise
+        assert report.converged == []
+
+
+class TestOrphanDeletion:
+    """Converge may DELETE a collection whose user Shortlist no longer knows — the one irreversible
+    action it takes, so it is gated on having a complete picture.
+
+    Demoting an orphan leaves it in the Collections tab; deleting is what clears it from there.
+
+    Neither clears the `label!=` exclude — `privacy.prune` removes only shared labels and a person's
+    own label from their own filter, so a private-row exclude survives either way. This docstring used
+    to claim deleting was the only way to clear the filters, which was the stated justification for
+    choosing the irreversible option.
+    """
+
+    def _collection(self, rating_key: int, label: str):
+        collection = MagicMock()
+        collection.ratingKey = rating_key
+        collection.title = f"row-{rating_key}"
+        collection.labels = [MagicMock(tag=label)]
+        hub = collection.visibility.return_value
+        hub.promotedToOwnHome = True
+        hub.promotedToRecommended = True
+        hub.promotedToSharedHome = True
+        return collection
+
+    def _run(self, ctx, collections, *, known: dict, may_delete: bool, dry_run: bool = False):
+        from shortlist.engine.models import RunReport
+        from shortlist.engine.pipeline import _converge_phase
+
+        ctx.owner_slug = "steve"
+        ctx.known_slugs = known
+        ctx.may_delete_orphans = may_delete
+        ctx.config.dry_run = dry_run
+        ctx.plex.sections.return_value[0].collections.return_value = collections
+        ctx.plex.claims_any_surface.return_value = True
+        ctx.plex.demote_all.return_value = True
+        report = RunReport(started_at=datetime.now(UTC))
+        _converge_phase(ctx, set(), report)
+        return report
+
+    def test_a_user_less_run_never_deletes_however_complete_the_picture(self, ctx: EngineContext):
+        """`engine_run(ctx, [])` is the privacy-sync shape, and it fires from routine mutations —
+        disabling one person, narrowing a shared row's audience. It documents itself as creating and
+        deleting nothing, but it inherited delete authority from the CONTEXT and quietly had it: the
+        audit row said "share filters merged" while a collection was destroyed.
+        """
+        from shortlist.engine.models import RunReport
+        from shortlist.engine.pipeline import _converge_phase
+
+        orphan = self._collection(1, "Shortlist_ghost")
+        ctx.owner_slug = "steve"
+        ctx.known_slugs = {100: "steve", 200: "sarah"}
+        ctx.may_delete_orphans = True  # the picture IS complete — that is not the question
+        ctx.config.dry_run = False
+        ctx.plex.sections.return_value[0].collections.return_value = [orphan]
+        ctx.plex.claims_any_surface.return_value = True
+        ctx.plex.demote_all.return_value = True
+
+        report = RunReport(started_at=datetime.now(UTC))
+        _converge_phase(ctx, set(), report, may_delete=False)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == [], "a pass with no users must not destroy anyone's row"
+        # Still demoted — monotonically private, which is what such a pass IS for.
+        assert report.converged == ["Shortlist_ghost"]
+
+    def test_a_collection_whose_user_is_gone_is_deleted(self, ctx: EngineContext):
+        orphan = self._collection(1, "Shortlist_ghost")
+        report = self._run(ctx, [orphan], known={100: "steve", 200: "sarah"}, may_delete=True)
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert report.orphans_removed == ["Shortlist_ghost"]
+
+    def test_a_known_users_collection_is_never_deleted(self, ctx: EngineContext):
+        live = self._collection(1, "Shortlist_sarah")
+        report = self._run(ctx, [live], known={100: "steve", 200: "sarah"}, may_delete=True)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == []
+
+    def test_an_incomplete_picture_demotes_instead_of_deleting(self, ctx: EngineContext):
+        """ "I could not read the users" and "this user does not exist" look identical from here.
+        Deleting on the first would wipe live rows, so it only ever hides."""
+        orphan = self._collection(1, "Shortlist_ghost")
+        report = self._run(ctx, [orphan], known={100: "steve"}, may_delete=False)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == []
+        assert report.converged == ["Shortlist_ghost"]
+
+    def test_an_empty_roster_never_deletes_anything(self, ctx: EngineContext):
+        """An empty `known_slugs` means the picture is missing, not that everyone left."""
+        orphan = self._collection(1, "Shortlist_ghost")
+        report = self._run(ctx, [orphan], known={}, may_delete=True)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == []
+
+    def test_dry_run_reports_the_deletion_without_making_it(self, ctx: EngineContext):
+        orphan = self._collection(1, "Shortlist_ghost")
+        report = self._run(ctx, [orphan], known={100: "steve"}, may_delete=True, dry_run=True)
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        assert report.orphans_removed == ["Shortlist_ghost"]

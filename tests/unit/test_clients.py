@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -60,6 +61,161 @@ class TestPlexTvClient:
         assert users[1].home is True
 
     @respx.mock
+    def test_only_user_elements_become_users(self):
+        """Any other child of the container — a `<Server>` block, an error node — used to become an
+        account with `id=0` and no filters. That matters beyond a junk row: the user sync compares its
+        own roster against this list to decide who has LEFT the share, so a response-shape change could
+        read as "everybody departed" and switch every account off (rule 11)."""
+        injected = re.sub(r"(<MediaContainer[^>]*>)", r'\1<Server name="something-new" />', USERS_XML, count=1)
+        respx.get("https://plex.tv/api/users").mock(return_value=httpx.Response(200, text=injected))
+
+        users = self._client().list_users()
+
+        assert [u.id for u in users] == [555000100, 555000200, 555000300]
+
+    @respx.mock
+    def test_home_restriction_profiles_separates_managed_users_plex_cannot(self):
+        """`/api/users` says `restricted="1"` for EVERY managed account. Only `/api/home/users` says
+        which of them actually has a parental preset — the distinction issue #20 turns on, and the one
+        that decides whether Plex will even accept a label restriction."""
+        home_xml = (FIXTURES / "plextv_home_users.xml.txt").read_text()
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(200, text=home_xml))
+
+        profiles = self._client().home_restriction_profiles()
+
+        assert profiles[555000200] == "little_kid"  # has a preset -> Plex refuses label filters
+        assert profiles[555000300] == ""  # ATTRIBUTE ABSENT entirely -> no preset, filters are accepted
+        assert profiles[555000001] == ""  # the owner
+
+    @respx.mock
+    def test_the_profile_lands_on_the_right_user_through_list_users(self):
+        """The JOIN is the load-bearing step, and it is invisible if the two endpoints disagree about
+        the id space. With disjoint ids every other test still passes while the enrichment matches
+        NOTHING — a feature that is a silent no-op in production behind a green suite."""
+        respx.get("https://plex.tv/api/users").mock(
+            return_value=httpx.Response(200, text=(FIXTURES / "plextv_users.xml.txt").read_text())
+        )
+        respx.get("https://plex.tv/api/home/users").mock(
+            return_value=httpx.Response(200, text=(FIXTURES / "plextv_home_users.xml.txt").read_text())
+        )
+
+        by_id = {u.id: u for u in self._client().list_users()}
+
+        assert by_id[555000200].restriction_profile == "little_kid", "the join matched nothing"
+        assert by_id[555000100].restriction_profile == ""  # an ordinary shared user
+        # The #20 cell itself: restricted="1" on /api/users, but NO profile on /api/home/users. It is
+        # the account that never got its excludes, so it has to survive the join as profile-less
+        # rather than being lumped in with the parental-controlled ones.
+        assert by_id[555000300].restricted is True
+        assert by_id[555000300].restriction_profile == ""
+
+    def test_a_log_title_is_legible_and_says_whose_row_it_is(self):
+        """Every delivery/promote/ordering line printed the raw title — which carries a 64-character
+        zero-width per-account marker. The log looked corrupted, wrapped absurdly, and two users'
+        rows were impossible to tell apart by eye, because the ONLY thing distinguishing them is
+        invisible. That is the log an operator reads to debug a user's report."""
+        from shortlist.engine.clients.plex_pms import log_title
+        from shortlist.engine.delivery import row_marker
+
+        marked = "✨ Movies Picked for You" + row_marker(218833834)
+        assert len(marked) == len("✨ Movies Picked for You") + 64
+
+        rendered = log_title(marked)
+        assert rendered == "✨ Movies Picked for You [acct 218833834]"
+        # No invisible characters survive into the log line.
+        assert not any(c in ("\u200b", "\u200c") for c in rendered)
+
+    def test_a_log_title_leaves_an_unmarked_title_alone(self):
+        """Kometa's collections and anything else on the server must pass through untouched."""
+        from shortlist.engine.clients.plex_pms import log_title
+
+        assert log_title("Christmas Favourites") == "Christmas Favourites"
+
+    @respx.mock
+    def test_an_omitted_account_is_unknown_not_unprofiled(self):
+        """A 200 is not the same as a complete answer.
+
+        `home_profile_known` used to be a single global "the read succeeded" flag, so an empty or
+        partial `<MediaContainer>` counted as knowledge about everybody in it AND everybody not.
+        A genuinely profiled child then read as having no profile, their share-filter 422 looked
+        unexpected, and the pipeline blocked promotion for EVERY user on the server, nightly, behind
+        a green suite — #14's shape re-created by the guard added to prevent it.
+        """
+        partial = '<MediaContainer><User id="555000200" restrictionProfile="little_kid"/></MediaContainer>'
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(200, text=partial))
+
+        client = self._client()
+        client.home_restriction_profiles()  # a successful read that simply does not mention 555000999
+
+        assert client.home_profile_known(555000200) is True
+        assert client.home_profile_known(555000999) is False, "the roster never mentioned them"
+
+    @respx.mock
+    def test_an_empty_but_successful_roster_is_knowledge_about_nobody(self):
+        """The starkest case: HTTP 200, well-formed, zero users."""
+        respx.get("https://plex.tv/api/home/users").mock(
+            return_value=httpx.Response(200, text="<MediaContainer></MediaContainer>")
+        )
+
+        client = self._client()
+        assert client.home_restriction_profiles() == {}
+        assert client.home_profile_known(555000200) is False
+
+    @respx.mock
+    def test_a_failed_read_is_knowledge_about_nobody_either(self):
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(500))
+
+        client = self._client()
+        assert client.home_restriction_profiles() == {}
+        assert client.home_profile_known(555000200) is False
+
+    @respx.mock
+    def test_a_malformed_home_user_id_does_not_sink_the_whole_roster(self):
+        """This parse used to sit outside the try. One junk id raised out of `list_users()`, which the
+        pipeline reads as "could not read the plex.tv user list" — no filters written for ANYONE and
+        nothing promoted, server-wide, over a bad character on a secondary endpoint."""
+        junk = '<MediaContainer><User id="not-a-number" restrictionProfile="teen"/>'
+        junk += '<User id="555000200" restrictionProfile="little_kid"/></MediaContainer>'
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(200, text=junk))
+
+        profiles = self._client().home_restriction_profiles()
+
+        assert profiles == {555000200: "little_kid"}, "the good row must survive the bad one"
+
+    @respx.mock
+    def test_the_profile_lookup_is_fetched_once_per_client(self):
+        """`list_users()` is called several times per run — privacy sync, the read-back verification,
+        uninstall's per-user restore. Without caching, each paid a second plex.tv GET for a value most
+        of them never read (rule 6: plex.tv is shared infrastructure)."""
+        respx.get("https://plex.tv/api/users").mock(
+            return_value=httpx.Response(200, text=(FIXTURES / "plextv_users.xml.txt").read_text())
+        )
+        route = respx.get("https://plex.tv/api/home/users").mock(
+            return_value=httpx.Response(200, text=(FIXTURES / "plextv_home_users.xml.txt").read_text())
+        )
+        client = self._client()
+
+        client.list_users()
+        client.list_users()
+        client.list_users()
+
+        assert route.call_count == 1
+
+    @respx.mock
+    def test_a_home_users_failure_leaves_profiles_blank_rather_than_failing_the_roster(self):
+        """Blank reads as "no preset", so the caller ATTEMPTS the write and plex.tv gets the final say
+        (a 422 is already handled). Failing the whole roster read over an enrichment would strand every
+        user's excludes over a hiccup on a secondary endpoint."""
+        users_xml = (FIXTURES / "plextv_users.xml.txt").read_text()
+        respx.get("https://plex.tv/api/users").mock(return_value=httpx.Response(200, text=users_xml))
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(500))
+
+        users = self._client().list_users()
+
+        assert users, "the roster must still be returned"
+        assert all(u.restriction_profile == "" for u in users)
+
+    @respx.mock
     def test_update_filters_sends_only_given_fields_with_token_header(self):
         route = respx.put("https://plex.tv/api/users/100").mock(return_value=httpx.Response(200))
         self._client().update_user_filters(100, {"filterMovies": "label!=Shortlist_a"})
@@ -72,15 +228,21 @@ class TestPlexTvClient:
     def test_429_slows_the_adaptive_pace_then_succeeds(self, monkeypatch):
         sleeps = []
         monkeypatch.setattr(plextv_mod.time, "sleep", sleeps.append)
+        # The CLOCK is frozen too, not just sleep. `throttle()` waits `pace - elapsed`, so with a
+        # live clock this asserted on how long the test itself took to get here: it wanted >= 0.9
+        # and got 0.74 on a loaded CI runner that had spent 0.26s between the two writes. Freezing
+        # monotonic makes the wait exactly the pace, which is the thing under test — the old version
+        # was passing by luck on fast machines.
+        monkeypatch.setattr(plextv_mod.time, "monotonic", lambda: 0.0)
         route = respx.put("https://plex.tv/api/users/100")
         route.side_effect = [httpx.Response(429), httpx.Response(200)]
         client = self._client()
         assert client._pace == 0.0  # starts fast — no fixed 1/s
         client.update_user_filters(100, {"filterMovies": "x=y"})
         assert len(route.calls) == 2  # the 429 was retried to success
-        # The 429 widened the pace to ~1s and the retry waited that long; the clean write then eased
-        # it partway back — so it ends above the floor but below the 1s it jumped to.
-        assert max(sleeps, default=0) >= 0.9
+        # The 429 widened the pace to >= 1s (plex-safety rule 6) and the retry waited exactly that;
+        # the clean write then eased it partway back, so it ends above the floor but below the jump.
+        assert max(sleeps, default=0) >= 1.0
         assert 0.0 < client._pace < 1.0
 
     @respx.mock
@@ -88,8 +250,21 @@ class TestPlexTvClient:
         monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)  # don't actually wait
         route = respx.put("https://plex.tv/api/users/100")
         route.side_effect = [httpx.Response(429)] * 8  # plex.tv never relents
-        with pytest.raises(RuntimeError, match="throttling"):
+        with pytest.raises(RuntimeError, match="rate-limiting"):
             self._client().update_user_filters(100, {"filterMovies": "x=y"})
+        assert len(route.calls) == 6  # bounded retries — it gives up, never loops forever
+
+    @respx.mock
+    def test_relentless_connect_failure_gives_up_with_the_real_reason_not_throttling(self, monkeypatch):
+        """A run of pure connect failures used to raise 'plex.tv still throttling filter update…',
+        which sends the operator to the wrong diagnosis on the most privacy-sensitive write path
+        (never a single 429). The final error must name what actually happened."""
+        monkeypatch.setattr(plextv_mod.time, "sleep", lambda _s: None)
+        route = respx.put("https://plex.tv/api/users/100")
+        route.side_effect = httpx.ConnectError("never landed")
+        with pytest.raises(RuntimeError, match="unreachable") as excinfo:
+            self._client().update_user_filters(100, {"filterMovies": "x=y"})
+        assert "throttl" not in str(excinfo.value).lower()
         assert len(route.calls) == 6  # bounded retries — it gives up, never loops forever
 
     @respx.mock
@@ -268,6 +443,36 @@ class TestTmdbClient:
         assert TmdbClient("k").tvdb_id(95396, MediaType.SHOW) is None
 
     @respx.mock
+    def test_poster_path_reads_the_movie_detail_endpoint(self):
+        respx.get("https://api.themoviedb.org/3/movie/603").mock(
+            return_value=httpx.Response(200, json={"id": 603, "poster_path": "/matrix.jpg"})
+        )
+        assert TmdbClient("k").poster_path(603, MediaType.MOVIE) == "/matrix.jpg"
+
+    @respx.mock
+    def test_poster_path_reads_the_tv_detail_endpoint(self):
+        # The movie/tv split is the whole branch in this method — a show must not be asked for at
+        # /movie/{id}, which is a DIFFERENT title (ids are unique only within their namespace).
+        respx.get("https://api.themoviedb.org/3/tv/95396").mock(
+            return_value=httpx.Response(200, json={"id": 95396, "poster_path": "/severance.jpg"})
+        )
+        assert TmdbClient("k").poster_path(95396, MediaType.SHOW) == "/severance.jpg"
+
+    @respx.mock
+    def test_poster_path_is_empty_when_tmdb_has_no_artwork(self):
+        # TMDB returns the key present but null for a title with no poster. This MUST become "" and
+        # never None: it is written to a NOT NULL column, so a None would fail the whole persist.
+        respx.get("https://api.themoviedb.org/3/movie/603").mock(
+            return_value=httpx.Response(200, json={"id": 603, "poster_path": None})
+        )
+        assert TmdbClient("k").poster_path(603, MediaType.MOVIE) == ""
+
+    @respx.mock
+    def test_poster_path_is_empty_when_the_title_is_unknown(self):
+        respx.get("https://api.themoviedb.org/3/movie/999999").mock(return_value=httpx.Response(404, json={}))
+        assert TmdbClient("k").poster_path(999999, MediaType.MOVIE) == ""
+
+    @respx.mock
     def test_cache_prevents_second_fetch(self):
         route = respx.get("https://api.themoviedb.org/3/movie/1/recommendations").mock(
             return_value=httpx.Response(200, json={"results": []})
@@ -288,6 +493,19 @@ class TestTmdbClient:
         assert TmdbClient("k").suggestions(1, MediaType.MOVIE) == []
 
     @respx.mock
+    def test_a_404_miss_is_cached_like_trakts_related_deliberately_does(self):
+        """Without this, a title TMDB 404s on gets re-fetched every run for every user who has it as
+        a seed — trakt.py's `related()` already caches its own misses, with a comment saying why."""
+        route = respx.get("https://api.themoviedb.org/3/tv/95396/external_ids").mock(return_value=httpx.Response(404))
+        client = TmdbClient("k", cache=_MemoryCache())
+
+        first = client.tvdb_id(95396, MediaType.SHOW)
+        second = client.tvdb_id(95396, MediaType.SHOW)
+
+        assert first is None and second is None
+        assert route.call_count == 1, "the second call must be a cache hit, not a second 404"
+
+    @respx.mock
     def test_api_key_never_appears_in_error_messages(self):
         respx.get("https://api.themoviedb.org/3/movie/1/recommendations").mock(return_value=httpx.Response(500))
         with pytest.raises(RuntimeError) as excinfo:
@@ -303,17 +521,12 @@ class TestRemovedOmdbClient:
 
 class TestTautulliClient:
     @respx.mock
-    def test_get_history_success(self):
+    def test_ping_success(self):
         route = respx.get("http://taut.test/api/v2").mock(
-            return_value=httpx.Response(
-                200, json={"response": {"result": "success", "data": {"data": [{"title": "Heat"}]}}}
-            )
+            return_value=httpx.Response(200, json={"response": {"result": "success", "data": {}}})
         )
-        rows = TautulliClient("http://taut.test", "key").get_history(100)
-        assert rows == [{"title": "Heat"}]
-        params = route.calls.last.request.url.params
-        assert params["cmd"] == "get_history"
-        assert params["user_id"] == "100"
+        assert TautulliClient("http://taut.test", "key").ping() is True
+        assert route.calls.last.request.url.params["cmd"] == "status"
 
     @respx.mock
     def test_api_failure_raises(self):
@@ -321,13 +534,13 @@ class TestTautulliClient:
             return_value=httpx.Response(200, json={"response": {"result": "error", "message": "bad key"}})
         )
         with pytest.raises(RuntimeError, match="bad key"):
-            TautulliClient("http://taut.test", "key").get_history(100)
+            TautulliClient("http://taut.test", "key").friendly_names()
 
     @respx.mock
     def test_api_key_never_appears_in_error_messages(self):
         respx.get("http://taut.test/api/v2").mock(return_value=httpx.Response(502))
         with pytest.raises(RuntimeError) as excinfo:
-            TautulliClient("http://taut.test", "SUPERSECRETKEY").get_history(100)
+            TautulliClient("http://taut.test", "SUPERSECRETKEY").friendly_names()
         assert "SUPERSECRETKEY" not in str(excinfo.value)
         assert "502" in str(excinfo.value)
 
@@ -344,6 +557,20 @@ class TestPlexClient:
         ]
         index = mock_plex.build_library_index(section)
         assert index == {42: 1}
+
+    def test_build_library_index_skips_a_malformed_tmdb_guid(self, mock_plex: PlexClient):
+        """A guid whose id isn't a real integer (a bad scrape, a corrupted agent match) must not raise
+        out of the whole section scan — every other tolerant spot in this file skips a bad row rather
+        than failing the caller, and this was the one place that didn't."""
+        section = MagicMock()
+        section.title = "Movies"
+        section.totalSize = 2
+        section.all.return_value = [
+            SimpleNamespace(ratingKey=1, title="Malformed", guids=[SimpleNamespace(id="tmdb://not-a-number")]),
+            fake_media_item(2, "Good", tmdb_id=99),
+        ]
+        index = mock_plex.build_library_index(section)
+        assert index == {99: 2}
 
     def test_stored_label_returns_existing_title_cased_form_without_write(self, mock_plex: PlexClient):
         collection = MagicMock()
@@ -410,12 +637,15 @@ class TestPlexClient:
         assert vis.updateVisibility.call_args.kwargs == {"recommended": False, "home": False, "shared": False}
         owned.delete.assert_called_once()
 
-    def test_promote_hides_from_library_and_promotes_shared(self, mock_plex: PlexClient):
+    def test_promote_hides_from_library_and_never_defaults_onto_the_owners_home(self, mock_plex: PlexClient):
+        """`home` defaults OFF. It is promotedToOwnHome — the SERVER OWNER's Home shelf — and the
+        owner has no share filter, so anything that lands there is visible to them with nothing able
+        to hide it. Defaulting it on is how every user's row ended up on the owner's Home."""
         collection = MagicMock()
         mock_plex.promote(collection)
         collection.modeUpdate.assert_called_once_with(mode="hide")
         vis = collection.visibility.return_value
-        assert vis.updateVisibility.call_args.kwargs == {"recommended": True, "home": True, "shared": True}
+        assert vis.updateVisibility.call_args.kwargs == {"recommended": True, "home": False, "shared": True}
         vis.reload.return_value.move.assert_not_called()  # not pinned by default
 
     def test_promote_passes_placement_flags_through(self, mock_plex: PlexClient):
@@ -633,6 +863,47 @@ class TestPlexClient:
         assert mock_plex.sections_by_type() == {MediaType.MOVIE: movies, MediaType.SHOW: shows}
 
 
+class TestUserHubs:
+    """Fetch hubs AS another user (a canary token) — the visibility-check read."""
+
+    _URL = "http://pms:32400/hubs"
+
+    @respx.mock
+    def test_reads_hubs_as_the_canary_user(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, json={"MediaContainer": {"Hub": [{"title": "Home"}]}})
+        )
+
+        hubs = mock_plex.user_hubs("CANARY-TOK")
+
+        assert hubs == [{"title": "Home"}]
+        request = respx.calls.last.request
+        assert request.headers["X-Plex-Token"] == "CANARY-TOK"
+
+    @respx.mock
+    def test_a_missing_hub_container_is_an_empty_list_not_an_error(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, json={"MediaContainer": {}}))
+        assert mock_plex.user_hubs("CANARY-TOK") == []
+
+    def test_the_configured_timeout_reaches_the_raw_read(self, mock_plex: PlexClient, monkeypatch):
+        """This used to hardcode `timeout=30`, ignoring the operator's configured `plex.timeout_s`."""
+        from shortlist.engine.clients import plex_pms
+
+        mock_plex._server.url.return_value = self._URL
+        mock_plex._timeout = 77
+        seen: list[object] = []
+
+        def fake_get(*_args, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            return httpx.Response(200, json={"MediaContainer": {}}, request=httpx.Request("GET", self._URL))
+
+        monkeypatch.setattr(plex_pms.http_retry, "get", fake_get)
+        mock_plex.user_hubs("CANARY-TOK")
+        assert seen == [77]
+
+
 class TestSectionsByType:
     def test_the_lowest_keyed_library_of_each_type_wins(self, mock_plex: PlexClient):
         """PMS list order must not decide where rows live: a reordering would silently move
@@ -684,6 +955,184 @@ class TestWatchedTitles:
         assert request.url.params["unwatched"] == "0"  # Plex's binary watched flag: viewCount>0, marks included
         assert request.url.params["type"] == "1"  # movie
 
+    @staticmethod
+    def _watched_xml(*rows: tuple[int, str, int]) -> str:
+        """`(ratingKey, title, lastViewedAt)` rows, in the order the server would return them."""
+        videos = "".join(
+            f'<Video ratingKey="{key}" title="{title}" year="2000" viewCount="1" lastViewedAt="{seen}">'
+            f'<Guid id="tmdb://{key}"/></Video>'
+            for key, title, seen in rows
+        )
+        return f'<MediaContainer size="{len(rows)}" totalSize="{len(rows)}">{videos}</MediaContainer>'
+
+    @staticmethod
+    def _watched_xml_raw(body: str, size: int) -> str:
+        return f'<MediaContainer size="{size}" totalSize="{size}">{body}</MediaContainer>'
+
+    @respx.mock
+    def test_a_title_with_no_lastViewedAt_does_not_end_the_walk(self, mock_plex: PlexClient):
+        """A missing `lastViewedAt` is stamped 1970, so it looks older than any cutoff. Ending the
+        walk on it would drop every title BEHIND it and return a truncated history that looks exactly
+        like a quiet night — the cache would then advance its cursor past titles it never read."""
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        # DESCENDING on purpose, so the order guard is satisfied and this test isolates the gap. With
+        # ascending data the order guard rescues the read and the test would pass either way.
+        recent = '<Video ratingKey="1" title="Recent" year="2000" viewCount="1" lastViewedAt="1785000002"><Guid id="tmdb://1"/></Video>'
+        # No lastViewedAt at all — the data gap.
+        gap = '<Video ratingKey="2" title="No Timestamp" year="2000" viewCount="1"><Guid id="tmdb://2"/></Video>'
+        behind = '<Video ratingKey="3" title="Also Recent" year="2000" viewCount="1" lastViewedAt="1785000001"><Guid id="tmdb://3"/></Video>'
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=self._watched_xml_raw(recent + gap + behind, 3))
+        )
+
+        items = mock_plex.watched_titles(
+            "1", MediaType.MOVIE, token="SARAH-TOK", since=datetime(2026, 7, 1, tzinfo=UTC)
+        )
+
+        titles = [i.title for i in items]
+        assert "Also Recent" in titles, f"the walk stopped on a missing timestamp: {titles}"
+
+    @respx.mock
+    def test_an_out_of_order_page_abandons_the_early_stop(self, mock_plex: PlexClient):
+        """The early stop is only sound while the server honours `sort=lastViewedAt:desc`.
+
+        `lastViewedAt>=` was also documented as supported and is silently ignored by this PMS, so the
+        sort earns the same suspicion: if it stops being honoured, a truncated read would look like a
+        quiet night for up to a week (until the next full read).
+        """
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        # Ascending — the opposite of what the sort promises.
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(
+                200,
+                text=self._watched_xml((1, "Older", 1784000000), (2, "Newer", 1785000000), (3, "Newest", 1785000002)),
+            )
+        )
+
+        items = mock_plex.watched_titles(
+            "1", MediaType.MOVIE, token="SARAH-TOK", since=datetime(2026, 7, 20, tzinfo=UTC)
+        )
+
+        # "Older" is before the cutoff and legitimately dropped; the point is the walk did not STOP
+        # there and still returned the two newer titles behind it.
+        assert {i.title for i in items} >= {"Newer", "Newest"}, [i.title for i in items]
+
+    @respx.mock
+    def test_an_incremental_read_works_for_SHOWS_not_just_movies(self, mock_plex: PlexClient):
+        """`media_type` is a branch variable with two shapes — `<Video>` vs `<Directory>`, type=1 vs
+        type=2 — and every other incremental test covers only movies. Shows are also where
+        `lastViewedAt` is most likely to be absent or populated differently."""
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        shows = (
+            '<Directory ratingKey="10" title="Recent Show" year="2020" viewedLeafCount="3" '
+            'leafCount="10" lastViewedAt="1785000000"><Guid id="tmdb://10"/></Directory>'
+            '<Directory ratingKey="11" title="Old Show" year="2001" viewedLeafCount="1" '
+            'leafCount="10" lastViewedAt="1700000000"><Guid id="tmdb://11"/></Directory>'
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._watched_xml_raw(shows, 2)))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, token="SARAH-TOK", since=datetime(2026, 7, 1, tzinfo=UTC))
+
+        assert [i.title for i in items] == ["Recent Show"], "the cutoff must work for shows too"
+        assert items[0].media_type is MediaType.SHOW
+        assert items[0].viewed_leaf_count == 3 and items[0].leaf_count == 10
+        assert respx.calls.last.request.url.params["type"] == "2"
+
+    @respx.mock
+    def test_an_incremental_read_sorts_newest_first_and_never_sends_a_filter(self, mock_plex: PlexClient):
+        """The saving comes from ORDERING plus an early stop, not from a server-side filter.
+
+        `lastViewedAt>=` (and `>>=`) are SILENTLY IGNORED by PMS 1.43.3 — live-probed 2026-07-30
+        against a real server: unfiltered, `>=` and `>>=` all returned the same totalSize of 1077, as
+        did a `year>>=` control. Ignoring a filter is the worst failure mode available, because the
+        read looks like it worked and quietly returns everything. Sorting IS honoured, so that is what
+        we rely on; sending the dead filter anyway would be cargo cult.
+        """
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        # 1785000000 = 2026-07-25, i.e. INSIDE the cutoff below, so it survives the early stop.
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._watched_xml((42, "Heat", 1785000000))))
+        since = datetime(2026, 7, 1, tzinfo=UTC)
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since)
+
+        assert [i.title for i in items] == ["Heat"]
+        params = respx.calls.last.request.url.params
+        assert params["sort"] == "lastViewedAt:desc"
+        assert "lastViewedAt>=" not in params, "a filter this PMS ignores must not be sent"
+        # The filters that DO work still apply — incremental narrows the read, it does not replace it.
+        assert params["unwatched"] == "0" and params["includeGuids"] == "1"
+
+    @respx.mock
+    def test_an_incremental_read_stops_at_the_first_title_older_than_the_cutoff(self, mock_plex: PlexClient):
+        """This early stop IS the optimisation. Without it the incremental path reads every watched
+        title and throws most away — all of the cost, none of the benefit."""
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        # Newest-first, as the sort guarantees. Only the first two are inside the cutoff.
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(
+                200,
+                text=self._watched_xml(
+                    (1, "Watched today", 1785000000),
+                    (2, "Watched yesterday", 1784900000),
+                    (3, "Watched years ago", 1500000000),
+                    (4, "Older still", 1400000000),
+                ),
+            )
+        )
+        since = datetime.fromtimestamp(1784000000, tz=UTC)
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since)
+
+        assert [i.title for i in items] == ["Watched today", "Watched yesterday"]
+
+    @respx.mock
+    def test_it_parses_the_recorded_sorted_response_from_a_real_server(self, mock_plex: PlexClient):
+        """Replays the recorded PMS 1.43.3 response (plex-safety rule 11).
+
+        The header of `pms_watched_incremental.xml.txt` carries the measurements that decided this
+        design: on a real 9,897-item section, `unwatched=0` and `sort=lastViewedAt:desc` are honoured
+        while every cutoff-filter form is silently ignored. This test pins the PARSE against that
+        exact shape — the ordering, the mark-as-watched with no viewCount, the multiple `<Guid>`
+        children — so a future refactor cannot quietly stop understanding it.
+        """
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        recorded = (FIXTURES / "pms_watched_incremental.xml.txt").read_text()
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=recorded))
+
+        # A cutoff older than all three, so nothing is stopped early and the whole page is parsed.
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=datetime(2025, 1, 1, tzinfo=UTC))
+
+        assert [i.tmdb_id for i in items] == [100001, 100002, 100003]
+        # Newest first, exactly as the recorded response is ordered.
+        assert [i.watched_at.timestamp() for i in items] == [1779572385, 1774305861, 1765677185]
+        assert items[1].watch_count == 3  # viewCount, the frequency signal for a movie
+        assert items[2].watch_count == 1  # a mark-as-watched carries none; it floors at 1
+
+    @respx.mock
+    def test_a_complete_read_asks_for_everything_unsorted(self, mock_plex: PlexClient):
+        """A full read must not narrow OR reorder: it is the only thing that notices an un-watch, and
+        the already-watched filter depends on it being the whole set."""
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text='<MediaContainer size="0" totalSize="0"/>'))
+
+        mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+
+        params = respx.calls.last.request.url.params
+        assert "lastViewedAt>=" not in params
+        assert "sort" not in params
+
     @respx.mock
     def test_a_marked_movie_with_no_playback_still_counts_once(self, mock_plex: PlexClient):
         # A mark-as-watched: unwatched=0 returns it (the whole point — the history API never would),
@@ -732,6 +1181,39 @@ class TestWatchedTitles:
         )
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
         assert mock_plex.watched_titles("1", MediaType.MOVIE, "TOK") == []
+
+    @respx.mock
+    def test_a_malformed_tmdb_guid_is_dropped_not_raised(self, mock_plex: PlexClient):
+        """A guid id that isn't a real integer must be treated like no guid at all — dropped, not a
+        crash that ends the whole watched-titles read for this user (see the same tolerance in
+        `build_library_index`/`_tmdb_guid`)."""
+        self._mock_url(mock_plex)
+        xml = (
+            '<MediaContainer size="2" totalSize="2">'
+            '<Video ratingKey="9" title="Malformed" viewCount="1"><Guid id="tmdb://not-a-number"/></Video>'
+            '<Video ratingKey="10" title="Good" viewCount="1"><Guid id="tmdb://949"/></Video>'
+            "</MediaContainer>"
+        )
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        assert [i.title for i in items] == ["Good"]
+
+    def test_the_configured_timeout_reaches_the_raw_watched_read(self, mock_plex: PlexClient, monkeypatch):
+        """`_read_watched_page` used to hardcode `timeout=45`, ignoring the operator's configured
+        `plex.timeout_s` on the heaviest raw PMS read in the file."""
+        from shortlist.engine.clients import plex_pms
+
+        self._mock_url(mock_plex)
+        mock_plex._timeout = 99
+        seen: list[object] = []
+
+        def fake_get(*_args, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            return httpx.Response(200, text=self._watched_xml(), request=httpx.Request("GET", self._URL))
+
+        monkeypatch.setattr(plex_pms.http_retry, "get", fake_get)
+        mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        assert seen == [99]
 
     @respx.mock
     def test_pages_until_the_reported_total_is_reached(self, mock_plex: PlexClient):
@@ -969,3 +1451,48 @@ class TestTimingHTTPAdapter:
         joined = "\n".join(lines)
         assert "ERR" in joined  # the failed attempt is still timed and logged
         assert "SECRETTOKEN" not in joined
+
+
+class TestWatchedPagingWithoutTotalSize:
+    """`size` on a paged Plex response is the PAGE size, not the library total."""
+
+    _URL = "http://plex.local:32400/library/sections/1/all"
+
+    def _mock_url(self, mock_plex: PlexClient) -> None:
+        mock_plex._server.url.return_value = self._URL
+
+    @staticmethod
+    def _page(start: int, count: int, *, total_size: bool) -> str:
+        videos = "".join(
+            f'<Video ratingKey="{start + i}" title="T{start + i}" year="2000" viewCount="1" '
+            f'lastViewedAt="{1785000000 - start - i}"><Guid id="tmdb://{start + i}"/></Video>'
+            for i in range(count)
+        )
+        attrs = f'size="{count}"'
+        if total_size:
+            attrs += ' totalSize="1200"'
+        return f"<MediaContainer {attrs}>{videos}</MediaContainer>"
+
+    @respx.mock
+    def test_a_response_without_totalSize_still_reads_every_page(self, mock_plex: PlexClient):
+        """Falling back to `size` made the total equal the page length, so the walk stopped after one
+        page and returned 500 of 1200 titles with no warning — a partial watched set reported as
+        complete, which is how already-watched titles get recommended."""
+        self._mock_url(mock_plex)
+        pages = [
+            self._page(0, 500, total_size=False),
+            self._page(500, 500, total_size=False),
+            self._page(1000, 200, total_size=False),  # short page = the end
+        ]
+        calls = {"n": 0}
+
+        def respond(request):
+            body = pages[min(calls["n"], len(pages) - 1)]
+            calls["n"] += 1
+            return httpx.Response(200, text=body)
+
+        respx.get(self._URL).mock(side_effect=respond)
+
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, token="TOK")
+
+        assert len(items) == 1200, f"read stopped early: {len(items)} of 1200"

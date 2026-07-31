@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import func
 
+from shortlist.server.api.schemas_runs import (
+    RunCancelledOut,
+    RunCreatedOut,
+    RunDetailOut,
+    RunLogLineOut,
+    RunsDeletedOut,
+    RunsSummaryOut,
+    RunSummaryOut,
+    RunUserTraceOut,
+)
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import PickRow, RequestCandidate, Run, RunUser, iso_utc
 
@@ -37,20 +48,32 @@ def _run_summary(run: Run) -> dict:
     }
 
 
-@router.get("")
-async def list_runs(request: Request, limit: int = 50, collection: str | None = None) -> list[dict]:
+@router.get("", response_model=list[RunSummaryOut])
+async def list_runs(
+    request: Request,
+    limit: int = Query(50, ge=1, le=200),
+    collection: str | None = None,
+    before_id: int | None = None,
+) -> list[dict]:
     """Recent runs, newest first. `collection` (a row slug) narrows to runs that actually built that
-    row — the ones whose picks carry its slug — so the Rows page can link a row to its own history."""
+    row — the ones whose picks carry its slug — so the Rows page can link a row to its own history.
+
+    `before_id` pages backwards through history: pass the id of the oldest run you already have.
+    Cursor rather than offset because runs are inserted while you read — an offset would skip or
+    repeat rows as the list shifts under you.
+    """
     with request.app.state.sessions() as session:
         query = session.query(Run).order_by(Run.id.desc())
         if collection:
             built_in = session.query(PickRow.run_id).filter(PickRow.collection_slug == collection).distinct()
             query = query.filter(Run.id.in_(built_in))
+        if before_id is not None:
+            query = query.filter(Run.id < before_id)
         runs = query.limit(min(limit, 200)).all()
         return [_run_summary(r) for r in runs]
 
 
-@router.get("/summary")
+@router.get("/summary", response_model=RunsSummaryOut)
 async def runs_summary(request: Request) -> dict:
     """Totals for the Runs page header: how many runs, how many succeeded/failed, and the last one."""
     with request.app.state.sessions() as session:
@@ -67,7 +90,7 @@ async def runs_summary(request: Request) -> dict:
         }
 
 
-@router.delete("")
+@router.delete("", response_model=RunsDeletedOut)
 async def clear_runs(request: Request) -> dict:
     """Delete all run history (the Runs list and per-user detail/traces). Picks are KEPT so the
     dashboard's lifetime metrics survive — only the browsable history is cleared. Changes nothing
@@ -113,17 +136,55 @@ def _with_provenance(breakdown: list[dict], picks: list) -> list[dict]:
     return out
 
 
-def _request_outcomes(session) -> dict[str, dict]:
+def _tmdb_ids_in(blob: object) -> set[int]:
+    """Every ``tmdb_id`` mentioned anywhere in a trace/breakdown blob.
+
+    Walked generically rather than by reaching into named stages: the trace's shape is the engine's,
+    it has gained stages several times, and the page looks an outcome up for any candidate it renders.
+    A structural walk cannot fall behind that; a hand-written list of paths silently would.
+    """
+    found: set[int] = set()
+    stack: list[object] = [blob]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            value = node.get("tmdb_id")
+            if isinstance(value, int):
+                found.add(value)
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
+#: `.in_()` binds one parameter per id and SQLite's compiled ceiling is 999 on older builds, so a
+#: long trace is queried in chunks rather than in one statement that would raise.
+_ID_CHUNK = 500
+
+
+def _request_outcomes(session, tmdb_ids: set[int]) -> dict[str, dict]:
     """What became of every wanted-but-missing title, keyed ``"<tmdb_id>:<media_type>"``.
 
     The trace's "not in your libraries" drops are the titles the curator wanted that no delivery
     library held; some of those become Sonarr/Radarr requests. This joins the request inbox back so
-    the trace can say WHICH — "requested from Radarr" vs "queued for your approval". Run-wide (one row
-    per title, whoever wanted it), so the key is title-only; the trace overlays it only where a drop
-    matches. `hidden` rows are kept: they're still `status="sent"` — the request DID happen, and the
-    trace records what happened, not what's currently in the inbox.
+    the trace can say WHICH — "requested from Radarr" vs "queued for your approval". Request state is
+    run-WIDE (one row per title, whoever wanted it), so the key is title-only.
+
+    Scoped to the ids this trace actually mentions. It used to read the WHOLE ``request_candidates``
+    table for a single user's page — a table that only grows, every night, for ever — and then throw
+    away everything the overlay never looked up.
+
+    `hidden` rows are kept: they're still `status="sent"` — the request DID happen, and the trace
+    records what happened, not what's currently in the inbox.
     """
-    rows = session.query(RequestCandidate).all()
+    if not tmdb_ids:
+        return {}
+    ids = sorted(tmdb_ids)
+    rows = []
+    for start in range(0, len(ids), _ID_CHUNK):
+        rows.extend(
+            session.query(RequestCandidate).filter(RequestCandidate.tmdb_id.in_(ids[start : start + _ID_CHUNK])).all()
+        )
     return {
         f"{r.tmdb_id}:{r.media_type}": {
             "status": r.status,  # pending | sent | rejected
@@ -135,7 +196,7 @@ def _request_outcomes(session) -> dict[str, dict]:
     }
 
 
-@router.get("/{run_id}")
+@router.get("/{run_id}", response_model=RunDetailOut)
 async def get_run(run_id: int, request: Request) -> dict:
     with request.app.state.sessions() as session:
         run = session.get(Run, run_id)
@@ -210,7 +271,7 @@ async def get_run(run_id: int, request: Request) -> dict:
         return {**_run_summary(run), "users": users + pending}
 
 
-@router.get("/{run_id}/users/{user_id}/trace")
+@router.get("/{run_id}/users/{user_id}/trace", response_model=RunUserTraceOut)
 async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dict:
     """The full pipeline trace for one user in one run: seeds derived, each candidate source's
     queries and returns, the web-search / RAG prompts, and the titles proposed. Fetched on demand
@@ -224,6 +285,8 @@ async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dic
         # the picks table + breakdown blob, not in the trace dict. Join it here so the trace page can
         # show "what we built per library" as the last stage without a second fetch.
         picks = session.query(PickRow).filter_by(run_id=run_id, user_id=run_user.user_id).order_by(PickRow.rank).all()
+        trace = run_user.trace or {}
+        breakdown = _with_provenance(run_user.breakdown or [], picks)
         return {
             "username": run_user.user.username,
             "display_name": run_user.user.display_name,
@@ -232,29 +295,54 @@ async def get_run_user_trace(run_id: int, user_id: int, request: Request) -> dic
             # stages: `error` for a failure, `reason` for a (non-failing) skip.
             "error": run_user.error,
             "reason": run_user.reason,
-            "trace": run_user.trace or {},
-            "breakdown": _with_provenance(run_user.breakdown or [], picks),
+            "trace": trace,
+            "breakdown": breakdown,
             # What became of the titles the curator wanted but no library held. The trace marks those
             # "not in your libraries"; this says whether the request subsystem then asked Sonarr/Radarr
             # for them (or queued them for the owner), keyed by "<tmdb_id>:<media_type>" so the UI can
             # overlay the outcome onto that fate. Run-WIDE state (a title is requested once for the
             # whole server, whoever wanted it) — the overlay is scoped by only matching this user's
             # missing titles. Empty on a deployment with requests off.
-            "requests": _request_outcomes(session),
+            "requests": _request_outcomes(session, _tmdb_ids_in(trace) | _tmdb_ids_in(breakdown)),
         }
 
 
-@router.get("/{run_id}/log")
-async def get_run_log(run_id: int, request: Request) -> list[dict]:
-    """The run's stage activity log (history -> candidates -> curating -> delivering, per user).
+@router.get("/{run_id}/log", response_model=list[RunLogLineOut])
+async def get_run_log(
+    run_id: int,
+    request: Request,
+    after_seq: int | None = None,
+    format: str = "json",
+) -> list[dict] | PlainTextResponse:
+    """The run's activity log: per-user stages, then the server-wide phases that follow them.
 
-    In-memory and live: it seeds the run page's activity feed on load and is topped up by the SSE
-    `run.user.stage` stream. Empty for a run whose process has since restarted — the per-user results
-    are the durable record; this is the live/recent debugging feed."""
-    return request.app.state.run_service.run_log(run_id)
+    Served from the live in-memory tail while the run is in flight and from `run_log_lines`
+    afterwards, so a run whose process has since restarted still has a readable log.
+
+    `after_seq` returns only lines past that sequence number, for topping up without refetching the
+    whole feed. `format=text` renders it as plain text for the download button — that branch returns
+    a `Response` directly, which FastAPI hands back untouched, so the schema describes the JSON one.
+    """
+    lines = request.app.state.run_service.run_log(run_id, after_seq=after_seq)
+    if format == "text":
+        return PlainTextResponse(
+            _log_as_text(lines), headers={"Content-Disposition": f'inline; filename="run-{run_id}.log"'}
+        )
+    return lines
 
 
-@router.post("", status_code=202)
+def _log_as_text(lines: list[dict]) -> str:
+    """One line per entry: timestamp, subject, stage, then counts and reason. Deliberately plain —
+    this is what someone pastes into a bug report."""
+    out = []
+    for entry in lines:
+        counts = " ".join(f"{k}={v}" for k, v in (entry.get("counts") or {}).items())
+        parts = [entry.get("ts", ""), entry.get("user", ""), entry.get("stage", ""), counts, entry.get("reason", "")]
+        out.append("  ".join(p for p in parts if p))
+    return "\n".join(out) + ("\n" if out else "")
+
+
+@router.post("", status_code=202, response_model=RunCreatedOut)
 async def trigger_run(body: RunRequest, request: Request) -> dict:
     run_id = await request.app.state.run_service.start_run(
         trigger="manual", dry_run=body.dry_run, user_ids=body.user_ids, collection_ids=body.collection_ids
@@ -262,7 +350,7 @@ async def trigger_run(body: RunRequest, request: Request) -> dict:
     return {"run_id": run_id}
 
 
-@router.post("/{run_id}/cancel")
+@router.post("/{run_id}/cancel", response_model=RunCancelledOut)
 async def cancel_run(run_id: int, request: Request) -> dict:
     """Ask the in-flight run to stop. Cooperative — it finishes the person it's on, then stops, and
     still merges the privacy filters + promotes everyone delivered so far. 409 if it isn't running."""

@@ -1,0 +1,21 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          { "text": "Here's what I found via search: " },
+          {
+            "text": "[{\"title\": \"The Wild Robot\", \"year\": 2024, \"media\": \"movie\"}, {\"title\": \"Severance\", \"year\": 2022, \"media\": \"show\"}]"
+          }
+        ]
+      },
+      "finish_reason": "STOP"
+    }
+  ],
+  "usage_metadata": {
+    "prompt_token_count": 300,
+    "candidates_token_count": 80,
+    "total_token_count": 380
+  }
+}

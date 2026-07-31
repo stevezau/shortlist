@@ -174,6 +174,9 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
                     key: item.title,
                     "vote_average": item.audience_rating,
                     "genre_ids": [1],
+                    # Real TMDB list responses carry the poster path; the request inbox reads it from
+                    # here rather than paying a detail call per title.
+                    "poster_path": f"/poster-{item.tmdb_id}.jpg",
                     ("release_date" if key == "title" else "first_air_date"): f"{item.year}-06-01",
                 }
             )
@@ -195,6 +198,14 @@ def _make_fake_tmdb(state: FakePlexState) -> FastAPI:
     @app.get("/tv/{tmdb_id}/{endpoint}")
     def tv_suggestions(tmdb_id: int, endpoint: str) -> dict:
         return _suggest(shows, tmdb_id, "name")
+
+    # The title detail endpoints — how a poster is recovered for a title a NON-TMDB source surfaced
+    # (Trakt, the web search), which never carries one. Declared after the two-segment routes above so
+    # those keep matching `/movie/123/similar`.
+    @app.get("/movie/{tmdb_id}")
+    @app.get("/tv/{tmdb_id}")
+    def title_detail(tmdb_id: int) -> dict:
+        return {"id": tmdb_id, "poster_path": f"/poster-{tmdb_id}.jpg"}
 
     return app
 

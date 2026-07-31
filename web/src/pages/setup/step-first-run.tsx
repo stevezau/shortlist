@@ -15,6 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { runOutcome } from "@/lib/run-outcome";
+import type { RunFinishedEvent } from "@/lib/types";
 import { api, apiErrorMessage } from "@/lib/api";
 import { useUsers } from "@/lib/queries";
 import { RUN_STAGES, STAGE_LABELS } from "@/lib/run-stages";
@@ -25,7 +27,7 @@ import { cn } from "@/lib/utils";
 import type { StepProps } from "./step-props";
 
 /** What each stage's counts mean, phrased for humans ("113 history · 40 seeds"). */
-function countsLine(counts: Record<string, number>): string {
+function countsLine(counts: Record<string, number | string>): string {
   const entries = Object.entries(counts).filter(
     ([name]) => name !== "position",
   );
@@ -35,7 +37,7 @@ function countsLine(counts: Record<string, number>): string {
 
 interface UserProgress {
   stage: string;
-  counts: Record<string, number>;
+  counts: Record<string, number | string>;
   reason?: string | null;
 }
 
@@ -154,7 +156,9 @@ function ProgressCard({
 export function StepFirstRun({ complete }: StepProps) {
   const usersQuery = useUsers();
   const [progress, setProgress] = useState<Record<string, UserProgress>>({});
-  const [finishedStatus, setFinishedStatus] = useState<string | null>(null);
+  const [finishedStatus, setFinishedStatus] = useState<
+    RunFinishedEvent["status"] | null
+  >(null);
   const [finishedError, setFinishedError] = useState<string | null>(null);
 
   useSSE({
@@ -163,7 +167,7 @@ export function StepFirstRun({ complete }: StepProps) {
         ...current,
         [event.user]: {
           stage: event.stage,
-          counts: event.counts,
+          counts: event.counts ?? {},
           reason: event.reason ?? null,
         },
       })),
@@ -184,7 +188,9 @@ export function StepFirstRun({ complete }: StepProps) {
 
   const started = run.isSuccess;
   const finished = finishedStatus !== null;
-  const failed = finished && finishedStatus !== "ok";
+  const outcome = finishedStatus === null ? null : runOutcome(finishedStatus);
+  const failed = outcome === "failed";
+  const stopped = outcome === "stopped";
 
   return (
     <div className="space-y-6">
@@ -302,7 +308,9 @@ export function StepFirstRun({ complete }: StepProps) {
           className={
             failed
               ? "space-y-3 rounded-lg border border-destructive/50 bg-destructive/10 p-5"
-              : "space-y-3 rounded-lg border border-success/50 bg-success/10 p-5"
+              : stopped
+                ? "space-y-3 rounded-lg border border-warning/50 bg-warning/10 p-5"
+                : "space-y-3 rounded-lg border border-success/50 bg-success/10 p-5"
           }
         >
           <p
@@ -312,22 +320,35 @@ export function StepFirstRun({ complete }: StepProps) {
                 : "inline-flex items-center gap-2 text-lg font-semibold text-success"
             }
           >
-            {failed ? (
+            {failed || stopped ? (
               <TriangleAlert className="h-5 w-5" aria-hidden="true" />
             ) : (
               <PartyPopper className="h-5 w-5" aria-hidden="true" />
             )}
             {failed
               ? "The run failed — no rows were built"
-              : "Rows are live on Plex"}
+              : stopped
+                ? "Stopped — the rows built before you stopped it are live"
+                : "Rows are live on Plex"}
           </p>
-          <Badge variant={finishedStatus === "ok" ? "success" : "destructive"}>
+          {/* "warning", not "destructive", for a stop: the owner did it on purpose. */}
+          <Badge
+            variant={
+              finishedStatus === "ok"
+                ? "success"
+                : stopped
+                  ? "warning"
+                  : "destructive"
+            }
+          >
             run {finishedStatus}
           </Badge>
           <p className="text-sm text-muted-foreground">
             {failed
               ? "Nothing was half-applied — fix the cause and run it again. Full per-user detail is on the Runs page."
-              : 'Tell your users to look for their new row tonight — something like: "Your Plex now has a private Picked-for-You row, built from what you actually watch. Enjoy."'}
+              : stopped
+                ? "Everyone the run reached kept their row, and their privacy filters were applied. Run it again whenever you like — it picks up from where things are."
+                : 'Tell your users to look for their new row tonight — something like: "Your Plex now has a private Picked-for-You row, built from what you actually watch. Enjoy."'}
           </p>
           {failed && finishedError && (
             <div className="space-y-1">

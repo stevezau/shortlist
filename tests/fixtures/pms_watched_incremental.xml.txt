@@ -1,0 +1,65 @@
+<!--
+  PMS 1.43.3 GET /library/sections/{key}/all — the watched read, and what the server does and does
+  NOT honour on it. Recorded 2026-07-30 from a real server (plex-safety rule 11). Titles, ids and
+  the section name are sanitized; attribute names, ordering and the container shape are verbatim.
+
+  WHAT WAS MEASURED, on a movie section with 9,897 items of which 1,077 are watched:
+
+    ?type=1                                       -> totalSize=9897   (whole section)
+    ?type=1&unwatched=0                           -> totalSize=1077   HONOURED
+    ?type=1&unwatched=1                           -> totalSize=8820   HONOURED
+    ?type=1&unwatched=0&sort=lastViewedAt:desc    -> totalSize=1077   HONOURED (order verified below)
+    ?type=1&unwatched=0&sort=lastViewedAt:asc     -> totalSize=1077   HONOURED
+
+    ?type=1&unwatched=0&lastViewedAt>=<epoch>     -> totalSize=1077   *** IGNORED ***
+    ?type=1&unwatched=0&lastViewedAt>>=<epoch>    -> totalSize=1077   *** IGNORED ***
+    ?type=1&unwatched=0&viewedAt>>=<epoch>        -> totalSize=1077   *** IGNORED ***
+    ?type=1&unwatched=0&year>>=2020  (control)    -> totalSize=1077   *** IGNORED ***
+    ?type=1&unwatched=0&lastViewedAt>            -> totalSize=0       parsed, matches nothing
+    ?type=1&unwatched=0&lastViewedAt=<epoch>     -> totalSize=0       exact match, useless here
+
+  THE POINT. A cutoff filter on this endpoint is silently ignored: the response is a 200 with the
+  FULL set, so an incremental read built on it looks like it worked while saving nothing. The
+  `year>>=` control being ignored too shows this is not about `lastViewedAt` — query-param filtering
+  simply does not apply on this endpoint as we call it.
+
+  So `PlexClient.watched_titles(..., since=...)` narrows by ORDERING: it sends
+  `sort=lastViewedAt:desc` (honoured) and stops at the first title older than the cutoff. That is
+  where the saving comes from — one page instead of every page — and it depends only on behaviour
+  this server actually has.
+
+  Note the UNSORTED response's `lastViewedAt` values are in no useful order (first five observed:
+  1576847797, 1513057169, 1592121344, 1541236133, 1500604279), which is why the sort is required
+  rather than merely nice: without it, "stop at the first old one" would stop almost immediately.
+-->
+<!-- This file is a THREE-ITEM excerpt, so its container says 3. The live section
+     reported totalSize=1077 (see the measurements above) — quoting that here would make a
+     single-page replay page forever looking for the other 1074. -->
+<MediaContainer size="3" totalSize="3" allowSync="1" identifier="com.plexapp.plugins.library"
+                librarySectionID="1" librarySectionTitle="Movies" librarySectionUUID="REDACTED-UUID"
+                mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1700000000"
+                offset="0" sortAsc="0" thumb="/:/resources/movie.png" title1="Movies"
+                title2="All Movies" viewGroup="movie" viewMode="65592">
+  <!-- sort=lastViewedAt:desc — newest watch first. The three epochs below are the real ordering
+       observed on the live server (1779572385 > 1774305861 > 1765677185). -->
+  <Video ratingKey="10001" key="/library/metadata/10001" guid="plex://movie/REDACTED"
+         type="movie" title="Sanitised Movie A" year="2019" viewCount="1"
+         lastViewedAt="1779572385" addedAt="1700000001" updatedAt="1700000002" duration="7200000">
+    <Guid id="imdb://tt0000001"/>
+    <Guid id="tmdb://100001"/>
+    <Guid id="tvdb://200001"/>
+  </Video>
+  <Video ratingKey="10002" key="/library/metadata/10002" guid="plex://movie/REDACTED"
+         type="movie" title="Sanitised Movie B" year="2021" viewCount="3"
+         lastViewedAt="1774305861" addedAt="1700000003" updatedAt="1700000004" duration="6600000">
+    <Guid id="imdb://tt0000002"/>
+    <Guid id="tmdb://100002"/>
+  </Video>
+  <!-- A mark-as-watched: unwatched=0 returns it (the playback-history API never would), but it
+       carries no viewCount. `watch_count` floors at 1 so it still weighs as one watch. -->
+  <Video ratingKey="10003" key="/library/metadata/10003" guid="plex://movie/REDACTED"
+         type="movie" title="Sanitised Movie C" year="1995"
+         lastViewedAt="1765677185" addedAt="1700000005" updatedAt="1700000006" duration="9000000">
+    <Guid id="tmdb://100003"/>
+  </Video>
+</MediaContainer>

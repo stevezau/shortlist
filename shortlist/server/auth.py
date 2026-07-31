@@ -15,6 +15,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from loguru import logger
+from pydantic import BaseModel, ConfigDict
 
 PLEXTV = "https://plex.tv"
 PRODUCT = "Shortlist"
@@ -101,6 +102,109 @@ def _client_headers(client_id: str) -> dict[str, str]:
     }
 
 
+async def owned_machine_ids(client_id: str, token: str) -> set[str]:
+    """The machine ids of every Plex server this token's account **owns**.
+
+    plex.tv's ``owned`` flag on ``/api/v2/resources`` is the only thing that separates a server you
+    own from one merely shared with you — both appear in the listing, and Shortlist writes
+    collections, labels and share filters, which is owner-level work on someone else's server.
+
+    Raises ``httpx.HTTPError`` on ANY failure to get a usable answer — transport, status, or a body
+    that is not the list of resources we expect. Callers fail closed on that one exception type, so
+    a malformed 200 must not escape as something else: a captive portal or proxy answering
+    ``200 text/html`` used to surface as an unhandled 500 with nothing in the log.
+    """
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(
+            f"{PLEXTV}/api/v2/resources?includeHttps=1",
+            headers={**_client_headers(client_id), "X-Plex-Token": token},
+        )
+    response.raise_for_status()
+    try:
+        resources = response.json()
+    except ValueError as e:  # HTML/XML from a portal or proxy, not JSON
+        raise httpx.HTTPError(f"plex.tv returned a non-JSON resources body: {type(e).__name__}") from e
+    if not isinstance(resources, list):
+        raise httpx.HTTPError(f"plex.tv returned {type(resources).__name__}, expected a list of resources")
+    # An EMPTY list is a legitimate answer (this account has no resources). A non-empty list with no
+    # objects in it is not a resources payload at all, and must not be reported as "owns nothing" —
+    # that tells the owner they don't own a Plex server when plex.tv actually returned garbage.
+    if resources and not any(isinstance(entry, dict) for entry in resources):
+        raise httpx.HTTPError("plex.tv returned a list with no resource objects")
+
+    owned: set[str] = set()
+    for entry in resources:
+        if not isinstance(entry, dict):
+            continue
+        machine_id = entry.get("clientIdentifier")
+        provides = entry.get("provides")
+        # `owned` is compared to True, NOT tested for truthiness: the string "0" and the string
+        # "false" are both truthy in Python, so a plex.tv response that ever serialised the flag as
+        # a string would hand back someone else's server as OWNED — failing OPEN on the one check
+        # that decides who may write to a stranger's PMS. `1` is accepted because JSON booleans and
+        # Plex's older 0/1 integers are both legitimate; a string never is.
+        if entry.get("owned") not in (True, 1):
+            continue
+        # "server" as its own capability, not a substring: `provides` is a comma-separated list, so
+        # matching loosely would accept a hypothetical "media-server-client".
+        if not (isinstance(provides, str) and "server" in provides.split(",")):
+            continue
+        if isinstance(machine_id, str) and machine_id:
+            owned.add(machine_id)
+    return owned
+
+
+async def _seeded_token_account_id(state) -> int | None:
+    """The Plex account id that this instance's env-seeded ``PLEX_TOKEN`` belongs to, or None.
+
+    Only meaningful BEFORE a server is linked. `docker-compose` can seed a real, working Plex token
+    with no server row — and that token is the thing worth stealing here, so it is also the thing
+    that says whose instance this is.
+
+    Returns None in the two cases where nothing is identified, and those are deliberately different
+    from an error:
+
+    * **No token seeded** — nothing names an owner; the caller falls back to a weaker bar.
+    * **The token is dead** (plex.tv answers 401/403) — a revoked token grants nobody anything, so it
+      is not a secret worth locking the wizard over. Failing closed here would BRICK first-run login
+      for anyone whose seeded token had since been rotated, and protect nothing by doing it.
+
+    Raises ``HTTPException(503)`` if plex.tv cannot be reached at all: "couldn't ask" is not "no
+    owner", and treating it as one would reopen the very hole this closes.
+    """
+    from shortlist.server.settings_store import SettingsStore
+
+    with state.sessions() as session:
+        seeded = SettingsStore(session, state.secrets).get("plex.token")
+    if not seeded:
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.get(
+                f"{PLEXTV}/api/v2/user",
+                headers={**_client_headers(state.client_id), "X-Plex-Token": seeded},
+            )
+    except httpx.HTTPError as e:
+        logger.warning("login deferred: could not identify the seeded Plex token ({})", type(e).__name__)
+        raise HTTPException(
+            status_code=503, detail="could not reach plex.tv to confirm this instance — try again in a moment"
+        ) from e
+
+    if response.status_code in (401, 403):
+        logger.info("seeded Plex token is no longer valid — falling back to the owns-a-server check")
+        return None
+    try:
+        response.raise_for_status()
+        return int(response.json()["id"])
+    except (httpx.HTTPError, ValueError, TypeError, KeyError) as e:
+        # A body we can't read is not an answer. Fail closed rather than silently downgrading.
+        logger.warning("login deferred: plex.tv gave an unreadable account for the seeded token")
+        raise HTTPException(
+            status_code=503, detail="could not reach plex.tv to confirm this instance — try again in a moment"
+        ) from e
+
+
 def session_serializer(secret: str) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(secret, salt="shortlist-session")
 
@@ -118,6 +222,30 @@ def read_session(request: Request) -> dict | None:
 def _check_csrf(request: Request) -> None:
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
         raise HTTPException(status_code=403, detail=f"missing {CSRF_HEADER} header")
+
+
+# Failed API-token attempts, globally. The token is a 32-char urlsafe secret so brute force is not a
+# realistic threat, but an unthrottled `Bearer` check is a free oracle: it answers on every request,
+# at network speed, with no lockout and nothing in the log to notice. A global cap is the right shape
+# here rather than per-IP — behind `--forwarded-allow-ips=*` (the shipped default, so a reverse proxy
+# on any host works out of the box) `request.client.host` comes from a header the caller controls, so
+# a per-IP bucket is trivially evaded by rotating it.
+_TOKEN_FAILS: deque[float] = deque()
+_TOKEN_MAX_FAILS = 20
+_TOKEN_WINDOW_S = 60.0
+
+
+def _rate_limit_token_failures() -> None:
+    """Raise 429 once failed token attempts exceed the window's budget.
+
+    Only FAILURES are counted, so a busy legitimate integration is never throttled — the limit is
+    invisible unless something is guessing.
+    """
+    now = time.monotonic()
+    while _TOKEN_FAILS and now - _TOKEN_FAILS[0] > _TOKEN_WINDOW_S:
+        _TOKEN_FAILS.popleft()
+    if len(_TOKEN_FAILS) >= _TOKEN_MAX_FAILS:
+        raise HTTPException(status_code=429, detail="Too many failed API-token attempts — wait a minute.")
 
 
 def require_owner(request: Request) -> dict:
@@ -139,6 +267,9 @@ def require_owner(request: Request) -> dict:
     if bearer is not None:
         if owner_id is not None and request.app.state.verify_api_token(bearer):
             return {"account_id": owner_id, "via": "api_token"}
+        _TOKEN_FAILS.append(time.monotonic())
+        logger.warning("rejected an invalid or revoked API token")
+        _rate_limit_token_failures()
         raise HTTPException(status_code=401, detail="invalid or revoked API token")
     _check_csrf(request)
     session = read_session(request)
@@ -180,7 +311,23 @@ def require_setup_access(request: Request) -> dict:
     return session or {"unclaimed": True}
 
 
-@router.post("/pin")
+class PinOut(BaseModel):
+    """A freshly created plex.tv PIN. The `code` is what the owner types into plex.tv/link — it is
+    short-lived and useless without the same `client_id`, and it is not a Shortlist credential.
+
+    ``extra="allow"`` is on every response model in this file: a strict Pydantic response model
+    silently DROPS any key it does not declare, so a field missed here would vanish from the payload
+    rather than fail loudly. The model documents the shape; it never filters it.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    id: int
+    code: str
+    client_id: str
+
+
+@router.post("/pin", response_model=PinOut)
 async def create_pin(request: Request) -> dict:
     _rate_limit_pin(request)
     async with httpx.AsyncClient() as client:
@@ -195,7 +342,19 @@ async def create_pin(request: Request) -> dict:
     return {"id": data["id"], "code": data["code"], "client_id": request.app.state.client_id}
 
 
-@router.get("/pin/{pin_id}")
+class PinStatusOut(BaseModel):
+    """The poll result. Until the owner approves in Plex it is `linked: false` and the identity
+    fields are null; the Plex auth token is NEVER part of this payload (it is held server-side,
+    keyed to the session, so an XSS in the SPA cannot steal it)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    linked: bool
+    account_id: int | None = None
+    username: str | None = None
+
+
+@router.get("/pin/{pin_id}", response_model=PinStatusOut)
 async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
     """Poll the PIN; once linked, verify the account is the server owner and set the session."""
     _rate_limit_poll()
@@ -216,9 +375,50 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
     account_id = int(info["id"])
 
     owner_id = state.owner_account_id()
-    if owner_id is not None and account_id != owner_id:
-        logger.warning("login rejected: account {} is not the server owner", account_id)
-        raise HTTPException(status_code=403, detail="only the server owner can sign in to Shortlist")
+    if owner_id is not None:
+        if account_id != owner_id:
+            logger.warning("login rejected: Plex account {} is not the owner of the linked server", account_id)
+            raise HTTPException(status_code=403, detail="only the server owner can sign in to Shortlist")
+    else:
+        # Unclaimed instance: there is no stored owner to compare against, so who may claim it is
+        # decided here. Two bars, strongest first.
+        seeded_owner = await _seeded_token_account_id(state)
+        if seeded_owner is not None:
+            # The environment seeded a WORKING `PLEX_TOKEN`. That token names exactly one Plex
+            # account, and it is the secret an attacker would come here to steal — so the bar is
+            # "you ARE that account", not merely "you own some Plex server somewhere". Without this,
+            # anyone running their own PMS cleared the ownership check, took a session, linked their
+            # own machine id, and owned an instance holding someone else's live Plex token.
+            if account_id != seeded_owner:
+                logger.warning(
+                    "login rejected: Plex account {} is not the account this instance's seeded token belongs to",
+                    account_id,
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail="This Shortlist was set up with another account's Plex token. Sign in as that account.",
+                )
+        else:
+            # Nothing here identifies an owner (no seeded token, or the seeded one is dead and so
+            # worth nothing to a thief). Fall back to the weaker bar: someone who owns NO Plex server
+            # can never legitimately finish setup, since Shortlist only ever writes to a server you
+            # own. A friend who merely has a share on someone's server lands here and is turned away.
+            try:
+                owned = await owned_machine_ids(state.client_id, token)
+            except httpx.HTTPError as e:
+                # Fail CLOSED. An unreachable plex.tv must never read as "sure, they own a server".
+                logger.warning("login deferred: could not confirm server ownership with plex.tv ({})", type(e).__name__)
+                raise HTTPException(
+                    status_code=503, detail="could not reach plex.tv to confirm your server — try again in a moment"
+                ) from e
+            if not owned:
+                logger.warning("login rejected: Plex account {} does not own a Plex server", account_id)
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Shortlist has to be set up by the owner of a Plex server, and this account does not own one."
+                    ),
+                )
 
     payload = {"account_id": account_id, "username": info.get("username") or info.get("title") or ""}
     cookie = session_serializer(state.session_secret).dumps(payload)
@@ -238,7 +438,25 @@ async def poll_pin(pin_id: int, request: Request, response: Response) -> dict:
     return {"linked": True, "account_id": account_id, "username": payload["username"]}
 
 
-@router.get("/session")
+class SessionOut(BaseModel):
+    """Who the caller is, and whether this instance demands a sign-in at all.
+
+    The signed cookie's contents are spread into the response, so `account_id`/`username` are
+    present only once signed in — they are declared optional rather than left to `extra`, so the
+    SPA gets real types for the two fields it actually reads.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    authenticated: bool
+    # Not "has someone claimed it": an instance holding a Plex token seeded from the environment has
+    # no owner and still holds something worth stealing, so it demands a sign-in too.
+    login_required: bool
+    account_id: int | None = None
+    username: str | None = None
+
+
+@router.get("/session", response_model=SessionOut)
 async def get_session(request: Request) -> dict:
     # `login_required` is what tells the SPA whether to open the wizard or the login screen. It is
     # NOT "has someone claimed it" — an instance with a secret seeded from the environment has no
@@ -250,7 +468,13 @@ async def get_session(request: Request) -> dict:
     return {"authenticated": True, "login_required": login_required, **session}
 
 
-@router.post("/logout")
+class LogoutOut(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    ok: bool
+
+
+@router.post("/logout", response_model=LogoutOut)
 async def logout(response: Response) -> dict:
     response.delete_cookie(SESSION_COOKIE)
     return {"ok": True}

@@ -1,7 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Users as UsersIcon } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
+
+import { toast } from "sonner";
+
+import { apiErrorMessage } from "@/lib/api";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { OwnerNote } from "@/components/owner-note";
@@ -33,6 +37,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { profileName } from "@/lib/user-profile";
+import type { User } from "@/lib/types";
 import { formatHitRate, timeAgo } from "@/lib/format";
 import {
   queryKeys,
@@ -53,7 +59,49 @@ function UsersSkeleton() {
 
 export function UsersPage() {
   const usersQuery = useUsers();
+  const navigate = useNavigate();
   const patchUser = usePatchUser();
+
+  /**
+   * Toggle one person, and say so immediately.
+   *
+   * Turning someone OFF removes their rows from Plex and re-merges every account's share filter
+   * before the request returns — seconds of real work on a shared server. Waiting for the response
+   * to give feedback made the click look ignored, and the only thing that eventually appeared was a
+   * generic job toast ("Remove a disabled person's rows") that named the machinery rather than the
+   * decision. This names the person and the consequence, up front, and resolves in place.
+   */
+  const toggleUser = (user: User, enabled: boolean) => {
+    const who = user.display_name || user.username;
+    const id = `user-toggle-${user.id}`;
+    toast.loading(enabled ? `Turning on ${who}…` : `Turning off ${who}…`, {
+      id,
+      description: enabled
+        ? "They get a row on the next run. Restoring their access to the shared rows now."
+        : "Removing their rows from Plex and updating everyone's share filters.",
+    });
+    patchUser.mutate(
+      { id: user.id, patch: { enabled } },
+      {
+        onSuccess: () =>
+          toast.success(enabled ? `${who} is on` : `${who} is off`, {
+            id,
+            description: enabled
+              ? "Their row is rebuilt on the next run."
+              : "Their rows are off Plex and everyone else's filters are updated.",
+            action: {
+              label: "Jobs",
+              onClick: () => navigate("/jobs"),
+            },
+          }),
+        onError: (error) =>
+          toast.error(`Couldn't turn ${enabled ? "on" : "off"} ${who}`, {
+            id,
+            description: apiErrorMessage(error, "The change was not saved."),
+          }),
+      },
+    );
+  };
   const setAll = useSetAllUsersEnabled();
   const queryClient = useQueryClient();
   const [confirmDisableOpen, setConfirmDisableOpen] = useState(false);
@@ -64,6 +112,20 @@ export function UsersPage() {
   // roster again — so someone newly invited to Plex, and the owner's own row, never appeared.
   const sync = useMutation({
     mutationFn: api.syncUsers,
+    // A sync is a Plex WRITER (it renames collections when a nickname changes), so it waits for a
+    // run to finish rather than writing underneath it. Without this the button would just stop
+    // spinning and nothing would visibly change — the roster is unchanged because it has not run yet.
+    onSuccess: (result) =>
+      result.queued
+        ? toast.success("Sync queued", {
+            description:
+              "A run is using Plex right now, so this will happen the moment it finishes.",
+          })
+        : toast.success(
+            result.added || result.updated
+              ? `Synced — ${result.added} new, ${result.updated} updated`
+              : "Synced — no changes",
+          ),
     onSettled: () =>
       queryClient.invalidateQueries({ queryKey: queryKeys.users }),
   });
@@ -85,10 +147,11 @@ export function UsersPage() {
               <RefreshCw aria-hidden="true" />
               Sync users
             </Button>
+            {/* Neither trigger carries `loading` — both merely OPEN a dialog; the mutation (and its
+                loading state) belongs to the confirm button inside it. */}
             <Button
               variant="outline"
               onClick={() => setConfirmEnableOpen(true)}
-              loading={setAll.isPending && setAll.variables === true}
             >
               Enable all
             </Button>
@@ -260,19 +323,19 @@ export function UsersPage() {
                         {formatHitRate(user.hit_rate)}
                       </TableCell>
                       <TableCell className="text-right">
+                        {/* Gated on the PRESET, not on `restricted` — plex.tv sets that for every Plex
+                            Home user, so keying on it greyed out ordinary managed accounts that can
+                            perfectly well have a row (#20). */}
                         <Switch
-                          checked={user.enabled && !user.restricted}
-                          disabled={user.restricted}
+                          checked={user.enabled && !user.restriction_profile}
+                          disabled={Boolean(user.restriction_profile)}
                           title={
-                            user.restricted
-                              ? "Plex parental controls hide all collections from this account — remove the age restriction to enable"
+                            user.restriction_profile
+                              ? `Plex's ${profileName(user)} restriction profile hides every collection from this account — set the profile to None in Plex to enable`
                               : undefined
                           }
                           onCheckedChange={(enabled) =>
-                            patchUser.mutate({
-                              id: user.id,
-                              patch: { enabled },
-                            })
+                            toggleUser(user, enabled)
                           }
                           aria-label={`Shortlist row for ${user.username}`}
                         />

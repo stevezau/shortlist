@@ -8,12 +8,16 @@ worker thread (the Arr/TMDB clients are sync) and respects ``dry_run``.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from loguru import logger
+from pydantic import BaseModel, Field
 
 from shortlist.engine.models import MediaType, MissingTitle
 from shortlist.engine.requests import request_titles
+from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Event, RequestCandidate, iso_utc
 
@@ -23,20 +27,22 @@ router = APIRouter(prefix="/requests", tags=["requests"], dependencies=[Depends(
 _STATUS_ORDER = {"pending": 0, "sent": 1, "rejected": 2}
 
 
-class RequestWhyOut(BaseModel):
+class RequestWhyOut(PassthroughModel):
     user: str  # whose taste surfaced it
     row: str  # the row that wanted it (the name the user sees)
     seed: str  # the history title behind it ("because you watched …"); "" for seedless sources
     source: str  # the candidate source that produced it
 
 
-class RequestCandidateOut(BaseModel):
+class RequestCandidateOut(PassthroughModel):
     id: int
     tmdb_id: int
     media_type: str
     title: str
     year: int | None
     imdb_id: str = ""  # "tt…" for a direct IMDb link; "" -> the UI falls back to an IMDb search
+    # TMDB poster path ("/abc.jpg"). The UI builds the image URL and its size; "" -> placeholder tile.
+    poster_path: str = ""
     rating: float
     vote_count: int
     demand: int
@@ -54,8 +60,18 @@ class RequestCandidateOut(BaseModel):
 
 
 class RequestAction(BaseModel):
-    ids: list[int]
+    #: Bounded because every handler feeds this straight into `.in_()`. SQLite's compiled parameter
+    #: ceiling (SQLITE_MAX_VARIABLE_NUMBER, 999 on older builds) turns an over-long list into an
+    #: OperationalError — a 500 with a SQL string in it — rather than a refusal the caller can read.
+    ids: list[int] = Field(max_length=1000)
     dry_run: bool = False
+
+
+#: Hard ceiling on one inbox read. The sent log only grows — every run that wants a title the library
+#: lacks adds a row — so an unbounded read is a query that gets slower for ever and eventually times
+#: out the page. Pending is what the owner acts on and is self-limiting (you clear it); the tail is
+#: history, and the sort puts pending first, so a cap can only ever truncate the oldest history.
+MAX_INBOX = 500
 
 
 @router.get("")
@@ -64,10 +80,15 @@ def list_requests(request: Request) -> list[RequestCandidateOut]:
 
     Rows the owner cleared from the Sent log (``hidden``) are excluded — they stay in the DB as sent
     tombstones (so the title isn't re-requested) but never show in the UI again.
+
+    Capped at :data:`MAX_INBOX`. The cap is applied AFTER the status sort, in Python, because the
+    ordering is by (status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows
+    rather than the oldest history.
     """
     with request.app.state.sessions() as session:
         rows = session.query(RequestCandidate).filter(~RequestCandidate.hidden).all()
     rows.sort(key=lambda r: (_STATUS_ORDER.get(r.status, 9), -r.demand, -r.rating))
+    rows = rows[:MAX_INBOX]
     return [
         RequestCandidateOut(
             id=r.id,
@@ -76,6 +97,7 @@ def list_requests(request: Request) -> list[RequestCandidateOut]:
             title=r.title,
             year=r.year,
             imdb_id=r.imdb_id or "",
+            poster_path=r.poster_path or "",
             rating=r.rating,
             vote_count=r.vote_count,
             demand=r.demand,
@@ -92,7 +114,19 @@ def list_requests(request: Request) -> list[RequestCandidateOut]:
     ]
 
 
-@router.post("/reject")
+class RejectedOut(PassthroughModel):
+    """How many rows the action actually touched — not how many ids were sent. Each of the four
+    inbox actions skips the statuses it does not own, so the count is the only honest receipt.
+
+    ``extra="allow"`` is on every response model here (and every nested one): a strict model would
+    silently DROP any key the handler returns but the model has not declared, so a field missed
+    here would vanish from the payload rather than fail loudly.
+    """
+
+    rejected: int
+
+
+@router.post("/reject", response_model=RejectedOut)
 def reject_requests(body: RequestAction, request: Request) -> dict:
     """Permanently dismiss the given titles.
 
@@ -110,7 +144,11 @@ def reject_requests(body: RequestAction, request: Request) -> dict:
     return {"rejected": len(rows)}
 
 
-@router.post("/restore")
+class RestoredOut(PassthroughModel):
+    restored: int
+
+
+@router.post("/restore", response_model=RestoredOut)
 def restore_requests(body: RequestAction, request: Request) -> dict:
     """Un-reject: move rejected titles back to the pending queue (Waiting) so they can be sent again.
 
@@ -131,7 +169,11 @@ def restore_requests(body: RequestAction, request: Request) -> dict:
     return {"restored": len(rows)}
 
 
-@router.post("/delete")
+class DeletedOut(PassthroughModel):
+    deleted: int
+
+
+@router.post("/delete", response_model=DeletedOut)
 def delete_requests(body: RequestAction, request: Request) -> dict:
     """Remove the given titles from the inbox entirely, leaving no trace.
 
@@ -157,7 +199,11 @@ def delete_requests(body: RequestAction, request: Request) -> dict:
     return {"deleted": count}
 
 
-@router.post("/clear")
+class ClearedOut(PassthroughModel):
+    cleared: int
+
+
+@router.post("/clear", response_model=ClearedOut)
 def clear_requests(body: RequestAction, request: Request) -> dict:
     """Clear the given SENT titles from the send log — hide them, don't delete them.
 
@@ -184,10 +230,16 @@ def clear_requests(body: RequestAction, request: Request) -> dict:
 
 @router.get("/status")
 async def get_arr_status(request: Request) -> dict[int, str | None]:
-    """Fetch Arr download status for all sent requests. Returns {request_id: 'downloaded' | 'downloading' | ...}.
+    """Arr download status for every request row. Returns {request_id: 'downloaded' | 'downloading' | ...}.
 
-    Only queries Arr for titles with status='sent' — pending/rejected are skipped. Runs in executor
-    since Arr clients are sync. A title not found in Arr appears as None in the map.
+    Covers waiting rows as well as sent ones. A waiting title is normally absent from the Arrs — the
+    nightly pass drops anything they already track — so a status there means the owner (or another
+    tool) added it by hand since, which is exactly the case where "why is this still waiting?" needs
+    an answer. Rejected rows are skipped: nothing is going to happen to them.
+
+    Whole-library maps, not per-title lookups, so the cost is a handful of calls no matter how long
+    the inbox is. Runs in an executor since the Arr clients are sync. A title neither app tracks
+    appears as None.
     """
     state = request.app.state
     svc = state.run_service
@@ -200,36 +252,68 @@ async def get_arr_status(request: Request) -> dict[int, str | None]:
         from shortlist.engine.clients.arr import RadarrClient, SonarrClient
 
         with state.sessions() as session:
-            rows = session.query(RequestCandidate).filter(RequestCandidate.status == "sent").all()
+            rows = session.query(RequestCandidate).filter(RequestCandidate.status.in_(("pending", "sent"))).all()
+
+        # One fetch per app up front. A failure here is not fatal: the inbox simply shows no status
+        # rather than erroring, which is what it did before this endpoint existed.
+        movies: dict[int, str] = {}
+        shows_by_tvdb: dict[int, str] = {}
+        shows_by_tmdb: dict[int, str] = {}
+        if cfg.radarr:
+            try:
+                movies = RadarrClient(cfg.radarr).status_by_tmdb()
+            except Exception as e:
+                logger.warning("request status: Radarr lookup failed ({})", e)
+        if cfg.sonarr:
+            try:
+                shows_by_tvdb, shows_by_tmdb = SonarrClient(cfg.sonarr).status_by_ids()
+            except Exception as e:
+                logger.warning("request status: Sonarr lookup failed ({})", e)
 
         statuses: dict[int, str | None] = {}
-        radarr = RadarrClient(cfg.radarr) if cfg.radarr else None
-        sonarr = SonarrClient(cfg.sonarr) if cfg.sonarr else None
-
         for row in rows:
-            try:
-                if row.media_type == "movie" and radarr:
-                    result = radarr.get_status(row.tmdb_id)
-                    statuses[row.id] = result["status"] if result else None
-                elif row.media_type == "tv" and sonarr:
-                    # Sonarr keys on tvdb_id; look it up via the TMDB client already built for this context.
-                    external = tmdb.external_ids(row.tmdb_id, MediaType.TV)
-                    tvdb_id = external.get("tvdb_id")
-                    if tvdb_id:
-                        result = sonarr.get_status_by_tvdb(tvdb_id)
-                        statuses[row.id] = result["status"] if result else None
-                    else:
-                        statuses[row.id] = None
-            except Exception:
-                # Arr errors shouldn't block the whole status fetch — just mark this one unknown
-                statuses[row.id] = None
+            if row.media_type == "movie":
+                statuses[row.id] = movies.get(row.tmdb_id)
+                continue
+            # Sonarr v4 carries tmdbId on every series, so the map answers directly. On v3 it doesn't,
+            # and only then is a per-title TMDB→TVDB lookup worth paying for (cached in the client).
+            status = shows_by_tmdb.get(row.tmdb_id)
+            if status is None and shows_by_tvdb and not shows_by_tmdb:
+                try:
+                    tvdb_id = tmdb.external_ids(row.tmdb_id, MediaType.SHOW).get("tvdb_id")
+                # Deliberately NOT a bare `except Exception`: this used to pass `MediaType.TV`, which
+                # does not exist, and the AttributeError was swallowed to a debug line — so on Sonarr
+                # v3 the fallback silently no-op'd for ever and every show showed a blank status. Only
+                # a transport failure or the TMDB client's own HTTP error is tolerable here; anything
+                # else is a bug and must be loud.
+                except (httpx.HTTPError, RuntimeError) as e:
+                    logger.debug("request status: tvdb lookup for {!r} failed ({})", row.title, e)
+                    tvdb_id = None
+                status = shows_by_tvdb.get(tvdb_id) if tvdb_id else None
+            statuses[row.id] = status
 
         return statuses
 
     return await asyncio.get_running_loop().run_in_executor(None, _fetch_statuses)
 
 
-@router.post("/send")
+class SendOutcomeOut(PassthroughModel):
+    """What the Arr said about one title. `status` is the engine's outcome — "requested",
+    "would_request" on a dry run, or a skip/error reason the owner can act on."""
+
+    id: int
+    title: str
+    status: str
+    detail: str
+
+
+class SendOut(PassthroughModel):
+    sent: int  # counts "would_request" too, so a dry run still reports what it would have done
+    dry_run: bool
+    outcomes: list[SendOutcomeOut]
+
+
+@router.post("/send", response_model=SendOut)
 async def send_requests(body: RequestAction, request: Request) -> dict:
     """Ask Sonarr/Radarr for the chosen pending titles.
 
@@ -275,6 +359,9 @@ async def send_requests(body: RequestAction, request: Request) -> dict:
                     row.arr_slug = outcome.arr_slug  # so the sent log deep-links to the arr page
                 if not body.dry_run and outcome.status == "requested":
                     row.status = "sent"
+                    # Stamped once, here, so "watched since sent" can compare against the real send
+                    # time rather than an `updated_at` that later edits move around.
+                    row.sent_at = datetime.now(UTC)
                 outcomes.append({"id": row.id, "title": row.title, "status": outcome.status, "detail": outcome.detail})
             session.add(
                 Event(scope="requests.send", level="info", message={"dry_run": body.dry_run, "outcomes": outcomes})

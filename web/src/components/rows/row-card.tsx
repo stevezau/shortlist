@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import {
   Eraser,
+  Image as ImageIcon,
   ListChecks,
   Pen,
   Trash2,
@@ -8,7 +9,7 @@ import {
   Users as UsersIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { Badge } from "@/components/ui/badge";
@@ -65,13 +66,22 @@ export function RowCard({
     collection.name_template || collection.name,
   );
 
-  useEffect(() => {
+  // Adjusted during render rather than in an effect: `openRename` is a one-shot request from the
+  // parent, so this reacts to the prop *changing* to true. Tracking the previous value keeps that
+  // edge-triggered behaviour without the effect's extra commit. onRenameOpened is the parent's
+  // acknowledgement and must not fire during render, so it stays in an effect keyed on the open
+  // state it acknowledges.
+  const [prevOpenRename, setPrevOpenRename] = useState(openRename);
+  if (prevOpenRename !== openRename) {
+    setPrevOpenRename(openRename);
     if (openRename) {
       setRenameTo(collection.name_template || collection.name);
       setRenameOpen(true);
-      onRenameOpened?.();
     }
-  }, [openRename]);
+  }
+  useEffect(() => {
+    if (openRename) onRenameOpened?.();
+  }, [openRename, onRenameOpened]);
   const rename = useMutation({
     mutationFn: () => {
       const oldTemplate = collection.name_template || collection.name;
@@ -116,7 +126,9 @@ export function RowCard({
   return (
     <Card className={cn(!collection.enabled && "opacity-60")}>
       <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
-        {collection.poster?.has_image && (
+        {/* The slot is always here, poster or not — otherwise a row without one loses 11rem of
+            leading space and its name no longer lines up with every other card in the list. */}
+        {collection.poster?.has_image ? (
           <img
             // Cache-bust on everything that changes the rendered image, so editing a text poster's
             // title/style refreshes the thumbnail instead of showing the stale one.
@@ -132,6 +144,14 @@ export function RowCard({
             aria-hidden="true"
             className="h-16 w-11 shrink-0 rounded border object-cover"
           />
+        ) : (
+          <div
+            aria-hidden="true"
+            title="No poster — Plex uses its own artwork for this row"
+            className="flex h-16 w-11 shrink-0 items-center justify-center rounded border border-dashed bg-muted/40"
+          >
+            <ImageIcon className="size-4 text-muted-foreground/60" />
+          </div>
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -219,20 +239,20 @@ export function RowCard({
             <Eraser aria-hidden="true" />
             Remove from Plex
           </Button>
-          {!isDefault && (
-            <Button
-              variant="ghost"
-              size="sm"
-              loading={remove.isPending}
-              onClick={() => setConfirmOpen(true)}
-              aria-label={`Delete ${collection.name}`}
-              title="Delete this row for good"
-              className="text-destructive hover:text-destructive"
-            >
-              {!remove.isPending && <Trash2 aria-hidden="true" />}
-              Delete
-            </Button>
-          )}
+          {/* The default row is deletable too. Hiding this on one card left the first row in the
+              list without the button every other row had, and nothing on screen said why. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={remove.isPending}
+            onClick={() => setConfirmOpen(true)}
+            aria-label={`Delete ${collection.name}`}
+            title="Delete this row for good"
+            className="text-destructive hover:text-destructive"
+          >
+            {!remove.isPending && <Trash2 aria-hidden="true" />}
+            Delete
+          </Button>
         </div>
         {/* The Switch mirrors the saved row, so a rejected save just snaps it back — silently
             reverting is exactly what a click that never landed looks like. */}

@@ -6,6 +6,7 @@ import {
   Send,
   Star,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
@@ -23,7 +24,7 @@ import { Segmented } from "@/components/segmented";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router";
 
 import { apiErrorMessage } from "@/lib/api";
 import { formatDate, settingBool, settingString } from "@/lib/format";
@@ -39,6 +40,7 @@ import {
 } from "@/lib/queries";
 import { sourceShortLabel } from "@/lib/sources";
 import type { RequestCandidate } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 function RequestsSkeleton() {
   return (
@@ -47,6 +49,43 @@ function RequestsSkeleton() {
         <Skeleton key={i} className="h-16 w-full" />
       ))}
     </div>
+  );
+}
+
+/**
+ * The title's artwork — the whole point of the inbox being visual rather than a wall of names.
+ *
+ * TMDB's image CDN, built from the stored path: `w154` is the smallest bucket that still looks sharp
+ * at this size on a 2x display, so a 40-title inbox costs a few hundred KB rather than megabytes.
+ * `loading="lazy"` keeps the off-screen ones off the wire entirely. A title with no artwork (TMDB
+ * has none, or the row predates 0044) gets a placeholder tile of the same size, so rows never jump.
+ */
+function Poster({ item }: { item: RequestCandidate }) {
+  // TMDB's CDN is a third-party host this app never checks: a server behind a restrictive network,
+  // an ad-blocker, or a title whose artwork was pulled all fail at load time, long after the path
+  // looked fine. Falling back on error keeps that as a tidy placeholder instead of a broken-image
+  // icon in every row.
+  const [failed, setFailed] = useState(false);
+
+  if (!item.poster_path || failed) {
+    return (
+      <div
+        className="flex h-[87px] w-[58px] shrink-0 items-center justify-center rounded border bg-muted"
+        aria-hidden="true"
+      >
+        <Clapperboard className="h-5 w-5 text-muted-foreground/60" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={`https://image.tmdb.org/t/p/w154${item.poster_path}`}
+      // Decorative: the title is right beside it as real text, so announcing it twice is noise.
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className="h-[87px] w-[58px] shrink-0 rounded border object-cover"
+    />
   );
 }
 
@@ -180,7 +219,9 @@ function WhyBreakdown({ why }: { why: RequestCandidate["why"] }) {
   );
 }
 
-/** The facts that let the owner judge a title at a glance: type, rating, and who wanted it. */
+/** The facts that let the owner judge a title at a glance: type, rating, and who wanted it. The
+ *  "wanted by …" list gets its own line — on a popular title it runs to three names plus "+18 more",
+ *  and inline it pushed the rating and tags off the end of a scannable row. */
 function TitleMeta({
   item,
   globalTag,
@@ -192,24 +233,37 @@ function TitleMeta({
   // show the full set of tags this title will actually get (deduped against the per-user/row tags).
   const tags = [...new Set([...(globalTag ? [globalTag] : []), ...item.tags])];
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-      <TypeBadge mediaType={item.media_type} />
-      {item.year ? <span>{item.year}</span> : null}
-      <span className="inline-flex items-center gap-1">
-        <Star
-          className="h-3.5 w-3.5 fill-current text-amber-500"
-          aria-hidden="true"
-        />
-        {item.rating.toFixed(1)}
-      </span>
-      <span title={(item.wanters ?? []).join(", ") || undefined}>
+    <div className="space-y-1 text-sm text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <TypeBadge mediaType={item.media_type} />
+        {item.year ? <span>{item.year}</span> : null}
+        <span className="inline-flex items-center gap-1">
+          <Star
+            className="h-3.5 w-3.5 fill-current text-amber-500"
+            aria-hidden="true"
+          />
+          <span className="font-medium text-foreground">
+            {item.rating.toFixed(1)}
+          </span>
+          {item.vote_count > 0 && (
+            <span className="text-xs">
+              ({item.vote_count.toLocaleString()} votes)
+            </span>
+          )}
+        </span>
+        {tags.map((tag) => (
+          <Badge key={tag} variant="secondary" className="font-normal">
+            {tag}
+          </Badge>
+        ))}
+      </div>
+      <p
+        className="flex items-start gap-1.5 text-xs"
+        title={(item.wanters ?? []).join(", ") || undefined}
+      >
+        <Users className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
         {wantedByLabel(item)}
-      </span>
-      {tags.map((tag) => (
-        <Badge key={tag} variant="secondary" className="font-normal">
-          {tag}
-        </Badge>
-      ))}
+      </p>
     </div>
   );
 }
@@ -235,12 +289,31 @@ function RequestsOffBanner() {
   );
 }
 
+/** What Sonarr/Radarr has for a title right now, in one word. Absent when neither app tracks it —
+ *  which for a waiting title is the normal case, so nothing is drawn rather than "not found". */
+const ARR_STATUS_LABELS: Record<
+  string,
+  { label: string; variant: "success" | "default" | "secondary" | "warning" }
+> = {
+  downloaded: { label: "Downloaded", variant: "success" },
+  downloading: { label: "Downloading", variant: "default" },
+  queued: { label: "Searching", variant: "secondary" },
+  unmonitored: { label: "Not monitored", variant: "warning" },
+};
+
+function ArrStatusBadge({ status }: { status?: string | null }) {
+  const shown = status ? ARR_STATUS_LABELS[status] : undefined;
+  if (!shown) return null;
+  return <Badge variant={shown.variant}>{shown.label}</Badge>;
+}
+
 function PendingRow({
   item,
   checked,
   onToggle,
   globalTag,
   disabled,
+  arrStatus,
 }: {
   item: RequestCandidate;
   checked: boolean;
@@ -248,26 +321,46 @@ function PendingRow({
   globalTag: string;
   /** Requests are off — the row is still readable, but it cannot be selected for sending. */
   disabled: boolean;
+  arrStatus?: string | null;
 }) {
+  const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50">
+    <label
+      className={cn(
+        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+        // Selection is what the whole toolbar acts on, so a picked card says so on the card itself —
+        // a 4px checkbox was the only difference between "will be sent" and "won't".
+        checked
+          ? "border-primary/60 bg-primary/5"
+          : "hover:border-border hover:bg-muted/50",
+      )}
+    >
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
         onChange={() => onToggle(item.id)}
-        className="mt-1 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-1.5 h-4 w-4 shrink-0 accent-primary disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <div className="min-w-0 space-y-1.5">
-        <p className="font-medium">{item.title}</p>
+      <Poster item={item} />
+      <div className="min-w-0 flex-1 space-y-2">
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <p className="text-base font-semibold leading-tight">{item.title}</p>
+          <ArrStatusBadge status={arrStatus} />
+        </div>
         <TitleMeta item={item} globalTag={globalTag} />
         <WhyBreakdown why={item.why} />
         <ExternalLinks item={item} />
+        {arrStatus ? (
+          <p className="text-xs text-muted-foreground">
+            Already in {app} — it was added there after this landed here, so
+            it’ll drop off the list on the next run.
+          </p>
+        ) : null}
         {item.excluded ? (
           <p className="text-xs text-warning">
-            On {item.media_type === "movie" ? "Radarr" : "Sonarr"}’s exclusion
-            list (from a past delete) — remove it there first, or approving
-            won’t add it.
+            On {app}’s exclusion list (from a past delete) — remove it there
+            first, or approving won’t add it.
           </p>
         ) : null}
         {item.detail ? (
@@ -321,58 +414,41 @@ function SentRow({
       ]
     : [];
   return (
-    <div className="space-y-1.5 rounded-lg border p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="font-medium">{item.title}</p>
-        <div className="flex items-center gap-2">
-          <Badge variant="success" className="gap-1">
-            <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
-            Sent to {app}
-          </Badge>
-          {arrStatus && (
-            <Badge
-              variant={
-                arrStatus === "downloaded"
-                  ? "success"
-                  : arrStatus === "downloading"
-                    ? "default"
-                    : "secondary"
-              }
-            >
-              {arrStatus === "downloaded"
-                ? "Downloaded"
-                : arrStatus === "downloading"
-                  ? "Downloading"
-                  : arrStatus === "queued"
-                    ? "Queued"
-                    : arrStatus === "monitored"
-                      ? "Monitored"
-                      : "Unmonitored"}
+    <div className="flex items-start gap-3 rounded-lg border p-3">
+      <Poster item={item} />
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="font-medium">{item.title}</p>
+          <div className="flex items-center gap-2">
+            <Badge variant="success" className="gap-1">
+              <ArrGlyph className="h-3.5 w-3.5 rounded-[2px]" />
+              Sent to {app}
             </Badge>
-          )}
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={clearing}
-            onClick={() => onClear(item.id)}
-            title={`Remove from the send log. ${item.title} stays in ${app} — this only clears the entry here, and it won't be re-requested.`}
-          >
-            <X aria-hidden="true" />
-            Clear
-          </Button>
+            <ArrStatusBadge status={arrStatus} />
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={clearing}
+              onClick={() => onClear(item.id)}
+              title={`Remove from the send log. ${item.title} stays in ${app} — this only clears the entry here, and it won't be re-requested.`}
+            >
+              <X aria-hidden="true" />
+              Clear
+            </Button>
+          </div>
         </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <TypeBadge mediaType={item.media_type} />
+          {item.year ? <span>{item.year}</span> : null}
+          {item.updated_at ? (
+            <span>Sent {formatDate(item.updated_at)}</span>
+          ) : null}
+          {item.detail ? <span>· {item.detail}</span> : null}
+        </div>
+        <WhyBreakdown why={item.why} />
+        {/* The "Open in Sonarr/Radarr" link now sits with the TMDB/IMDb/Trakt look-ups, not up top. */}
+        <ExternalLinks item={item} lead={lead} />
       </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <TypeBadge mediaType={item.media_type} />
-        {item.year ? <span>{item.year}</span> : null}
-        {item.updated_at ? (
-          <span>Sent {formatDate(item.updated_at)}</span>
-        ) : null}
-        {item.detail ? <span>· {item.detail}</span> : null}
-      </div>
-      <WhyBreakdown why={item.why} />
-      {/* The "Open in Sonarr/Radarr" link now sits with the TMDB/IMDb/Trakt look-ups, not up top. */}
-      <ExternalLinks item={item} lead={lead} />
     </div>
   );
 }
@@ -429,23 +505,58 @@ const SORT_OPTIONS: { value: RequestSort; label: string }[] = [
 ];
 
 /** A rating floor to hide weaker titles. Every queued title already cleared the request min-rating
- *  gate, so the useful thresholds sit above it — these narrow a crowded inbox to the strongest.
- *  Values are strings because the shared Segmented control keys on string values. */
+ *  gate, so the useful thresholds sit above it — these narrow a crowded inbox to the strongest. */
 const RATING_OPTIONS: { value: string; label: string }[] = [
-  { value: "0", label: "Any rating" },
+  { value: "0", label: "Any" },
   { value: "7", label: "7+" },
   { value: "8", label: "8+" },
   { value: "9", label: "9+" },
 ];
 
 /** A vote-count floor — a high rating on a handful of votes is noise; this keeps only well-attested
- *  titles. Values are strings for the shared Segmented control. */
+ *  titles. */
 const VOTES_OPTIONS: { value: string; label: string }[] = [
-  { value: "0", label: "Any votes" },
+  { value: "0", label: "Any" },
   { value: "100", label: "100+" },
   { value: "500", label: "500+" },
   { value: "1000", label: "1k+" },
 ];
+
+/**
+ * One refinement control in the filter bar. These are deliberately NOT `Segmented`: sort + rating +
+ * votes as chip groups put eleven buttons next to the Waiting/Sent tabs, four of them highlighted
+ * (their own defaults), so the tab strip — the only control that changes what you're looking at —
+ * was indistinguishable from a rating floor. A labelled dropdown is one quiet control per choice,
+ * and a default reads as neutral.
+ */
+function FilterSelect<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+}) {
+  return (
+    <label className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as T)}
+        className="rounded-md border bg-background px-2 py-1 text-xs font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 /** Order a list by the chosen sort. `recent` = newest state change first, falling back to queue order
  *  (id) for items that were queued but never sent, so a sent log reads newest-first and a waiting
@@ -652,7 +763,10 @@ export function RequestsPage() {
                   <div className="space-y-6">
                     {!requestsEnabled && <RequestsOffBanner />}
 
-                    <div className="flex flex-wrap items-center justify-between gap-3">
+                    {/* Two levels, not one row of fifteen chips: the tab strip decides WHAT you are
+                        looking at and keeps the primary highlight; the refinements below it narrow
+                        that list and stay quiet. */}
+                    <div className="space-y-3">
                       <Segmented
                         value={active}
                         options={tabs}
@@ -666,50 +780,65 @@ export function RequestsPage() {
                         }}
                         ariaLabel="Which requests to show"
                       />
-                      <div className="flex flex-wrap items-center gap-2">
-                        {showMediaFilter && (
-                          <Segmented
-                            value={media}
-                            onChange={setMedia}
-                            ariaLabel="Filter by library"
-                            options={[
-                              {
-                                value: "all",
-                                label: `All (${activeFull.length})`,
-                              },
-                              {
-                                value: "movie",
-                                label: `Movies (${movieCount})`,
-                              },
-                              { value: "show", label: `Shows (${showCount})` },
-                            ]}
-                          />
-                        )}
-                        {activeFull.length > 1 && (
-                          <Segmented
-                            value={sort}
-                            onChange={setSort}
-                            ariaLabel="Sort requests"
-                            options={SORT_OPTIONS}
-                          />
-                        )}
-                        {activeFull.length > 1 && (
-                          <Segmented
-                            value={minRating}
-                            onChange={setMinRating}
-                            ariaLabel="Minimum rating"
-                            options={RATING_OPTIONS}
-                          />
-                        )}
-                        {activeFull.length > 1 && (
-                          <Segmented
-                            value={minVotes}
-                            onChange={setMinVotes}
-                            ariaLabel="Minimum vote count"
-                            options={VOTES_OPTIONS}
-                          />
-                        )}
-                      </div>
+                      {(showMediaFilter || activeFull.length > 1) && (
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b pb-3">
+                          {showMediaFilter && (
+                            <Segmented
+                              value={media}
+                              onChange={setMedia}
+                              ariaLabel="Filter by library"
+                              options={[
+                                {
+                                  value: "all",
+                                  label: `All (${activeFull.length})`,
+                                },
+                                {
+                                  value: "movie",
+                                  label: `Movies (${movieCount})`,
+                                },
+                                {
+                                  value: "show",
+                                  label: `Shows (${showCount})`,
+                                },
+                              ]}
+                            />
+                          )}
+                          {activeFull.length > 1 && (
+                            <>
+                              <FilterSelect
+                                label="Sort"
+                                value={sort}
+                                onChange={setSort}
+                                options={SORT_OPTIONS}
+                              />
+                              <FilterSelect
+                                label="Rating"
+                                value={minRating}
+                                onChange={setMinRating}
+                                options={RATING_OPTIONS}
+                              />
+                              <FilterSelect
+                                label="Votes"
+                                value={minVotes}
+                                onChange={setMinVotes}
+                                options={VOTES_OPTIONS}
+                              />
+                              {(minRating !== "0" || minVotes !== "0") && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setMinRating("0");
+                                    setMinVotes("0");
+                                  }}
+                                  className="text-xs text-primary underline-offset-4 hover:underline focus-visible:underline"
+                                >
+                                  Clear filters
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {active === "waiting" &&
@@ -812,18 +941,31 @@ export function RequestsPage() {
                             </p>
                           )}
 
-                          <div className="space-y-2">
-                            {pendingShown.map((item) => (
-                              <PendingRow
-                                key={item.id}
-                                item={item}
-                                checked={selected.has(item.id)}
-                                onToggle={toggle}
-                                globalTag={globalTag}
-                                disabled={!requestsEnabled}
-                              />
-                            ))}
-                          </div>
+                          {pendingShown.length > 0 ? (
+                            <div className="space-y-2">
+                              {pendingShown.map((item) => (
+                                <PendingRow
+                                  key={item.id}
+                                  item={item}
+                                  checked={selected.has(item.id)}
+                                  onToggle={toggle}
+                                  globalTag={globalTag}
+                                  disabled={!requestsEnabled}
+                                  arrStatus={arrStatusQuery.data?.[item.id]}
+                                />
+                              ))}
+                            </div>
+                          ) : (
+                            // Filtered down to nothing — say which filters did it, or the queue
+                            // reads as empty when {pending.length} titles are a click away.
+                            <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+                              No waiting title clears these filters.{" "}
+                              {pending.length}{" "}
+                              {pending.length === 1 ? "is" : "are"} waiting in
+                              total — lower the rating or vote floor to see
+                              them.
+                            </p>
+                          )}
                         </section>
                       ) : (
                         <EmptyState

@@ -1,13 +1,13 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export const RECENT_COUNT_MIN = 1;
-export const RECENT_COUNT_MAX = 25;
+const RECENT_COUNT_MIN = 1;
+const RECENT_COUNT_MAX = 25;
 
 /** Clamp any number to the valid recent-watches range (matches the API's 1..25 bound). */
-export function clampRecentCount(n: number): number {
+function clampRecentCount(n: number): number {
   if (Number.isNaN(n)) return RECENT_COUNT_MIN;
   return Math.max(RECENT_COUNT_MIN, Math.min(RECENT_COUNT_MAX, Math.round(n)));
 }
@@ -31,7 +31,12 @@ export function RecentCountField({
   const id = useId();
   const [text, setText] = useState(String(value));
   // Re-sync the buffer when the value changes from elsewhere (reset, another tab).
-  useEffect(() => setText(String(value)), [value]);
+  // Adjusted during render rather than in an effect — see the note in row-size-field.tsx.
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (syncedValue !== value) {
+    setSyncedValue(value);
+    setText(String(value));
+  }
 
   const commit = () => {
     const next = text.trim() === "" ? value : clampRecentCount(Number(text));

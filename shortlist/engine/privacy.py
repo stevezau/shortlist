@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from loguru import logger
 
-from shortlist.engine.models import FilterSnapshot, UserProfile, UserType
+from shortlist.engine.models import LABEL_PREFIX, SHARED_LABEL_PREFIX, FilterSnapshot, UserProfile, UserType
 
 if TYPE_CHECKING:
     from shortlist.engine.clients.plextv import PlexTvClient, PlexTvUser
@@ -172,8 +172,12 @@ def desired_excludes(
     """
     shared_labels = shared_labels or {}
     excludes: set[str] = set()
+    own_lower = (own_label or "").lower()
     for label in stored_labels.values():
-        if label == own_label:
+        # Case-insensitive to match the self-exclusion prune below. Both read the same PMS-cased
+        # dict today, but if that ever drifted a case-sensitive compare here would ADD the label
+        # while the prune REMOVED it — a flip-flop written to plex.tv every night.
+        if own_label and label.lower() == own_lower:
             continue
         audience = shared_labels.get(label.lower(), _UNSHARED)
         if audience is not _UNSHARED and not hide_all_shared:  # a CONFIGURED shared row, account opted in
@@ -194,9 +198,10 @@ def sync_user_restrictions(
     snapshots: SnapshotStore,
     *,
     own_label: str | None = None,
-    label_prefix: str = "shortlist",
+    label_prefix: str = LABEL_PREFIX,
     shared_labels: dict[str, set[int] | None] | None = None,
     hide_all_shared: bool = False,
+    collections_known: bool = False,
     dry_run: bool = False,
 ) -> dict[str, tuple[str, str]] | None:
     """Merge the desired shortlist excludes into one user's share filters.
@@ -210,6 +215,10 @@ def sync_user_restrictions(
     is the audit record: changing someone's Plex share permissions is the most sensitive write
     Shortlist makes (rule 10).
 
+    `collections_known` says whether `stored_labels` is a COMPLETE enumeration of what is on the
+    server. Only then may a dead shared-row exclude be pruned — see the prune block below. It defaults
+    to False so a caller that hasn't thought about it gets the fail-safe behaviour.
+
     The owner is never restricted (Plex limitation — skipped, not an error).
     """
     if user.user_type is UserType.OWNER:
@@ -221,13 +230,29 @@ def sync_user_restrictions(
         # stale user row stop every other user's rows from being promoted, every night.
         logger.info("{}: no longer shares this server — nothing to restrict", user.username)
         return None
-    if remote.restricted:
-        # A restricted (managed/parental) account: plex.tv refuses share-filter writes (HTTP 422)
-        # because the restriction PROFILE already governs what this account can see. Live-verified
-        # (2026-07-25): a restricted account sees ZERO collections, ZERO library hubs, and ZERO
-        # Home hubs — Plex hides everything the profile doesn't allow. The label-exclude filter is
-        # completely redundant; skipping is safe and avoids blocking promotion for the server (#14).
-        logger.debug("{}: restricted account — skipping share-filter (parental profile hides all)", user.username)
+    if remote.restricted and remote.restriction_profile:
+        # A managed account with a PARENTAL PRESET ("little_kid" / "older_kid" / "teen"). Plex refuses
+        # label restrictions outright while one is applied — its own docs: "For Managed users, the
+        # restriction profile must be set to None if you wish to edit Rating and Label restrictions on
+        # the library types" (support.plex.tv/articles/204232573-restricting-the-shares/). Live-confirmed
+        # 2026-07-29: the write comes back 422, and the account sees ZERO collections of any kind
+        # anyway, so there is nothing for an exclude to hide. Skipping is both necessary and harmless,
+        # and it is what keeps one such account from blocking promotion for the whole server (#14).
+        #
+        # Gated on the PROFILE, not on `restricted` alone. `/api/users` sets `restricted="1"` for every
+        # managed account, preset or not — so keying on it also skipped managed users with NO age
+        # restriction, who see everything and genuinely need their excludes (#20).
+        #
+        # BOTH are required so the new skip is a strict SUBSET of the old one: no account that used to
+        # receive excludes can lose them here. The two flags come from different endpoints and nothing
+        # enforces a relationship, so a `restricted="0"` account that somehow reports a profile keeps
+        # its excludes rather than silently losing them.
+        logger.debug(
+            "{}: managed account with a '{}' profile — Plex refuses label filters for these, and it "
+            "sees no collections regardless",
+            user.username,
+            remote.restriction_profile,
+        )
         return None
 
     wanted = desired_excludes(
@@ -238,25 +263,73 @@ def sync_user_restrictions(
         hide_all_shared=hide_all_shared,
     )
     # Converge SHARED-row excludes: drop any shortlist SHARED-row exclude the account should no longer
-    # have (re-enabled after a disable, or added to a subset row's audience). This is the ONE safe
-    # place to remove an exclude — un-hiding a *shared* row only ever reveals a public or in-audience
-    # row, never a private one, so it can't leak even if `wanted` is computed from a partial read.
-    # Private-row excludes are NEVER pruned (removing one is the leak direction), so they stay
-    # union-only and fail-safe. Foreign filters are untouched (both primitives byte-preserve them).
+    # have (re-enabled after a disable, or added to a subset row's audience). This is the ONE place an
+    # exclude is ever removed — un-hiding a *shared* row only ever reveals a public or in-audience row,
+    # never a private one. Private-row excludes are NEVER pruned (removing one is the leak direction),
+    # so they stay union-only and fail-safe. Foreign filters are untouched (both primitives
+    # byte-preserve them).
+    #
+    # EVERY removal below is gated on `existing_lower is not None` — a complete, non-empty enumeration
+    # of what is on the server. `wanted` is derived from that same enumeration, so a PMS that answers
+    # 200 with no collections (mid library-index rebuild, or just restarted) makes every shared exclude
+    # look unwanted at once. Without the gate, one such read strips them from every account on the
+    # server in a single pass, and nothing re-adds them until a read succeeds.
     shared_lower = set(shared_labels or {})
     wanted_lower = {w.lower() for w in wanted}
-    prunable_shared: set[str] = set()
+    # Every label that EXISTS on the server right now, lowercased — but only when the caller could
+    # actually enumerate them. `None` means "we don't know", and not knowing must never license a
+    # removal (see `dead_shared` below).
+    # `collections_known and stored_labels`: an EMPTY enumeration is not evidence of absence. A PMS
+    # mid library-index rebuild answers 200 with no collections, which is indistinguishable from "every
+    # row is gone" — and acting on that reading removes excludes across every account on the server.
+    existing_lower = {v.lower() for v in stored_labels.values()} if (collections_known and stored_labels) else None
+    # NOT shared-only despite the section header above: it also collects `excluded_from_self` (an
+    # account's own label sitting in its own filter), a private-row exclude — but one whose removal
+    # is still leak-safe, since un-hiding someone from their OWN row can't expose it to anyone else.
+    prunable: set[str] = set()
     for fieldname in RESTRICTED_FILTER_FIELDS:
         for lbl in shortlist_labels_in(remote.filters[fieldname], label_prefix):
-            if lbl.lower() in shared_lower and lbl.lower() not in wanted_lower:
-                prunable_shared.add(lbl)
+            stale_shared = (
+                existing_lower is not None and lbl.lower() in shared_lower and lbl.lower() not in wanted_lower
+            )
+            # A `shortlist__shared_*` exclude for a row that no longer EXISTS on the server. Left
+            # alone it accumulated for ever: deleting a shared row, or flipping it to per-person,
+            # takes it out of `shared_labels`, so the prune above stopped considering it and the dead
+            # entry sat in all ~48 accounts' filters permanently.
+            #
+            # Safe because the collection is gone: removing an exclude that matches nothing cannot
+            # reveal anything. That reasoning depends entirely on KNOWING it is gone, which is why
+            # this is gated on a successful enumeration rather than on an empty lookup — a failed or
+            # partial PMS read would otherwise read as "deleted" and un-hide a live row.
+            dead_shared = (
+                existing_lower is not None
+                and lbl.lower().startswith(SHARED_LABEL_PREFIX.lower())
+                # NOT declared shared by the config either. Belt to the enumeration's braces: a row the
+                # config still declares is a LIVE row whose visibility is `stale_shared`'s business, and
+                # only a row that is gone from BOTH the config and the server is provably dead. Without
+                # this, a PMS that answers an empty (but successful) collections read strips the
+                # excludes hiding a configured, restricted-audience shared row from everyone.
+                and lbl.lower() not in shared_lower
+                and lbl.lower() not in existing_lower
+            )
+            if dead_shared:
+                stale_shared = True
+            # An account's OWN label must never sit in its own filter — that hides a person from
+            # their own row permanently, because private-row excludes are otherwise union-only.
+            # Reachable: delete a user's DB row while their collection still exists on Plex, so
+            # `own_label` is None and `desired_excludes` adds their own label to their own filter;
+            # re-adding them later never undid it. Un-hiding someone's OWN row cannot leak to anyone
+            # else — the same reasoning that makes the shared case safe to prune.
+            excluded_from_self = bool(own_label) and lbl.lower() == (own_label or "").lower()
+            if stale_shared or excluded_from_self:
+                prunable.add(lbl)
 
     desired_fields = {}
     for fieldname in RESTRICTED_FILTER_FIELDS:
         current = remote.filters[fieldname]
         merged = merge_label_excludes(current, wanted)
-        if prunable_shared:
-            merged = remove_label_excludes(merged, prunable_shared)
+        if prunable:
+            merged = remove_label_excludes(merged, prunable)
         if merged != current:
             desired_fields[fieldname] = merged
 
@@ -328,8 +401,16 @@ def restore_user_restrictions(
 ) -> bool:
     """Restore a user's filters byte-identical from their pre-Shortlist snapshot (uninstall path)."""
     remote = plextv.get_user(snapshot.plex_account_id)
+    # `.get` on BOTH sides. `snapshot.filters` is a JSON column holding whatever was persisted at
+    # snapshot time, not a validated five-field dict — so a snapshot missing a field the remote now
+    # has raised KeyError here. The caller has no per-user guard, so one such snapshot aborted the
+    # whole restore loop and left every remaining account carrying Shortlist's excludes for ever,
+    # after the operator had already typed UNINSTALL. A missing field restores as empty, which is
+    # what "this user had no filter here" means.
     changed = {
-        k: snapshot.filters[k] for k in FILTER_FIELDS if remote.filters.get(k, "") != snapshot.filters.get(k, "")
+        k: snapshot.filters.get(k, "")
+        for k in FILTER_FIELDS
+        if remote.filters.get(k, "") != snapshot.filters.get(k, "")
     }
     if not changed:
         return False

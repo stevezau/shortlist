@@ -1,6 +1,8 @@
 import { Bell, CircleAlert, Info, TriangleAlert, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useRef, useState } from "react";
+
+import { useDismissable } from "@/lib/use-dismissable";
+import { Link } from "react-router";
 
 import { Button } from "@/components/ui/button";
 import { useDismissNotification, useNotifications } from "@/lib/queries";
@@ -84,23 +86,7 @@ export function NotificationBell({
   const count = items.length;
   const hasError = items.some((n) => n.severity === "error");
 
-  // Close on an outside click or Escape — the expected behaviour for a dropdown.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node))
-        setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  useDismissable(open, ref, () => setOpen(false));
 
   return (
     <div ref={ref} className="relative">
@@ -115,8 +101,10 @@ export function NotificationBell({
         {count > 0 && (
           <span
             className={cn(
-              "absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white",
-              hasError ? "bg-destructive" : "bg-amber-500",
+              "absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold",
+              hasError
+                ? "bg-destructive text-destructive-foreground"
+                : "bg-warning text-warning-foreground",
             )}
           >
             {count}

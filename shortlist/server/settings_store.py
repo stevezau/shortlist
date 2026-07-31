@@ -13,6 +13,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Setting
+from shortlist.server.scheduler import DEFAULT_CRONS as _DEFAULT_CRONS
 
 DEFAULTS: dict[str, Any] = {
     "plex.url": "",
@@ -62,13 +63,24 @@ DEFAULTS: dict[str, Any] = {
     # per-user traces are deleted; picks are kept so the dashboard's lifetime metrics survive).
     # 0 = keep everything forever.
     "runs.retention": 3,
-    # The cron expression for the daily watch-history sync. Blank = the default (04:17 daily).
-    "sync.watch_cron": "",
-    # The cron expression for the user-list sync (plex.tv + Tautulli). Blank = the default (daily 04:47).
-    "sync.users_cron": "",
-    # Backup schedule. Blank cron = the default (daily 03:00). max_keep = number of backups to retain.
-    "backup.cron": "",
-    "backup.max_keep": 10,
+    # How many months of the audit trail (`events`) to keep. 0 = forever, and that is the default:
+    # "what changed on whose share at 03:31" (plex-safety rule 10) is the one record an operator may
+    # want long after the run detail around it is gone.
+    "events.retention": 0,
+    # Read only what changed since the last sync (Plex's `lastViewedAt>=` filter) instead of every
+    # watched title, every night, per user, per library. An incremental read cannot see an un-watch
+    # or a deletion, so a COMPLETE read still runs every `sync.watch_full_days` regardless — this
+    # switch only decides whether the nights in between are cheap. Off = always read everything.
+    "sync.watch_incremental": True,
+    # How often the complete re-read happens, in days. It is the only thing that can notice a title
+    # being un-watched or removed, so it is not optional — only its frequency is.
+    "sync.watch_full_days": 7,
+    # (the schedulable crons are added below, derived from scheduler.DEFAULT_CRONS)
+    "backup.max_keep": 10,  # how many backups to retain
+    # How many read-only jobs may run at once. Jobs that WRITE to Plex/plex.tv are always exclusive
+    # and never overlap a run — share-filter writes are read-modify-write merges, so two at once lose
+    # one of them (plex-safety rule 3). Dial to 1 if a PMS complains about the concurrency.
+    "jobs.max_parallel_readonly": 3,
     # Notification ids the owner dismissed. Each id encodes its state (run id / version), so the same
     # alert stays hidden but a new failure or a newer release surfaces again. Capped to the newest 100.
     "notifications.dismissed": [],
@@ -90,6 +102,14 @@ DEFAULTS: dict[str, Any] = {
     # How many of a person's most recent watches the web-search source searches per row (one cached
     # Exa search each). Row-overridable. Fewer = tighter/cheaper; the DbCache dedups shared titles.
     "recommendations.recent_count": 10,
+    # How many watched titles SEED a row — what every source searches from, not just the web one.
+    # Row-overridable, and the row is where a deliberately narrow value belongs: the floor here is 5
+    # because a server-wide 1 or 2 would starve every movies-and-TV row of one of its media types.
+    "recommendations.max_seeds": 30,
+    # TMDB ids that must never seed a SHARED row. Separate from each person's own blocked seeds on
+    # purpose: a shared row is public, so letting one person's block reshape what everyone sees would
+    # make an individual preference into a server-wide edit nobody else can see or undo.
+    "recommendations.blocked_shared_seeds": [],
     # When on (default), disabling a user hides EVERY shared row from them too (even public "Popular on
     # this server" rows), so a disabled user sees nothing from Shortlist. Off = disabled users still see
     # public shared rows like any other account with library access.
@@ -116,10 +136,23 @@ DEFAULTS: dict[str, Any] = {
     "setup.state": {},
 }
 
+# Every schedulable cron ships BLANK, meaning "use the built-in default". The expressions themselves
+# live in exactly one place — `scheduler.DEFAULT_CRONS` — and are NOT copied here: a second copy is
+# what let the drift check be documented as off-by-default for months while it ran nightly. Deriving
+# the keys also means a cron added there is automatically accepted by `PUT /api/settings`, whose
+# allowlist is built from this dict.
+#
+# The scheduler resolves a cron from the RAW settings row, never through here, because a stored blank
+# and an absent row must stay distinguishable: for `sync.check_cron` — the one schedule the UI offers
+# to switch off — a stored blank means OFF, while an absent row means "nightly at 05:45". So the
+# effective schedule is `scheduler.effective_cron`, not this default.
+DEFAULTS.update({key: "" for key in _DEFAULT_CRONS})
+
 # Secrets are stored Fernet-encrypted under these keys (never in the clear, never logged).
 SECRET_KEYS = {
     "plex.token",
     "tautulli.apikey",
+    "tmdb.apikey",  # was the ONE api key stored in the clear — and returned unredacted by all_public()
     "curator.api_key",
     "requests.radarr.apikey",
     "requests.sonarr.apikey",
@@ -151,22 +184,56 @@ ENV_SEEDS = {
 }
 
 
+_UNSET = object()
+
+
 class SettingsStore:
     def __init__(self, session: Session, secret_box=None):
         self._session = session
         self._secrets = secret_box
 
+    @staticmethod
+    def _unwrap(row: Setting, key: str) -> Any:
+        """The stored value, or `_UNSET` when the row is not the `{"v": ...}` shape every write uses.
+
+        A row that is somehow not that shape — a hand-edited database, a half-written migration, a
+        future format — must read as "unset" and fall back, not raise. This is read during boot (the
+        scheduler resolves every cron here), so an exception is a crash loop rather than one broken
+        setting; and `all_public()` backs the whole Settings page, where one bad row used to mean a
+        500 recoverable only by hand-editing SQLite.
+        """
+        if not isinstance(row.value, dict) or "v" not in row.value:
+            logger.warning("setting {!r} has an unreadable value — using the default", key)
+            return _UNSET
+        return row.value["v"]
+
+    def _require_box(self, key: str) -> None:
+        """A secret key may only be read or written through a store that can encrypt it.
+
+        Without this the crypto silently short-circuits and `set("plex.token", …)` writes the owner's
+        token to the DB in the clear (plex-safety rule 9). Failing loudly is the only safe direction:
+        a caller that reached a SECRET_KEY without a box is wired wrong, not merely unlucky.
+        """
+        if key in SECRET_KEYS and self._secrets is None:
+            raise RuntimeError(
+                f"settings key {key!r} is a secret — SettingsStore needs a SecretBox to read or write it"
+            )
+
     def get(self, key: str, default: Any = None) -> Any:
+        self._require_box(key)
         row = self._session.get(Setting, key)
         if row is None:
             return DEFAULTS.get(key, default)
-        value = row.value["v"]
-        if key in SECRET_KEYS and value and self._secrets:
+        value = self._unwrap(row, key)
+        if value is _UNSET:
+            return DEFAULTS.get(key, default)
+        if key in SECRET_KEYS and value:
             return self._secrets.decrypt(value)
         return value
 
     def set(self, key: str, value: Any) -> None:
-        if key in SECRET_KEYS and value and self._secrets:
+        self._require_box(key)
+        if key in SECRET_KEYS and value:
             value = self._secrets.encrypt(str(value))
         row = self._session.get(Setting, key)
         if row is None:
@@ -176,16 +243,50 @@ class SettingsStore:
         self._session.commit()
 
     def all_public(self) -> dict[str, Any]:
-        """Everything except secrets; secrets appear redacted when set (UI contract)."""
+        """Everything except secrets; secrets appear redacted when set (UI contract).
+
+        Reads secret rows without decrypting them — only their truthiness decides the redaction — so
+        this stays callable from a store with no SecretBox.
+        """
         out = dict(DEFAULTS)
         for row in self._session.query(Setting).all():
             if row.key in PRIVATE_KEYS:
                 continue  # never surfaced to any client — managed via dedicated endpoints only
-            if row.key in SECRET_KEYS:
-                out[row.key] = "•••••" if row.value.get("v") else ""
-            else:
-                out[row.key] = row.value["v"]
+            value = self._unwrap(row, row.key)
+            if value is _UNSET:
+                continue  # leave the default in place
+            out[row.key] = ("•••••" if value else "") if row.key in SECRET_KEYS else value
         return out
+
+    def encrypt_plaintext_secrets(self) -> list[str]:
+        """Re-store any SECRET_KEY still sitting in the clear, encrypted. Returns the keys healed.
+
+        `tmdb.apikey` was the one API key missing from SECRET_KEYS, so it was plaintext at rest AND
+        returned unredacted by `all_public()` — visible to anything with a session, and to anyone
+        handed a `/config` backup. Simply adding it to the set is not enough: `get()` would then try to
+        Fernet-decrypt the existing plaintext and raise, breaking TMDB (and so every recommendation)
+        on every existing install.
+
+        Runs at boot, idempotent, and covers any key added to SECRET_KEYS in future — an encrypted
+        value round-trips, a plaintext one is re-written. Detection is by decryptability rather than a
+        prefix check, so it cannot be fooled by a key that merely looks Fernet-shaped.
+        """
+        if not self._secrets:
+            return []
+        healed = []
+        for key in sorted(SECRET_KEYS):
+            row = self._session.get(Setting, key)
+            value = (row.value or {}).get("v") if row else None
+            if not value or not isinstance(value, str):
+                continue
+            try:
+                self._secrets.decrypt(value)
+            except Exception:  # any decrypt failure means the value is not encrypted
+                row.value = {"v": self._secrets.encrypt(value)}
+                healed.append(key)
+        if healed:
+            self._session.commit()
+        return healed
 
     def purge_legacy(self) -> None:
         """Delete rows for keys we no longer use (e.g. the old hash-only API-token fields), so stale

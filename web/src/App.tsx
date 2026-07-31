@@ -1,12 +1,16 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import {
+  MutationCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 
 import { AppShell } from "@/components/layout/app-shell";
 import { EmptyState, ErrorState } from "@/components/query-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError } from "@/lib/api";
 import { resolveArea } from "@/lib/auth";
-import { useSession, useSetupState } from "@/lib/queries";
+import { queryKeys, useSession, useSetupState } from "@/lib/queries";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
 import { RequestsPage } from "@/pages/requests";
@@ -18,12 +22,22 @@ import { LogsPage } from "@/pages/logs";
 import { RunsPage } from "@/pages/runs";
 import { SettingsPage } from "@/pages/settings";
 import { SetupPage } from "@/pages/setup";
-import { ToolsPage } from "@/pages/tools";
+import { JobsPage } from "@/pages/jobs";
 import { UninstallPage } from "@/pages/uninstall";
 import { UserDetailPage } from "@/pages/user-detail";
 import { UsersPage } from "@/pages/users";
 
 const queryClient = new QueryClient({
+  // Any mutation might enqueue background work — disabling someone, pausing them, editing a row —
+  // and the activity poll idles at 30s, so its toast could arrive half a minute after the click that
+  // caused it. Refreshing the job queue after EVERY mutation is one cheap request and means no future
+  // enqueue site has to remember to do it; wiring each call site individually is what left this one
+  // silent for 30 seconds in the first place.
+  mutationCache: new MutationCache({
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.jobs });
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 15_000,
@@ -111,7 +125,13 @@ export default function App() {
               element={<RunUserTracePage />}
             />
             <Route path="requests" element={<RequestsPage />} />
-            <Route path="tools" element={<ToolsPage />} />
+            <Route path="jobs" element={<JobsPage />} />
+            {/* Merged into Jobs. Redirect rather than remove: the old page was linked from docs
+                and may be bookmarked, and a 404 would read as the feature being gone. */}
+            <Route path="schedule" element={<Navigate to="/jobs" replace />} />
+            {/* The page was /tools until the nav started calling it Jobs. Kept as a redirect:
+                bookmarks and the `action_url` baked into notifications already in the DB. */}
+            <Route path="tools" element={<Navigate to="/jobs" replace />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/uninstall" element={<UninstallPage />} />
             <Route

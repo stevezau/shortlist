@@ -8,7 +8,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { PageHeader } from "@/components/page-header";
@@ -44,10 +44,11 @@ import {
   triggerLabel,
 } from "@/lib/format";
 import {
+  RUNS_PAGE,
   useCancelRun,
   useClearRuns,
   useCollections,
-  useRuns,
+  useRunsPaged,
   useRunsSummary,
   useStartRun,
 } from "@/lib/queries";
@@ -74,7 +75,7 @@ export function RunDuration({ run }: { run: Run }) {
   }, [running]);
 
   if (running) {
-    const started = Date.parse(run.started_at);
+    const started = Date.parse(run.started_at ?? "");
     const elapsed = Number.isNaN(started) ? null : Math.max(0, now - started);
     return (
       <span className="tabular-nums text-muted-foreground" title="Running…">
@@ -226,7 +227,10 @@ export function RunsPage() {
   // A row links here as /runs?row=<slug> to show only the runs that built it.
   const [params] = useSearchParams();
   const rowSlug = params.get("row") ?? undefined;
-  const runsQuery = useRuns(rowSlug);
+  const runsQuery = useRunsPaged(rowSlug);
+  // A page is a page of the SAME list; flattening here keeps every consumer below unaware that
+  // the history is fetched in chunks.
+  const runs = (runsQuery.data?.pages ?? []).flat();
   const summary = useRunsSummary();
   const collections = useCollections();
   const startRun = useStartRun();
@@ -340,7 +344,7 @@ export function RunsPage() {
       <QueryBoundary
         query={runsQuery}
         skeleton={<RunsSkeleton />}
-        isEmpty={(runs) => runs.length === 0}
+        isEmpty={() => runs.length === 0}
         empty={
           <EmptyState
             title={rowSlug ? "No runs for this row yet" : "No runs yet"}
@@ -352,25 +356,40 @@ export function RunsPage() {
           />
         }
       >
-        {(runs) => (
-          <div className="overflow-hidden rounded-xl border">
-            <Table>
-              <TableHeader>
-                <TableRow className="hover:bg-transparent">
-                  <TableHead>Run</TableHead>
-                  <TableHead>Trigger</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Users</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {runs.map((run) => (
-                  <RunRow key={run.id} run={run} />
-                ))}
-              </TableBody>
-            </Table>
+        {() => (
+          <div className="space-y-3">
+            <div className="overflow-hidden rounded-xl border">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Run</TableHead>
+                    <TableHead>Trigger</TableHead>
+                    <TableHead>Started</TableHead>
+                    <TableHead>Duration</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Users</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {runs.map((run) => (
+                    <RunRow key={run.id} run={run} />
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+            {/* Explicit, not infinite scroll: this is an ops list people read to find one run, and
+                a page that grows as you scroll makes "the oldest one" unreachable. */}
+            {runsQuery.hasNextPage && (
+              <div className="flex justify-center">
+                <Button
+                  variant="outline"
+                  onClick={() => void runsQuery.fetchNextPage()}
+                  loading={runsQuery.isFetchingNextPage}
+                >
+                  Load {RUNS_PAGE} more
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </QueryBoundary>

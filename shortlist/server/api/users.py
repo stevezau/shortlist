@@ -1,55 +1,45 @@
-"""Users API: list with badges, enable/prefs, sync from plex.tv."""
+"""Users API: list with badges, enable/prefs, sync from plex.tv.
+
+The roster reconciliation itself lives in ``services/user_sync.py`` — it has no HTTP in it and the
+nightly job is its other caller, so it is not this layer's to own.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import String, cast, func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.clients.http_retry import redact
-from shortlist.engine.clients.plextv import PlexTvClient
-from shortlist.engine.clients.tautulli import TautulliClient
-from shortlist.engine.delivery import remove_row_collections
-from shortlist.engine.models import UserType
+from shortlist.server.api.schemas import PassthroughModel
+from shortlist.server.api.serializers import UserOut, UserPickOut, pick_dict, user_dict
 from shortlist.server.auth import require_owner
-from shortlist.server.db.adapters import unique_slug
 from shortlist.server.db.models import (
-    DEFAULT_SLUG,
-    Event,
     PickRow,
     Run,
     RunUser,
-    Server,
     User,
     iso_utc,
 )
-from shortlist.server.safe_mode import force_dry_run
-from shortlist.server.services.setup_probe import plextv_account
-from shortlist.server.settings_store import SettingsStore
+from shortlist.server.prefs import blocked_entries
+from shortlist.server.services import jobs
+from shortlist.server.services.user_sync import (
+    remove_users_rows,
+    rename_after_nickname,
+)
 
 router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_owner)])
 
 
-def _pick_dict(pick: PickRow) -> dict:
-    return {
-        "rank": pick.rank,
-        "title": pick.title,
-        "reason": pick.reason,
-        "media_type": pick.media_type,
-        "collection_slug": pick.collection_slug or DEFAULT_SLUG,  # legacy blank rows are the default row
-        "library": pick.library or "",
-        "section_key": pick.section_key or "",
-        "seed_title": pick.seed_title,
-        # Provenance: which source(s) surfaced it, and how strongly they vouched. Blank/1.0 on rows
-        # written before 0035, which the UI renders as "not recorded" rather than "a perfect match".
-        "sources": [s for s in (pick.sources or "").split(",") if s],
-        "affinity": pick.affinity,
-    }
+class BlockSeedBody(BaseModel):
+    tmdb_id: int
+    title: str = ""
+    media_type: str = ""  # movie | show; blank on a client that predates it
+    year: int | None = None
 
 
 class UserPrefs(BaseModel):
@@ -58,7 +48,11 @@ class UserPrefs(BaseModel):
     # (PUT /users/{id}/rows/{collection_id}), which the UI actually exposes.
     row_name_tpl: str | None = None
     excluded_genres: list[str] | None = None
-    blocked_seeds: list[int] | None = None
+    # int entries are the original storage shape and are still accepted for ever; dict entries carry
+    # the title, so the UI can show a name instead of "tmdb 346648". See `blocked_entries`.
+    # `BlockSeedBody`, not a bare `dict`: an untyped element publishes as an opaque object in the
+    # OpenAPI schema, so the SPA's generated type lost the record shape and had to re-declare it.
+    blocked_seeds: list[int | BlockSeedBody] | None = None
     paused: bool | None = None
 
 
@@ -76,36 +70,81 @@ class BulkEnabled(BaseModel):
     enabled: bool
 
 
-def _serialize(
-    user: User,
-    history_depth: int,
-    last_run_at,
-    hit_rate: float | None,
-    preview_titles: list[str] | None = None,
-) -> dict:
-    return {
-        "id": user.id,
-        "plex_account_id": user.plex_account_id,
-        "username": user.username,
-        "slug": user.slug,
-        "nickname": user.nickname or "",
-        # What Tautulli calls them, when it has its own name for them — the default a blank
-        # nickname falls back to, shown in the UI so the field's placeholder can be honest.
-        "friendly_name": user.friendly_name or "",
-        "display_name": user.display_name,
-        "avatar_url": user.avatar_url,
-        "user_type": user.user_type,
-        "restricted": user.restricted,
-        "enabled": user.enabled,
-        "cold_start": user.cold_start,
-        "request_tag": user.request_tag or "",
-        "prefs": user.prefs or {},
-        "history_depth": history_depth,
-        "last_run_at": iso_utc(last_run_at),
-        "hit_rate": hit_rate,
-        # A few of their most recent pick titles, for a real preview strip on the dashboard card.
-        "preview_titles": preview_titles or [],
-    }
+class BulkEnabledOut(PassthroughModel):
+    """What `POST /users/set-enabled` did: how many were touched, and how many had rows removed."""
+
+    updated: int
+    cleaned: int
+    enabled: bool
+
+
+class BlockedSeedOut(PassthroughModel):
+    """One blocked seed, always as a RECORD.
+
+    The bare-int list an old install stores is normalised by `blocked_entries` before it reaches here,
+    so this shape is what both endpoints return whichever way the prefs are stored — see
+    `shortlist/server/prefs.py`.
+    """
+
+    tmdb_id: int
+    title: str
+    media_type: str
+    year: int | None
+
+
+class BlockedSeedsOut(PassthroughModel):
+    blocked_seeds: list[BlockedSeedOut]
+
+
+class TitleMatchOut(PassthroughModel):
+    """TMDB's own best guess for a title search, for the "block a seed" picker."""
+
+    tmdb_id: int | None  # None if TMDB answered without an id — the caller can't block that one
+    title: str
+    media_type: str
+    year: int | None
+
+
+class UserRunOut(PassthroughModel):
+    """One run as it went for ONE person: their outcome, not the run's."""
+
+    run_id: int
+    started_at: str | None
+    finished_at: str | None
+    status: str
+    error: str | None
+    reason: str
+    duration_ms: int
+    run_status: str | None
+    dry_run: bool
+    # Free-form: `{}` for a user the run left alone, else some subset of added/removed/kept/deleted.
+    # Which keys exist varies by what happened, so a model with defaults would invent the rest.
+    diff: dict
+    picks: list[UserPickOut]
+
+
+class UserRunsSummaryOut(PassthroughModel):
+    included: int
+    total: int
+
+
+class WatchItemOut(PassthroughModel):
+    """One recent watch, from the same source recommendations are built from."""
+
+    title: str
+    tmdb_id: int | None  # None with no tmdb:// GUID — such a watch cannot be blocked as a seed
+    media_type: str
+    watched_at: str
+    year: int | None
+    season: int | None
+    episode: int | None
+    episode_title: str | None
+
+
+class UserSyncOut(PassthroughModel):
+    added: int
+    updated: int
+    total: int
 
 
 def _watch_depths(session) -> dict[int, int]:
@@ -125,8 +164,15 @@ def _watch_depths(session) -> dict[int, int]:
     return depths
 
 
-@router.get("")
-async def list_users(request: Request) -> list[dict]:
+@router.get("", response_model=list[UserOut])
+def list_users(request: Request) -> list[dict]:
+    """Every user with their badges, watch depth, lifetime hit rate and a pick preview.
+
+    Deliberately a plain `def`, not `async def`: it issues four synchronous queries PER USER,
+    which on a 40-account server is ~160 round-trips. On the event loop that stalls SSE,
+    `/api/system/health` and every other request for the duration; as a sync handler Starlette
+    runs it in a worker thread instead.
+    """
     with request.app.state.sessions() as session:
         depths = _watch_depths(session)
         out = []
@@ -164,76 +210,44 @@ async def list_users(request: Request) -> list[dict]:
                     .all()
                 ]
             out.append(
-                _serialize(user, depths.get(user.id, 0), last.run.finished_at if last else None, hit_rate, preview)
+                user_dict(user, depths.get(user.id, 0), last.run.finished_at if last else None, hit_rate, preview)
             )
         return out
 
 
-async def _remove_users_rows(state, user_slug: str) -> None:
-    """Remove ALL of a just-disabled user's Shortlist collections (their whole label). Best-effort +
-    audited; removal only, so gate-exempt (it only makes the server more private). Runs in an executor
-    because it does Plex I/O; a Plex outage/unconfigured server is logged, not fatal."""
-    removed: list[str] = []
-
-    def work() -> None:
-        dry_run = force_dry_run()  # honour SHORTLIST_DRY_RUN safe-mode (this path is otherwise always live)
-        ctx = state.run_service.build_context(dry_run=dry_run)
-        removed.extend(
-            remove_row_collections(
-                ctx.plex, ctx.config, label=f"{ctx.config.label_prefix}_{user_slug}", displays=None, dry_run=dry_run
-            )
-        )
-
-    error: str | None = None
-    try:
-        await asyncio.get_running_loop().run_in_executor(None, work)
-    except Exception as e:
-        error = redact(f"{type(e).__name__}: {e}")  # a PMS error can carry a tokened URL (rule 9)
-        # Also narrate it: the failure IS audited to events, but this is a destructive Plex write, so
-        # it should show in the live run/console log the operator is watching, not only the DB.
-        logger.warning("disable cleanup for {} hit an error ({})", user_slug, type(e).__name__)
-    with state.sessions() as session:
-        session.add(
-            Event(
-                scope="user.disable.cleanup",
-                level="warn",
-                message={"user": user_slug, "removed": removed, "error": error, "at": datetime.now(UTC).isoformat()},
-            )
-        )
-        session.commit()
-    logger.warning(
-        "disabled user '{}': removed {} collection(s){}",
-        user_slug,
-        len(removed),
-        f" then FAILED: {error}" if error else "",
-    )
-
-
-@router.post("/set-enabled")
+@router.post("/set-enabled", response_model=BulkEnabledOut)
 async def set_all_users_enabled(body: BulkEnabled, request: Request) -> dict:
-    """Enable or disable EVERY user at once. Enabling just flips the flags (rows rebuild on the next
-    run). Disabling also removes each newly-disabled user's rows from Plex now — the same cleanup the
-    per-user toggle does, so 'off' means gone, not merely 'not refreshed'. Best-effort + audited."""
+    """Enable or disable EVERY user at once. Disabling removes each newly-disabled user's rows from
+    Plex now and writes their share filters — the same cleanup the per-user toggle does, so 'off'
+    means gone, not merely 'not refreshed'. Enabling gives back the shared rows that disabling hid;
+    their own rows rebuild on the next run. Best-effort + audited."""
     state = request.app.state
     to_clean: list[str] = []
+    reinstated = 0
     with state.sessions() as session:
         users = session.query(User).all()
         for user in users:
             if body.enabled is False and user.enabled:
                 to_clean.append(user.slug)  # was on, now off -> remove their rows from Plex
+            if body.enabled is True and not user.enabled:
+                reinstated += 1  # was off, now on -> the excludes that hid every shared row must go
             user.enabled = body.enabled
         session.commit()
         total = len(users)
-    for slug in to_clean:
-        await _remove_users_rows(state, slug)
+    await remove_users_rows(state, to_clean)
+    if reinstated:
+        await jobs.queue_privacy_sync(state, f"{reinstated} people were turned back on")
     return {"updated": total, "cleaned": len(to_clean), "enabled": body.enabled}
 
 
-@router.patch("/{user_id}")
+@router.patch("/{user_id}", response_model=UserOut)
 async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
     state = request.app.state
     disabled_slug: str | None = None
-    renamed_slug: str | None = None
+    enabled_slug: str | None = None
+    paused_slug: str | None = None
+    unpaused_slug: str | None = None
+    was_called: dict[str, str] = {}  # {slug -> the display name their collections are still titled with}
     with state.sessions() as session:
         user = session.get(User, user_id)
         if user is None:
@@ -242,75 +256,83 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
             if user.enabled and patch.enabled is False:
                 # Turned off → remove their rows from Plex now, not just stop delivering to them.
                 disabled_slug = user.slug
+            if not user.enabled and patch.enabled is True:
+                # Turned back on → the excludes that hid every shared row from them must come off.
+                # Their own row is a rebuild, so that part still waits for the next run.
+                enabled_slug = user.slug
             user.enabled = patch.enabled
         if patch.nickname is not None:
             nickname = patch.nickname.strip()
             # Checked whether it is being SET or CLEARED: clearing falls back to the Tautulli or
             # Plex name, which is just as capable of colliding as one that was typed.
             _reject_display_name_clash(session, user, nickname or user.friendly_name or user.username)
-            renamed_slug = user.slug if nickname != (user.nickname or "") else None
+            if nickname != (user.nickname or ""):
+                was_called[user.slug] = user.display_name  # captured BEFORE the write
             user.nickname = nickname
         if patch.request_tag is not None:
             user.request_tag = patch.request_tag.strip()
         if patch.prefs is not None:
             prefs = dict(user.prefs or {})
+            was_paused = bool(prefs.get("paused"))
             prefs.update({k: v for k, v in patch.prefs.model_dump().items() if v is not None})
             user.prefs = prefs
+            # Pausing means "stop showing their row", so it has to come down NOW — a paused person is
+            # absent from every run by definition, so nothing else would ever act on it. Unpausing is
+            # the exact mirror: the collections still exist, they are merely demoted, so putting them
+            # back is a re-promote. Leaving it to "the next run" was wrong — a row whose schedule is
+            # blank has no next run, and neither does one while `paused_all` is set, so an unpaused
+            # person could stay invisible indefinitely.
+            now_paused = bool(prefs.get("paused"))
+            if now_paused and not was_paused:
+                paused_slug = user.slug
+            elif was_paused and not now_paused:
+                unpaused_slug = user.slug
         session.commit()
-        result = _serialize(user, _watch_depths(session).get(user.id, 0), None, None)
+        result = user_dict(user, _watch_depths(session).get(user.id, 0), None, None)
     if disabled_slug is not None:
-        await _remove_users_rows(state, disabled_slug)
-    if renamed_slug is not None:
-        # A nickname changes what `{user}` renders to, so this person's existing collections carry a
-        # title no future run will write. Renaming them in place is the same reconcile a row rename
-        # uses; without it a multi-row user keeps the old-named copy alongside the new one.
-        await _rename_after_nickname(state)
+        await remove_users_rows(state, [disabled_slug])
+    if enabled_slug is not None:
+        await jobs.queue_privacy_sync(state, f"'{enabled_slug}' was turned back on")
+    if paused_slug is not None:
+        await _hide_paused_users_rows(state, paused_slug)
+    if unpaused_slug is not None:
+        await _restore_paused_users_rows(state, unpaused_slug)
+    # A nickname changes what `{user}` renders to, so this person's existing collections carry a title
+    # no future run will write. Renaming them in place is the same reconcile a row rename uses; without
+    # it a multi-row user keeps the old-named copy alongside the new one.
+    await rename_after_nickname(state, was_called)
     return result
 
 
-async def _rename_after_nickname(state) -> None:
-    """Re-render every per-person row's titles so a nickname change lands on Plex now, not next run.
-
-    Reuses the row-rename reconcile with each row's UNCHANGED template: it renames only the users
-    whose rendered title actually drifted, which after one nickname edit is exactly that person.
-    Best-effort and privacy-neutral — titles move, the label (and every filter excluding it) doesn't.
-    """
-    from shortlist.server.db.models import Collection
-    from shortlist.server.services.collection_reconcile import run_row_rename
-
-    with state.sessions() as session:
-        rows = [
-            (c.slug, c.name_template)
-            for c in session.query(Collection).filter_by(enabled=True, build="per_person").all()
-        ]
-    for slug, template in rows:
-        if "{user}" not in (template or ""):
-            continue  # this row's title doesn't mention them, so a nickname can't have changed it
-        await run_row_rename(state, slug=slug, new_template=template, scope="user.nickname")
-
-
-class BlockSeedBody(BaseModel):
-    tmdb_id: int
-    title: str = ""
-
-
-@router.post("/{user_id}/blocked-seeds")
+@router.post("/{user_id}/blocked-seeds", response_model=BlockedSeedsOut)
 async def block_seed(user_id: int, body: BlockSeedBody, request: Request) -> dict:
-    """Block a title from being used as a seed for this user's recommendations."""
+    """Stop a title being used as a seed for this person's recommendations.
+
+    Blocking a seed does not ban the title outright — it stops that watch from SHAPING their picks,
+    which is the thing you want after a one-off that isn't representative of them.
+    """
     with request.app.state.sessions() as session:
         user = session.get(User, user_id)
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
         prefs = dict(user.prefs or {})
-        blocked = set(prefs.get("blocked_seeds") or [])
-        blocked.add(body.tmdb_id)
-        prefs["blocked_seeds"] = sorted(blocked)
+        entries = [e for e in blocked_entries(prefs) if e["tmdb_id"] != body.tmdb_id]
+        entries.append(
+            {
+                "tmdb_id": body.tmdb_id,
+                "title": body.title,
+                "media_type": body.media_type,
+                "year": body.year,
+            }
+        )
+        entries.sort(key=lambda e: (e["title"].lower(), e["tmdb_id"]))
+        prefs["blocked_seeds"] = entries
         user.prefs = prefs
         session.commit()
-    return {"blocked_seeds": sorted(blocked)}
+    return {"blocked_seeds": entries}
 
 
-@router.delete("/{user_id}/blocked-seeds/{tmdb_id}")
+@router.delete("/{user_id}/blocked-seeds/{tmdb_id}", response_model=BlockedSeedsOut)
 async def unblock_seed(user_id: int, tmdb_id: int, request: Request) -> dict:
     """Unblock a title so it can be used as a seed again."""
     with request.app.state.sessions() as session:
@@ -318,16 +340,54 @@ async def unblock_seed(user_id: int, tmdb_id: int, request: Request) -> dict:
         if user is None:
             raise HTTPException(status_code=404, detail="user not found")
         prefs = dict(user.prefs or {})
-        blocked = set(prefs.get("blocked_seeds") or [])
-        blocked.discard(tmdb_id)
-        prefs["blocked_seeds"] = sorted(blocked)
+        entries = [e for e in blocked_entries(prefs) if e["tmdb_id"] != tmdb_id]
+        prefs["blocked_seeds"] = entries
         user.prefs = prefs
         session.commit()
-    return {"blocked_seeds": sorted(blocked)}
+    return {"blocked_seeds": entries}
 
 
-@router.get("/{user_id}/runs")
-async def user_runs(user_id: int, request: Request, limit: int = 15) -> list[dict]:
+@router.get("/search/titles", response_model=list[TitleMatchOut])
+async def search_titles(request: Request, q: str, media_type: str = "movie") -> list[dict]:
+    """Look a title up on TMDB, for the "block a seed" picker.
+
+    Owner-gated like the rest of this router. Returns at most one match per query — TMDB's own best
+    guess — because the only thing the caller needs is a tmdb_id to attach a name to.
+    """
+    if media_type not in ("movie", "show"):
+        raise HTTPException(status_code=422, detail="media_type must be 'movie' or 'show'")
+    query = q.strip()
+    if not query:
+        return []
+    # The requests-only context: a TMDB client without connecting to the PMS or building the LLM
+    # curator, neither of which a title lookup needs.
+    _config, tmdb = request.app.state.run_service.build_requests_context()
+    if tmdb is None:
+        raise HTTPException(status_code=503, detail="TMDB is not configured — add an API key in Settings.")
+
+    def lookup():
+        return tmdb.search(query, media_type)
+
+    try:
+        found = await asyncio.get_running_loop().run_in_executor(None, lookup)
+    except Exception as e:
+        logger.warning("TMDB title search failed ({})", type(e).__name__)
+        raise HTTPException(status_code=502, detail=redact(f"{type(e).__name__}: {e}")) from e
+    if not found:
+        return []
+    date = found.get("release_date") or found.get("first_air_date") or ""
+    return [
+        {
+            "tmdb_id": found.get("id"),
+            "title": found.get("title") or found.get("name") or query,
+            "media_type": media_type,
+            "year": int(date[:4]) if date[:4].isdigit() else None,
+        }
+    ]
+
+
+@router.get("/{user_id}/runs", response_model=list[UserRunOut])
+async def user_runs(user_id: int, request: Request, limit: int = Query(15, ge=1, le=50)) -> list[dict]:
     """This user's recent run results — status, what changed, and the picks with their reasons."""
     with request.app.state.sessions() as session:
         if session.get(User, user_id) is None:
@@ -351,16 +411,36 @@ async def user_runs(user_id: int, request: Request, limit: int = 15) -> list[dic
                     "finished_at": iso_utc(run.finished_at) if run else None,
                     "status": ru.status,
                     "error": ru.error,
+                    # Why a non-failing outcome happened ("no watch history yet"). Without it a
+                    # `skipped` reads as a failure, which is the opposite of what it means.
+                    "reason": ru.reason or "",
+                    "duration_ms": ru.duration_ms,
+                    "run_status": run.status if run else None,
                     "dry_run": run.dry_run if run else False,
                     "diff": ru.diff or {},
-                    "picks": [_pick_dict(p) for p in picks],
+                    "picks": [pick_dict(p) for p in picks],
                 }
             )
         return out
 
 
-@router.get("/{user_id}/history")
-async def user_history(user_id: int, request: Request, limit: int = 25) -> list[dict]:
+@router.get("/{user_id}/runs/summary", response_model=UserRunsSummaryOut)
+async def user_runs_summary(user_id: int, request: Request) -> dict:
+    """How many runs included this person, against how many there have been.
+
+    A run is server-wide, so "6 runs" on a person's page is only honest next to "of 148" — otherwise
+    the page reads as though the server has run six times.
+    """
+    with request.app.state.sessions() as session:
+        if session.get(User, user_id) is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        included = session.query(func.count(RunUser.user_id)).filter(RunUser.user_id == user_id).scalar() or 0
+        total = session.query(func.count(Run.id)).scalar() or 0
+        return {"included": included, "total": total}
+
+
+@router.get("/{user_id}/history", response_model=list[WatchItemOut])
+async def user_history(user_id: int, request: Request, limit: int = Query(25, ge=1, le=100)) -> list[dict]:
     """Recent watch history for this user, from Tautulli/Plex — the same source recommendations use."""
 
     def fetch():
@@ -375,15 +455,6 @@ async def user_history(user_id: int, request: Request, limit: int = 25) -> list[
     if rows is None:
         raise HTTPException(status_code=404, detail="user not found")
     return rows
-
-
-def _display_names_drifted(session: Session, before: dict[int, str]) -> bool:
-    """Did any EXISTING user's `{user}` name change? New users are excluded deliberately — they have
-    no rows on Plex yet, so there is nothing to rename and no reason to make a sync do Plex I/O."""
-    return any(
-        user.id in before and (user.nickname or user.friendly_name or user.username) != before[user.id]
-        for user in session.query(User)
-    )
 
 
 def _reject_display_name_clash(session: Session, user: User, nickname: str) -> None:
@@ -408,182 +479,76 @@ def _reject_display_name_clash(session: Session, user: User, nickname: str) -> N
             )
 
 
-def _sync_owner(
-    session: Session,
-    account: dict | None,
-    owner_account_id: int | None,
-    friendly_names: dict[int, str] | None = None,
-) -> str | None:
-    """Add (or refresh) the server owner as a user. Returns "added", "updated", or None if skipped.
-
-    plex.tv's `/api/users` lists everyone the server is shared WITH and never the account that owns
-    it, so without this the person running Shortlist can never get a row of their own — the whole app
-    is unusable for a one-person server. The owner is stored like any other user (history, labels and
-    delivery all key off `plex_account_id`); `user_type="owner"` marks the one account Plex cannot
-    restrict, which `sync_user_restrictions` skips and the UI badges.
-
-    New rows land disabled like everyone else, so an existing install gains a user to switch on
-    rather than a row that appears on the owner's Home unannounced.
-    """
-    if account is None or owner_account_id is None:
-        return None
-    if int(account.get("id") or 0) != owner_account_id:
-        # The stored Plex token no longer belongs to the owner this instance was claimed by. Building
-        # a row from THIS account's history and labelling it as the owner's would hand one person
-        # another's picks, so skip — loudly, because it also means the token needs re-linking.
-        logger.warning(
-            "plex.tv token belongs to account {} but this server's owner is {} — owner not synced",
-            account.get("id"),
-            owner_account_id,
-        )
-        return None
-    # `username`, never `title`: store the owner's plex.tv username ("S_FLIX"), not their display
-    # title ("SFLIX_Admin"), to match how every other account is keyed on the roster.
-    username = account.get("username") or account.get("title") or "owner"
-    # The owner is in Tautulli like anyone else, so their `{user}` row should honour the name set
-    # there rather than falling straight through to their Plex username.
-    friendly = (friendly_names or {}).get(owner_account_id, "")
-    # Re-linking Plex under a different admin leaves the PREVIOUS owner marked `owner` forever, and
-    # that type is the one `sync_user_restrictions` skips — so an account that is no longer the owner
-    # must lose the badge, or it keeps its "never restricted" exemption on a server it merely shares.
-    # SHARED is the safe landing type (it is simply "restrictable"); anyone still on the share was
-    # already re-typed correctly by the roster loop, which commits before this runs.
-    for stale in session.query(User).filter(
-        User.user_type == UserType.OWNER.value, User.plex_account_id != owner_account_id
-    ):
-        logger.warning("{} is no longer this server's owner — demoting to a shared user", stale.username)
-        stale.user_type = UserType.SHARED.value
-    user = session.query(User).filter_by(plex_account_id=owner_account_id).one_or_none()
-    if user is None:
-        session.add(
-            User(
-                plex_account_id=owner_account_id,
-                username=username,
-                slug=unique_slug(session, username),
-                avatar_url=account.get("thumb") or "",
-                friendly_name=friendly,
-                user_type=UserType.OWNER.value,
-            )
-        )
-        return "added"
-    user.username = username
-    user.avatar_url = account.get("thumb") or ""
-    user.friendly_name = friendly or user.friendly_name
-    user.user_type = UserType.OWNER.value  # a pre-existing row for this account was never really "shared"
-    return "updated"
-
-
-@router.post("/sync")
+@router.post("/sync", response_model=UserSyncOut)
 async def sync_users(request: Request) -> dict:
     """Pull shared + Home users — and the owner — from plex.tv into the users table (idempotent).
 
-    Streams ``sync.progress``/``sync.finished`` (``kind="users"``) over the SSE bus so the Tools page
-    can show a live bar: an indeterminate ``fetch`` phase for the one opaque plex.tv round-trip, then
-    a determinate ``save`` bar over the roster upsert.
+    Queued as a `sync.users` JOB and drained inline, rather than called directly. `sync.users` is a
+    WRITER despite its name — it renames Shortlist collections on the PMS when a display name has
+    drifted — and both things that make that safe live in the job runner, not in the function:
+    `_claimable` refuses to start a writer while a run is in flight, and the runner holds
+    `plex_writer_lock()` for the duration. Calling it straight from here bypassed both, so pressing
+    "Sync from Plex" mid-run could rename a collection the run was converging against. The run
+    matches collections by rendered TITLE, so that makes a live row look orphaned — and converge
+    deletes orphans. (jobs-and-runs-design.md §12; the CATALOG entry for this kind spells out the
+    same failure.)
+
+    Drained inline so the button still returns the counts it always has.
     """
+    from shortlist.server.db.models import Job
+    from shortlist.server.services.jobs import enqueue, run_pending
+
     state = request.app.state
-    bus = state.bus
-
-    def emit(event: str, data: dict) -> None:
-        # This handler runs on the event loop, so publish directly — no thread hop needed.
-        bus.publish(event, {"kind": "users", **data})
-
+    job_id = enqueue(state.sessions, "sync.users")
+    await run_pending(state)
     with state.sessions() as session:
-        store = SettingsStore(session, state.secrets)
-        token = store.get("plex.token")
-        server = session.query(Server).first()
-    if not token or server is None:
-        raise HTTPException(status_code=409, detail="Plex is not connected yet")
-    machine_id = server.machine_id
-    owner_account_id = server.owner_account_id
-    client_id = state.client_id
-    with state.sessions() as session:
-        store = SettingsStore(session, state.secrets)
-        tautulli_url, tautulli_key = store.get("tautulli.url"), store.get("tautulli.apikey")
-
-    def fetch() -> tuple[list, dict | None, dict[int, str]]:
-        # machine_id comes from the server table — no PMS round-trip needed to talk to plex.tv.
-        users = PlexTvClient(token, machine_id).list_users()
-        try:
-            account = plextv_account(token, client_id)
-        except Exception as e:
-            # The owner is a bonus here; the shared users we already fetched are the point. Failing
-            # the whole sync over it would leave the roster stale for everybody.
-            logger.warning("could not read the owner account from plex.tv ({})", type(e).__name__)
-            account = None
-        friendly: dict[int, str] = {}
-        if tautulli_url:
-            try:
-                friendly = TautulliClient(tautulli_url, tautulli_key or "").friendly_names()
-            except Exception as e:
-                # Nicer row titles are a bonus too — never fail a roster sync for them.
-                logger.warning("could not read friendly names from Tautulli ({})", type(e).__name__)
-        return users, account, friendly
-
-    emit("sync.progress", {"phase": "fetch"})  # indeterminate: one opaque plex.tv + Tautulli round-trip
-    remote, owner_account, friendly_names = await asyncio.get_running_loop().run_in_executor(None, fetch)
-    added = updated = 0
-    # if plex.tv ever does list the owner, `_sync_owner` is the one that writes them — not both
-    roster = [r for r in remote if r.id != owner_account_id]
-    total = len(roster) + 1  # + the owner's own transaction below
-    emit("sync.progress", {"phase": "save", "done": 0, "total": total})
-    with state.sessions() as session:
-        before = {u.id: u.nickname or u.friendly_name or u.username for u in session.query(User)}
-        for i, r in enumerate(roster, start=1):
-            user = session.query(User).filter_by(plex_account_id=r.id).one_or_none()
-            if user is None:
-                session.add(
-                    User(
-                        plex_account_id=r.id,
-                        username=r.username,
-                        slug=unique_slug(session, r.username),
-                        avatar_url=r.avatar_url,
-                        user_type=r.user_type.value,
-                        restricted=r.restricted,
-                        friendly_name=friendly_names.get(r.id, ""),
-                    )
-                )
-                added += 1
-            else:
-                user.username = r.username
-                user.avatar_url = r.avatar_url
-                user.user_type = r.user_type.value
-                user.restricted = r.restricted
-                # Refreshed every sync so a rename in Tautulli follows through — but `nickname`
-                # (the owner's own choice) is never touched, so an override always survives.
-                user.friendly_name = friendly_names.get(r.id, user.friendly_name)
-                updated += 1
-            emit("sync.progress", {"phase": "save", "done": i, "total": total})
-        # A Tautulli rename changes what `{user}` renders to, exactly like a nickname edit — and the
-        # rows already on Plex still carry the old title. Without the same reconcile `patch_user`
-        # does, a multi-row user keeps the stale copy alongside the new one forever: `remove_row`
-        # matches by rendered title, so no sweep ever collects it.
-        display_changed = _display_names_drifted(session, before)
-        session.commit()
-
-    # The owner gets their OWN transaction, deliberately. The roster above is the point of this
-    # endpoint and is now safely committed; anything the owner upsert hits — a plex.tv payload that
-    # isn't shaped how we expect, a slug collision — must not roll back everybody else's update.
-    with state.sessions() as session:
-        try:
-            owner = _sync_owner(session, owner_account, owner_account_id, friendly_names)
-            session.commit()
-        except Exception as e:
-            # redact: a plex.tv/DB error can carry a tokened URL (rule 9), like every other handler here.
-            logger.warning("could not sync the server owner ({}: {})", type(e).__name__, redact(str(e)))
-            owner = None
-    if owner == "added":
-        added += 1
-    elif owner == "updated":
-        updated += 1
-    emit("sync.progress", {"phase": "save", "done": total, "total": total})
-    with state.sessions() as session:  # the owner's own name can drift on the same sync
-        display_changed = display_changed or _display_names_drifted(session, before)
-    if display_changed:
-        await _rename_after_nickname(state)
-    with state.sessions() as session:
-        SettingsStore(session, state.secrets).set("report.users_synced_at", datetime.now(UTC).isoformat())
-        session.commit()
-    result = {"added": added, "updated": updated, "total": len(roster) + (1 if owner else 0)}
-    emit("sync.finished", {"ok": True, **result})
+        job = session.get(Job, job_id)
+        result = dict(job.result or {})
+        # Read INSIDE the session. It worked outside only because the factory is
+        # `expire_on_commit=False` and `close()` detaches without expiring — a property of the
+        # factory, not of this code, and one that would turn into a DetachedInstanceError the day it
+        # changed. `job` is never None (we just enqueued it), but reading it here says so.
+        status = job.status if job is not None else "queued"
+    # Still queued means a run holds the writer lock. The row stays, the worker retries — say so
+    # rather than reporting a sync that has not happened yet.
+    result.setdefault("added", 0)
+    result.setdefault("updated", 0)
+    result.setdefault("total", 0)
+    result["queued"] = status in ("queued", "running")
     return result
+
+
+async def _hide_paused_users_rows(state, user_slug: str) -> None:
+    """Queue the take-down for a just-paused user, and drain it so it happens now.
+
+    Durable rather than fire-and-forget for the same reason disable cleanup is: a paused user is
+    absent from every subsequent run, so if this write is lost to a Plex outage nothing would ever
+    retry it and their row would stay up indefinitely.
+    """
+    from shortlist.server.services.jobs import enqueue, run_pending
+
+    enqueue(state.sessions, "user.hide", {"slug": user_slug})
+    try:
+        await run_pending(state)
+    except Exception as e:
+        logger.warning(
+            "paused {} but their rows could not be hidden right now ({}: {}) — queued for retry",
+            user_slug,
+            type(e).__name__,
+            redact(str(e)),
+        )
+
+
+async def _restore_paused_users_rows(state, user_slug: str) -> None:
+    """Put an un-paused user's rows back.
+
+    ONE job, deliberately. `user.restore` merges every account's share filters itself before promoting
+    anything — plex-safety rule 1's ordering, in straight-line code. Splitting it into a queued
+    `privacy.sync` followed by a queued `user.restore` would NOT have been ordered: a job whose retry
+    backoff has not elapsed is stepped over, so a filter pass that failed against a 503 plex.tv would
+    be skipped and the promotion would land anyway.
+    """
+    from shortlist.server.services.jobs import drain_now, enqueue
+
+    enqueue(state.sessions, "user.restore", {"slug": user_slug})
+    await drain_now(state, f"'{user_slug}' was un-paused")

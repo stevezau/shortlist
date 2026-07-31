@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { AlertTriangle, Check, Eye, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { PageHeader } from "@/components/page-header";

@@ -626,6 +626,84 @@ class TestSnapshotsForAccountsShortlistDoesNotKnow:
         assert store.get(111) is not None and store.get(222) is not None
 
 
+class TestAFinishedRunStartsTheWorkItWasBlocking:
+    """A run holds the Plex writer lock, so `_plex_busy` parks every writer job behind it.
+
+    Nothing used to tell the queue when that ended, so the jobs sat idle until the worker's next
+    60-second tick — measured at 29 seconds of nothing on the maintainer's server, which is what he
+    noticed when a manual run appeared to do nothing for 10-20s.
+    """
+
+    def _service_with_a_drain_spy(self, sessions, tmp_path, monkeypatch):
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        drained: list[bool] = []
+
+        async def fake_drain(state, reason):
+            # Asserted, not incidental: draining while the run still counts as in-flight would
+            # re-park every writer and buy nothing, which is the whole bug being fixed.
+            drained.append(state.run_service.is_running())
+
+        monkeypatch.setattr(run_service_mod.jobs, "drain_now", fake_drain)
+        service.state = SimpleNamespace(run_service=service)
+        return service, drained
+
+    def test_it_drains_as_soon_as_the_run_finishes(self, sessions, tmp_path, monkeypatch):
+        service, drained = self._service_with_a_drain_spy(sessions, tmp_path, monkeypatch)
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        asyncio.run(scenario())
+
+        assert drained == [False], "expected exactly one drain, with the run no longer in flight"
+
+    def test_it_drains_even_when_the_run_failed(self, sessions, tmp_path, monkeypatch):
+        """The failure path is the one most likely to be missed — and the one that matters most.
+
+        A crashed run released the writer lock just the same, and it is exactly when a `privacy.sync`
+        is most likely to be sitting in the queue: that is the leak direction.
+        """
+        service, drained = self._service_with_a_drain_spy(sessions, tmp_path, monkeypatch)
+
+        def boom(ctx, profiles):
+            raise RuntimeError("plex went away mid-run")
+
+        monkeypatch.setattr(run_service_mod, "engine_run", boom)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+
+        assert run.status == "error"
+        assert drained == [False], "a failed run still owes the queue its turn"
+
+    def test_a_broken_queue_never_fails_an_otherwise_good_run(self, sessions, tmp_path, monkeypatch):
+        """The drain is opportunistic: the queue is durable and the worker re-ticks regardless."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        monkeypatch.setattr(service, "build_context", lambda **kw: _fake_ctx())
+        monkeypatch.setattr(run_service_mod, "engine_run", lambda ctx, profiles: fake_report())
+
+        async def exploding_drain(state, reason):
+            raise RuntimeError("the queue is on fire")
+
+        monkeypatch.setattr(run_service_mod.jobs, "drain_now", exploding_drain)
+        service.state = SimpleNamespace(run_service=service)
+
+        async def scenario():
+            run_id = await service.start_run(trigger="manual", dry_run=False)
+            return await _wait_for_run(sessions, run_id)
+
+        run = asyncio.run(scenario())
+
+        assert run.status == "error"  # fake_report has one errored user; the DRAIN did not cause it
+        assert run.stats["users_ok"] == 1, "the run's own results survived the queue blowing up"
+
+
 class TestRunLogBuffer:
     """The in-memory run activity log: append via the progress sink, replay, and bounded eviction."""
 
@@ -637,7 +715,56 @@ class TestRunLogBuffer:
         assert [e["stage"] for e in service.run_log(1)] == ["history", "candidates"]
 
         # Only the most-recent runs' logs are kept in memory; older ones are evicted.
-        for run_id in range(2, 2 + service._run_log_runs + 1):
+        for run_id in range(2, 2 + service._log._run_log_runs + 1):
             service._new_run_log(run_id)
-        assert service.run_log(1) == [], "the oldest run's log is evicted once the cap is exceeded"
-        assert service.run_log(999_999) == [], "a run that never ran this process has an empty log"
+        assert service.run_log(999_999) == [], "a run that never ran, and has no rows, has an empty log"
+
+    def test_stamps_a_monotonic_seq_so_the_live_tail_can_be_deduped(self, sessions, tmp_path):
+        """The client merges a seeded fetch with the SSE tail. Timestamps are not unique enough to
+        dedupe on — several lines land in the same millisecond."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        sink = service._new_run_log(1)
+        for stage in ("history", "candidates", "delivering"):
+            sink({"stage": stage, "user": "sarah"})
+
+        assert [e["seq"] for e in service.run_log(1)] == [0, 1, 2]
+        assert [e["stage"] for e in service.run_log(1, after_seq=0)] == ["candidates", "delivering"]
+
+    def test_survives_the_log_being_evicted_from_memory(self, sessions, tmp_path):
+        """The whole point of persisting it: opening an older run's log used to show nothing at all."""
+        from shortlist.server.db.models import Run
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.commit()
+            run_id = run.id
+
+        sink = service._new_run_log(run_id)
+        sink({"stage": "history", "user": "sarah", "counts": {"titles": 113}})
+        sink({"stage": "finished", "user": "Shortlist", "counts": {}, "reason": "all done"})
+        service.flush_run_log(run_id)
+
+        # Evict every in-memory tail, as a restart would.
+        for other in range(run_id + 1, run_id + 2 + service._log._run_log_runs):
+            service._new_run_log(other)
+        assert run_id not in service._log._run_logs
+
+        replayed = service.run_log(run_id)
+        assert [e["stage"] for e in replayed] == ["history", "finished"]
+        assert replayed[0]["counts"] == {"titles": 113}
+        assert replayed[1]["reason"] == "all done"
+
+    def test_a_broken_log_write_never_fails_the_run(self, sessions, tmp_path, monkeypatch):
+        """The run has already written to Plex by the time the tail flushes. Losing narration is an
+        annoyance; raising here would turn it into a failed run that actually succeeded."""
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        sink = service._new_run_log(1)
+        sink({"stage": "history", "user": "sarah"})
+
+        def boom():
+            raise RuntimeError("disk is on fire")
+
+        monkeypatch.setattr(service._log, "_sessions", boom)
+        service.flush_run_log(1)  # must not raise

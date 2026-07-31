@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { CleanupAuditCard } from "@/components/settings/cleanup-audit-card";
 import { Button } from "@/components/ui/button";

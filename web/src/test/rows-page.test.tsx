@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
@@ -45,8 +45,11 @@ const SUBSET_ROW: Collection = {
   candidate_sources: [],
   library_keys: [],
   watched_pct: null,
+  rewatch: false,
+  unstarted_only: false,
   freshness: null,
   recent_count: null,
+  max_seeds: null,
   placement: "both",
   placement_friends: "both",
   pin_top: false,

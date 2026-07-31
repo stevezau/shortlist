@@ -1,4 +1,5 @@
 import { freshnessBadgeLabel, watchedBadgeLabel } from "@/lib/constants";
+import { placementLabel } from "@/lib/placement";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
 import type {
   Collection,
@@ -12,6 +13,8 @@ import type {
 export function blankInput(): CollectionInput {
   return {
     name: "",
+    // The editor renames inline; only the dedicated rename page defers to its own stream.
+    defer_rename: false,
     build: "per_person",
     audience: "everyone",
     audience_user_ids: [],
@@ -26,8 +29,11 @@ export function blankInput(): CollectionInput {
     candidate_sources: [],
     library_keys: [],
     watched_pct: null,
+    rewatch: false,
+    unstarted_only: false,
     freshness: null,
     recent_count: null,
+    max_seeds: null,
     placement: "both",
     placement_friends: "both",
     pin_top: false,
@@ -40,6 +46,7 @@ export function blankInput(): CollectionInput {
 export function toInput(collection: Collection): CollectionInput {
   return {
     name: collection.name,
+    defer_rename: false,
     build: collection.build,
     audience: collection.audience,
     audience_user_ids: collection.audience_user_ids,
@@ -54,8 +61,11 @@ export function toInput(collection: Collection): CollectionInput {
     candidate_sources: collection.candidate_sources,
     library_keys: collection.library_keys,
     watched_pct: collection.watched_pct ?? null,
+    rewatch: collection.rewatch ?? false,
+    unstarted_only: collection.unstarted_only ?? false,
     freshness: collection.freshness ?? null,
     recent_count: collection.recent_count ?? null,
+    max_seeds: collection.max_seeds ?? null,
     placement: collection.placement ?? "both",
     placement_friends: collection.placement_friends ?? "both",
     pin_top: collection.pin_top ?? false,
@@ -135,10 +145,22 @@ export function rowOverrides(
     parts.push(`Libraries: ${titles.join(", ")}`);
   }
 
-  // null inherits the global recommendations.watched_pct, so there's nothing to badge. Unlike the
-  // prompt, this override IS honoured on the default row, so it isn't gated on the slug.
-  if (collection.watched_pct !== null && collection.watched_pct !== undefined) {
+  // Badged BEFORE the watched cap, and instead of it: on a rewatch row the cap is plumbing (it only
+  // stops the pool dropping finished titles), so "Watched: no filter" describes the mechanism while
+  // "Rewatches first" describes the row. Showing both would read as two competing settings.
+  if (collection.rewatch) {
+    parts.push("Rewatches first");
+  } else if (
+    // null inherits the global recommendations.watched_pct, so there's nothing to badge. Unlike the
+    // prompt, this override IS honoured on the default row, so it isn't gated on the slug.
+    collection.watched_pct !== null &&
+    collection.watched_pct !== undefined
+  ) {
     parts.push(watchedBadgeLabel(collection.watched_pct));
+  }
+
+  if (collection.unstarted_only) {
+    parts.push("Never started only");
   }
 
   // null inherits the global freshness, so only badge a per-row override.
@@ -154,23 +176,20 @@ export function rowOverrides(
     parts.push(`Recent watches: ${collection.recent_count}`);
   }
 
+  // null inherits the engine's seed budget, so only badge a per-row override.
+  if (collection.max_seeds !== null && collection.max_seeds !== undefined) {
+    parts.push(
+      `Built from ${collection.max_seeds} ${collection.max_seeds === 1 ? "watch" : "watches"}`,
+    );
+  }
+
   // Only badge when placement differs from the "both" default.
   if (
     collection.placement !== "both" ||
     collection.placement_friends !== "both"
   ) {
-    const owner =
-      collection.placement === "home"
-        ? "Home"
-        : collection.placement === "library"
-          ? "Library"
-          : "Home & Library";
-    const friends =
-      collection.placement_friends === "home"
-        ? "Home"
-        : collection.placement_friends === "library"
-          ? "Library"
-          : "Home & Library";
+    const owner = placementLabel(collection.placement);
+    const friends = placementLabel(collection.placement_friends);
     if (collection.placement === collection.placement_friends) {
       if (collection.placement !== "both") parts.push(`Shows on: ${owner}`);
     } else {

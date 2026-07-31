@@ -189,6 +189,8 @@ class TestRuns:
 
         page.get_by_role("link", name="#1").click()
         expect(page.get_by_role("heading", name="Run #1")).to_be_visible(timeout=LOAD)
+        # Run detail is tabbed — Overview lands first; the per-person results live under People.
+        page.get_by_role("button", name=re.compile(r"^People")).click()
         # Every user is a clickable tab in the run's nav; the selected one's rows show below it.
         for username in ("sarah", "mike", "canary"):
             expect(page.get_by_role("tab", name=re.compile(username, re.IGNORECASE))).to_be_visible()
@@ -202,7 +204,7 @@ class TestRuns:
         run = app.api("GET", f"/api/runs/{first['id']}").json()
         assert any(b["added"] for u in run["users"] for b in u["breakdown"]), "no per-library breakdown recorded"
 
-        page.goto(f"/runs/{first['id']}")
+        page.goto(f"/runs/{first['id']}?tab=users")
         expect(page.get_by_role("heading", name=f"Run #{first['id']}")).to_be_visible(timeout=LOAD)
         # First run: every pick is new, so the selected user's row shows a "+N new" badge and nothing
         # removed. Picks render as a ranked list, and their titles are answerable from here.
@@ -220,7 +222,7 @@ class TestRuns:
 
         before = row_sizes()
         second = build_real_rows(app)
-        page.goto(f"/runs/{second['id']}")
+        page.goto(f"/runs/{second['id']}?tab=users")
         expect(page.get_by_role("heading", name=f"Run #{second['id']}")).to_be_visible(timeout=LOAD)
 
         # "Don't repeat the last 3 runs' picks" rotates the row; it must never leave it short.

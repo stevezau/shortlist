@@ -25,7 +25,14 @@ class TraktError(RuntimeError):
 
 
 class TraktClient:
-    def __init__(self, client_id: str, *, cache: Cache | None = None, timeout: float = 30.0):
+    def __init__(
+        self,
+        client_id: str,
+        *,
+        cache: Cache | None = None,
+        # Trakt has no unusual latency profile of its own; the shared ceiling applies.
+        timeout: float = http_retry.DEFAULT_TIMEOUT_S,
+    ):
         self._client_id = client_id
         self._cache = cache or NullCache()
         self._timeout = timeout

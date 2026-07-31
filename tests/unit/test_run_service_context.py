@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -67,6 +68,37 @@ class TestBuildContext:
         assert isinstance(ctx.history_source, ShareTokenWatchSource)
         assert ctx.curator.name == "none"
         assert ctx.config.dry_run is True
+
+    def test_plex_only_skips_the_clients_a_label_walk_never_touches(self, service, configured, monkeypatch):
+        """The reconciles, the pause/disable handlers and the watch sync only ever walk collections
+        under a label — but every one of them opened Trakt, Exa, MDBList, the LLM curator and the
+        poster studio first, so a wrong LLM key could fail a read of watch history.
+
+        `_refuse_a_different_server` still runs: it is what stops a reconcile enumerating a stranger's
+        PMS, finding zero Shortlist collections, and concluding every row is gone.
+        """
+        monkeypatch.setattr(
+            context_builder_mod, "make_studio", lambda *a, **k: pytest.fail("plex-only built the poster studio")
+        )
+
+        ctx = service.build_context(dry_run=True, plex_only=True)
+
+        assert ctx.plex is not None and isinstance(ctx.history_source, ShareTokenWatchSource)
+        assert ctx.curator.name == "none"  # the NullCurator, not whatever provider is configured
+        assert ctx.trakt is None and ctx.search is None and ctx.mdblist is None and ctx.poster_artist is None
+        assert ctx.config.dry_run is True
+
+    def test_plex_only_still_refuses_a_different_server(self, service, sessions, configured):
+        from shortlist.server.db.models import Server
+
+        with sessions() as session:
+            session.add(
+                Server(machine_id="a-different-machine", name="elsewhere", url="http://elsewhere:32400", token_enc="x")
+            )
+            session.commit()
+
+        with pytest.raises(RuntimeError, match="different server"):
+            service.build_context(dry_run=False, plex_only=True)
 
     def test_the_progress_callback_carries_a_reason_without_polluting_the_counts(self, service, configured):
         """`counts` is a map of NUMBERS the UI renders as a "113 history · 40 seeds" tally, so a skip
@@ -146,6 +178,92 @@ class TestBuildContext:
             "base_url": "https://openrouter.ai/api/v1",
             "api_key": "sk-or-abc",
         }
+
+    def test_a_managed_user_with_no_parental_profile_is_built_for(self, service, sessions, configured):
+        """Issue #20's other half. `enabled_profiles` dropped every account with `restricted` set —
+        which plex.tv reports for EVERY Plex Home user. So a managed user with no age restriction got
+        no row, silently, while the Users page offered an enable toggle and the docs promised one.
+
+        Plex hides nothing from these accounts; they are ordinary users."""
+        with sessions() as session:
+            session.add(
+                User(
+                    plex_account_id=1,
+                    username="kid",
+                    slug="kid",
+                    enabled=True,
+                    user_type="managed",
+                    restricted=True,
+                    restriction_profile="",
+                )
+            )
+            session.commit()
+            profiles = service.enabled_profiles(session)
+
+        assert [p.slug for p in profiles] == ["kid"]
+
+    def test_a_managed_user_WITH_a_profile_is_still_skipped(self, service, sessions, configured):
+        """Plex hides every collection from a profiled account, so a row would be invisible — and Plex
+        refuses the share filters that would make it private anyway."""
+        with sessions() as session:
+            session.add(
+                User(
+                    plex_account_id=2,
+                    username="littleone",
+                    slug="littleone",
+                    enabled=True,
+                    user_type="managed",
+                    restricted=True,
+                    restriction_profile="little_kid",
+                )
+            )
+            session.commit()
+            profiles = service.enabled_profiles(session)
+
+        assert profiles == []
+
+    def test_delivered_keys_reach_the_engine_under_the_key_delivery_looks_up(self, service, sessions, configured):
+        """The DB→engine wiring for the delivery ledger, asserted as the literal tuple.
+
+        `rows.py` unpacks `(user_slug, row_slug, section_key)` and looks up by `str(section.key)`. Swap
+        two elements here, or drop the `str()`, and every lookup silently returns nothing — delivery
+        falls back to the count guess, which is a full regression to the bug the ledger exists to fix,
+        with a green suite. The sibling `_previous_picks` has exactly this test; this reader had none.
+        """
+        from shortlist.server.db.models import Delivery
+
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="sarah", slug="sarah", enabled=True))
+            session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=9001))
+            session.add(Delivery(collection_slug="gems", user_slug="sarah", library_key="2", rating_key=9002))
+            session.commit()
+
+        ctx = service.build_context(dry_run=True)
+
+        assert ctx.delivered_keys[("sarah", "picked", "1")] == 9001
+        assert ctx.delivered_keys[("sarah", "gems", "2")] == 9002
+
+    def test_a_ratingkey_two_rows_claim_is_dropped_rather_than_arbitrated(self, service, sessions, configured):
+        """The safety valve that makes a bad ledger self-heal. Two rows naming one collection is
+        reachable if a run died between the delete and the persist on delivery's rebuild path — and
+        picking a winner would let the loser's build retitle the winner's live collection.
+
+        Dropping BOTH sends delivery back to matching by title, which is where it was before the
+        ledger: no worse, and it recovers on the next successful run."""
+        from shortlist.server.db.models import Delivery
+
+        with sessions() as session:
+            session.add(User(plex_account_id=1, username="sarah", slug="sarah", enabled=True))
+            session.add(Delivery(collection_slug="picked", user_slug="sarah", library_key="1", rating_key=9001))
+            session.add(Delivery(collection_slug="gems", user_slug="sarah", library_key="1", rating_key=9001))
+            session.add(Delivery(collection_slug="safe", user_slug="sarah", library_key="2", rating_key=9002))
+            session.commit()
+
+        ctx = service.build_context(dry_run=True)
+
+        assert ("sarah", "picked", "1") not in ctx.delivered_keys
+        assert ("sarah", "gems", "1") not in ctx.delivered_keys
+        assert ctx.delivered_keys[("sarah", "safe", "2")] == 9002, "an unambiguous key is unaffected"
 
     def test_previous_picks_carries_the_latest_run_per_row_and_library(self, service, sessions, configured):
         from shortlist.server.db.models import Run
@@ -335,8 +453,14 @@ class TestSyncWatched:
         # This person has since watched the recommended title — the sync must credit it, no run needed.
         profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
         watch = WatchedItem(title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42)
+        # The sync reads through the watched-title cache, which walks the server's sections and asks
+        # the history source for one library at a time — so the fake has to offer both.
         fake_ctx = SimpleNamespace(
-            history_source=SimpleNamespace(fetch=lambda p, **k: [watch]),
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(
+                fetch=lambda p, **k: [watch],
+                fetch_section=lambda p, section, media_type, since=None: [watch],
+            ),
             config=SimpleNamespace(min_completion=0.7),
         )
         monkeypatch.setattr(service, "build_context", lambda **k: fake_ctx)
@@ -346,6 +470,73 @@ class TestSyncWatched:
 
         with sessions() as s:
             assert s.query(PickRow).filter_by(tmdb_id=42).one().watched_at is not None
+
+    def test_an_unreadable_library_falls_back_to_a_complete_read(self, service, sessions, monkeypatch):
+        """A PARTIAL cache must never be served as if it were complete.
+
+        The watched set is what stops an already-seen title being recommended again, so serving a
+        stale one is a visible regression. If any section fails — most likely the PMS refusing the
+        incremental filter — fall back to the direct complete read: the behaviour before the cache
+        existed, so it cannot be worse, only slower.
+        """
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        complete = WatchedItem(
+            title="From the complete read", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=9
+        )
+
+        def boom(_profile, _section, _media, since=None):
+            raise RuntimeError("PMS refused the filter")
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key="1", type="movie")]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: [complete], fetch_section=boom),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+
+        history = service.refresh_watched(ctx, profile)
+
+        assert [i.title for i in history] == ["From the complete read"]
+
+    def test_the_prefill_skips_people_this_run_will_not_build_for(self, service):
+        """Every row carries its own cron, so a SCHEDULED run is always scoped to a subset of rows.
+
+        `_run_user` returns "skipped" before reading any history for anyone with no row in scope, so
+        pre-filling them is a complete per-user PMS read spent on someone the run then skips.
+
+        REQUIRES `shortlist.engine.rows.builds_anything_for(profile, config)`. The server asks the
+        engine that question now instead of importing the engine's private `_in_audience`/`_is_muted`
+        and re-assembling the rule. `_has_a_row_in_scope` fails OPEN when the export is missing — so
+        this test failing with `True` means the engine has not exported it, and every scoped run is
+        pre-filling history for people it then skips.
+        """
+        from shortlist.engine.models import EngineConfig, RowSpec, UserProfile, UserType
+
+        included = UserProfile(username="in", plex_account_id=1, user_type=UserType.SHARED, slug="in")
+        excluded = UserProfile(username="out", plex_account_id=2, user_type=UserType.SHARED, slug="out")
+        # One row, whose audience is only `included`'s account, and it IS in this run's scope.
+        config = EngineConfig(
+            rows=[RowSpec(slug="picked", name_template="Picked", size=10, audience={1})],
+            build_only=["picked"],
+        )
+        ctx = SimpleNamespace(config=config)
+
+        assert service._has_a_row_in_scope(ctx, included) is True
+        assert service._has_a_row_in_scope(ctx, excluded) is False
+
+    def test_the_prefill_scope_check_fails_open(self, service):
+        """A context that cannot answer must be treated as in-scope — the worst case is then exactly
+        the behaviour before the narrowing, never a person silently missing their history."""
+        assert service._has_a_row_in_scope(SimpleNamespace(), object()) is True
 
     def test_streams_per_user_progress_and_a_finished_event(self, service, monkeypatch):
         """The Tools page bar is driven by these events — a sync that emits nothing shows no bar."""
@@ -403,3 +594,37 @@ def test_build_scheduler_registers_the_daily_watch_sync(sessions, tmp_path):
     scheduler = build_scheduler(app)
     assert scheduler.get_job(WATCH_SYNC_JOB_ID) is not None  # daily, independent of any row's cron
     assert scheduler.get_job(BACKUP_JOB_ID) is not None  # daily DB backup
+
+
+class TestRefusingADifferentServer:
+    """Every record Shortlist holds is scoped to ONE Plex machine — the delivery ledger says which
+    collection is whose, `restriction_snapshots` holds each account's filters as they were before we
+    touched them, the user table says who the owner is.
+
+    Settings refuses a repoint, but only when the new server ANSWERS at save time; a box that is down
+    then and up later slips past. This is the check at the point of use, where it cannot be skipped —
+    and it matters most for the privacy sync, because a stranger's PMS enumerates ZERO Shortlist
+    collections, which reads as "every row is gone".
+    """
+
+    def _check(self, linked: str | None, reported: str):
+        from types import SimpleNamespace
+
+        from shortlist.server.services.context_builder import _refuse_a_different_server
+
+        session = SimpleNamespace(
+            query=lambda model: SimpleNamespace(first=lambda: SimpleNamespace(machine_id=linked) if linked else None)
+        )
+        _refuse_a_different_server(session, reported)
+
+    def test_a_different_machine_aborts_before_anything_is_touched(self):
+        with pytest.raises(RuntimeError, match="different server"):
+            self._check(linked="m1", reported="someone-elses-server")
+
+    def test_the_linked_machine_passes(self):
+        self._check(linked="m1", reported="m1")
+
+    def test_an_unlinked_instance_passes(self):
+        """Setup itself builds a context before a `Server` row exists — refusing there would make the
+        wizard unable to complete."""
+        self._check(linked=None, reported="m1")

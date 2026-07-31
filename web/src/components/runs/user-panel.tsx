@@ -1,0 +1,297 @@
+import { Check, CircleSlash, Copy } from "lucide-react";
+import { useState } from "react";
+
+import { PickList } from "@/components/pick-list";
+import { Segmented } from "@/components/segmented";
+import { Button } from "@/components/ui/button";
+import { provenanceLabel } from "@/lib/pick-provenance";
+import { friendlyError, rankClass } from "@/lib/run-format";
+import { githubIssueSnippet } from "@/lib/github";
+import { STAGE_LABELS } from "@/lib/run-stages";
+import { useCopy } from "@/lib/use-copy";
+import { cn } from "@/lib/utils";
+import type {
+  Pick,
+  RunDetail,
+  RunLibraryBreakdown,
+  RunLogEntry,
+  RunUserResult,
+} from "@/lib/types";
+
+function CopyForGitHubButton({
+  run,
+  result,
+}: {
+  run: RunDetail;
+  result: RunUserResult;
+}) {
+  const { state, copy } = useCopy();
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => copy(githubIssueSnippet(run, result))}
+    >
+      {state === "copied" ? (
+        <Check aria-hidden="true" />
+      ) : (
+        <Copy aria-hidden="true" />
+      )}
+      {state === "copied"
+        ? "Copied"
+        : state === "error"
+          ? "Couldn’t copy — try again"
+          : "Copy for GitHub issue"}
+    </Button>
+  );
+}
+
+/** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
+ *  came from. */
+function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
+  return (
+    <li className="flex items-baseline gap-3 py-1.5">
+      <span
+        className={cn(
+          "w-9 shrink-0 text-right text-sm font-semibold tabular-nums",
+          rankClass(pick.rank),
+        )}
+      >
+        #{pick.rank}
+      </span>
+      <span
+        className={cn(
+          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+          isNew ? "bg-success" : "bg-muted-foreground/30",
+        )}
+        aria-label={isNew ? "new this run" : "kept"}
+        title={isNew ? "New this run" : "Kept from last run"}
+      />
+      <span className="min-w-0 flex-1 text-sm">
+        <span className="block truncate">
+          <span className="font-medium">{pick.title}</span>
+          {pick.reason && (
+            <span className="text-muted-foreground"> — {pick.reason}</span>
+          )}
+        </span>
+        {/* Where it came from. This page has its own pick renderer rather than using PickList, so
+            the provenance line has to be repeated here — it is the page people open to ask exactly
+            this question. */}
+        {provenanceLabel(pick) && (
+          <span className="block truncate text-xs text-muted-foreground/80">
+            {provenanceLabel(pick)}
+          </span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+/** One library's ranked picks: first five, a show-all toggle, and a quiet "removed" footer. */
+function LibraryPicks({ entry }: { entry: RunLibraryBreakdown }) {
+  const [expanded, setExpanded] = useState(false);
+  const added = new Set(entry.added);
+  const shown = expanded ? entry.picks : entry.picks.slice(0, 5);
+  return (
+    <div className="space-y-2">
+      {entry.picks.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No picks in this library.
+        </p>
+      ) : (
+        <ul className="divide-y divide-border/40">
+          {shown.map((pick) => (
+            <PickLine
+              key={pick.rank}
+              pick={pick}
+              isNew={added.has(pick.title)}
+            />
+          ))}
+        </ul>
+      )}
+      {entry.picks.length > 5 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "Show fewer" : `Show all ${entry.picks.length}`}
+        </Button>
+      )}
+      {entry.removed.length > 0 && (
+        <p className="pt-1 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground/70">
+            −{entry.removed.length} rotated out
+          </span>{" "}
+          — the row keeps its size, so these made room for the new picks above:{" "}
+          <span className="line-through">{entry.removed.join(", ")}</span>
+        </p>
+      )}
+      {entry.deleted.length > 0 && (
+        <p className="text-xs font-medium text-destructive">
+          Row deleted (this person no longer gets this row):{" "}
+          {entry.deleted.join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** One row (its libraries as tabs when there's more than one), showing the selected library's picks. */
+function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
+  const [libKey, setLibKey] = useState(entries[0]?.library_key ?? "");
+  const active =
+    entries.find((entry) => entry.library_key === libKey) ?? entries[0];
+  // Title, new-count and tokens all follow the SELECTED library, so a `{library_name}` row title
+  // renders for the tab you're viewing (e.g. "Movies Picked for You" ↔ "TV Shows Picked for You")
+  // instead of being stuck on the first library's rendering.
+  const added = active?.added.length ?? 0;
+  const rowTokens = active?.llm_tokens ?? 0;
+  return (
+    <div className="space-y-3">
+      <div className="flex items-baseline gap-2">
+        <h3 className="text-sm font-semibold">{active?.row_title}</h3>
+        {added > 0 && (
+          <span className="text-xs text-success">+{added} new</span>
+        )}
+        {rowTokens > 0 && (
+          <span
+            className="text-xs text-muted-foreground"
+            title="AI tokens the curator spent choosing this row's picks."
+          >
+            {rowTokens.toLocaleString()} AI tokens
+          </span>
+        )}
+      </div>
+      {entries.length > 1 && (
+        <Segmented
+          value={libKey}
+          onChange={setLibKey}
+          ariaLabel="Library"
+          options={entries.map((entry) => ({
+            value: entry.library_key,
+            label: `${entry.library_title} · ${entry.picks.length}`,
+          }))}
+        />
+      )}
+      {active && <LibraryPicks entry={active} />}
+    </div>
+  );
+}
+
+/** A key for the run results — what the dots and the strikethrough mean — so the view reads without
+ *  hovering to guess. Shown once above a person's rows. */
+function ResultsLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+      <span className="font-medium text-foreground/70">What changed:</span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-2 w-2 rounded-full bg-success" aria-hidden="true" />
+        New this run
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span
+          className="h-2 w-2 rounded-full bg-muted-foreground/30"
+          aria-hidden="true"
+        />
+        Kept from last run
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="line-through">Title</span>
+        Rotated out for variety
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="font-semibold tabular-nums text-amber-400">#1–3</span>
+        Top picks
+      </span>
+    </div>
+  );
+}
+
+/** The selected user's result: an error, or their rows grouped from the per-(row, library) breakdown. */
+export function UserPanel({
+  run,
+  result,
+  liveLog,
+}: {
+  run: RunDetail;
+  result: RunUserResult;
+  liveLog?: RunLogEntry[];
+}) {
+  if (result.error !== null) {
+    return (
+      <div role="alert" className="space-y-3 rounded-md bg-destructive/10 p-3">
+        <p className="text-sm font-medium text-foreground">
+          {friendlyError(result.error)}
+        </p>
+        {/* Raw detail is contained: it scrolls inside its own box and wraps long tokens (the encoded
+            Plex uri) so it can never push the page sideways. */}
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive">
+          {result.error}
+        </pre>
+        <CopyForGitHubButton run={run} result={result} />
+      </div>
+    );
+  }
+  // A skip is a configuration outcome, not a failure — so it explains itself rather than sitting
+  // on "Working on this person…" forever, which is how it read to the beta user who filed issue #3.
+  if (result.status === "skipped") {
+    return (
+      <div className="flex gap-3 rounded-md bg-muted/40 p-3 text-sm">
+        <CircleSlash
+          className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
+        <div>
+          <p className="font-medium text-foreground">
+            Nothing to build for this person
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            {result.reason ??
+              "No row was due for them in this run. Check that a per-person row is enabled and that they’re in its audience."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+  if (result.breakdown.length === 0) {
+    // Still running (this user hasn’t finished) or a legacy run with no breakdown.
+    if (result.picks.length > 0)
+      return <PickList picks={result.picks} className="mt-1" />;
+    if (result.status === "ok" || result.status === "cold_start") {
+      return (
+        <p className="text-sm text-muted-foreground">
+          No changes — this person’s rows were already up to date.
+        </p>
+      );
+    }
+    // Show the latest stage from the live log for this user.
+    const userLog = liveLog?.filter((e) => e.user === result.slug);
+    const latest = userLog?.at(-1);
+    const stageLabel = latest
+      ? (STAGE_LABELS[latest.stage] ?? latest.stage)
+      : null;
+    const rowName = latest?.counts?.row as string | undefined;
+    return (
+      <p className="text-sm text-muted-foreground">
+        {stageLabel
+          ? `${stageLabel}${rowName ? ` — ${rowName}` : ""}…`
+          : "Working on this person…"}
+      </p>
+    );
+  }
+  const rows = new Map<string, RunLibraryBreakdown[]>();
+  for (const entry of result.breakdown) {
+    rows.set(entry.row_slug, [...(rows.get(entry.row_slug) ?? []), entry]);
+  }
+  return (
+    <div className="space-y-6">
+      <ResultsLegend />
+      {[...rows.values()].map((entries) => (
+        <RowSection key={entries[0]?.row_slug} entries={entries} />
+      ))}
+    </div>
+  );
+}

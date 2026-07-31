@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
@@ -9,12 +9,23 @@ import { ApiError } from "@/lib/api";
 import type { User, UserPatch } from "@/lib/types";
 import { UsersPage } from "@/pages/users";
 
+const { toastSuccess } = vi.hoisted(() => ({ toastSuccess: vi.fn() }));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: toastSuccess,
+    loading: vi.fn(),
+    error: vi.fn(),
+    dismiss: vi.fn(),
+  },
+}));
+
 const { getUsers, patchUser, setAllUsersEnabled, syncUsers } = vi.hoisted(
   () => ({
     getUsers: vi.fn(),
     patchUser: vi.fn(),
     syncUsers: vi.fn(() =>
-      Promise.resolve({ added: 1, updated: 48, total: 49 }),
+      Promise.resolve({ added: 1, updated: 48, total: 49, queued: false }),
     ),
     setAllUsersEnabled: vi.fn((_enabled: boolean) =>
       Promise.resolve({ updated: 1, cleaned: 0, enabled: true }),
@@ -47,6 +58,14 @@ const SARAH: User = {
   last_run_at: null,
   request_tag: "",
   hit_rate: null,
+  nickname: "",
+  friendly_name: "",
+  display_name: "",
+  avatar_url: "",
+  plex_account_id: 0,
+  restriction_profile: "",
+  preview_titles: [],
+  prefs: {},
 };
 
 function renderPage() {
@@ -69,14 +88,12 @@ describe("UsersPage", () => {
     setAllUsersEnabled.mockClear();
   });
 
-  it("warns the owner that their own Home shows everyone's rows — but only once they're in the list", async () => {
+  it("tells the owner where they DO see everyone's rows — but only once they're in the list", async () => {
     getUsers.mockResolvedValue([SARAH]);
     const { unmount } = renderPage();
     // A server with no owner row yet (pre-sync) shouldn't explain a caveat nobody has hit.
     expect(await screen.findByText("sarah")).toBeInTheDocument();
-    expect(
-      screen.queryByText(/can’t hide rows from the server owner/i),
-    ).toBeNull();
+    expect(screen.queryByText(/Home screen shows only/i)).toBeNull();
     unmount();
 
     getUsers.mockResolvedValue([
@@ -85,10 +102,14 @@ describe("UsersPage", () => {
     ]);
     renderPage();
 
+    // `promotedToOwnHome` and `promotedToSharedHome` are separate Plex flags, so a friend's row
+    // never reaches the owner's Home. The note used to claim otherwise and send them off to make a
+    // Home user for nothing.
     expect(
-      await screen.findByText(/can’t hide rows from the server owner/i),
+      await screen.findByText(/Home screen shows only/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/watch on a Plex Home user/i)).toBeInTheDocument();
+    expect(screen.getByText(/Collections tab/i)).toBeInTheDocument();
+    expect(screen.queryByText(/watch on a Plex Home user/i)).toBeNull();
   });
 
   it("only enables everyone after confirming", async () => {
@@ -204,6 +225,31 @@ describe("UsersPage — pulling the roster again", () => {
     expect(await screen.findByText("steve")).toBeInTheDocument();
   });
 
+  it("says a sync is queued when a run is holding Plex, rather than looking like nothing happened", async () => {
+    // Sync from Plex is a WRITER (it renames collections when a nickname drifts), so it defers to an
+    // in-flight run. The page shows no counts, so without this the button would simply stop spinning
+    // and the roster would be unchanged — indistinguishable from a broken button.
+    getUsers.mockResolvedValue([SARAH]);
+    syncUsers.mockResolvedValueOnce({
+      added: 0,
+      updated: 0,
+      total: 0,
+      queued: true,
+    });
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Sync/ }));
+
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(
+        "Sync queued",
+        expect.objectContaining({
+          description: expect.stringContaining("the moment it finishes"),
+        }),
+      ),
+    );
+  });
+
   it("says plex.tv couldn’t be reached rather than silently doing nothing", async () => {
     getUsers.mockResolvedValue([SARAH]);
     syncUsers.mockRejectedValueOnce(new ApiError(502, "plex.tv timed out"));
@@ -246,5 +292,63 @@ describe("UsersPage — the Type column", () => {
     const badge = await screen.findByText("New viewer");
     // Its cell is the watch-history one, so it reads as "0 titles · New viewer".
     expect(badge.closest("td")).toHaveTextContent(/0 titles/);
+  });
+});
+
+describe("UsersPage — Plex Home accounts", () => {
+  beforeEach(() => {
+    getUsers.mockReset();
+    patchUser.mockReset();
+  });
+
+  /** plex.tv reports `restricted: true` for EVERY Plex Home managed account — with a parental preset
+   *  or without. Only `restriction_profile` says which, and the two must not look the same. */
+  const managed = (restriction_profile: string): User => ({
+    ...SARAH,
+    id: 9,
+    username: "kid",
+    slug: "kid",
+    user_type: "managed",
+    restricted: true,
+    restriction_profile,
+    enabled: false,
+  });
+
+  it("names the actual restriction profile rather than a bare 'Restricted'", async () => {
+    // "Younger Kid" tells the owner what they set and therefore what to change; "Restricted" does not.
+    getUsers.mockResolvedValue([managed("little_kid")]);
+    renderPage();
+
+    expect(await screen.findByText("Younger Kid")).toBeInTheDocument();
+  });
+
+  it("disables the toggle only for an account Plex really hides everything from", async () => {
+    getUsers.mockResolvedValue([managed("little_kid")]);
+    renderPage();
+
+    await screen.findByText("Younger Kid");
+    expect(screen.getByRole("switch")).toBeDisabled();
+  });
+
+  it("treats a managed account with NO profile as an ordinary user", async () => {
+    // Issue #20: keying on `restricted` badged these as parental-controlled and greyed out their
+    // toggle, when Plex hides nothing from them and they need a row (and privacy filters) like anyone.
+    getUsers.mockResolvedValue([managed("")]);
+    renderPage();
+
+    await screen.findByText("kid");
+    expect(screen.getByRole("switch")).toBeEnabled();
+    expect(screen.queryByText(/Younger Kid|Older Kid|Teen/)).toBeNull();
+  });
+
+  it("can be enabled, which the old gate made impossible", async () => {
+    getUsers.mockResolvedValue([managed("")]);
+    patchUser.mockResolvedValue({});
+    renderPage();
+
+    await screen.findByText("kid");
+    await userEvent.click(screen.getByRole("switch"));
+
+    expect(patchUser).toHaveBeenCalledWith(9, { enabled: true });
   });
 });

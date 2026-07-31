@@ -300,7 +300,13 @@ def gather_candidates(
                 genres=[gmap[g] for g in item.get("genre_ids", []) if g in gmap],
                 rating=float(item.get("vote_average") or 0.0),
                 vote_count=int(item.get("vote_count") or 0),
+                poster_path=item.get("poster_path") or "",
             )
+        # Artwork folds like the rest: `merge()` (Trakt, and any other non-TMDB source) has no poster
+        # to give and runs BEFORE the TMDB-backed sources, so a title both found would otherwise keep
+        # the poster-less copy's "" and buy the path again with a detail call in `request_missing` —
+        # while a list response carrying it was already in hand. Same rule `accumulate` uses.
+        pool[key].poster_path = pool[key].poster_path or (item.get("poster_path") or "")
         # A title two sources both found belongs to both — it competes in each one's share, and
         # keeps the STRONGEST claim any of them made for it. A source with nothing to claim
         # (`affinity is None`) adds itself to `sources` but never touches the score.
@@ -484,13 +490,6 @@ def gather_candidates(
     return list(pool.values())
 
 
-def _slice_for_llm(items: list[dict], taste_genres: set[str], cap: int) -> list[dict]:
-    """Trim a library down to what an LLM can read, favouring titles in the person's taste genres."""
-    if len(items) <= cap:
-        return items
-    return sorted(items, key=lambda it: len(set(it.get("genres") or []) & taste_genres), reverse=True)[:cap]
-
-
 def _dominant_genre_ids(tmdb: TmdbClient, seeds: list[Seed], media_type: MediaType) -> list[int]:
     """The genres this person's seeds skew toward, weighted by each seed's recency/frequency."""
     counts: Counter[int] = Counter()
@@ -508,10 +507,9 @@ def filter_candidates(
     *,
     watched_tmdb_ids: set[tuple[int, MediaType]],
     excluded_genres: set[str],
-    recent_pick_ids: set[tuple[int, MediaType]],
     dropped: list[tuple[Candidate, str]] | None = None,
 ) -> list[Candidate]:
-    """Intersect with the library and drop watched/excluded/stale titles.
+    """Intersect with the library and drop watched/excluded titles.
 
     Titles are identified by (tmdb_id, media_type), never by id alone: TMDB ids are unique only
     WITHIN a namespace, so movie 550 and TV 550 are different titles. Keying on the bare id makes
@@ -522,7 +520,6 @@ def filter_candidates(
         library_index: media_type -> {tmdb_id -> ratingKey} built once per run.
         watched_tmdb_ids: (tmdb_id, media_type) this user has already watched.
         excluded_genres: Per-user genre exclusions (case-insensitive).
-        recent_pick_ids: (tmdb_id, media_type) recommended within the last N runs (staleness guard).
         dropped: Optional out-list; each dropped candidate is appended as ``(candidate, reason)`` for
             the run trace. Purely observational — it never changes which candidates are kept.
     """
@@ -534,7 +531,7 @@ def filter_candidates(
             if dropped is not None:
                 dropped.append((c, "not_in_your_libraries"))
             continue
-        if (c.tmdb_id, c.media_type) in watched_tmdb_ids or (c.tmdb_id, c.media_type) in recent_pick_ids:
+        if (c.tmdb_id, c.media_type) in watched_tmdb_ids:
             if dropped is not None:
                 dropped.append((c, "already_watched"))
             continue

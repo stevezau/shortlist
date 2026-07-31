@@ -2,14 +2,24 @@
 
 ## Requirements
 
-- **Plex Media Server ≥ 1.43.2.10687** — earlier versions ignore the label exclusion that hides
-  each row, so a private row could leak onto other accounts' Home/Recommended/Related. The wizard
-  shows your server's version up front so you can confirm it before you start.
-- **Plex Pass** on the server owner's account (label restrictions are a Pass feature).
+- **Plex Media Server 1.43.2.10687 or newer** — this is the version where Plex started honouring
+  the setting that hides each row. On anything older, a private row could show up for other people.
+  The wizard checks your version before you begin, so you'll know straight away.
+- **Plex Pass** on the server owner's account — the hiding feature is a Pass feature.
 - A **TMDB API key** (free: themoviedb.org → Settings → API).
-- Optional: **Tautulli** for friendlier display names (watch history is read straight from Plex,
-  no setup); **an LLM API key** (Anthropic/OpenAI/Google) or a **local server** (Ollama, llama.cpp,
-  LM Studio, vLLM, LocalAI) — Shortlist is fully functional with none of these (heuristic mode).
+
+### Optional extras
+
+**Shortlist works fully without any of these.**
+
+- **Tautulli** — only improves the names people are shown by. Watch history comes straight from
+  Plex either way, with no setup.
+- **An AI provider** — Claude, GPT or Gemini, or a local server you run yourself (Ollama,
+  llama.cpp, LM Studio, vLLM, LocalAI). This unlocks one extra source: a live web search for what
+  to watch next.
+- **An [Exa](https://exa.ai) key** — makes that web search work with _any_ AI provider, including
+  local ones that have no internet access. See
+  [What is Exa, and should I use it?](faq.md#what-is-exa-and-should-i-use-it).
 
 ## Install (Docker)
 
@@ -41,22 +51,30 @@ what claims the instance for you); from then on Shortlist only opens for that ac
 > anyone who can open the page could claim it as theirs — so don't put it on the public internet
 > until you've finished the wizard. Once you've claimed it, it's yours.
 
-The wizard opens on a short welcome screen, then walks (the progress bar reads "step X of 7"):
+The wizard has **7 steps**, and the progress bar counts them the same way this list does:
 
-1. **Connect Plex** — PIN login, pick your server. The capability probe checks your PMS
-   version, Plex Pass, and libraries with plain-English results.
-2. **Recommendations & history** — where picks come from (TMDB, Trakt, AI, web search). Watch
-   history is read straight from Plex, per user, with no setup; Tautulli is optional here, only
-   for the friendlier display names it knows people by.
-3. **Choose your AI provider** — Claude / GPT / Gemini / Local (OpenAI-compatible) / **None**.
-   Keys are yours, stored encrypted, redacted after save.
-4. **Pick your users** — everyone you share with, with history-depth and new-viewer badges.
-5. **Make it yours** — row name, row size, and when rows refresh (each row runs on its own
-   schedule; there is no single global schedule). The name can be plain text or use a placeholder:
-   `{library_name}` (the library — the default `✨ {library_name} Picked for You` becomes "✨ Movies
-   Picked for You"), `{user}` (the person's name — e.g. "Sarah's picks"), or `{top_seed}` (their
-   current favourite — e.g. "Because you watched {top_seed}").
-6. **First run** — live per-user progress; when it finishes, each user has their private row.
+1. **Welcome** — a short intro screen. Read it and continue.
+2. **Connect Plex** — sign in with a PIN, then pick your server. Shortlist checks your Plex
+   version, Plex Pass, and libraries, and tells you in plain English whether each one is OK.
+3. **Recommendations & history** — choose where picks come from (TMDB, Trakt, AI web search).
+   Watch history comes straight from Plex with no setup. Tautulli is optional, and only improves
+   the names people are shown by.
+4. **Choose your AI provider** — Claude / GPT / Gemini / a local server / **None**. Keys stay
+   yours: stored encrypted, and hidden again once saved. Picking None is a perfectly good choice.
+5. **Pick your users** — everyone you share with, with badges showing how much history each
+   person has.
+6. **Make it yours** — the row's name, how many titles it holds, and how often it refreshes. Each
+   row keeps its own schedule; there's no single global one.
+
+   The name can be plain text, or use a placeholder that fills itself in:
+
+   | Placeholder      | Becomes                 | Example                    |
+   | ---------------- | ----------------------- | -------------------------- |
+   | `{library_name}` | the library's name      | "✨ Movies Picked for You" |
+   | `{user}`         | the person's name       | "Sarah's picks"            |
+   | `{top_seed}`     | their current favourite | "Because you watched Dune" |
+
+7. **First run** — watch it build, person by person. When it finishes, everyone has their row.
 
 ## Trying it safely
 
@@ -75,8 +93,8 @@ share filter. Later runs are much faster — most rows are unchanged and skipped
 Every row is kept private automatically: it's a labeled collection excluded on every other
 account's share, delivered hidden and only promoted once those exclusions are in place. Your share
 filters are snapshotted before the first change, so **Uninstall** (Settings → Danger Zone) puts them
-back exactly as they were. This hiding relies on a PMS ≥ 1.43.2.10687 — older builds ignore the
-label exclusion, which is why the wizard surfaces your version before you begin.
+back exactly as they were. This hiding relies on Plex Media Server ≥ 1.43.2.10687 — older builds
+ignore the label exclusion, which is why the wizard surfaces your version before you begin.
 
 ## The one honest caveat
 

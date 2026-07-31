@@ -88,7 +88,7 @@ class TestShareTokenWatchSource:
     def test_selects_the_media_type_per_library_and_aggregates_across_them(self, mock_plex, mock_plextv):
         source = self._source(mock_plex, mock_plextv)
         mock_plextv.shared_server_tokens.return_value = {100: "SARAH-TOK"}
-        mock_plex.watched_titles.side_effect = lambda key, mt, tok: (
+        mock_plex.watched_titles.side_effect = lambda key, mt, tok, since=None: (
             [make_watched("Heat", media_type=MediaType.MOVIE)]
             if mt is MediaType.MOVIE
             else [make_watched("Suits", media_type=MediaType.SHOW)]
@@ -103,6 +103,9 @@ class TestShareTokenWatchSource:
             ("Heat", MediaType.MOVIE),
             ("Suits", MediaType.SHOW),
         }
+        # A direct engine run holds no state between runs, so it has nothing to be incremental
+        # against — it must always ask for everything.
+        assert all(call.kwargs.get("since") is None for call in mock_plex.watched_titles.call_args_list)
 
     def test_one_unreadable_library_degrades_to_empty_without_failing_the_others(self, mock_plex, mock_plextv):
         """A single library erroring must not lose the user's whole history — the other library's
@@ -110,7 +113,7 @@ class TestShareTokenWatchSource:
         source = self._source(mock_plex, mock_plextv)
         mock_plextv.shared_server_tokens.return_value = {100: "SARAH-TOK"}
 
-        def read(key, media_type, token):
+        def read(key, media_type, token, since=None):
             if media_type is MediaType.MOVIE:
                 raise RuntimeError("section unreadable")
             return [make_watched("Suits", media_type=MediaType.SHOW)]
@@ -181,6 +184,26 @@ class TestDeriveSeeds:
         assert binge.watch_count == 50
         assert seeds[0].title == "One Movie"  # more recent wins despite the 50-episode binge
 
+    def test_a_blocked_title_never_becomes_a_seed(self):
+        """A blocked title stays in their history — it just stops shaping what they are recommended."""
+        history = [
+            make_watched("One-Off", days_ago=1, tmdb_id=111),
+            make_watched("Actually Them", days_ago=5, tmdb_id=222),
+        ]
+
+        seeds = derive_seeds(history, lambda _w: None, blocked={111})
+
+        assert [s.tmdb_id for s in seeds] == [222], "the blocked title was the most recent watch"
+
+    def test_blocking_frees_the_budget_for_the_next_title(self):
+        """Blocking must not just null out a slot — otherwise a person with three blocked recent
+        watches gets a row built from two seeds instead of the three they asked for."""
+        history = [make_watched(f"T{i}", days_ago=i + 1, tmdb_id=i) for i in range(5)]
+
+        seeds = derive_seeds(history, lambda _w: None, max_seeds=2, blocked={0, 1})
+
+        assert [s.tmdb_id for s in seeds] == [2, 3]
+
     def test_an_items_own_tmdb_id_wins_over_the_resolver(self):
         # The share-token source inlines the tmdb_id from the PMS GUID, so derive_seeds must use it
         # and never consult the (index/search) resolver for that item — the resolver here would fail.
@@ -201,6 +224,20 @@ class TestDeriveSeeds:
         ids = {f"Movie {i}": i + 1 for i in range(10)}
         seeds = derive_seeds(history, lambda w: ids[w.title], max_seeds=4)
         assert len(seeds) == 4
+
+    def test_a_budget_of_one_yields_a_single_media_type(self):
+        # Not a defect — one seed cannot be both — but it is WHY the row editor steers a
+        # movies-and-TV row to 2 rather than 1 for a `{top_seed}` name. A `media="both"` row seeded
+        # by one show gathers no movie candidates at all, so its Movies collection never builds.
+        history = [make_watched("Show", days_ago=1, media_type=MediaType.SHOW)]
+        history += [make_watched("Movie", days_ago=2, media_type=MediaType.MOVIE)]
+        ids = {"Show": 1, "Movie": 2}
+
+        one = derive_seeds(history, lambda w: ids[w.title], max_seeds=1)
+        two = derive_seeds(history, lambda w: ids[w.title], max_seeds=2)
+
+        assert {s.media_type for s in one} == {MediaType.SHOW}
+        assert {s.media_type for s in two} == {MediaType.SHOW, MediaType.MOVIE}
 
     def test_reserves_seed_budget_for_the_minority_media_type(self):
         # A TV-heavy watcher: 20 recent shows + 3 older movies. The movies must still seed, or a

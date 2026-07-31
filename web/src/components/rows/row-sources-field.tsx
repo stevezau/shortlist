@@ -14,6 +14,18 @@ function globalSources(settings: Settings | undefined): string[] {
     : ["tmdb_similar", "tmdb_discover"];
 }
 
+/** The inherited set, read back as names ("TMDB Similar and TMDB Discover"). Null until settings
+ *  load, so the sentence stays true rather than naming a set this server may not have. */
+function globalSourceLabels(settings: Settings | undefined): string | null {
+  if (!settings) return null;
+  const labels = globalSources(settings).map(
+    (id) => SOURCES.find((source) => source.id === id)?.label ?? id,
+  );
+  if (labels.length === 0) return null;
+  if (labels.length === 1) return labels[0] ?? null;
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+}
+
 /**
  * Per-row discovery-source override. An empty array means "inherit the global Settings →
  * Recommendations set" (the default); choosing "Custom" seeds from the current global set so the
@@ -81,7 +93,10 @@ export function RowSourcesField({
       )}
       {!custom ? (
         <p className="text-sm text-muted-foreground">
-          This row uses the sources you enabled in Settings → Recommendations.
+          This row uses the sources you enabled in Settings → Recommendations
+          {globalSourceLabels(settings.data) &&
+            ` — currently ${globalSourceLabels(settings.data)}`}
+          .
         </p>
       ) : (
         <div className="space-y-3">

@@ -7,12 +7,15 @@ ones, and hooks into startup (pre-migration) and APScheduler (daily). The backup
 
 from __future__ import annotations
 
+import re
 import shutil
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
+
+from shortlist.server.net_guard import safe_backup_name
 
 DEFAULT_MAX_BACKUPS = 10
 BACKUP_SUBDIR = "backups"
@@ -34,21 +37,34 @@ def take_backup(config_dir: Path, *, label: str = "scheduled", max_keep: int = D
         return None
 
     backup_dir = _backup_dir(config_dir)
-    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    backup_path = backup_dir / f"shortlist_{ts}_{label}.db"
+    # LOCAL time, matching every log line (the container's TZ). An operator picking a restore point
+    # reads these filenames against a log that narrates what happened at 03:31 their time; a UTC
+    # filename asks them to convert, and an off-by-a-timezone choice restores the wrong night.
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # The label lands in a filename, and `POST /api/system/jobs` takes an unvalidated payload — so
+    # `{"label": "../../../../tmp/x"}` wrote a complete copy of the database, encrypted Plex tokens
+    # included, outside /config. The restore path has always validated its filename; this one didn't.
+    safe_label = re.sub(r"[^a-z0-9_-]", "-", (label or "backup").strip().lower())[:32] or "backup"
+    backup_path = backup_dir / f"shortlist_{ts}_{safe_label}.db"
 
+    src = dst = None
     try:
         src = sqlite3.connect(str(db_path))
         dst = sqlite3.connect(str(backup_path))
         src.backup(dst)
-        dst.close()
-        src.close()
         logger.info("backup created: {} ({:.1f} KB)", backup_path.name, backup_path.stat().st_size / 1024)
     except Exception as e:
         logger.error("backup failed: {}", e)
         if backup_path.exists():
             backup_path.unlink()
         return None
+    finally:
+        # Both handles, always. They used to be closed only on the success path, so a failure
+        # mid-`backup()` leaked two SQLite connections and then unlinked a file `dst` still held —
+        # and this runs on every boot.
+        for conn in (dst, src):
+            if conn is not None:
+                conn.close()
 
     _rotate(backup_dir, max_keep)
     return backup_path
@@ -86,6 +102,12 @@ def restore_backup(config_dir: Path, backup_name: str) -> bool:
 
     The caller must stop the app or hold the DB lock before calling this.
     """
+    try:
+        backup_name = safe_backup_name(backup_name)
+    except ValueError:
+        # `../../etc/passwd` would otherwise escape the backups directory and be copied over the DB.
+        logger.error("refusing a backup name that is not a plain filename: {!r}", backup_name)
+        return False
     backup_path = config_dir / BACKUP_SUBDIR / backup_name
     db_path = config_dir / "shortlist.db"
     if not backup_path.exists():

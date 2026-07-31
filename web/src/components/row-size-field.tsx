@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useId, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +24,14 @@ export function RowSizeField({
   const id = useId();
   const [text, setText] = useState(String(value));
   // Re-sync the buffer when the saved value changes from elsewhere (reset, another tab).
-  useEffect(() => setText(String(value)), [value]);
+  // Adjusted during render rather than in an effect: React re-runs this component immediately
+  // without committing the discarded render, so the input never paints the stale text. An effect
+  // would paint stale, then correct it on the next frame.
+  const [syncedValue, setSyncedValue] = useState(value);
+  if (syncedValue !== value) {
+    setSyncedValue(value);
+    setText(String(value));
+  }
 
   const commit = () => {
     const next = text.trim() === "" ? value : clampRowSize(Number(text));

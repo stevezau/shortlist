@@ -14,8 +14,12 @@ class SecretBox:
     def __init__(self, config_dir: Path):
         key_path = config_dir / "secret.key"
         if not key_path.exists():
-            key_path.write_bytes(Fernet.generate_key())
-            os.chmod(key_path, 0o600)
+            # Created with the mode already set, rather than write-then-chmod: between those two calls
+            # the key that decrypts every Plex token and LLM key on this instance is readable at
+            # whatever the umask allows (rule 9). Same shape as `main._instance_secret`.
+            fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(Fernet.generate_key())
         self._fernet = Fernet(key_path.read_bytes())
 
     def encrypt(self, value: str) -> str:

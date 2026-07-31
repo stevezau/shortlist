@@ -1,5 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  CircleAlert,
+  CircleCheck,
+  Loader2,
   Bug,
   Check,
   ClipboardCopy,
@@ -17,16 +20,20 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router";
 
-import { Wordmark } from "@/components/brand";
+import { HomeWordmark } from "@/components/brand";
 import { ActivityPill } from "@/components/layout/activity-pill";
+import { ActivityIndicator } from "@/components/layout/activity-indicator";
 import { NotificationBell } from "@/components/layout/notification-bell";
 import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useSession, useVersion } from "@/lib/queries";
 import { GITHUB_REPO, newBugReportUrl } from "@/lib/support";
+import { useCopy } from "@/lib/use-copy";
+import { Toaster } from "sonner";
+
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -36,7 +43,7 @@ const NAV_ITEMS = [
   { to: "/runs", label: "Runs", icon: ListChecks, end: false },
   { to: "/logs", label: "Logs", icon: ScrollText, end: false },
   { to: "/requests", label: "Requests", icon: Inbox, end: false },
-  { to: "/tools", label: "Tools", icon: Wrench, end: false },
+  { to: "/jobs", label: "Jobs", icon: Wrench, end: false },
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },
 ];
 
@@ -44,25 +51,15 @@ const NAV_ITEMS = [
  *  version + browser so a report always carries the two facts people forget to include. */
 export function HelpLinks() {
   const version = useVersion();
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
-    "idle",
-  );
+  const { state: copyState, copy } = useCopy(2500);
   const linkClass =
     "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
 
   // The secrets-free diagnostics bundle lives with the bug-report action, not in Settings — grab it
-  // here, then paste it into the GitHub issue. (Too long to pre-fill into the issue URL.)
-  const copyDiagnostics = async () => {
-    try {
-      // Both the fetch (a 500 building the bundle) and the clipboard write can fail — surface either
-      // as "couldn't copy" rather than a silently dead button.
-      await navigator.clipboard.writeText(await api.getDebugBundle());
-      setCopyState("copied");
-    } catch {
-      setCopyState("error");
-    }
-    setTimeout(() => setCopyState("idle"), 2500);
-  };
+  // here, then paste it into the GitHub issue. (Too long to pre-fill into the issue URL.) Both the
+  // fetch (a 500 building the bundle) and the clipboard write can fail — useCopy surfaces either as
+  // "couldn't copy" rather than a silently dead button.
+  const copyDiagnostics = () => copy(api.getDebugBundle());
   const copyLabel =
     copyState === "copied"
       ? "Copied — paste into the issue"
@@ -222,10 +219,48 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
+      {/* One Toaster for the whole app — background work announces itself from the header's
+          ActivityIndicator, which is the single observer of the job queue.
+
+          Themed to the app's own tokens rather than left on sonner's defaults, which render a WHITE
+          card on a dark-only app. `richColors` is deliberately off: it paints success/error in
+          sonner's palette, which does not match ours. */}
+      <Toaster
+        position="bottom-right"
+        closeButton
+        theme="dark"
+        gap={8}
+        toastOptions={{
+          classNames: {
+            toast:
+              "!bg-elevated !border-border !text-foreground !rounded-lg !shadow-xl !gap-3 !px-4 !py-3 !text-sm",
+            title: "!text-sm !font-medium !leading-tight",
+            description: "!text-xs !text-muted-foreground !leading-snug",
+            icon: "!m-0 !self-start !mt-0.5",
+            closeButton:
+              "!bg-elevated !border-border !text-muted-foreground hover:!text-foreground",
+          },
+        }}
+        icons={{
+          // The app's own spinner, so a running toast matches every other "in flight" indicator
+          // instead of introducing a second visual language for the same idea.
+          loading: (
+            <Loader2
+              className="h-4 w-4 animate-spin text-primary"
+              aria-hidden
+            />
+          ),
+          success: <CircleCheck className="h-4 w-4 text-success" aria-hidden />,
+          error: (
+            <CircleAlert className="h-4 w-4 text-destructive" aria-hidden />
+          ),
+        }}
+      />
       {/* Mobile top bar: wordmark + hamburger. Hidden once the sidebar appears at md. */}
       <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-card/80 px-4 py-3 backdrop-blur md:hidden">
-        <Wordmark />
+        <HomeWordmark />
         <div className="flex items-center gap-1">
+          <ActivityIndicator align="right" />
           <NotificationBell align="right" />
           <Button
             variant="ghost"
@@ -263,7 +298,7 @@ export function AppShell() {
             }}
           >
             <div className="flex items-center justify-between border-b px-4 py-3">
-              <Wordmark />
+              <HomeWordmark />
               <Button
                 variant="ghost"
                 size="icon"
@@ -285,7 +320,8 @@ export function AppShell() {
           OVER that overflow (the "text shows behind the panel" bug). Elevating the whole rail fixes it. */}
       <aside className="sticky top-0 z-30 hidden h-screen w-60 shrink-0 flex-col border-r bg-card/40 backdrop-blur md:flex">
         <div className="flex items-center justify-between px-5 py-5">
-          <Wordmark />
+          <HomeWordmark />
+          <ActivityIndicator align="left" />
           <NotificationBell align="left" />
         </div>
         <NavBody />

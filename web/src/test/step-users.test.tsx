@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
@@ -37,13 +37,21 @@ const SARAH: User = {
   username: "sarah",
   slug: "sarah",
   user_type: "shared",
-    restricted: false,
+  restricted: false,
   enabled: true,
   cold_start: false,
   history_depth: 120,
   last_run_at: null,
   request_tag: "",
   hit_rate: null,
+  nickname: "",
+  friendly_name: "",
+  display_name: "",
+  avatar_url: "",
+  plex_account_id: 0,
+  restriction_profile: "",
+  preview_titles: [],
+  prefs: {},
 };
 
 function renderStep() {
@@ -101,7 +109,6 @@ describe("StepUsers select all/none", () => {
   });
 });
 
-
 describe("StepUsers — the owner's own line", () => {
   beforeEach(() => {
     getUsers.mockReset();
@@ -126,7 +133,9 @@ describe("StepUsers — the owner's own line", () => {
     renderStep();
 
     expect(
-      await screen.findByText(/switch yourself on below to get a row of your own/i),
+      await screen.findByText(
+        /switch yourself on below to get a row of your own/i,
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/switched on like everyone else/i)).toBeNull();
   });
@@ -144,10 +153,10 @@ describe("StepUsers — the owner's own line", () => {
     getUsers.mockResolvedValue([SARAH, OWNER]);
     renderStep();
 
-    expect(await screen.findByText(/Heads up, server owner/i)).toBeInTheDocument();
-    // The sentence is split by an <em>, so match the fragment that lives in one text node.
     expect(
-      screen.getByText(/people.s rows from you/i),
+      await screen.findByText(/Heads up, server owner/i),
     ).toBeInTheDocument();
+    // The sentence is split by an <em>, so match the fragment that lives in one text node.
+    expect(screen.getByText(/people.s rows from you/i)).toBeInTheDocument();
   });
 });

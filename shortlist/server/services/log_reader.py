@@ -2,9 +2,11 @@
 
 The whole point of this view is that a user can hand their logs to someone else — that is what the
 "copy" and "download" buttons are for, and it is exactly what a beta user did in issue #1. So
-everything served here goes through `scrub()` first, which is deliberately broader than the
-`redact()` used on exception text: a log line can carry a token in header form, a Bearer credential,
-or a provider API key, none of which look like a query parameter.
+everything served here goes through `scrub()` first — an alias for `http_retry.redact()`, which
+covers every credential shape we know of: a query-param token, a header form, a Bearer credential, a
+JSON-shaped field, or a provider API key. The two used to be separate ladders of different strength
+(`redact()` matched only the query-param form); they were merged so the ladder guarding a 502 detail
+or an `events` row is exactly as strong as the one guarding this view.
 
 Over-redaction is fine. A leaked token is not (plex-safety rule 9).
 """
@@ -27,43 +29,9 @@ _LINE = re.compile(
     r"(?P<level>[A-Z]+)\s*\|\s(?P<source>\S*?)\s-\s(?P<message>.*)$"
 )
 
-# Credentials that can appear in a log line but NOT as a query parameter, so `redact()` misses them.
-# Each pattern keeps its label and replaces only the secret, so the line still reads sensibly.
-_EXTRA_SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
-    # Header form: `X-Plex-Token: abc123`, `'X-Plex-Token': 'abc123'`
-    (
-        re.compile(r"((?:X-Plex-Token|X-Plex-Client-Identifier)['\"]?\s*[:=]\s*['\"]?)[^\s,'\"}\]]+", re.I),
-        r"\1REDACTED",
-    ),
-    # `Authorization: Bearer abc123` — our own API token, and any other bearer credential.
-    (re.compile(r"((?:Authorization['\"]?\s*[:=]\s*['\"]?)?Bearer\s+)[A-Za-z0-9._\-]{8,}", re.I), r"\1REDACTED"),
-    # JSON/dict form: `"token": "abc"`, `'apikey': 'abc'`, `"api_key": "abc"`.
-    (re.compile(r"(['\"](?:token|api_?key|authToken|accessToken)['\"]\s*:\s*['\"])[^'\"]+", re.I), r"\1REDACTED"),
-    # Provider key shapes, wherever they appear: Anthropic, OpenAI, Google, xAI, Groq.
-    # The OpenAI pattern must allow `-` and `_` INSIDE the key, not just after `sk-`: every key
-    # issued since 2024 is `sk-proj-…`, and OpenRouter — which this provider now supports — uses
-    # `sk-or-v1-…`. An alnum-only class stops dead at the hyphen after `proj`/`or` and matches
-    # neither. Over-redaction is the safe direction here.
-    (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{16,}"), "REDACTED"),
-    (re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"), "REDACTED"),
-    (re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}"), "REDACTED"),
-    (re.compile(r"\bxai-[A-Za-z0-9_\-]{20,}"), "REDACTED"),
-    (re.compile(r"\bgsk_[A-Za-z0-9_\-]{20,}"), "REDACTED"),
-    # Plex tokens are 20-char alnum; catch the bare `token=`/`X-Plex-Token` path form too.
-    (re.compile(r"(plex\.direct[^\s]*?token[=/])[A-Za-z0-9_\-]+", re.I), r"\1REDACTED"),
-)
-
-
-def scrub(text: str) -> str:
-    """Strip every credential shape we know of from a log line (rule 9).
-
-    Applied to EVERY line served or exported, not just ones we think are risky — the value of this
-    view is that it can be shared, so the safe assumption is that all of it will be.
-    """
-    cleaned = redact(text)
-    for pattern, replacement in _EXTRA_SECRETS:
-        cleaned = pattern.sub(replacement, cleaned)
-    return cleaned
+# Every credential shape now lives in `http_retry.redact()` (plex-safety rule 9); this is a plain
+# alias kept so callers here read `scrub()`, the name that describes what a log line needs.
+scrub = redact
 
 
 @dataclass(frozen=True)

@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type * as ApiModule from "@/lib/api";
 import { RunDetailPage } from "@/pages/run-detail";
-import type { RunDetail } from "@/lib/types";
+import type { RunLogEntry, RunDetail } from "@/lib/types";
 
 const { getRun, getUsers, getRunLog } = vi.hoisted(() => ({
   getRun: vi.fn(),
@@ -26,12 +26,29 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-// useSSE opens an EventSource; jsdom has none, so stub a no-op one.
+// useSSE opens an EventSource; jsdom has none, so stub one. Captures registered listeners (rather
+// than the setup.ts no-op default) so a test can simulate a server event and assert on the page's
+// reaction — used below to prove run-detail only refetches on ITS OWN run's SSE events (issue 7.6).
 class FakeEventSource {
-  addEventListener() {}
-  close() {}
+  static instances: FakeEventSource[] = [];
+  listeners: Record<string, ((event: MessageEvent<string>) => void)[]> = {};
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  constructor() {
+    FakeEventSource.instances.push(this);
+  }
+  addEventListener(
+    type: string,
+    handler: (event: MessageEvent<string>) => void,
+  ) {
+    (this.listeners[type] ??= []).push(handler);
+  }
+  close() {}
+  emit(type: string, data: unknown) {
+    for (const handler of this.listeners[type] ?? []) {
+      handler({ data: JSON.stringify(data) } as MessageEvent<string>);
+    }
+  }
 }
 vi.stubGlobal("EventSource", FakeEventSource);
 
@@ -44,13 +61,19 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
     finished_at: "2026-07-15T04:24:00Z",
     dry_run: false,
     stats: { users_ok: 1, users_error: 0, titles_requested: 0 },
+    error: null,
+    promotion_blockers: [],
     users: [
       {
         username: "MooHouse",
         slug: "moohouse",
         status: "ok",
+        display_name: "MooHouse",
         error: null,
         reason: null,
+        exa_searches: 0,
+        has_trace: false,
+        llm_tokens_by_step: {},
         duration_ms: 335000,
         llm_tokens: 5030,
         diff: {},
@@ -61,13 +84,15 @@ function run(breakdown: RunDetail["users"][number]["breakdown"]): RunDetail {
   } as RunDetail;
 }
 
-function renderDetail() {
+/** `query` deep-links a tab (`?tab=users`) — the same URL a person's Runs tab links to, so these
+ *  tests exercise the real entry point rather than a state the UI can't reach. */
+function renderDetail(query = "?tab=users") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/runs/2"]}>
+      <MemoryRouter initialEntries={[`/runs/2${query}`]}>
         <Routes>
           <Route path="/runs/:id" element={<RunDetailPage />} />
         </Routes>
@@ -125,6 +150,8 @@ describe("RunDetailPage — grouped by library", () => {
               title: "Deadliest Catch",
               reason: "survival series",
               seed_title: "Gold Rush",
+              sources: [],
+              affinity: null,
             },
           ],
         },
@@ -168,7 +195,7 @@ describe("RunDetailPage — grouped by library", () => {
     };
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     // Duration is computed from started_at → finished_at (04:18 → 04:24 = 6 minutes).
     expect(await screen.findByText("Duration")).toBeInTheDocument();
@@ -196,7 +223,7 @@ describe("RunDetailPage — grouped by library", () => {
     };
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     expect(await screen.findByText("Exa searches")).toBeInTheDocument();
     expect(screen.getByText("1")).toBeInTheDocument(); // billed
@@ -216,7 +243,7 @@ describe("RunDetailPage — grouped by library", () => {
     };
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     expect(await screen.findByText("all succeeded")).toBeInTheDocument();
     // No AI this run → those tiles don't render at all (0-value tiles would be noise).
@@ -229,7 +256,7 @@ describe("RunDetailPage — grouped by library", () => {
     r.stats = { users_ok: 1, users_error: 0, llm_tokens: 9000 }; // legacy run: total but no split
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     expect(await screen.findByText("9,000")).toBeInTheDocument();
     expect(screen.getByText("curate + AI sources")).toBeInTheDocument();
@@ -250,7 +277,14 @@ describe("RunDetailPage — grouped by library", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{ rank: 1, title: "Heat", reason: "crime", seed_title: "" }],
+          picks: [{
+            rank: 1,
+            title: "Heat",
+            reason: "crime",
+            seed_title: "",
+            sources: [],
+            affinity: null,
+          }],
         },
         {
           row_slug: "picked",
@@ -262,7 +296,14 @@ describe("RunDetailPage — grouped by library", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{ rank: 1, title: "Fargo", reason: "crime", seed_title: "" }],
+          picks: [{
+            rank: 1,
+            title: "Fargo",
+            reason: "crime",
+            seed_title: "",
+            sources: [],
+            affinity: null,
+          }],
         },
       ]),
     );
@@ -294,7 +335,14 @@ describe("RunDetailPage — grouped by library", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{ rank: 1, title: "A", reason: "a" }],
+          picks: [{
+            rank: 1,
+            title: "A",
+            reason: "a",
+            seed_title: null,
+            sources: [],
+            affinity: null,
+          }],
         },
         {
           row_slug: "hidden_gems",
@@ -306,7 +354,14 @@ describe("RunDetailPage — grouped by library", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{ rank: 1, title: "B", reason: "b" }],
+          picks: [{
+            rank: 1,
+            title: "B",
+            reason: "b",
+            seed_title: null,
+            sources: [],
+            affinity: null,
+          }],
         },
       ]),
     );
@@ -330,11 +385,104 @@ describe("RunDetailPage — grouped by library", () => {
       },
     ]);
 
-    renderDetail();
+    renderDetail("?tab=log");
 
     // The stage renders with its human label + the count detail.
     expect(await screen.findByText(/curating with AI/)).toBeInTheDocument();
     expect(screen.getByText(/120 candidates/)).toBeInTheDocument();
+  });
+
+  it("filters the log down to Plex writes, and says what it hid", async () => {
+    getRun.mockResolvedValue(run([]));
+    getRunLog.mockResolvedValue([
+      {
+        seq: 0,
+        ts: "2026-07-15T04:18:05Z",
+        run_id: 2,
+        user: "moohouse",
+        stage: "curating",
+        counts: {},
+      },
+      {
+        seq: 1,
+        ts: "2026-07-15T04:18:06Z",
+        run_id: 2,
+        user: "Shortlist",
+        stage: "filters",
+        counts: { done: 2, total: 5 },
+      },
+    ]);
+
+    renderDetail("?tab=log");
+    await screen.findByText(/curating with AI/);
+
+    await userEvent.click(screen.getByRole("button", { name: "Plex writes" }));
+
+    // Scoped to the log box: the phase timeline above it is always on now, and it names the same
+    // phases — so an unscoped query matches both and proves nothing about the filter.
+    const log = within(screen.getByRole("log", { name: /Run activity log/i }));
+    expect(log.getByText(/merging share filters/)).toBeInTheDocument();
+    expect(log.queryByText(/curating with AI/)).toBeNull();
+    expect(screen.getByText("1 of 2 lines")).toBeInTheDocument();
+  });
+
+  it("explains an empty log rather than implying the feature is broken", async () => {
+    // A run from before activity logs were stored has an empty tab through no fault of its own.
+    getRun.mockResolvedValue(run([]));
+    getRunLog.mockResolvedValue([]);
+
+    renderDetail("?tab=log");
+
+    expect(
+      await screen.findByText(/No activity recorded for this run/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Runs from before this was added have no stored log/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows an error with retry when the log fetch fails, instead of reading as 'no log'", async () => {
+    // Issue 7.7: a failed GET /runs/:id/log rendered exactly the same "No activity recorded" empty
+    // state as a run that genuinely has no log — indistinguishable, and with no way to retry.
+    getRun.mockResolvedValue(run([]));
+    getRunLog.mockRejectedValue(new Error("network error"));
+
+    renderDetail("?tab=log");
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText(/No activity recorded for this run/i)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Try again/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("names the phase a still-running run is actually in", async () => {
+    // The complaint this whole tab exists for: every person shows "done" and the run still says
+    // running, with nothing anywhere saying what it is doing.
+    getRun.mockResolvedValue({
+      ...run([]),
+      finished_at: null,
+      status: "running",
+    });
+    getRunLog.mockResolvedValue([
+      {
+        seq: 0,
+        ts: "2026-07-15T04:18:05Z",
+        run_id: 2,
+        user: "Shortlist",
+        stage: "converging",
+        counts: {},
+      },
+    ]);
+
+    renderDetail("");
+
+    expect(await screen.findByText(/Finishing up/)).toBeInTheDocument();
+    // Named in the header AND in Overview's latest-activity panel — both answer "what is it
+    // doing right now", so both carry it.
+    expect(
+      screen.getAllByText("checking for stranded rows").length,
+    ).toBeGreaterThan(0);
   });
 
   it("falls back to the flat pick list for legacy runs with no breakdown", async () => {
@@ -344,14 +492,25 @@ describe("RunDetailPage — grouped by library", () => {
       users: [
         {
           username: "MooHouse",
+          display_name: "MooHouse",
           slug: "moohouse",
           status: "ok",
           error: null,
           reason: null,
           duration_ms: 1000,
           llm_tokens: 0,
+          llm_tokens_by_step: {},
+          exa_searches: 0,
+          has_trace: false,
           diff: {},
-          picks: [{ rank: 1, title: "Old Title", reason: "legacy" }],
+          picks: [{
+            rank: 1,
+            title: "Old Title",
+            reason: "legacy",
+            seed_title: null,
+            sources: [],
+            affinity: null,
+          }],
           breakdown: [],
         },
       ],
@@ -381,6 +540,8 @@ describe("RunDetailPage — grouped by library", () => {
               title: "Fresh One",
               reason: "new pick",
               seed_title: "X",
+              sources: [],
+              affinity: null,
             },
           ],
         },
@@ -466,16 +627,33 @@ describe("RunDetail — a skipped person is not a success", () => {
     ) as unknown as RunDetail["users"];
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
-    // Both surfaces that used to say "succeeded": the People tile's hint and the list summary.
+    // The Overview tile's hint — one of the two surfaces that used to say "succeeded".
     expect(
       await screen.findByText(/3 skipped, built nothing/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/3 skipped — nothing was built/i),
-    ).toBeInTheDocument();
     expect(screen.queryByText("all succeeded")).toBeNull();
+  });
+
+  it("explains a skip on the person's own panel too", async () => {
+    const r = run([]);
+    r.stats = {
+      users_ok: 0,
+      users_error: 0,
+      users_skipped: 3,
+      titles_requested: 0,
+    };
+    r.users = ["sarah", "mike", "canary"].map((u, i) =>
+      skippedUser(u, i),
+    ) as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail("?tab=users");
+
+    expect(
+      await screen.findByText(/3 skipped — nothing was built/i),
+    ).toBeInTheDocument();
     // …and the person panel explains WHY rather than leaving them on "Working on this person…".
     expect(
       await screen.findByText(/no per-person rows to build/i),
@@ -524,7 +702,7 @@ describe("RunDetail — a failed run says why", () => {
     ];
     getRun.mockResolvedValue(r);
 
-    renderDetail();
+    renderDetail("");
 
     expect(
       await screen.findByText(/Plex wouldn’t accept a share filter/i),
@@ -539,9 +717,206 @@ describe("RunDetail — a failed run says why", () => {
 
   it("stays quiet on a clean run", async () => {
     getRun.mockResolvedValue(run([]));
-    renderDetail();
+    renderDetail("");
     // The tiles only render once a run has finished — wait for one, then assert no alarm.
     expect(await screen.findByText("all succeeded")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+function failedUser(username: string, error: string) {
+  return {
+    username,
+    slug: username,
+    status: "error",
+    error,
+    reason: null,
+    duration_ms: 0,
+    llm_tokens: 0,
+    diff: {},
+    picks: [],
+    breakdown: [],
+  };
+}
+
+describe("RunDetail — 'N people failed with the same problem' (issue 7.1)", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getRunLog.mockReset();
+    getUsers.mockResolvedValue([]);
+    getRunLog.mockResolvedValue([]);
+  });
+
+  it("claims commonality for two people who hit the SAME recognised error class", async () => {
+    const r = run([]);
+    r.stats = { users_ok: 0, users_error: 3, titles_requested: 0 };
+    r.users = [
+      failedUser("sarah", "HTTP 500 while updating collection 12"),
+      failedUser("mike", "HTTP 500 while updating collection 99"),
+      failedUser("amy", "connection refused to 10.0.0.5:32400"),
+    ] as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail("");
+
+    // Scoped to the banner itself: the selected (first) failed person's own panel repeats the same
+    // friendly sentence below it, so an unscoped query matches both and proves nothing about the
+    // banner specifically.
+    const commonLine = await screen.findByText(
+      /people failed with the same problem/i,
+    );
+    const banner = commonLine.closest('[role="alert"]') as HTMLElement;
+    expect(banner).toHaveTextContent(/2 people failed with the same problem/i);
+    expect(banner).toHaveTextContent(/server error \(500\)/i);
+  });
+
+  it("does NOT claim commonality for two people with different unrecognised errors", async () => {
+    // The bug: errorBucket used to be a pure alias of friendlyError, which returns one generic
+    // sentence for anything unrecognised — so these two unrelated failures bucketed together and
+    // the page asserted they were "the same problem", which was false.
+    const r = run([]);
+    r.stats = { users_ok: 0, users_error: 2, titles_requested: 0 };
+    r.users = [
+      failedUser("sarah", "KeyError: 'ratingKey'"),
+      failedUser("mike", "AttributeError: NoneType has no attribute 'guid'"),
+    ] as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail("");
+
+    await screen.findAllByText(/failed/i);
+    expect(screen.queryByText(/failed with the same problem/i)).toBeNull();
+  });
+});
+
+describe("RunDetail — where the phase breakdown lives", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getRunLog.mockReset();
+    getUsers.mockResolvedValue([]);
+    // Real TAIL_STAGES with a gap between them — the breakdown renders nothing without them.
+    getRunLog.mockResolvedValue([
+      {
+        seq: 1,
+        ts: "2026-07-30T03:30:00Z",
+        level: "info",
+        message: "run · Shortlist · users_done",
+        stage: "users_done",
+      },
+      {
+        seq: 2,
+        ts: "2026-07-30T03:30:30Z",
+        level: "info",
+        message: "run · Shortlist · ordering",
+        stage: "ordering",
+      },
+      {
+        seq: 3,
+        ts: "2026-07-30T03:32:00Z",
+        level: "info",
+        message: "run · Shortlist · finished",
+        stage: "finished",
+      },
+    ] as unknown as RunLogEntry[]);
+  });
+
+  it("keeps the headline tiles on the People tab but not the phase breakdown", async () => {
+    // The tiles are the run's summary. "Where the time went" is read off the log's own timings and
+    // answers a question you're asking while reading the log — not while scanning people.
+    getRun.mockResolvedValue(run([]));
+
+    renderDetail("?tab=users");
+
+    await screen.findByRole("button", { name: /Log/i });
+    expect(screen.queryByText(/Where the time went/i)).toBeNull();
+  });
+
+  it("shows the phase breakdown on the Log tab, collapsed behind its headline", async () => {
+    getRun.mockResolvedValue(run([]));
+
+    renderDetail("?tab=log");
+
+    // The number says what it measures — the tail — rather than competing with the run's own
+    // Duration tile for "the" total. 03:30:00 to 03:32:00 is two minutes.
+    const headline = await screen.findByText(/after the last person finished/i);
+    // Scoped to the card: the log panel below renders the same stage labels for its own lines, so an
+    // unscoped query matches those and proves nothing about this card.
+    const card = headline.closest("div[class*='rounded']") as HTMLElement;
+    // users_done 03:30:00 -> finished 03:32:00. The number is the whole point of the collapsed state,
+    // so assert the value, not just that some text is present.
+    expect(within(card).getByText("2m")).toBeInTheDocument();
+    expect(within(card).queryByText(/ordering rows/i)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /time went/i }));
+    expect(within(card).getByText(/ordering rows/i)).toBeInTheDocument();
+  });
+
+  it("never shows a marker as a phase — 'all users done' has no duration", async () => {
+    // It is a MOMENT, not work: its "duration" is the gap to the next stage, which is ~0 by
+    // definition, so it rendered an empty bar labelled "0s" that looked like a bug.
+    getRun.mockResolvedValue(run([]));
+
+    renderDetail("?tab=log");
+
+    const headline = await screen.findByText(/after the last person finished/i);
+    const card = headline.closest("div[class*='rounded']") as HTMLElement;
+    await userEvent.click(screen.getByRole("button", { name: /time went/i }));
+
+    expect(within(card).queryByText(/all users done/i)).toBeNull();
+    expect(within(card).queryByText(/run finished/i)).toBeNull();
+  });
+});
+
+describe("RunDetail — SSE stage events only refetch THIS run (issue 7.6)", () => {
+  beforeEach(() => {
+    getRun.mockReset();
+    getUsers.mockReset();
+    getRunLog.mockReset();
+    getUsers.mockResolvedValue([]);
+    getRunLog.mockResolvedValue([]);
+    FakeEventSource.instances = [];
+  });
+
+  it("does not refetch when the stage event belongs to a different run", async () => {
+    // Sitting on finished run #2 while another run (#40) streams its own stage events used to
+    // refetch #2 on every single one of them — `onRunUserStage` had no run_id guard at all, unlike
+    // `onRunFinished` right below it, which correctly checked `event.run_id === runId`.
+    getRun.mockResolvedValue(run([]));
+    renderDetail("");
+    await screen.findByText("all succeeded");
+
+    const callsBefore = getRun.mock.calls.length;
+    const source = FakeEventSource.instances.at(-1);
+    source?.emit("run.user.stage", {
+      user: "someoneelse",
+      stage: "curating",
+      counts: {},
+      run_id: 999, // this page is showing run #2
+    });
+
+    // Give any (wrongly) queued refetch a chance to fire, then assert it didn't.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getRun.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("does refetch on a stage event for this run", async () => {
+    getRun.mockResolvedValue(run([]));
+    renderDetail("");
+    await screen.findByText("all succeeded");
+
+    const callsBefore = getRun.mock.calls.length;
+    const source = FakeEventSource.instances.at(-1);
+    source?.emit("run.user.stage", {
+      user: "moohouse",
+      stage: "curating",
+      counts: {},
+      run_id: 2, // this page is showing run #2
+    });
+
+    await waitFor(() =>
+      expect(getRun.mock.calls.length).toBeGreaterThan(callsBefore),
+    );
   });
 });

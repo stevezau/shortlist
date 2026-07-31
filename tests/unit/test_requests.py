@@ -17,8 +17,15 @@ RADARR = ArrTarget(url="http://radarr.test", api_key="rk", quality_profile_id=1,
 SONARR = ArrTarget(url="http://sonarr.test", api_key="sk", quality_profile_id=1, root_folder="/tv")
 
 
-def _cand(tmdb_id: int, media: MediaType, *, rating: float = 8.0, votes: int = 500) -> Candidate:
-    return Candidate(tmdb_id=tmdb_id, title=f"t{tmdb_id}", media_type=media, rating=rating, vote_count=votes)
+def _cand(tmdb_id: int, media: MediaType, *, rating: float = 8.0, votes: int = 500, poster: str = "") -> Candidate:
+    return Candidate(
+        tmdb_id=tmdb_id,
+        title=f"t{tmdb_id}",
+        media_type=media,
+        rating=rating,
+        vote_count=votes,
+        poster_path=poster,
+    )
 
 
 def _cfg(**kw) -> RequestConfig:
@@ -97,10 +104,15 @@ class FakeTmdb:
         *,
         raise_on: int | None = None,
         imdb: dict[int, str | None] | None = None,
+        posters: dict[int, str] | None = None,
+        poster_raises: bool = False,
     ):
         self._tvdb = tvdb or {}
         self._raise_on = raise_on
         self._imdb = imdb or {}
+        self._posters = posters or {}
+        self._poster_raises = poster_raises
+        self.poster_calls: list[int] = []  # every tmdb_id a poster was actually looked up for
 
     def tvdb_id(self, tmdb_id: int, media_type: MediaType) -> int | None:
         if self._raise_on == tmdb_id:
@@ -109,6 +121,15 @@ class FakeTmdb:
 
     def imdb_id(self, tmdb_id: int, media_type: MediaType) -> str | None:
         return self._imdb.get(tmdb_id, f"tt{tmdb_id:07d}")  # default: every title has a synthetic IMDb id
+
+    def poster_path(self, tmdb_id: int, media_type: MediaType) -> str:
+        # This stub MUST exist: the engine backfills a missing poster here inside a bare `except
+        # Exception`, so an absent attribute is an AttributeError that gets silently swallowed —
+        # every request test passed while the backfill did nothing at all.
+        self.poster_calls.append(tmdb_id)
+        if self._poster_raises:
+            raise RuntimeError("TMDB API error HTTP 503")
+        return self._posters.get(tmdb_id, f"/poster-{tmdb_id}.jpg")
 
 
 class FakeMdbList:
@@ -166,6 +187,20 @@ class TestAccumulate:
         requests_mod.accumulate(demand, [_cand(3, MediaType.SHOW)])
         assert demand[(2, MediaType.MOVIE)].demand == 2
         assert demand[(3, MediaType.SHOW)].demand == 1
+
+    def test_keeps_the_poster_from_whichever_copy_actually_has_one(self):
+        # The same title can reach two people from different sources: TMDB's list carries poster_path,
+        # Trakt's "related" does not. Folding must not let the poster-less copy blank out the artwork.
+        demand: requests_mod.DemandMap = {}
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE, poster="")])  # Trakt first
+        requests_mod.accumulate(demand, [_cand(2, MediaType.MOVIE, poster="/art.jpg")])  # then TMDB
+        assert demand[(2, MediaType.MOVIE)].poster_path == "/art.jpg"
+
+        # ...and in the other order, the first one's artwork survives the second, poster-less fold.
+        reverse: requests_mod.DemandMap = {}
+        requests_mod.accumulate(reverse, [_cand(3, MediaType.MOVIE, poster="/art.jpg")])
+        requests_mod.accumulate(reverse, [_cand(3, MediaType.MOVIE, poster="")])
+        assert reverse[(3, MediaType.MOVIE)].poster_path == "/art.jpg"
 
     def test_tags_union_across_users_and_dedupe_blanks(self):
         demand: requests_mod.DemandMap = {}
@@ -277,6 +312,47 @@ class TestRequestMissing:
         report = requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
         assert report.considered == 1  # only the well-rated, widely-voted title
         assert [c[0] for c in fake.movie_calls] == [1]
+
+    def test_backfills_a_missing_poster_but_leaves_one_it_already_has(self, monkeypatch):
+        """A title a non-TMDB source surfaced arrives with no artwork; the inbox still needs some."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(1, "From Trakt", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, poster_path=""),
+            MissingTitle(2, "From TMDB", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, poster_path="/already.jpg"),
+        )
+        tmdb = FakeTmdb()
+        report = requests_mod.request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
+        by_title = {m.title: m for m in report.sent}
+        assert by_title["From Trakt"].poster_path == "/poster-1.jpg"  # looked up
+        assert by_title["From TMDB"].poster_path == "/already.jpg"  # left alone
+        assert tmdb.poster_calls == [1]  # and the one that had art cost no call at all
+
+    def test_a_failing_poster_lookup_never_fails_the_run(self, monkeypatch):
+        """TMDB being down must cost a picture, not the whole request pass."""
+        fake = FakeArr()
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(1, "no art", MediaType.MOVIE, 2020, rating=8.0, vote_count=500, poster_path="")
+        )
+        report = requests_mod.request_missing(_cfg(radarr=RADARR), FakeTmdb(poster_raises=True), demand, dry_run=False)
+        # The title is still requested, and carries "" — never None, which the NOT NULL column rejects.
+        assert [m.title for m in report.sent] == ["no art"]
+        assert report.sent[0].poster_path == ""
+
+    def test_does_not_look_up_a_poster_for_a_title_the_arr_already_has(self, monkeypatch):
+        """Enrichment runs AFTER the Arr drop, so a discarded title costs no TMDB call."""
+        fake = FakeArr(present={10})  # Radarr already tracks tmdb 10
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(10, "already downloading", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, poster_path="")
+        )
+        tmdb = FakeTmdb()
+        report = requests_mod.request_missing(_cfg(radarr=RADARR), tmdb, demand, dry_run=False)
+        assert report.sent == []  # dropped as already-present
+        # Asserting the CALL, not the outcome: the engine swallows a failed poster lookup, so a test
+        # that only checked the result would pass whether or not the wasted call was made.
+        assert tmdb.poster_calls == []
 
     def test_ranks_by_demand_then_rating_and_caps_at_max_per_run(self, monkeypatch):
         fake = FakeArr()

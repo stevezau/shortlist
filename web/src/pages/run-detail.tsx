@@ -1,257 +1,34 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertCircle,
-  Check,
-  CircleSlash,
-  Clock,
-  Copy,
-  Download,
-  Info,
-  Loader2,
-  Search,
-  Shuffle,
-  Sparkles,
-  Telescope,
-  Users,
-} from "lucide-react";
-import type { ReactNode } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Info, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useParams, useSearchParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
-import { PickList } from "@/components/pick-list";
-import { provenanceLabel } from "@/lib/pick-provenance";
-import { QueryBoundary, EmptyState } from "@/components/query-boundary";
+import {
+  QueryBoundary,
+  EmptyState,
+  ErrorState,
+} from "@/components/query-boundary";
+import { RunLogPanel } from "@/components/runs/run-log-panel";
+import { RunPhaseTimeline } from "@/components/runs/run-phase-timeline";
+import { RunStatTiles } from "@/components/runs/run-stat-tiles";
+import { RunUsersTab } from "@/components/runs/run-users-tab";
 import { Segmented } from "@/components/segmented";
-import { UserAvatar } from "@/components/user-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatTile } from "@/components/stat-tile";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
 import {
   formatDate,
-  formatDuration,
-  runElapsedMs,
   runStatusLabel,
   runStatusVariant,
   triggerLabel,
 } from "@/lib/format";
-import { githubIssueSnippet } from "@/lib/github";
 import { queryKeys, useCancelRun, useRun, useUsers } from "@/lib/queries";
-import { mergeRunLog } from "@/lib/run-log";
-import { countLabel, STAGE_LABELS } from "@/lib/run-stages";
+import { mergeRunLog, stageBelongsToRun } from "@/lib/run-log";
+import { currentPhase } from "@/lib/run-format";
 import { useSSE } from "@/lib/sse";
-import type {
-  Pick,
-  RunDetail,
-  RunLibraryBreakdown,
-  RunLogEntry,
-  RunUserResult,
-  RunUserStageEvent,
-} from "@/lib/types";
-
-/** A run's live activity log: seeded from the server buffer, topped up by the SSE stage stream. */
-function ActivityLog({
-  entries,
-  running,
-}: {
-  entries: RunLogEntry[];
-  running: boolean;
-}) {
-  const logRef = useRef<HTMLDivElement>(null);
-  // Follow the tail as new lines arrive by scrolling the log box ITSELF — never scrollIntoView,
-  // which walks up and scrolls the whole page too, yanking it to the bottom every time a user
-  // completes. Only auto-follow when the operator is already near the bottom, so scrolling up to
-  // read an earlier line isn't fought on the next update.
-  useEffect(() => {
-    const box = logRef.current;
-    if (!box) return;
-    const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-    if (nearBottom) box.scrollTop = box.scrollHeight;
-  }, [entries.length]);
-
-  return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
-        <CardTitle className="text-base">Activity</CardTitle>
-        {running && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            live
-          </span>
-        )}
-      </CardHeader>
-      <CardContent>
-        <div
-          ref={logRef}
-          className="max-h-72 space-y-1 overflow-y-auto rounded-md bg-muted/40 p-3 font-mono text-xs"
-          role="log"
-          aria-live="polite"
-          aria-label="Run activity log"
-        >
-          {entries.length === 0 ? (
-            <p className="text-muted-foreground">
-              {running ? "Starting…" : "No activity recorded for this run."}
-            </p>
-          ) : (
-            entries.map((entry, i) => <LogLine key={i} entry={entry} />)
-          )}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function LogLine({ entry }: { entry: RunLogEntry }) {
-  const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : "";
-  const label = STAGE_LABELS[entry.stage] ?? entry.stage;
-  const detail = Object.entries(entry.counts ?? {})
-    .map(([k, v]) => countLabel(k, v))
-    .join(" · ");
-  return (
-    <div className="flex gap-2">
-      {time && <span className="shrink-0 text-muted-foreground">{time}</span>}
-      <span className="shrink-0 font-medium">{entry.user}</span>
-      <span className="text-muted-foreground">
-        {label}
-        {detail ? ` · ${detail}` : ""}
-        {/* A skip carries its reason here — this feed is the only place a SHARED row's outcome
-            appears at all, since a shared row has no per-user panel. */}
-        {entry.reason ? ` — ${entry.reason}` : ""}
-      </span>
-    </div>
-  );
-}
-
-function CopyForGitHubButton({
-  run,
-  result,
-}: {
-  run: RunDetail;
-  result: RunUserResult;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(githubIssueSnippet(run, result));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard can be unavailable (http, permissions); the button simply
-      // stays in its default state — the error text itself is on screen.
-    }
-  };
-
-  return (
-    <Button variant="outline" size="sm" onClick={() => void copy()}>
-      {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-      {copied ? "Copied" : "Copy for GitHub issue"}
-    </Button>
-  );
-}
-
-/** A one-line, plain-English take on a raw engine/Plex error — the raw text stays available below. */
-function friendlyError(raw: string): string {
-  if (/\b50\d\b|internal_server_error/i.test(raw))
-    return "Plex hit a server error (500) while writing this row — it was most likely overloaded. This usually clears on the next run.";
-  if (/timed?\s?out|timeout/i.test(raw))
-    return "Plex timed out while writing this row — it was busy. This usually clears on the next run.";
-  if (/\b429\b|too many requests/i.test(raw))
-    return "Plex was rate-limiting writes (429) — too many at once. This usually clears on the next run.";
-  return "Something went wrong building this person’s row.";
-}
-
-/** A stable bucket key for an error, so identical failures (same 500 on different collection ids /
- *  rating keys) group together — used to surface "N people failed with the same problem". */
-function errorBucket(raw: string): string {
-  return friendlyError(raw);
-}
-
-/** Rank badge colour by tier — the top picks stand out, lower ones recede. */
-function rankClass(rank: number): string {
-  if (rank <= 3) return "text-amber-400";
-  if (rank <= 10) return "text-foreground";
-  return "text-muted-foreground";
-}
-
-/** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
- *  came from. */
-function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
-  return (
-    <li className="flex items-baseline gap-3 py-1.5">
-      <span
-        className={cn(
-          "w-9 shrink-0 text-right text-sm font-semibold tabular-nums",
-          rankClass(pick.rank),
-        )}
-      >
-        #{pick.rank}
-      </span>
-      <span
-        className={cn(
-          "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-          isNew ? "bg-success" : "bg-muted-foreground/30",
-        )}
-        aria-label={isNew ? "new this run" : "kept"}
-        title={isNew ? "New this run" : "Kept from last run"}
-      />
-      <span className="min-w-0 flex-1 text-sm">
-        <span className="block truncate">
-          <span className="font-medium">{pick.title}</span>
-          {pick.reason && (
-            <span className="text-muted-foreground"> — {pick.reason}</span>
-          )}
-        </span>
-        {/* Where it came from. This page has its own pick renderer rather than using PickList, so
-            the provenance line has to be repeated here — it is the page people open to ask exactly
-            this question. */}
-        {provenanceLabel(pick) && (
-          <span className="block truncate text-xs text-muted-foreground/80">
-            {provenanceLabel(pick)}
-          </span>
-        )}
-      </span>
-    </li>
-  );
-}
-
-/** One library's ranked picks: first five, a show-all toggle, and a quiet "removed" footer. */
-/** Plain-English names for the AI steps in an llm_tokens_by_step map. */
-const STEP_LABELS: Record<string, string> = {
-  curate: "final picks",
-  llm_web: "web search",
-  llm_library: "library scan",
-};
-
-/** " (final picks 12,340 · web search 4,100)" for a by-step token map, or "" when empty. */
-function tokenStepSummary(byStep?: Record<string, number>): string {
-  if (!byStep) return "";
-  const parts = Object.entries(byStep)
-    .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1])
-    .map(([step, n]) => `${STEP_LABELS[step] ?? step} ${n.toLocaleString()}`);
-  return parts.length ? ` (${parts.join(" · ")})` : "";
-}
-
-/** " · N Exa search(es)" when any ran, else "". Exa bills per search, so it's shown apart from tokens. */
-function exaSummary(count?: number): string {
-  if (!count) return "";
-  return ` · ${count} Exa search${count === 1 ? "" : "es"}`;
-}
-
-/** "final picks 251,295 · web search 126,133" for a by-step map — same as tokenStepSummary, no parens. */
-function tokenStepInline(byStep?: Record<string, number>): string {
-  if (!byStep) return "";
-  return Object.entries(byStep)
-    .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1])
-    .map(([step, n]) => `${STEP_LABELS[step] ?? step} ${n.toLocaleString()}`)
-    .join(" · ");
-}
+import type { RunDetail, RunLogEntry, RunUserStageEvent } from "@/lib/types";
 
 /** Why a run failed for a reason that belongs to no single person — a share filter Plex refused, a
  *  sweep that could not run. The reason was always recorded, but lived only in `stats.error`, which
@@ -288,512 +65,9 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
   );
 }
 
-/** The finished-run stats as at-a-glance tiles (Dashboard style) rather than one dense text line. */
-function RunStatTiles({ run }: { run: RunDetail }) {
-  const s = run.stats;
-  const elapsed = runElapsedMs(run.started_at, run.finished_at);
-  const failed = s.users_error ?? 0;
-  // Skipped is neither a success nor a failure — a run where everyone was skipped used to read
-  // "3 · all succeeded" above three rows badged "Skipped".
-  const skipped = s.users_skipped ?? 0;
-  const requested = s.titles_requested ?? 0;
-  const tokens = s.llm_tokens ?? 0;
-  const exa = s.exa_searches ?? 0;
-  const exaCacheHits = s.exa_cache_hits ?? 0;
-  // "web search 467,463 · final picks 52,625 tokens" — the trailing unit makes clear these are token
-  // counts, not the (separate) Exa search count shown in its own tile below.
-  const stepInline = tokenStepInline(s.llm_tokens_by_step);
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-      <StatTile
-        icon={Clock}
-        label="Duration"
-        value={elapsed != null ? formatDuration(elapsed) : "—"}
-        hint="start → finish"
-      />
-      <StatTile
-        icon={Users}
-        label="People"
-        value={s.users_ok ?? 0}
-        hint={
-          failed > 0
-            ? `${failed} failed${skipped > 0 ? `, ${skipped} skipped` : ""}`
-            : skipped > 0
-              ? `${skipped} skipped, built nothing`
-              : // Everyone can succeed while the RUN fails (a refused share filter belongs to no
-                // person) — "all succeeded" under a "Failed" badge is how that looked before.
-                run.status === "error"
-                ? "built, but not promoted"
-                : "all succeeded"
-        }
-        tone={
-          failed > 0
-            ? "destructive"
-            : skipped > 0 || run.status === "error"
-              ? "warning"
-              : "success"
-        }
-      />
-      <StatTile
-        icon={Shuffle}
-        label="Titles changed"
-        value={`+${s.titles_added ?? 0}/−${s.titles_removed ?? 0}`}
-        hint="added / rotated out"
-      />
-      <StatTile
-        icon={Download}
-        label="Requested"
-        value={requested}
-        hint={
-          s.requests_warnings?.length
-            ? s.requests_warnings.join("; ")
-            : "to Sonarr / Radarr"
-        }
-        tone={s.requests_warnings?.length ? "warning" : undefined}
-      />
-      {tokens > 0 && (
-        <StatTile
-          icon={Sparkles}
-          label="AI tokens"
-          value={tokens.toLocaleString()}
-          hint={stepInline ? `${stepInline} tokens` : "curate + AI sources"}
-          title="Total AI tokens this run cost, split by what the AI did. Turn AI sources off in Settings → Recommendations to lower it."
-        />
-      )}
-      {(exa > 0 || exaCacheHits > 0) && (
-        <StatTile
-          icon={Search}
-          label="Exa searches"
-          value={exa}
-          // A warm cache means most lookups aren't billed — showing only the billed "1" made a
-          // fully-cached run look like the source did nothing. The hint names what the cache served.
-          hint={
-            exaCacheHits > 0
-              ? `billed · ${exaCacheHits.toLocaleString()} from cache`
-              : "web lookups · billed per search"
-          }
-          title="Billable Exa web-search requests this run made — a count, not tokens. Exa bills per search; results are cached for two weeks and shared across everyone, so most lookups are served from cache and cost nothing."
-        />
-      )}
-    </div>
-  );
-}
-
-function LibraryPicks({ entry }: { entry: RunLibraryBreakdown }) {
-  const [expanded, setExpanded] = useState(false);
-  const added = new Set(entry.added);
-  const shown = expanded ? entry.picks : entry.picks.slice(0, 5);
-  return (
-    <div className="space-y-2">
-      {entry.picks.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No picks in this library.
-        </p>
-      ) : (
-        <ul className="divide-y divide-border/40">
-          {shown.map((pick) => (
-            <PickLine
-              key={pick.rank}
-              pick={pick}
-              isNew={added.has(pick.title)}
-            />
-          ))}
-        </ul>
-      )}
-      {entry.picks.length > 5 && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs"
-          onClick={() => setExpanded((v) => !v)}
-        >
-          {expanded ? "Show fewer" : `Show all ${entry.picks.length}`}
-        </Button>
-      )}
-      {entry.removed.length > 0 && (
-        <p className="pt-1 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground/70">
-            −{entry.removed.length} rotated out
-          </span>{" "}
-          — the row keeps its size, so these made room for the new picks above:{" "}
-          <span className="line-through">{entry.removed.join(", ")}</span>
-        </p>
-      )}
-      {entry.deleted.length > 0 && (
-        <p className="text-xs font-medium text-destructive">
-          Row deleted (this person no longer gets this row):{" "}
-          {entry.deleted.join(", ")}
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** One row (its libraries as tabs when there's more than one), showing the selected library's picks. */
-function RowSection({ entries }: { entries: RunLibraryBreakdown[] }) {
-  const [libKey, setLibKey] = useState(entries[0]?.library_key ?? "");
-  const active =
-    entries.find((entry) => entry.library_key === libKey) ?? entries[0];
-  // Title, new-count and tokens all follow the SELECTED library, so a `{library_name}` row title
-  // renders for the tab you're viewing (e.g. "Movies Picked for You" ↔ "TV Shows Picked for You")
-  // instead of being stuck on the first library's rendering.
-  const added = active?.added.length ?? 0;
-  const rowTokens = active?.llm_tokens ?? 0;
-  return (
-    <div className="space-y-3">
-      <div className="flex items-baseline gap-2">
-        <h3 className="text-sm font-semibold">{active?.row_title}</h3>
-        {added > 0 && (
-          <span className="text-xs text-success">+{added} new</span>
-        )}
-        {rowTokens > 0 && (
-          <span
-            className="text-xs text-muted-foreground"
-            title="AI tokens the curator spent choosing this row's picks."
-          >
-            {rowTokens.toLocaleString()} AI tokens
-          </span>
-        )}
-      </div>
-      {entries.length > 1 && (
-        <Segmented
-          value={libKey}
-          onChange={setLibKey}
-          ariaLabel="Library"
-          options={entries.map((entry) => ({
-            value: entry.library_key,
-            label: `${entry.library_title} · ${entry.picks.length}`,
-          }))}
-        />
-      )}
-      {active && <LibraryPicks entry={active} />}
-    </div>
-  );
-}
-
-/** A key for the run results — what the dots and the strikethrough mean — so the view reads without
- *  hovering to guess. Shown once above a person's rows. */
-function ResultsLegend() {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-      <span className="font-medium text-foreground/70">What changed:</span>
-      <span className="inline-flex items-center gap-1.5">
-        <span className="h-2 w-2 rounded-full bg-success" aria-hidden="true" />
-        New this run
-      </span>
-      <span className="inline-flex items-center gap-1.5">
-        <span
-          className="h-2 w-2 rounded-full bg-muted-foreground/30"
-          aria-hidden="true"
-        />
-        Kept from last run
-      </span>
-      <span className="inline-flex items-center gap-1.5">
-        <span className="line-through">Title</span>
-        Rotated out for variety
-      </span>
-      <span className="inline-flex items-center gap-1.5">
-        <span className="font-semibold tabular-nums text-amber-400">#1–3</span>
-        Top picks
-      </span>
-    </div>
-  );
-}
-
-/** The selected user's result: an error, or their rows grouped from the per-(row, library) breakdown. */
-function UserPanel({
-  run,
-  result,
-  liveLog,
-}: {
-  run: RunDetail;
-  result: RunUserResult;
-  liveLog?: RunLogEntry[];
-}) {
-  if (result.error !== null) {
-    return (
-      <div role="alert" className="space-y-3 rounded-md bg-destructive/10 p-3">
-        <p className="text-sm font-medium text-foreground">
-          {friendlyError(result.error)}
-        </p>
-        {/* Raw detail is contained: it scrolls inside its own box and wraps long tokens (the encoded
-            Plex uri) so it can never push the page sideways. */}
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive">
-          {result.error}
-        </pre>
-        <CopyForGitHubButton run={run} result={result} />
-      </div>
-    );
-  }
-  // A skip is a configuration outcome, not a failure — so it explains itself rather than sitting
-  // on "Working on this person…" forever, which is how it read to the beta user who filed issue #3.
-  if (result.status === "skipped") {
-    return (
-      <div className="flex gap-3 rounded-md bg-muted/40 p-3 text-sm">
-        <CircleSlash
-          className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-          aria-hidden="true"
-        />
-        <div>
-          <p className="font-medium text-foreground">
-            Nothing to build for this person
-          </p>
-          <p className="mt-1 text-muted-foreground">
-            {result.reason ??
-              "No row was due for them in this run. Check that a per-person row is enabled and that they’re in its audience."}
-          </p>
-        </div>
-      </div>
-    );
-  }
-  if (result.breakdown.length === 0) {
-    // Still running (this user hasn’t finished) or a legacy run with no breakdown.
-    if (result.picks.length > 0)
-      return <PickList picks={result.picks} className="mt-1" />;
-    if (result.status === "ok" || result.status === "cold_start") {
-      return (
-        <p className="text-sm text-muted-foreground">
-          No changes — this person’s rows were already up to date.
-        </p>
-      );
-    }
-    // Show the latest stage from the live log for this user.
-    const userLog = liveLog?.filter((e) => e.user === result.slug);
-    const latest = userLog?.at(-1);
-    const stageLabel = latest
-      ? (STAGE_LABELS[latest.stage] ?? latest.stage)
-      : null;
-    const rowName = latest?.counts?.row as string | undefined;
-    return (
-      <p className="text-sm text-muted-foreground">
-        {stageLabel
-          ? `${stageLabel}${rowName ? ` — ${rowName}` : ""}…`
-          : "Working on this person…"}
-      </p>
-    );
-  }
-  const rows = new Map<string, RunLibraryBreakdown[]>();
-  for (const entry of result.breakdown) {
-    rows.set(entry.row_slug, [...(rows.get(entry.row_slug) ?? []), entry]);
-  }
-  return (
-    <div className="space-y-6">
-      <ResultsLegend />
-      {[...rows.values()].map((entries) => (
-        <RowSection key={entries[0]?.row_slug} entries={entries} />
-      ))}
-    </div>
-  );
-}
-
-/** One person as a full-width list row — far more scannable at 48 users than a wall of pills:
- *  name on the left, status/duration on the right, selected row highlighted. */
-function UserRow({
-  result,
-  selected,
-  onSelect,
-}: {
-  result: RunUserResult;
-  selected: string;
-  onSelect: (slug: string) => void;
-}) {
-  const failed = result.error !== null;
-  const isSelected = result.slug === selected;
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={isSelected}
-      onClick={() => onSelect(result.slug)}
-      className={cn(
-        "flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        failed ? "border-l-destructive/70" : "border-l-transparent",
-        isSelected ? "bg-primary/10" : "hover:bg-muted/60",
-      )}
-    >
-      <UserAvatar name={result.username} size="sm" />
-      <span className="min-w-0 flex-1 truncate font-medium">
-        {result.display_name || result.username}
-      </span>
-      {failed ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive">
-          <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-          Failed
-        </span>
-      ) : result.status === "pending" ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Pending
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        </span>
-      ) : result.status === "skipped" ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          Skipped
-          <CircleSlash className="h-3.5 w-3.5" aria-hidden="true" />
-        </span>
-      ) : (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-          {formatDuration(result.duration_ms)}
-          <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
-        </span>
-      )}
-    </button>
-  );
-}
-
-/** The user nav at the top of a run. At 48 users a flat grid is a wall, so: a one-line summary,
- *  failures always up front, the (usually many) successes tucked behind a toggle, and a search box. */
-function UserTabs({
-  results,
-  selected,
-  onSelect,
-}: {
-  results: RunUserResult[];
-  selected: string;
-  onSelect: (slug: string) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "failed" | "ok">("all");
-  const q = query.trim().toLowerCase();
-  const failedTotal = results.filter((r) => r.error !== null).length;
-  const pendingTotal = results.filter((r) => r.status === "pending").length;
-  const skippedTotal = results.filter(
-    (r) => r.error === null && r.status === "skipped",
-  ).length;
-  const okTotal = results.length - failedTotal - skippedTotal - pendingTotal;
-  const isPending = (r: RunUserResult) => r.status === "pending";
-  const isSkipped = (r: RunUserResult) =>
-    r.error === null && r.status === "skipped";
-  const isOk = (r: RunUserResult) =>
-    r.error === null && !isSkipped(r) && !isPending(r);
-  const mixed = failedTotal > 0 && okTotal + skippedTotal > 0; // a filter only helps when there's a mix
-  const byStatus =
-    !mixed || filter === "all"
-      ? results
-      : results.filter((r) =>
-          filter === "failed" ? r.error !== null : !r.error,
-        );
-  const shown = q
-    ? byStatus.filter(
-        (r) =>
-          r.username.toLowerCase().includes(q) ||
-          (r.display_name ?? "").toLowerCase().includes(q),
-      )
-    : byStatus;
-  const failed = shown.filter((r) => r.error !== null);
-  const pending = shown.filter(isPending);
-  const ok = shown.filter(isOk);
-  const skipped = shown.filter(isSkipped);
-  const many = results.length > 10;
-  const bothGroups =
-    [failed.length, ok.length, skipped.length, pending.length].filter(Boolean)
-      .length > 1;
-
-  return (
-    <div className="space-y-3" role="tablist" aria-label="Users in this run">
-      <div className="space-y-2">
-        {mixed ? (
-          <Segmented<"all" | "failed" | "ok">
-            value={filter}
-            onChange={setFilter}
-            ariaLabel="Filter people by status"
-            options={[
-              { value: "all", label: `All ${results.length}` },
-              { value: "failed", label: `Failed ${failedTotal}` },
-              { value: "ok", label: `OK ${okTotal + skippedTotal}` },
-            ]}
-          />
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {pendingTotal > 0 && okTotal === 0 && failedTotal === 0 ? (
-              `${pendingTotal} pending…`
-            ) : failedTotal > 0 ? (
-              <span className="font-medium text-destructive">
-                {failedTotal} failed
-              </span>
-            ) : okTotal === 0 && skippedTotal > 0 ? (
-              `${skippedTotal} skipped — nothing was built`
-            ) : (
-              `${okTotal} succeeded${skippedTotal > 0 ? `, ${skippedTotal} skipped` : ""}${pendingTotal > 0 ? `, ${pendingTotal} pending` : ""}`
-            )}
-          </p>
-        )}
-        {many && (
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Find a person…"
-            className="h-8 w-full rounded-md border bg-background px-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Search users in this run"
-          />
-        )}
-      </div>
-
-      {/* One scannable, scrollable list — failures first, so a partly-failed run opens on what you
-          came for. A vertical list reads far better than a wrapped grid of 48 near-identical pills. */}
-      <div className="overflow-hidden rounded-lg border">
-        <div className="max-h-96 divide-y divide-border/50 overflow-y-auto">
-          {bothGroups && <GroupLabel>Failed · {failed.length}</GroupLabel>}
-          {failed.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-            />
-          ))}
-          {bothGroups && ok.length > 0 && (
-            <GroupLabel>Succeeded · {ok.length}</GroupLabel>
-          )}
-          {ok.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-            />
-          ))}
-          {bothGroups && skipped.length > 0 && (
-            <GroupLabel>Skipped · {skipped.length}</GroupLabel>
-          )}
-          {skipped.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-            />
-          ))}
-          {bothGroups && pending.length > 0 && (
-            <GroupLabel>Pending · {pending.length}</GroupLabel>
-          )}
-          {pending.map((result) => (
-            <UserRow
-              key={result.slug}
-              result={result}
-              selected={selected}
-              onSelect={onSelect}
-            />
-          ))}
-          {shown.length === 0 && (
-            <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-              No one matches “{query}”.
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** A sticky section header inside the scrollable user list. */
-function GroupLabel({ children }: { children: ReactNode }) {
-  return (
-    <p className="sticky top-0 z-10 bg-muted/90 px-3 py-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground backdrop-blur-sm">
-      {children}
-    </p>
-  );
-}
+/** The two things that differ per tab. The metrics and the failure banner are NOT tabbed: they are
+ *  the answer to "how did this run go", which you want regardless of which detail you came for. */
+type RunTab = "users" | "log";
 
 export function RunDetailPage() {
   const { id } = useParams();
@@ -802,6 +76,17 @@ export function RunDetailPage() {
   const usersQuery = useUsers();
   const queryClient = useQueryClient();
   const cancel = useCancelRun();
+  // Tab and the deep-linked person both live in the URL, so a refresh, a bookmark, and the link
+  // from a person's Runs tab all land exactly where they said they would.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = (searchParams.get("tab") as RunTab | null) ?? "users";
+  const linkedUser = searchParams.get("user") ?? "";
+  const setTab = (next: RunTab) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === "users") params.delete("tab");
+    else params.set("tab", next);
+    setSearchParams(params, { replace: true });
+  };
 
   // Run results carry slug/username but no user id, so map slug → id to deep-link each result to
   // its user page. Users removed from Plex since the run won't be in the map — those stay plain text.
@@ -812,18 +97,23 @@ export function RunDetailPage() {
   // The activity log: seed from the server's in-memory buffer, then top it up live from the SSE
   // stage stream. Held in a ref+state so appends don't depend on stale closures.
   const logQuery = useQuery({
-    queryKey: ["run-log", runId],
+    queryKey: queryKeys.runLog(runId),
     queryFn: () => api.getRunLog(runId),
     enabled: Number.isFinite(runId),
   });
   const [liveLog, setLiveLog] = useState<RunLogEntry[]>([]);
   // Seed from the server snapshot; mergeRunLog dedups, so re-merging the same data is a no-op and an
   // event captured by BOTH the snapshot and the live stream is never doubled.
+  // Effect is the right tool here and the rule is suppressed deliberately: this state is a merge of
+  // two external sources (the fetched snapshot and the live SSE stream), so it cannot be derived
+  // from props — there is nothing to derive it FROM until the query resolves.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (logQuery.data) {
       setLiveLog((prev) => mergeRunLog(prev, logQuery.data, runId));
     }
   }, [logQuery.data, runId]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const appendStage = useCallback(
     (event: RunUserStageEvent) => {
@@ -833,11 +123,15 @@ export function RunDetailPage() {
   );
 
   // Keep an in-flight run's page live: refetch on every stage/finish event, and append the stage to
-  // the activity log so it scrolls in real time.
+  // the activity log so it scrolls in real time. Guarded on run_id — appendStage/mergeRunLog already
+  // drop events for another run from the LOG, but the refetch used to fire regardless, so sitting on
+  // finished run #12 while run #40 streamed refetched #12 on every one of #40's events.
   useSSE({
     onRunUserStage: (event) => {
       appendStage(event);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) });
+      if (stageBelongsToRun(event, runId)) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.run(runId) });
+      }
     },
     onRunFinished: (event) => {
       if (event.run_id === runId) {
@@ -849,14 +143,26 @@ export function RunDetailPage() {
 
   // Which user's rows are on screen. Default to the first FAILED user (what you opened the page to
   // see), else the first user; keep the current pick as long as they're still in the run.
-  const [selectedSlug, setSelectedSlug] = useState("");
-  useEffect(() => {
-    const users = runQuery.data?.users ?? [];
-    const first = users[0];
-    if (first && !users.some((u) => u.slug === selectedSlug)) {
-      setSelectedSlug((users.find((u) => u.error !== null) ?? first).slug);
-    }
-  }, [runQuery.data, selectedSlug]);
+  // Derived, not synced by an effect: hold only what the user explicitly clicked, and fall back
+  // whenever that person isn't in the run (first load, or a refetch that dropped them). The effect
+  // version had to list selectedSlug in its own deps to re-check itself, which is the shape that
+  // makes cascading renders easy to introduce.
+  const [pickedSlug, setSelectedSlug] = useState("");
+  const runUsers = runQuery.data?.users ?? [];
+  // `?user=` wins on first load — it is how a person's own Runs tab links here — but only until
+  // something else is clicked, which is what `pickedSlug` records.
+  const requested = pickedSlug || linkedUser;
+  const selectedSlug = runUsers.some((u) => u.slug === requested)
+    ? requested
+    : ((runUsers.find((u) => u.error !== null) ?? runUsers[0])?.slug ?? "");
+
+  // Computed once per render rather than called twice (header line + phase text below it).
+  const phase = currentPhase(liveLog);
+  // A failed log fetch with nothing to show is otherwise indistinguishable from "no log was ever
+  // recorded" — RunLogPanel's own empty state says the latter, which is a lie when the former is
+  // true. Live SSE stage events can still fill `liveLog` even if the initial snapshot failed, so
+  // this only takes over when there is truly nothing to show.
+  const logFailed = logQuery.isError && liveLog.length === 0;
 
   return (
     <div className="space-y-6">
@@ -914,12 +220,46 @@ export function RunDetailPage() {
                     ? ` · finished ${formatDate(run.finished_at)}`
                     : " · still running"}
                 </p>
+                {/* The direct fix for "all users finished but it still says running": say WHAT it
+                    is doing. Everything after the last person is server-wide and used to be silent. */}
+                {!run.finished_at && phase && (
+                  <p className="flex items-center gap-1.5 text-sm">
+                    <Loader2
+                      className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <span className="text-muted-foreground">
+                      Finishing up ·{" "}
+                    </span>
+                    <span className="font-medium">{phase}</span>
+                  </p>
+                )}
               </header>
+
+              <Segmented
+                value={tab}
+                onChange={setTab}
+                ariaLabel="Run detail sections"
+                options={[
+                  { value: "users", label: `People (${run.users.length})` },
+                  {
+                    value: "log",
+                    label: liveLog.length ? `Log (${liveLog.length})` : "Log",
+                  },
+                ]}
+              />
 
               <RunFailureBanner run={run} />
 
               {/* Stats are only finalized once a run ends; while it's live we show the why-slow note instead. */}
+              {/* The TILES stay on both tabs — they are the run's summary, not one view of it. The
+                  phase breakdown does not: "where the time went" is read off the log's own timings and
+                  answers a question you are asking while reading the log, not while scanning people. */}
               {run.finished_at && <RunStatTiles run={run} />}
+
+              {/* No log peek here. It duplicated the Log tab sitting one click away, and on a live
+                  run it churned under the header while you were trying to read the people list —
+                  the Log tab is the place to watch a run, not this one. */}
 
               {!run.finished_at && (
                 <div className="flex gap-3 rounded-lg border bg-muted/40 p-4 text-sm">
@@ -939,148 +279,47 @@ export function RunDetailPage() {
                 </div>
               )}
 
-              {run.users.length === 0 ? (
-                <EmptyState
-                  title={
-                    run.finished_at
-                      ? "No per-user results"
-                      : "Working — results appear as each user finishes"
-                  }
-                  hint={
-                    run.finished_at
-                      ? "This run didn't process any users."
-                      : "Each user's picks land here when they finish; the activity log below shows live progress."
-                  }
-                />
-              ) : (
-                (() => {
-                  // Failures first in the nav, so a partly-failed run opens on the error you came for.
-                  const ordered = [...run.users].sort(
-                    (a, b) =>
-                      Number(b.error !== null) - Number(a.error !== null),
-                  );
-                  const selected =
-                    run.users.find((u) => u.slug === selectedSlug) ??
-                    ordered[0];
-                  if (!selected) return null;
-                  const failed = selected.error !== null;
-                  const userId = idBySlug.get(selected.slug) ?? null;
-                  // When many people failed the same way (e.g. one Plex outage), say it ONCE up top so
-                  // you don't click through 47 identical errors.
-                  const buckets = new Map<string, number>();
-                  for (const u of run.users)
-                    if (u.error)
-                      buckets.set(
-                        errorBucket(u.error),
-                        (buckets.get(errorBucket(u.error)) ?? 0) + 1,
-                      );
-                  const topError = [...buckets.entries()].sort(
-                    (a, b) => b[1] - a[1],
-                  )[0];
-                  const commonError =
-                    topError && topError[1] >= 2
-                      ? { msg: topError[0], count: topError[1] }
-                      : null;
-                  return (
-                    <div className="space-y-4">
-                      {commonError && (
-                        <div
-                          role="alert"
-                          className="flex gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
-                        >
-                          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                          <p>
-                            <span className="font-medium">
-                              {commonError.count} people failed with the same
-                              problem.
-                            </span>{" "}
-                            {commonError.msg} Open any person below for the raw
-                            details.
-                          </p>
-                        </div>
-                      )}
-                      <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)] lg:items-start">
-                        <div className="lg:sticky lg:top-4">
-                          <UserTabs
-                            results={ordered}
-                            selected={selected.slug}
-                            onSelect={setSelectedSlug}
-                          />
-                        </div>
-                        <Card
-                          className={cn(
-                            "min-w-0",
-                            failed && "border-destructive/50",
-                          )}
-                        >
-                          <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
-                            <CardTitle className="flex items-center gap-2.5">
-                              <UserAvatar name={selected.username} size="sm" />
-                              {userId !== null ? (
-                                <Link
-                                  to={`/users/${userId}`}
-                                  className="rounded-sm hover:text-primary hover:underline"
-                                >
-                                  {selected.display_name || selected.username}
-                                </Link>
-                              ) : (
-                                selected.display_name || selected.username
-                              )}
-                              <Badge
-                                variant={
-                                  failed
-                                    ? "destructive"
-                                    : runStatusVariant(selected.status)
-                                }
-                              >
-                                {runStatusLabel(selected.status)}
-                              </Badge>
-                            </CardTitle>
-                            <div className="flex items-center gap-3">
-                              <p className="text-sm text-muted-foreground">
-                                {formatDuration(selected.duration_ms)}
-                                {selected.llm_tokens > 0
-                                  ? ` · ${selected.llm_tokens.toLocaleString()} AI tokens${tokenStepSummary(
-                                      selected.llm_tokens_by_step,
-                                    )}`
-                                  : ""}
-                                {exaSummary(selected.exa_searches)}
-                              </p>
-                              {selected.has_trace && userId !== null && (
-                                <Button
-                                  asChild
-                                  variant="secondary"
-                                  size="sm"
-                                  className="gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
-                                >
-                                  <Link to={`/runs/${run.id}/trace/${userId}`}>
-                                    <Telescope
-                                      className="h-3.5 w-3.5"
-                                      aria-hidden="true"
-                                    />
-                                    How we picked
-                                  </Link>
-                                </Button>
-                              )}
-                            </div>
-                          </CardHeader>
-                          <CardContent>
-                            <UserPanel
-                              run={run}
-                              result={selected}
-                              liveLog={liveLog}
-                            />
-                          </CardContent>
-                        </Card>
-                      </div>
-                    </div>
-                  );
-                })()
-              )}
+              {tab === "users" &&
+                (run.users.length === 0 ? (
+                  <EmptyState
+                    title={
+                      run.finished_at
+                        ? "No per-user results"
+                        : "Working — results appear as each user finishes"
+                    }
+                    hint={
+                      run.finished_at
+                        ? "This run didn't process any users."
+                        : "Each person's picks land here when they finish; the Log tab shows live progress."
+                    }
+                  />
+                ) : (
+                  <RunUsersTab
+                    run={run}
+                    selectedSlug={selectedSlug}
+                    onSelect={setSelectedSlug}
+                    idBySlug={idBySlug}
+                    liveLog={liveLog}
+                  />
+                ))}
 
-              {(liveLog.length > 0 || !run.finished_at) && (
-                <ActivityLog entries={liveLog} running={!run.finished_at} />
-              )}
+              {tab === "log" &&
+                (logFailed ? (
+                  <ErrorState
+                    error={logQuery.error}
+                    onRetry={() => void logQuery.refetch()}
+                  />
+                ) : (
+                  <>
+                    {run.finished_at && <RunPhaseTimeline entries={liveLog} />}
+                    <RunLogPanel
+                      runId={run.id}
+                      entries={liveLog}
+                      running={!run.finished_at}
+                      people={[...new Set(run.users.map((u) => u.slug))].sort()}
+                    />
+                  </>
+                ))}
             </div>
           )}
         </QueryBoundary>

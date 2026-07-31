@@ -313,11 +313,21 @@ def normalize_upload(raw: bytes) -> tuple[bytes, str]:
         from PIL import Image, UnidentifiedImageError
     except ImportError:  # pragma: no cover - posters extra missing from the runtime
         return raw, "image/png"
+    # A decompression bomb — a 100,000 x 100,000 PNG is a few hundred KB on the wire and gigabytes
+    # once decoded, comfortably inside MAX_UPLOAD_BYTES. Pillow's own limit warns by default rather
+    # than raising, so set an explicit ceiling generous for real artwork (a 4K poster is ~35 MP) and
+    # turn the warning into the error the caller already handles.
+    previous_limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = 64_000_000
     try:
         image = Image.open(io.BytesIO(raw))
         image = image.convert("RGB")
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError("that file isn't an image we can read") from exc
+    except Image.DecompressionBombError as exc:
+        raise ValueError("that image is too large to process") from exc
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous_limit
     image.thumbnail((1000, 1500))  # keep aspect; poster-sized ceiling
     out = io.BytesIO()
     image.save(out, format="JPEG", quality=88)

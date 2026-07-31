@@ -13,6 +13,8 @@ function makeRun(overrides: Partial<Run> = {}): Run {
     status: "running",
     dry_run: false,
     stats: {} as Run["stats"],
+    error: null,
+    promotion_blockers: [],
     ...overrides,
   };
 }

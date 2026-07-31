@@ -34,9 +34,13 @@ everyone can actually discover from.
 
 ## Why this couldn't exist before 2026
 
-Per-user private collections were impossible until Plex fixed label restrictions on
-Home/Recommended (v1.43.1) and Related hubs (v1.43.2). Shortlist is built on that fix: each row is a
-labeled collection excluded on every other account's share, so only its owner ever sees it.
+A row that only one person can see was simply impossible until recently. Plex had no per-user
+collections, and the "hide this by label" setting it does have wasn't applied everywhere — so a
+row meant for one person still showed up for others.
+
+Plex fixed that in 2026: label hiding now works on the Home and Recommended shelves (v1.43.1) and
+on Related rows (v1.43.2). Shortlist is built on that fix — each row is labelled, and every other
+account is told to hide that label, so only its owner ever sees it.
 
 ## Features
 
@@ -50,8 +54,11 @@ labeled collection excluded on every other account's share, so only its owner ev
   GPT / Gemini, or any local server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI) adds one extra
   source — a live web search for what to watch next.
 - 🌐 **Finds what to watch next from everywhere** — pools candidates from TMDB, Trakt, and an optional
-  **live web search** for current, well-reviewed titles (via the AI provider's own web search or an
-  [Exa](https://exa.ai) key).
+  **live web search** for current, well-reviewed titles.
+- 🔎 **Web search that works with _any_ model, even offline ones** — Shortlist runs the search
+  itself, so your model never needs internet access. Works with a local Ollama box just as well as
+  with Claude — via your provider's own web search, an [Exa](https://exa.ai) key, or both at once.
+  [How it works →](docs/guides.md#the-one-ai-powered-source)
 - 💬 **Explains itself** — every pick says "Because you watched X".
 - 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, and it looks
   back through your full history so both movies and TV shape the picks.
@@ -60,6 +67,10 @@ labeled collection excluded on every other account's share, so only its owner ev
 
 - 🎞️ **Multiple rows per person + shared rows** — e.g. a personal row, a "New this week" shared
   row, per-library rows — each with its own sources, size, libraries, freshness, and audience.
+  **Start from a template** — _Because you watched…_, _Happy to see again_, _Fresh finds_, _Popular on
+  this server_ and more — rather than a blank form, then change anything you like.
+- 🚫 **Block a bad seed** — a film someone put on for a friend shouldn't shape their picks. Block it
+  from a run's "How we picked" page; the watch stays in their history, it just stops seeding.
 - 🗓️ **Freshness you control** — rows stay stable and refresh on a cadence you set (nightly →
   fortnightly), so people aren't shown a totally reshuffled row every day.
 - 📍 **Row placement** — choose which Plex shelf each row lands on (Home, the library's Recommended
@@ -125,7 +136,7 @@ picks your server, and walks you to your first rows (about 10 minutes).
 > 💡 Want to try it without touching your server first? Add `-e SHORTLIST_DRY_RUN=1` — Shortlist
 > will show you exactly what it _would_ do and write nothing to Plex.
 
-Requirements: PMS ≥ 1.43.2.10687 · Plex Pass on the admin account · a free TMDB key.
+Requirements: Plex Media Server ≥ 1.43.2.10687 · Plex Pass on the admin account · a free TMDB key.
 Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-started.md).
 
 ## Documentation

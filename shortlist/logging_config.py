@@ -51,6 +51,13 @@ def _bridge_stdlib_logging() -> None:
     # asyncio warns "socket.send() raised exception" every time an SSE/HTTP client disconnects
     # mid-stream — harmless, but noisy now that the bridge surfaces it. Keep real asyncio errors.
     logging.getLogger("asyncio").setLevel(logging.ERROR)
+    # APScheduler logs TWO INFO lines for every firing of every scheduled job ("Running job…" and
+    # "…executed successfully"). The job-queue drain fires on a short interval, so at INFO that alone
+    # produced a pair of lines every few seconds — thousands a day, burying every real event in the
+    # log the operator actually reads. Real problems still surface: a job that raises is logged by
+    # APScheduler at ERROR, and each Shortlist job records its own outcome to the `jobs` table.
+    logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler.scheduler").setLevel(logging.WARNING)
     _stdlib_bridged = True
 
 

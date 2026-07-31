@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { TemplateVarsHint } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,14 +9,7 @@ import { api, apiErrorMessage } from "@/lib/api";
 import { useImageProvider } from "@/lib/queries";
 import type { PosterInput } from "@/lib/types";
 
-const PLACEHOLDER_HINT = (
-  <p className="text-sm text-muted-foreground">
-    Use <span className="font-mono">{"{user}"}</span> for each person's name,{" "}
-    <span className="font-mono">{"{library_name}"}</span> for the library, or{" "}
-    <span className="font-mono">{"{top_seed}"}</span> for a title they recently
-    watched.
-  </p>
-);
+const PLACEHOLDER_HINT = <TemplateVarsHint />;
 
 /**
  * The row editor's "Poster" section: leave Plex's own artwork alone, upload an image, or generate one
@@ -178,7 +172,7 @@ export function PosterField({
               : "An AI-generated image from your text and style, using your AI provider."}
           </p>
           {isAiMode && provider.data && !provider.data.capable && (
-            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+            <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm text-warning-foreground">
               {provider.data.reason} You can use a <strong>Text</strong> poster
               instead — it needs no AI provider.
             </p>

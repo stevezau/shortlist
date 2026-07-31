@@ -45,12 +45,18 @@ export function provenanceLabel(pick: Pick): string {
   const sources = pick.sources ?? [];
   if (sources.length === 0) return "";
   // Both TMDB sources on one pick would read "TMDB (your genres) + TMDB", which looks like a bug.
-  const both = sources.includes("tmdb_similar") && sources.includes("tmdb_discover");
-  const shown = both ? ["tmdb_both", ...sources.filter((s) => !s.startsWith("tmdb_"))] : sources;
+  const both =
+    sources.includes("tmdb_similar") && sources.includes("tmdb_discover");
+  const shown = both
+    ? ["tmdb_both", ...sources.filter((s) => !s.startsWith("tmdb_"))]
+    : sources;
   const names = shown.map(sourceLabel).join(" + ");
   // ONLY tmdb_similar ranks its suggestions. tmdb_discover is "popular in genres you like" — it is
   // permanently 1.0, so matching it here would stamp "close match" on every discover pick forever.
   const ranked = sources.includes("tmdb_similar");
-  if (!ranked || pick.affinity === undefined) return `suggested by ${names}`;
+  // `== null` on purpose: the server sends `affinity: null` for a pick recorded before provenance
+  // existed, never `undefined`. Testing only for `undefined` stamped "loosely related" on every one
+  // of those, because `null >= 0.5` is false.
+  if (!ranked || pick.affinity == null) return `suggested by ${names}`;
   return `suggested by ${names} · ${STRENGTH_LABELS[matchStrength(pick.affinity)]}`;
 }

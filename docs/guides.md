@@ -3,8 +3,10 @@
 ## The web interface
 
 - **Dashboard** — the impact report: what Shortlist delivered versus what people actually
-  watched (hit rate over time, per user and per row), recent watches, and a **Sync watched now**
-  button to refresh those numbers on demand.
+  watched, for a window you choose (7 / 30 / 90 days, or all time — 30 by default). Each headline
+  figure carries its change against the previous equal period, so you can see direction rather than
+  a running total. There's also a **Sync watched now** button to refresh the numbers on demand.
+  See "Reading the dashboard" below for what each figure actually means.
 - **Rows** — create, edit, and reorder your rows. Each card shows who sees it and how it
   differs from the defaults (sources, libraries, freshness, placement). This is where
   the whole multi-row feature lives — see "Naming a row" and "Row placement" below.
@@ -14,9 +16,19 @@
   Enable/disable each person or **Enable all / Disable all** at once, pause someone (keeps their
   row, skips them on runs), set a request tag, add per-person row overrides
   (mute a row, resize it, or set its watch-history depth just for them), and see each user's
-  restriction status. Accounts with Plex **parental controls** (age restrictions) are badged
-  "Restricted" — Plex hides all collections from them regardless, so no row is built; remove the
-  restriction in Plex if you want them to get recommendations. Opening a person shows
+  restriction status. Turning someone **off** removes their rows from Plex and rewrites the share
+  filters so they stop seeing the shared rows too; turning them back **on** undoes the second half
+  straight away (their own row returns on the next run). **Pause** takes their rows off every shelf
+  and **unpause** puts them straight back — neither waits for a run. If **Sync from Plex** finds
+  somebody who no longer has access to the server, Shortlist turns them off and cleans up their rows;
+  their history is kept, so you can switch them back on if they return. All of this runs as
+  background jobs, visible on the **Jobs** page. Accounts with a Plex **restriction profile** (Younger Kid / Older Kid / Teen) are
+  badged with that profile's name. Plex hides every collection from them, so no row is built — and
+  Plex also refuses the privacy filters Shortlist writes, so those accounts are left out of them.
+  Both go away by setting **Restriction Profile → None** in Plex → Settings → Users & Sharing; you can
+  still limit them by rating or label there, which Plex only permits once the profile is None.
+  A Plex Home account with **no** profile is an ordinary user: it gets a row and privacy filters like
+  anybody else. Opening a person shows
   their recent watch history (distinct titles, with season/episode numbers for TV), their picks
   grouped by row (long lists collapse behind a "show more"), and a **Run now** button to rebuild
   just that person.
@@ -41,25 +53,106 @@
   of the console level in Settings → Advanced.
 - **Requests** — the approval inbox for titles your picks wanted but the library doesn't have
   yet. Approve to send to Radarr/Sonarr, or reject so they never come back (see "Requests" below).
-- **Tools** — on-demand maintenance: **Sync watch history** (re-read everyone's watched set now,
-  with a frequency picker: Daily / 12h / 6h / 4h / custom cron) and **Sync users** (pull the
-  roster from plex.tv + Tautulli). Both show when they last synced and when the next scheduled
-  run fires. Clearing run history is here too — it clears the browsable history but preserves
-  your dashboard metrics (delivered/watched/hit rate survive indefinitely).
-- **Settings** — organised into a grouped sidebar sub-nav so it doesn't read as one long wall:
-  **Connect** (Connections), **Rows** (Finding titles, Row defaults, Row
-  placement), **Add-ons** (Requests), and **System** (Advanced, API access, Danger Zone). Every
-  connection is re-testable in place. (Each row's run schedule lives in that row's editor, not
-  here — see Schedules below.)
+- **Jobs** — every piece of background maintenance Shortlist does, in two areas.
+
+  **Jobs** lists them one per line: the name, how the last run went, when the next one fires, and the
+  button. **Run now** holds the five you start yourself — **Sync people from Plex** (pull the roster
+  from plex.tv + Tautulli), **Sync watch history** (re-read everyone's watched set), **Sync check**
+  (preview, then fix, rows left on the wrong shelf), **Privacy sync** (re-merge every share filter),
+  and **Back up the database**. **Automatic** holds the ones Shortlist queues for itself when
+  something changes — removing a disabled person's rows, hiding a paused one's, tidying up after a
+  row edit. Those have no button by design: each one is aimed at a specific person or row by the
+  action that queued it.
+
+  Open any job for its description, its settings (the frequency picker on the scheduled ones, the
+  backup retention and restore list), what the last run reported, and **Previous runs** — that job's
+  own history. Anything a run is doing right now (a progress bar, a drift preview and its Fix button)
+  stays visible on the line without opening it.
+
+  **Activity** is the other half: every job run across every kind, newest first, filterable by All /
+  In flight / Failed. Open a row for what it was asked to do, what came back, how long it took, and
+  the error if it failed. Anything that fails is retried with backoff and survives a container
+  restart; if it finally gives up, it reaches the notification bell.
+
+  Clearing run history lives on the Runs page — it clears the browsable history but preserves your
+  dashboard metrics (delivered/watched/hit rate survive indefinitely), and doesn't affect Shortlist's
+  ability to tidy up rows on Plex.
+
+- **Settings** — one scrolling page, organised into a grouped sidebar sub-nav that jumps to each
+  section and tracks where you are: **Connect** (Connections), **Rows** (Finding titles, Row
+  defaults, Row placement), **Add-ons** (Requests), and **System** (Advanced, API access, Danger
+  Zone). Each section is walled off by a rule, and its own sub-headings sit a clear rank below the
+  section title. Every connection is re-testable in place. (Each row's run schedule lives in that
+  row's editor, not here — see Schedules below.)
 
 ## Schedules
 
+**Jobs → Timeline** lists everything on a timer — rows and background jobs together, in the order they
+actually fire, each with its next run and an inline editor. Row schedules are edited on the Rows page
+(one place per setting), and jobs are edited in place.
+
+It sits with Jobs rather than in its own nav entry because "what background work exists" and "when
+does it run" are two views of one thing — as separate pages, every job was listed twice and neither
+page could answer a whole question. `/schedule` still redirects here.
+
+Two jobs are worth knowing about there:
+
+- **Sync watch history** reads only what changed since last night, then does a complete re-read
+  weekly (it is the only thing that can notice a title being un-watched or removed). If a library
+  cannot be read incrementally, that library falls back to a complete read on its own rather than
+  serving a stale watched set.
+- **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
+  builds, delivers and promotes nothing — so it can only ever make your server _more_ private. It is
+  the cheapest safety net against drift.
+- **Sync check** runs nightly at **05:45** — after the rows build and after the privacy pass, so it
+  checks the state those actually left behind. Drift is the failure nobody notices: a row left on the
+  wrong shelf stays there until somebody happens to look, so the thing that repairs it is on by
+  default. It is also the **only** schedule you can switch off completely — it _writes corrections_
+  to Plex, so clearing its box means off, not "fall back to the default" the way every other blank
+  cron does.
+
 **Every row runs on its own schedule** — there is no single server-wide one. Open a row (Rows → edit)
-and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom (cron)**
-for any 5-field expression (e.g. `0 */6 * * *` for every six hours, or `0 4 * * 1` for Mondays at
-4am), or **Off** to only run that row by hand. New rows default to nightly at 03:30 server-local;
+and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for
+anything else, or **Off** to only run that row by hand. New rows default to nightly at 03:30 server-local;
 on upgrade, existing rows keep whatever your old global schedule was. Rows that share a cron run
 together. To skip a person entirely, pause them on their detail page.
+
+### Writing a custom schedule
+
+Every **Custom** schedule box in Shortlist — a row's schedule, and the watch-history / user-sync /
+backup pickers on Jobs — takes either form:
+
+- **Plain English**: `every 30 minutes`, `every 4 hours`, `every 4 hours at 17 past`, `hourly`,
+  `nightly at 3:30am`, `daily at 21:15`, `mondays at 9pm`, `weekdays at 6am`, `weekends at 10am`.
+- **A cron expression**, if you already think that way: five fields — minute, hour, day-of-month,
+  month, day-of-week. `0 */6 * * *` is every six hours; `0 4 * * 1` is Mondays at 4am.
+
+Whichever you type, the line underneath tells you what it will actually do and what gets saved, and
+nothing saves until it parses — so a typo can't quietly leave you on the built-in default. Times are
+the server's, not your browser's.
+
+## Blocking a seed
+
+A **seed** is one of a person's recent watches that Shortlist searches from. When a watch isn't
+really them — a film they put on for someone else, a genre they don't want more of — block it: the
+watch stays in their history, it just stops shaping their picks.
+
+The natural place to do it is a run's **How we picked** page, on the seeds list, where a bad seed is
+usually what you noticed in the first place. There's also a search box on a person's detail page
+(**Users → someone → Settings → Blocked seeds**) for a title you remember but can't find a run for.
+
+Blocks are personal. A **shared** row is public, so one person's block deliberately does _not_
+reshape what everyone else sees — otherwise an individual preference would become a server-wide edit
+nobody else can see or undo. Shared rows use their own server-wide list
+(`recommendations.blocked_shared_seeds`).
+
+## Starting from a template
+
+**Rows → Add a row** opens a gallery rather than a blank form: _Picked for You_, _Because you
+watched…_, _Happy to see again_, _Fresh finds_, _From the vault_, _Popular on this server_, _Movie
+night_, _More TV to watch_, and _Start from scratch_. Each tile names the two or three settings it
+changes, so picking one also shows you which knobs matter. Nothing is locked in — every field is
+editable afterwards, and the template is not stored on the row.
 
 ## Naming a row
 
@@ -82,6 +175,58 @@ If a `{top_seed}` row is built for someone with too little history to have a fav
 back to a clean default ("✨ Picked for You") rather than a half-finished sentence. You can rename
 any row at any time in the **Row editor** — the collection on Plex is renamed in place, so its
 place in the shelf and its privacy are preserved.
+
+**A `{top_seed}` row needs one more setting to be honest.** By default every row is built from a
+person's 30 most recent watches blended together, so a row titled "Because you watched The Bear" is
+really "because you watched these thirty things, one of which was The Bear". Set **Row editor →
+Watches to build from** to `1` and the row genuinely is what that one title led to. The editor
+prompts you for this as soon as a row's name uses `{top_seed}`.
+
+One catch, which the editor also tells you: seeds are shared out across the media types a row
+covers, and a single watch is either a film or a show — never both. So a row set to **Movies and
+TV** with a budget of 1 seeds only one of them, and the other library's collection never builds.
+For a row covering both, use `2` (one of each), or set the row to Movies only or TV only.
+
+**Watches to build from** (1–100, default 30) is worth knowing about on its own: it decides how many
+watched titles every discovery source searches from. Fewer means a tighter, more coherent row about
+a couple of things; more means broader coverage of someone's taste. It is separate from **Recent
+watches to search**, which only caps the AI web-search source.
+
+There is a server-wide default for it in **Settings → Recommendations**, and any row can override it.
+The global stops at 5 while a row goes down to 1 — a single seed is a deliberate choice for one row,
+not something to impose on every row at once.
+
+## Where a row shows
+
+The **Row editor** → **Where it shows** grid picks which Plex screens a row appears on. Two
+surfaces, two audiences, and every one of the four switches is independent:
+
+|                         | You | Everyone else |
+| ----------------------- | --- | ------------- |
+| **Library Recommended** | ☑   | ☑             |
+| **Home screen**         | ☑   | ☑             |
+
+The columns are real, not cosmetic: every person gets their **own** Plex collection, so each switch
+is set on a different collection. **You** is your own row — Plex's Home shelf applies to the server
+owner alone. **Everyone else** covers the people you've shared with plus Plex Home members, whom
+Plex groups together under Shared Users' Home. Each of them only ever sees their own row; everyone
+else's is excluded from their share filter.
+
+Turn all four off and the row still gets built and kept private; it claims no Recommended slot, and
+you'll find it under the library's **Collections** tab. One caveat: on a run where Shortlist can't
+match an existing collection back to its row — a `{top_seed}` row that produced no picks, say — that
+row keeps its own Home flag for that run. It stays off the Recommended shelf, and it is only ever
+visible to the person it belongs to.
+
+**The one thing this can't do:** hide friends' rows from _your_ Recommended shelf while leaving them
+on theirs. Share filters are what hide a row from someone, and you own the server — there is no
+share with yourself to attach one to. So with **Everyone else → Library Recommended** on, every friend's
+row is on your shelf too. Turn it off (leaving **Everyone else → Home screen** on) and each friend still
+gets their row on their own Home, while your shelf stays yours. Shortlist shows this warning at the
+switch itself.
+
+A common setup: **You** both on, **Everyone else** Home only — you get your row on your Home and your
+shelf, everyone else gets theirs on their Home, and nobody's row clutters anybody else's view.
 
 ## Row placement (Recommended shelf)
 
@@ -121,11 +266,44 @@ Hit **Preview** to see a sample before saving. Generated images are made once an
 runs (they refresh when you change the text or style), so posters don't slow a run down or cost per
 user. Posters are cosmetic — a poster that can't be made never blocks a row from building.
 
-## Hit rate
+## Reading the dashboard
 
-The % of recommended items a user actually watched within 30 days, computed from the same
-history source that feeds recommendations. It's Shortlist's own proof of value — visible
-globally and per user. Expect ~20-40% on engaged users after a few weeks.
+Everything on the dashboard is scoped to the window selected at the top — **the last 30 days** by
+default. That matters more than it sounds: these figures used to be lifetime totals, which made
+every ratio a measure of how long Shortlist had been installed rather than of how good the picks
+were. A pick can only ever be credited as watched within **30 days** of being delivered, but the old
+denominator kept every pick ever delivered, for ever — so each night added ~60 permanently
+uncreditable picks per person to the bottom of the fraction and the number could only sink.
+
+**Watched** — picks people watched in the window. A pick delivered last month and watched this week
+counts here: this figure is about watching, not delivery.
+
+**People watching** — how many people watched at least one pick, out of everyone currently enabled.
+
+**Avg to watch** — average days from a title first being recommended to it first being watched, over
+titles first watched in the window. Lower is better, and the change arrow is coloured accordingly.
+
+**Landing rate** — the one percentage, and the only one computed carefully enough to trust. It is the
+share of picks watched within 30 days of delivery, measured over a **matured cohort**: picks
+delivered in the window _and_ at least 30 days ago. A pick delivered yesterday cannot have been
+"watched within 30 days" yet, so counting it would drag the rate toward zero for no reason. On a
+7-day window there is usually no matured cohort at all, and the card says so instead of showing a
+misleading number.
+
+**By person / By row** — counts, not percentages, sorted by what was actually watched. At these
+sample sizes a percentage is noise: ranking by one put a person with `1/31` above a person with
+`3/103`. People and rows with nothing in the window fold away behind a disclosure rather than filling
+the list with empty bars, and rows you have since deleted are hidden the same way — their picks still
+count in the totals above.
+
+Hiding a deleted row is the default because its picks are real history. If you want it actually gone —
+a throwaway test row, say — expand the disclosure and choose **Delete their history**. That permanently
+removes those picks from every total that counts them, here and on each person's page, and cannot be
+undone. Rows that still exist are never affected, whichever slug is named: Shortlist recomputes what is
+eligible on the server rather than trusting the request.
+
+**Watches per week** is deliberately the long view: always the last 16 weeks, whatever window is
+selected.
 
 ## Recommendation sources
 
@@ -181,7 +359,7 @@ titles behind the ~1,000 the API reported.)
 
 When it does happen, it's almost always timing: **the read is per-run, so a title you mark watched
 after the last run stays eligible until the next one.** To fix it immediately without waiting for a
-scheduled run, go to **Tools → Sync history** — it re-reads every user's watched set right now,
+scheduled run, go to **Jobs → Sync history** — it re-reads every user's watched set right now,
 writes nothing to Plex, and updates what Shortlist knows (and the "N titles watched" count on the
 Users page). Any run after that leaves the title out.
 
@@ -263,6 +441,43 @@ in code, with no AI and no per-token cost.
   source — it surfaces well-reviewed titles the TMDB lists simply don't return. It's the only place AI
   spends anything, and it's off by default.
 
+**How it actually works.** Shortlist takes each person's recent watches, turns them into real web
+searches ("what to watch if you liked X"), and hands the results to your model — which then picks
+from what was found. The model never browses; it reads.
+
+That ordering is the whole trick. Because **Shortlist** runs the search rather than the model, the
+source works with **any** provider — including a local Ollama, llama.cpp or LM Studio server with no
+internet access of its own. A local model that could never search the web still gets to recommend
+from current web results.
+
+You choose the search backend on the "AI web search" card:
+
+| Backend                        | Works with                         | Trade-off                                               |
+| ------------------------------ | ---------------------------------- | ------------------------------------------------------- |
+| Your provider's own web search | Claude, GPT, Gemini only           | no extra signup; unavailable on local models            |
+| [Exa](https://exa.ai) key      | **every provider, local included** | one extra free-tier signup                              |
+| **Auto** (default)             | both, unioned when both are set up | widest coverage — they find noticeably different titles |
+
+**Why we suggest adding an Exa key**, even when your provider can already search:
+
+[Exa](https://exa.ai) is a search engine built for AI to read rather than for people to browse — it
+returns ranked results with the relevant text already pulled out, so the model spends its effort
+judging films instead of wading through web pages. In practice that buys you four things:
+
+1. **It's the only option that works with a local model.** An Ollama or LM Studio server on your own
+   hardware has no way to reach the internet. With Exa, Shortlist does the searching and hands over
+   the findings, so a fully offline model still recommends current titles.
+2. **Your results stop depending on which AI you picked.** Switch from Claude to a cheap local model
+   and the search half stays identical — only the choosing changes.
+3. **The cost is predictable.** Exa bills per search rather than per word, and those searches are
+   reported separately from AI tokens. Results are reused for 14 days and shared across everyone on
+   the server, so a popular film is looked up once, not once per person.
+4. **Auto gives you both.** Left on the default with both configured, Shortlist unions the two —
+   they reliably surface different films, so coverage is wider than either alone.
+
+Entirely optional: leave it empty and everything still works, you're just limited to your provider's
+own search (or to none at all).
+
 ### If you don't want to use AI
 
 Leave the AI provider on **None** (Settings → Connections — this is the default) and the AI web-search
@@ -287,9 +502,9 @@ levers:
    plenty; you don't need a flagship model to read a few search results.
 4. **Run less often.** Nightly is the default; a longer schedule means fewer runs and fewer searches.
 
-The "AI web search" card also lets you pick the **search backend** — your provider's own web search
-(Claude/GPT/Gemini), an **Exa** key (works with any provider, and the only option for a local model),
-or **Auto**, which uses both when available because they tend to find different titles.
+5. **Use a local model.** An Ollama or LM Studio server on your own hardware costs nothing per run.
+   This needs an Exa key, since a local model can't search the web itself — see
+   [the backend comparison above](#the-one-ai-powered-source).
 
 **Seeing where the tokens go.** Every run records its AI cost so there's no guessing. Open a run
 (Runs → click a run) and you'll see the **total AI tokens** for the run, then per person a breakdown
@@ -340,11 +555,16 @@ like the global one.
 ### The Requests inbox
 
 The **Requests** tab (in the sidebar) is your approval queue. Each run adds the wanted-but-missing
-titles it didn't auto-send — with the title, year, rating, and a full **why it's here** breakdown:
-one line per person and row that wanted it, with the reason (e.g. "Sarah · Comedy Classics · because
+titles it didn't auto-send — with its poster, title, year, rating, and a full **why it's here**
+breakdown: one line per person and row that wanted it, with the reason (e.g. "Sarah · Comedy Classics · because
 they watched Fawlty Towers"). That answers where a request came from and why, not just a count.
 A long queue can be narrowed by a minimum rating and vote count (and to movies or shows) and
 sorted by **Newest**, **Top rated**, or **Most wanted**, so the best picks triage first.
+Posters come straight from TMDB's image CDN (`image.tmdb.org`) — the only third-party asset Shortlist's
+web UI fetches. An install behind a restrictive network, or a browser with an ad-blocker, will show a
+placeholder tile instead; so will a title TMDB has no artwork for, and one queued before posters existed
+(those fill in on the next run that re-surfaces the title). Nothing else on the page depends on it.
+
 Tick the ones you want and click **Send to Sonarr/Radarr**. For the rest you have two choices, and the
 difference is exactly what happens on the next run:
 
@@ -373,6 +593,45 @@ run's detail page shows how many titles it requested.
 
 Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 
+### Why is a title still waiting?
+
+The auto-send bar is deliberately higher than the bar to be requestable at all: a title is sent
+without asking only if it clears **both** `requests.auto_min_demand` (default 3 distinct people) and
+`requests.auto_min_rating` (default 8.0) — a 7.9 wanted by twenty people still waits. Beyond that:
+
+- **On an exclusion list** — a past delete in Radarr/Sonarr leaves the title on an import-exclusion
+  list, and Shortlist will never auto-send one (the app would refuse the add anyway). The card says
+  so; clear it in Radarr/Sonarr first, then approve.
+- **Over the per-run cap** — `requests.max_per_run` auto-worthy titles go per run; the rest wait.
+- **Already in Radarr/Sonarr** — the card shows a **Downloaded / Downloading / Searching / Not
+  monitored** badge if either app already tracks it, which normally means it was added by hand after
+  it landed here. It drops off the list on the next run.
+
+## Backups
+
+Shortlist copies its whole database to `/config/backups` on a schedule (Jobs → Backups; nightly at
+3 AM by default), before every upgrade, and before any restore. It keeps the newest 10 by default.
+
+A backup holds everything Shortlist knows: settings and connections, your rows and their audiences,
+the people it tracks, run history and each run's picks, the request inbox — and, most importantly,
+the `restriction_snapshots` of each user's original Plex share filters.
+
+Because a backup holds your rows' **audiences**, restoring one also restores who could see which
+rows at that moment. If you have narrowed a shared row's audience since the backup was taken,
+restoring widens it again and those people will see the row after the next run. Shortlist says so
+before you confirm and again afterwards, but it does not undo it for you — check Rows before
+restarting. Those snapshots are the only
+record of how your server's sharing looked before Shortlist touched it, and **Uninstall restores
+from them**. Everything else is rebuildable by hand; that isn't.
+
+Two things worth knowing:
+
+- Backups sit beside the database in the `/config` volume, so they survive removing and recreating
+  the container — but not losing the volume. Copy them off the host if that matters to you.
+- `/config/secret.key` is **not** in a backup. It's the key your Plex token and AI keys are
+  encrypted with, so restoring a database without that same file leaves those credentials unreadable
+  and you'll have to re-enter them. Keep a copy of it alongside your backups.
+
 ## Troubleshooting
 
 - **A run says "skipped" and no collections were made** — a skip is always a configuration
@@ -384,11 +643,11 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 - **A user says they can see someone else's row** — run Shortlist again (Run now): every run
   re-merges the `label!=` exclusions into each account's share filters. Check whether the share
   was edited by hand in plex.tv (Shortlist re-merges but never deletes filter conditions it
-  didn't add), and confirm the PMS is ≥ 1.43.2.10687 (older builds ignore the exclusion).
+  didn't add), and confirm Plex Media Server is ≥ 1.43.2.10687 (older builds ignore the exclusion).
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
 - **A watched title keeps getting recommended** — the watched set is read per run, so a title you
-  mark watched _after_ the last run stays eligible until the next one. **Tools → Sync history**
+  mark watched _after_ the last run stays eligible until the next one. **Jobs → Sync history**
   re-reads everyone's watched set immediately (writes nothing to Plex); any run after that drops it.
 - **Everything broke, get me out** — Settings → Danger Zone → **Uninstall** restores every
   user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled
@@ -398,3 +657,32 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
   the database), flagging any whose user/row no longer exists in the app. Every collection is
   labeled at creation (atomically — a collection that can't be labeled is deleted rather than left
   as an orphan), so a cleanup always finds them all; this is how you confirm it.
+
+## Exposing Shortlist to the internet
+
+Whether Shortlist is reachable from outside your network is **your call** — it is a normal web app and
+it does not assume either way. If you do publish it, these are the things worth knowing.
+
+**Put it behind a reverse proxy with HTTPS.** The session cookie is only marked `Secure` when the
+request arrives over TLS, and HSTS is only sent then too. Over plain HTTP neither protects anything.
+
+**`FORWARDED_ALLOW_IPS` defaults to `*`**, which trusts the `X-Forwarded-For` of whatever connects —
+convenient when your proxy is on another host, but it means the client IP Shortlist logs is whatever
+the caller claims. Set it to your proxy's address if you publish the container port directly.
+
+**Only `/api/system/health` answers without a login**, and it returns nothing but `{"status": "ok"}`.
+Everything else requires the owner's Plex account, re-checked on every request. Login is rate-limited,
+and so are failed API-token attempts.
+
+**The API token is owner-level access.** Anything holding it can do anything you can, including
+deleting rows and rewriting share filters. Rotate it from Settings → API access if it leaks; the old
+one stops working immediately.
+
+**URLs you enter are fetched by the server**, which is the point — your Plex, Tautulli, Radarr,
+Sonarr and Ollama are usually on private addresses, and all of those keep working. The one thing
+Shortlist refuses is a cloud instance-metadata address (`169.254.169.254` and friends), which no media
+server runs on and which hands out credentials on a hosted VM.
+
+**Backups contain everything**, including your Plex token and the pre-Shortlist share-filter snapshots
+that Uninstall restores from. They sit in `/config/backups` — treat that directory like a password
+file.

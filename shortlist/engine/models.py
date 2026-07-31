@@ -21,6 +21,13 @@ class UserType(StrEnum):
     MANAGED = "managed"
 
 
+# Every Plex label/collection Shortlist owns starts with this. Was also an `EngineConfig` field,
+# but nothing ever assigned it a non-default value, so `UserProfile.label` had already hardcoded
+# the literal separately — one knob nobody turned, and one hardcode that could drift from it. This
+# constant is now the single place either could change.
+LABEL_PREFIX = "shortlist"
+
+
 def slugify(name: str) -> str:
     """Normalize a username into the slug used in labels: ``shortlist_<slug>``."""
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
@@ -105,6 +112,9 @@ class Candidate:
     genres: list[str] = field(default_factory=list)
     rating: float = 0.0  # TMDB vote_average, 0..10
     vote_count: int = 0  # TMDB vote_count — a 9.0 from 12 votes is noise; the request gate needs both
+    # TMDB's own poster path ("/abc.jpg"), free in every list response. Only carried through to the
+    # request inbox, which shows the artwork — a delivered pick uses Plex's copy of the title.
+    poster_path: str = ""
     seeds: list[Seed] = field(default_factory=list)  # every seed that suggested it
     rating_key: int | None = None  # set once matched to the library
     # Which candidate source(s) produced it. Ranking needs this: seedless sources (tmdb_discover,
@@ -201,7 +211,7 @@ class UserProfile:
 
     @property
     def label(self) -> str:
-        return f"shortlist_{self.slug}"
+        return f"{LABEL_PREFIX}_{self.slug}"
 
 
 # Shared ("popular on this server") rows live in a namespace no per-person label can collide with.
@@ -209,7 +219,7 @@ class UserProfile:
 # username can never produce a slug containing "__" — the DOUBLE underscore here makes a shared
 # label unreachable from any user slug, so a private row can never be mistaken for a shared one.
 SHARED_SLUG_PREFIX = "shared"
-SHARED_LABEL_PREFIX = "shortlist__shared_"
+SHARED_LABEL_PREFIX = f"{LABEL_PREFIX}__shared_"
 
 
 @dataclass
@@ -235,7 +245,9 @@ class RowSpec:
     """One curated-row definition the engine delivers, built by the adapter from a Collection row.
 
     A per-person spec produces one private row per audience member (label ``shortlist_<userslug>``); a
-    shared spec produces one public row for the whole audience (label ``shortlist_shared_<slug>``).
+    shared spec produces one public row for the whole audience (label ``shortlist__shared_<slug>`` —
+    the DOUBLE underscore puts it in a namespace no user slug can ever collide with; see
+    ``SHARED_LABEL_PREFIX``).
     """
 
     slug: str
@@ -257,6 +269,19 @@ class RowSpec:
     # Per-row cap on already-watched titles, as a fraction of the row (0.0 = all fresh, 1.0 = no
     # filtering). None -> inherit EngineConfig.watched_pct.
     watched_pct: float | None = None
+    # Build a REWATCH row: already-finished titles are what the row is FOR, so they are ordered first
+    # and unwatched ones only fill what's left.
+    #
+    # `watched_pct` cannot express this. It is a CEILING — `_apply_watched_cap` shows unwatched titles
+    # first and merely PERMITS up to that fraction of finished ones — so on a library with plenty of
+    # unwatched candidates even 1.0 yields a mostly-unwatched row. A row named "Happy to see again"
+    # needs the opposite preference, which is this flag.
+    rewatch: bool = False
+    # Shows only: drop any series this person has STARTED, however little of it. Stricter than the
+    # normal watched filter, which only drops shows they have FINISHED (>= watched_show_pct) — one they
+    # are three episodes into is otherwise still eligible. This is what makes "a series to start" true.
+    # Meaningless for movies (a movie with any view is already finished), so it applies to shows only.
+    unstarted_only: bool = False
     # How much this row varies day to day, as a fraction: 0.0 = stable (same strong picks daily,
     # best quality), 1.0 = fresh (rotate the whole row + reach deep for novelty). None -> inherit
     # EngineConfig.freshness.
@@ -266,11 +291,19 @@ class RowSpec:
     # broader reach. Only affects the llm_web source; TMDB/Trakt still use the full seed set. None ->
     # inherit EngineConfig.recent_count.
     recent_count: int | None = None
-    # Where the row's collection appears for the owner / home users: "both" (Home + Library
-    # Recommended, the default), "home" (Home only), or "library" (Library Recommended only).
+    # How many of this person's watched titles SEED this row — the titles every source searches from.
+    # Unlike recent_count (which only caps the web-search source), this caps the seed set itself, so it
+    # decides what the whole row is derived from. Small values make a row about one or two things they
+    # actually watched, which is what a `{top_seed}` ("Because you watched X") title claims; the default
+    # blends the whole recent history. None -> inherit EngineConfig.max_seeds.
+    max_seeds: int | None = None
+    # Which surfaces the OWNER's own collection appears on: "both" (Home + Library Recommended, the
+    # default), "home", "library", or "off" (neither — the Collections tab only, since promote()
+    # always browse-hides). "off" is a STRING, not None: `placement_friends=None` already means
+    # "inherit", so a None sentinel here would be two different things at once.
     placement: str = "both"
-    # Where the row's collection appears for friends (shared users). None = inherit from `placement`
-    # (backward compat); set explicitly to diverge from the owner's placement.
+    # The same, for each FRIEND's (shared user's) own collection — "home" means Friends' Home there.
+    # None = inherit from `placement` (backward compat); set explicitly to diverge.
     placement_friends: str | None = None
     # Pin the row to the TOP of its library's Recommended shelf (ManagedHub.move). This is a
     # server-wide managed-recommendations order, NOT per-viewing-user — Plex exposes no per-user order.
@@ -289,19 +322,36 @@ class RowSpec:
 
     @property
     def show_home(self) -> bool:
-        """Owner / home users see this on their Home screen."""
+        """The owner sees their OWN row on their Home screen (Plex `promotedToOwnHome`)."""
         return self.placement in ("both", "home")
 
     @property
-    def show_library(self) -> bool:
-        """Show in the Library's Recommended shelf."""
-        fp = self._effective_friends_placement
-        return self.placement in ("both", "library") or fp in ("both", "library")
+    def show_friends_home(self) -> bool:
+        """Each friend sees their OWN row on their Home screen (Plex `promotedToSharedHome`)."""
+        return self._effective_friends_placement in ("both", "home")
 
     @property
-    def show_friends_home(self) -> bool:
-        """Friends (shared users) see this on their Home screen."""
-        return self._effective_friends_placement in ("both", "home")
+    def show_owner_library(self) -> bool:
+        """The OWNER's own collection sits on its library's Recommended shelf."""
+        return self.placement in ("both", "library")
+
+    @property
+    def show_friends_library(self) -> bool:
+        """Each FRIEND's own collection sits on its library's Recommended shelf.
+
+        Separate from `show_owner_library` because every person gets their OWN collection, so Plex's
+        single `promotedToRecommended` flag is set per collection — the owner/friends split is real,
+        not cosmetic. Friends only ever see their own row on that shelf (their share filter excludes
+        everyone else's), but the OWNER has no share filter to hang an exclude on, so turning this on
+        also puts every friend's row on the owner's shelf. Plex limitation, surfaced in the UI.
+        """
+        return self._effective_friends_placement in ("both", "library")
+
+    @property
+    def show_library(self) -> bool:
+        """Recommended-shelf flag for a SHARED row — one public collection rather than one per
+        person, so there is nothing to split: it shows if either audience asked for it."""
+        return self.show_owner_library or self.show_friends_library
 
     @property
     def label(self) -> str | None:
@@ -385,6 +435,9 @@ class MissingTitle:
     vote_count: int  # vote count on that same source
     demand: int = 1  # distinct users whose candidate pool contained it (multi-person demand ranks higher)
     imdb_id: str = ""  # "tt…" when TMDB has one — lets the inbox deep-link to IMDb instead of a search
+    # TMDB poster path ("/abc.jpg") so the inbox can show the artwork. Free from the candidate's own
+    # TMDB list response; filled in for the gated shortlist when a non-TMDB source surfaced the title.
+    poster_path: str = ""
     # Per-user + per-row tags to apply on request, layered on top of the target's global tag. Unioned
     # across every user who wanted the title and every row it surfaced in (deduplication merges them).
     tags: set[str] = field(default_factory=set)
@@ -491,7 +544,6 @@ class EngineConfig:
 
     row_size: int = 15
     row_name_template: str = DEFAULT_ROW_TEMPLATE
-    label_prefix: str = "shortlist"
     candidates_pre_rank: int = 40  # heuristic pre-rank keeps this many for the curator
     # How many of a person's most recent watched titles the web-search source searches per row (one
     # cached Exa search each). Row-overridable via RowSpec.recent_count.
@@ -501,7 +553,15 @@ class EngineConfig:
     hide_shared_from_disabled: bool = True
     min_history: int = 10  # below this -> cold-start row
     min_completion: float = 0.7  # history completion threshold for "meaningful" watch
+    # How many watched titles seed a row (the most recently watched win, balanced across media types).
+    # Row-overridable via RowSpec.max_seeds.
     max_seeds: int = 30
+    # Titles that must never seed a SHARED row, server-wide.
+    #
+    # Per-person blocks deliberately do NOT apply here: a shared row is public, and letting one
+    # person's "don't seed this" quietly reshape what everyone else sees would make an individual
+    # preference into a server-wide edit nobody else can see or undo.
+    blocked_shared_seeds: set[int] = field(default_factory=set)
     # Cap on already-watched titles in a row, as a fraction of the row. 0.0 (default): all fresh —
     # drop every finished title (a movie you watched, or a show you've seen >= watched_show_pct of;
     # a partly-watched show or one with a new season stays eligible). 1.0: no filtering. Between:
@@ -606,6 +666,11 @@ class CollectionDiff:
     deleted: list[str] = field(default_factory=list)  # rows destroyed this run (swept, or rebuilt)
     collection_title: str = ""
     created: bool = False
+    # The Plex ratingKey of the collection this landed in. The delivery LEDGER's whole point: it is
+    # the only stable handle on "which object on the server is this row, for this person, in this
+    # library". Titles are not — a `{top_seed}` row renders differently every run, so nothing computed
+    # from config can find it later. 0 in a dry run and whenever the PMS didn't hand one back.
+    rating_key: int = 0
 
 
 @dataclass
@@ -678,6 +743,15 @@ class RunReport:
     # run level because the sweep covers the whole SERVER: a leaking row belonging to a paused or
     # disabled user is still a leaking row, and nobody would ever see it in a per-user report.
     swept_rows: dict[str, list[str]] = field(default_factory=dict)
+    # Labels of rows the converge phase pulled off the OWNER's Home because this run's promote could
+    # not reach them (their user is paused, disabled, deselected, errored — or the row was promoted
+    # by an older build). Run level for the same reason as the sweep: these people are by definition
+    # absent from the user list, so a per-user report would never show it (plex-safety rule 10).
+    converged: list[str] = field(default_factory=list)
+    # Labels of collections DELETED because Shortlist no longer knows the user they belong to.
+    # Separate from `converged` because this is the one irreversible action converge takes, and
+    # "what was destroyed at 03:31" must be answerable on its own (plex-safety rule 10).
+    orphans_removed: list[str] = field(default_factory=list)
     # Share filters we changed, keyed by plex account id. Editing someone's Plex share permissions
     # is the most sensitive write Shortlist makes, and most of the accounts we write to are not in
     # any run's user list — so without this, "what changed on whose share at 03:31" would have no

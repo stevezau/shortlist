@@ -9,25 +9,17 @@ guarantees that depend on it.
 from __future__ import annotations
 
 import json
-import threading
 import time
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from loguru import logger
 
 import shortlist.engine.rows as rows
 from shortlist.engine import requests as requests_mod
-from shortlist.engine.clients.mdblist import MdbListClient
-from shortlist.engine.clients.plex_pms import PlexClient
-from shortlist.engine.clients.plextv import FilterWriteRefused, PlexTvClient
-from shortlist.engine.clients.poster import PosterArtist
-from shortlist.engine.clients.search import WebSearchProvider
-from shortlist.engine.clients.tmdb import Cache, NullCache, TmdbClient
-from shortlist.engine.clients.trakt import TraktClient
-from shortlist.engine.curator import Curator
+from shortlist.engine.clients.plextv import FilterWriteRefused
+from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
     render_row_name,
     resolve_row_template,
@@ -35,13 +27,12 @@ from shortlist.engine.delivery import (
     sweep_broken_rows,
     target_sections,
 )
-from shortlist.engine.history import HistorySource
 from shortlist.engine.models import (
+    LABEL_PREFIX,
+    SHARED_LABEL_PREFIX,
     CollectionDiff,
-    EngineConfig,
     HubAnchor,
     MediaType,
-    Pick,
     RequestOutcome,
     RequestReport,
     RowSpec,
@@ -51,102 +42,10 @@ from shortlist.engine.models import (
     UserType,
 )
 from shortlist.engine.privacy import (
-    SnapshotStore,
     shared_label_audiences,
     shortlist_labels_in,
     sync_user_restrictions,
 )
-
-
-@dataclass
-class EngineContext:
-    """Everything one run needs; the server adapter builds this once."""
-
-    config: EngineConfig
-    plex: PlexClient
-    plextv: PlexTvClient
-    tmdb: TmdbClient
-    history_source: HistorySource
-    curator: Curator
-    snapshots: SnapshotStore
-    # Optional 'related titles' candidate source; None when no Trakt key is configured.
-    trakt: TraktClient | None = None
-    # Optional external web-search backend for the llm_web source (Exa); None when no key is
-    # configured. Native provider web-search tools don't need it; a local Ollama model does.
-    search: WebSearchProvider | None = None
-    # Optional image-generation backend for generate-mode row posters, built from the AI curator's
-    # provider/key. None when the curator provider can't make images (Anthropic, Ollama) or none is set.
-    poster_artist: PosterArtist | None = None
-    # (owner_slug, row_slug, section_key) -> last run's delivered picks for that row+library, newest
-    # first. Carried forward so a row is REUSED unchanged on non-refresh nights (freshness is the
-    # refresh CADENCE) instead of re-curated from scratch every night — the fix for the nightly
-    # full-row churn that staleness_runs=3 used to force (SFLIX 2026-07-20). Empty -> every row
-    # bootstraps by curating fresh, exactly like a first run.
-    previous_picks: dict[tuple[str, str, str], list[Pick]] = field(default_factory=dict)
-    # plex_account_ids of DISABLED (opted-out) Shortlist users. With config.hide_shared_from_disabled,
-    # the privacy sync hides even public shared rows from these accounts, so disabling a user removes
-    # them from Shortlist entirely. A non-Shortlist account that merely shares the server is NOT here,
-    # so it still sees public shared rows.
-    disabled_account_ids: set[int] = field(default_factory=set)
-    # section key -> {tmdb_id: ratingKey}: per-library index so a row delivered into a specific
-    # library uses that library's ratingKeys. Built by _build_indexes each run.
-    section_index: dict[str, dict[int, int]] = field(default_factory=dict)
-    # Every library rows may be delivered to (all movie + show sections), for resolving a row's
-    # library_keys to real sections. Built by _build_indexes each run.
-    delivery_sections: list = field(default_factory=list)
-    # plex account id -> the slug Shortlist assigned that account, for EVERY user it knows (not just
-    # tonight's). This is how "whose row is this?" is answered. It cannot be answered from a name:
-    # people rename themselves, and two display names can slugify to the same string — either
-    # would silently hand one account another's row.
-    known_slugs: dict[int, str] = field(default_factory=dict)
-    # (tmdb_id, media_type) the owner has already actioned in the Requests inbox — sent or rejected.
-    # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
-    # by a later auto-send. Empty for direct engine runs, which have no inbox.
-    handled_requests: set[tuple[int, str]] = field(default_factory=set)
-    # MDBList client (cache-backed) for the chosen non-TMDB rating source; None when requests gate on
-    # TMDB or no MDBList key is set. Built by the server adapter so it shares the persistent cache.
-    mdblist: MdbListClient | None = None
-    # (user_slug, stage, counts, reason) -> None. `reason` explains a non-failing outcome (a
-    # skipped user) in plain English; None for every stage that needs no explaining.
-    progress: Callable[[str, str, dict, str | None], None] | None = None
-    # Called the moment one user finishes (before their terminal progress event), with their profile
-    # and finished report — so the server can persist that user's results INCREMENTALLY and the UI
-    # shows them as each person completes, instead of the whole roster appearing only at run's end.
-    # Must be resilient: it runs on the worker threads, and any error is swallowed (never sinks a run).
-    on_user_done: Callable[[UserProfile, UserRunReport], None] | None = None
-    # Cross-run cache for the per-library tmdb_id -> ratingKey index, keyed by a cheap change signal
-    # (item count + last-updated). An unchanged library skips its full scan next run. NullCache (the
-    # default) disables it — safe, since a stale/missing entry only ever means a re-scan.
-    index_cache: Cache = field(default_factory=NullCache)
-    # Cross-run cache for per-title web-search (Exa) results, keyed (media, tmdb_id). A title many
-    # users watched is searched ONCE server-wide (Exa bills per search). NullCache disables it — safe,
-    # since a miss just re-searches.
-    web_search_cache: Cache = field(default_factory=NullCache)
-    # Day number of this run (date.toordinal()), the phase for freshness rotation so a row shifts
-    # day to day but is reproducible within a day. Set at the start of run(); 0 disables rotation.
-    run_day: int = 0
-    # How many users to process concurrently. 1 = fully sequential (the safe engine/test default).
-    # The server sets this from `run.concurrency`. Only the READ + LLM work overlaps; every Plex and
-    # plex.tv write is serialized by ``write_lock``, so the leak-safe ordering is preserved exactly.
-    concurrency: int = 1
-    write_lock: threading.Lock = field(default_factory=threading.Lock)
-    # Cooperative cancel check — returns True once the run has been asked to stop. The deliver phase
-    # checks it before each user and skips the rest; an in-flight user finishes (per-user
-    # transactional, rule 6), so a cancel never leaves a half-applied user. The privacy merge +
-    # promote still run for the users already delivered, so the server stays consistent. Default:
-    # never cancels (direct engine runs and tests can't be cancelled).
-    cancelled: Callable[[], bool] = lambda: False
-
-
-def _emit(ctx: EngineContext, slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
-    # Mirror every stage to the container log too, so `docker logs` narrates a run in real time —
-    # the same story the UI's activity feed tells, for anyone watching the console.
-    logger.info("run · {} · {}{}{}", slug, stage, f" {counts}" if counts else "", f" — {reason}" if reason else "")
-    if ctx.progress is not None:
-        try:
-            ctx.progress(slug, stage, counts, reason)
-        except Exception:  # a broken progress listener must never fail a run
-            logger.exception("progress callback failed")
 
 
 def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
@@ -158,6 +57,15 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
     collection is never visible to anyone before the exclusions that hide it exist.
     """
     report = RunReport(started_at=datetime.now(UTC), dry_run=ctx.config.dry_run)
+    # The header a log reader needs BEFORE anything else: a run that dies in the index build, or is
+    # scoped to nobody, otherwise leaves no trace of having started at all — only per-user stage
+    # lines, of which there would be none. "Did 03:30 fire, and over what?" is answered here.
+    logger.info(
+        "run starting: {} user(s), dry_run={}, label prefix '{}'",
+        len(users),
+        ctx.config.dry_run,
+        LABEL_PREFIX,
+    )
     # Freshness rotates a row by a per-DAY phase, so it shifts day to day but stays reproducible
     # within a day (a re-run the same night doesn't reshuffle). Only overwrite the default 0 (which
     # disables rotation) so a caller/test can pin a specific day.
@@ -185,7 +93,7 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
 
     # Preload label casing + collection ids from the PMS — the source of truth survives
     # restarts and covers users whose delivery fails this run.
-    stored_labels = {slug: row.label for slug, row in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
+    stored_labels = {slug: row.label for slug, row in ctx.plex.owned_collections(LABEL_PREFIX).items()}
 
     # Missing-title demand, accumulated across users only when requests are on — the common case
     # (feature off) pays nothing for it. None -> _run_user does no missing-title bookkeeping at all.
@@ -202,7 +110,14 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         ctx, users, seed_index, library_index, stored_labels, report, demand if requests_on else None, order_work
     )
 
+    # The hinge of the whole run: after this line every per-user card is terminal, and everything
+    # that follows is server-wide. Without it the activity feed's last line is whichever person
+    # happened to finish last, and the minutes of real work after them look like a hang.
+    done = sum(1 for u in report.users if u.status in ("ok", "cold_start"))
+    _emit(ctx, "Shortlist", "users_done", {"done": done, "total": len(users)})
+
     # Merge the excludes into every share filter BEFORE anything is promoted.
+    _emit(ctx, "Shortlist", "filters", {})
     filters_ok = _privacy_sync_phase(ctx, users, stored_labels, report)
     if filters_ok is None:
         # The plex.tv roster could not be read — no filters written, nothing promoted. The sweep
@@ -210,24 +125,65 @@ def run(ctx: EngineContext, users: list[UserProfile]) -> RunReport:
         return report
 
     # Only now, with the exclusions in place, promote rows onto shared Home.
-    _promote_phase(ctx, to_promote, shared_to_promote, filters_ok, report)
+    _emit(ctx, "Shortlist", "promoting", {})
+    promoted = _promote_phase(ctx, to_promote, shared_to_promote, filters_ok, report)
+
+    # Converge everything the promote phase could NOT reach. Promotion only ever writes flags for
+    # users in tonight's run, so a row belonging to anyone paused, disabled, deselected, errored,
+    # cancelled, or simply promoted by an older build keeps its flags forever. This walks the rest
+    # and takes them off the owner's Home — the one surface nothing can hide.
+    _emit(ctx, "Shortlist", "converging", {})
+    # `users=[]` is the privacy-sync shape (rule 1: sweep + merge only). It has no authority to
+    # DELETE anyone's collection — it was never given a roster to judge against, and its own contract
+    # says it can only ever make the server more private.
+    _converge_phase(ctx, promoted, report, may_delete=bool(users))
+    _emit(
+        ctx,
+        "Shortlist",
+        "converged",
+        {"demoted": len(report.converged or []), "removed": len(report.orphans_removed or [])},
+    )
 
     # Order each row's items (the expensive one-move-per-item step) as a best-effort pass AFTER
     # promotion — rows are already delivered, hidden and live, so a slow PMS here degrades only the
     # ordering, never the run. Privacy-neutral (never touches a label, filter, or promotion).
+    # The long one: one PMS round-trip per moved item, minutes on a big server. Silence here is
+    # what made a healthy run look wedged.
+    _emit(ctx, "Shortlist", "ordering", {"collections": len(order_work)})
     _collection_order_phase(ctx, order_work)
 
     # Position the just-promoted rows in each library's Recommended shelf (must run after promotion —
     # a hub has to be promoted to be movable). Best-effort and privacy-neutral.
     if filters_ok:
+        _emit(ctx, "Shortlist", "shelves", {})
         _order_phase(ctx, report)
 
     # Sonarr/Radarr requests, dead LAST — after every Plex write is done.
+    if requests_on:
+        _emit(ctx, "Shortlist", "requesting", {"wanted": len(demand)})
     _request_phase(ctx, requests_on, demand, report)
 
     report.finished_at = datetime.now(UTC)
     ok = sum(1 for u in report.users if u.status in ("ok", "cold_start"))
-    logger.info("run complete: {}/{} users ok (dry_run={})", ok, len(report.users), ctx.config.dry_run)
+    failed = sum(1 for u in report.users if u.status == "error")
+    elapsed = (report.finished_at - report.started_at).total_seconds()
+    # Errors called out separately rather than left as "N/M" arithmetic — "3/40 ok" reads as a
+    # disaster when 37 people were simply skipped, and as fine when 37 actually failed.
+    logger.info(
+        "run complete in {:.0f}s: {} ok, {} failed, {} skipped (dry_run={})",
+        elapsed,
+        ok,
+        failed,
+        len(report.users) - ok - failed,
+        ctx.config.dry_run,
+    )
+    # The last line of the feed, so "is it still going?" is answerable without reading the header.
+    _emit(
+        ctx,
+        "Shortlist",
+        "finished",
+        {"ok": ok, "failed": failed, "seconds": round(elapsed)},
+    )
     return report
 
 
@@ -476,19 +432,35 @@ def _privacy_sync_phase(
     # read here: this privacy-critical enumeration must not depend on the in-process cache being a
     # complete mirror of the server — it reads the server itself, unconditionally.
     sync_failed = False
-    if not ctx.config.dry_run:
-        try:
-            ctx.plex.invalidate_collections_cache()
-            stored_labels.update(
-                {slug: row.label for slug, row in ctx.plex.owned_collections(ctx.config.label_prefix).items()}
+    # Whether `stored_labels` is a COMPLETE picture of what is on the server. Only a successful fresh
+    # enumeration earns it, and only then may a dead shared-row exclude be pruned — "I could not read
+    # the collections" and "that collection is gone" are indistinguishable, and one of those readings
+    # un-hides a live row.
+    collections_known = False
+    # Read in a DRY RUN too. The enumeration is read-only, and skipping it made `--dry-run` report the
+    # merges while silently omitting the exclude REMOVALS a live run would make — a preview that is
+    # missing the only destructive half is worse than no preview (rule 8).
+    try:
+        ctx.plex.invalidate_collections_cache()
+        owned = ctx.plex.owned_collections(LABEL_PREFIX)
+        stored_labels.update({slug: row.label for slug, row in owned.items()})
+        collections_known = True
+        if not owned:
+            # A successful read that returned NOTHING. Correct to carry on — nothing is promoted that
+            # shouldn't be, and the prune declines to act on it (privacy.py) — but silent otherwise,
+            # and it defers every legitimate un-hide by a cycle. "I added Sarah to the Popular row and
+            # she still can't see it" has to be answerable from the log.
+            logger.warning(
+                "the PMS reported NO shortlist collections — share-filter excludes will be merged but "
+                "none removed this pass, since an empty read cannot prove a row is gone"
             )
-        except Exception as e:
-            # We can no longer enumerate what exists, so we cannot promise the filters cover it.
-            # Sync with what we know, but promote nothing: an unpromoted row is not on anyone's
-            # Home screen, and the next run will put this right.
-            sync_failed = True
-            report.error = f"could not re-read collections before the privacy sync: {type(e).__name__}: {e}"
-            logger.exception("could not re-read collections before the privacy sync — nothing will be promoted")
+    except Exception as e:
+        # We can no longer enumerate what exists, so we cannot promise the filters cover it.
+        # Sync with what we know, but promote nothing: an unpromoted row is not on anyone's
+        # Home screen, and the next run will put this right.
+        sync_failed = True
+        report.error = f"could not re-read collections before the privacy sync: {type(e).__name__}: {e}"
+        logger.exception("could not re-read collections before the privacy sync — nothing will be promoted")
 
     # Sync EVERY account that shares this server — not the users we happened to process.
     #
@@ -528,7 +500,11 @@ def _privacy_sync_phase(
     # account_id -> {field: expected} for every write this run, verified in ONE roster read after the
     # loop (below) instead of a full GET /api/users per write (which was O(A²) on a change night).
     to_verify: dict[int, dict[str, str]] = {}
-    for user in audience:
+    # One plex.tv write per account, throttled and backing off on a 429 (rule 6) — minutes on a
+    # 40-account server. Counted out loud so the feed shows it moving rather than sitting on
+    # "filters" for the duration.
+    for position, user in enumerate(audience, start=1):
+        _emit(ctx, "Shortlist", "filters", {"done": position, "total": len(audience)})
         user_report = reports.get(user.slug)
         try:
             own_slug = own_slugs.get(user.plex_account_id)
@@ -539,8 +515,9 @@ def _privacy_sync_phase(
                 stored_labels,
                 ctx.snapshots,
                 own_label=stored_labels.get(own_slug) if own_slug else None,
-                label_prefix=ctx.config.label_prefix,
+                label_prefix=LABEL_PREFIX,
                 shared_labels=shared_labels,
+                collections_known=collections_known,
                 # A disabled (opted-out) Shortlist account gets even public shared rows hidden, so
                 # disabling someone removes them from Shortlist entirely. Non-Shortlist accounts that
                 # merely share the server aren't in disabled_account_ids, so they still see public rows.
@@ -559,16 +536,40 @@ def _privacy_sync_phase(
             if user_report is not None:
                 user_report.privacy_synced = bool(written)
         except FilterWriteRefused as e:
-            # plex.tv permanently refused the write (422). Only safe to skip for restricted accounts
-            # (live-verified: they see 0 collections). An unexpected 422 on a non-restricted account
-            # must block promotion — it's an unknown failure, not a known-safe skip.
+            # plex.tv permanently refused the write (422). Safe to skip ONLY for an account with a
+            # parental PROFILE: Plex declines label restrictions while one is set, and such an account
+            # sees zero collections anyway, so there is nothing an exclude would have hidden.
+            #
+            # Keyed on the profile, NOT on `restricted` — plex.tv reports that for every Plex Home
+            # account, profile or not. Since privacy.py now attempts the write for profile-less managed
+            # accounts, they reach this handler for the first time; treating their 422 as a known-safe
+            # skip would let the run promote every private row while that account holds no excludes at
+            # all. That is #20's leak, re-opened, with the check that should catch it turned off.
+            # `not profile_known` is the "we could not find out" case, kept separate from "no
+            # profile". Both look like an empty string otherwise — so a permanent `/api/home/users`
+            # outage would make every profiled account an unknown failure and block promotion for the
+            # entire server, nightly, until someone disabled those users by hand (#14's shape again).
+            # When the profile is unknown, fall back to the pre-#20 behaviour and trust `restricted`.
+            #
+            # Asked PER ACCOUNT: a 200 carrying an empty or partial roster is not knowledge about
+            # somebody it never mentioned, and treating it as such re-created the very server-wide
+            # block this guard exists to prevent.
             remote_user = roster.get(user.plex_account_id)
-            if remote_user and remote_user.restricted:
-                logger.warning("{}: plex.tv refused filter write (restricted account), skipping", user.username)
+            profiles_known = ctx.plextv.home_profile_known(user.plex_account_id)
+            if remote_user and (remote_user.restriction_profile or (not profiles_known and remote_user.restricted)):
+                logger.warning(
+                    "{}: plex.tv refused the filter write for a '{}' account — expected, skipping",
+                    user.username,
+                    remote_user.restriction_profile or "restricted, profile unknown",
+                )
             else:
                 sync_failed = True
                 report.promotion_blockers.append(f"{user.username} (plex account {user.plex_account_id}): {e}")
-                logger.error("{}: plex.tv 422 on a NON-restricted account — blocking promotion", user.username)
+                logger.error(
+                    "{}: plex.tv 422 on an account with NO parental profile — blocking promotion, "
+                    "because nothing else would stop their rows going public",
+                    user.username,
+                )
         except Exception as e:
             # One user's filter not being written means the rows are not private. Nothing gets
             # promoted this run — including for users whose own sync succeeded.
@@ -601,9 +602,7 @@ def _privacy_sync_phase(
                 remote2 = fresh.get(account_id)
                 for fieldname, expected in expected_fields.items():
                     got = remote2.filters[fieldname] if remote2 is not None else ""
-                    missing = shortlist_labels_in(expected, ctx.config.label_prefix) - shortlist_labels_in(
-                        got, ctx.config.label_prefix
-                    )
+                    missing = shortlist_labels_in(expected, LABEL_PREFIX) - shortlist_labels_in(got, LABEL_PREFIX)
                     if missing:
                         sync_failed = True
                         msg = f"read-back missing excludes {missing} on {fieldname} for account {account_id}"
@@ -624,15 +623,21 @@ def _promote_phase(
     shared_to_promote: list[tuple[RowSpec, UserProfile]],
     filters_ok: bool,
     report: RunReport,
-) -> None:
+) -> set[int]:
     """Promote delivered rows onto shared Home — never before the excludes that hide them exist.
 
     Promotion runs across EVERY delivery library, not just one per type: promote() is the only call
     that hides a collection from that library's normal browse view (modeUpdate), and a row can now be
     delivered into any library (library_keys). A row promoted in only the lowest-key library would sit
-    unhidden — and browse-visible to everyone — in whatever other library it actually landed in."""
-    for user in to_promote:
-        user_report = next(r for r in report.users if r.slug == user.slug)
+    unhidden — and browse-visible to everyone — in whatever other library it actually landed in.
+
+    Returns the ratingKeys actually promoted, so the converge phase can tell "this row was set
+    correctly tonight" from "nothing has touched this row in weeks" and only walk the remainder.
+    A collection skipped by an exception mid-loop is correctly absent, so converge picks it up."""
+    promoted: set[int] = set()
+    for position, user in enumerate(to_promote, start=1):
+        _emit(ctx, "Shortlist", "promoting", {"done": position, "total": len(to_promote)})
+        user_report = next((r for r in report.users if r.slug == user.slug), None)
         if ctx.config.dry_run:
             logger.info("[dry-run] {}: would promote row to shared Home", user.username)
             continue
@@ -647,89 +652,342 @@ def _promote_phase(
                 why,
             )
             continue
-        # Which row produced each of this user's collections, so promotion honours that row's
-        # placement (Home / Library) and pin-to-top. Keyed by the exact title delivery wrote and
-        # recorded per library during this user's run (a {top_seed} title differs per library).
-        spec_by_slug = {spec.slug: spec for spec in ctx.config.rows}
-        placements = {
-            title: spec_by_slug[slug] for title, slug in user_report.placement_titles.items() if slug in spec_by_slug
-        }
-        # Fallback for rows that EXIST but got no picks this run (so they're absent from
-        # placement_titles): a STATIC-titled row's title is stable, so map it to its spec by that title
-        # — otherwise _promote_one would fall to the everywhere-visible default and yank a "Library
-        # only" row onto Home for this one run. Dynamic ({top_seed}) titles can't be predicted without
-        # picks, so those keep the safe hide-everywhere fallback. resolve_row_template is the shared
-        # source of truth for the template precedence delivery also uses — they must not drift.
-        marker = row_marker(user.plex_account_id)
-        for spec in ctx.config.rows:
-            if spec.shared or (spec.audience is not None and user.plex_account_id not in spec.audience):
-                continue
-            title_template = resolve_row_template(spec, user, ctx.config)
-            if "{top_seed}" not in title_template:
-                # A {library_name} title differs per library, so map one per library the row targets;
-                # setdefault leaves the recorded per-library titles (placement_titles) winning.
-                for section in target_sections(ctx.delivery_sections, spec):
-                    name = render_row_name(title_template, user, [], library_name=getattr(section, "title", "") or "")
-                    placements.setdefault(name + marker, spec)
         try:
-            # Every row the user has, in every library — they can have several rows (all sharing
-            # their label), and promoting only one would leave the others invisible to the one
-            # person meant to see them.
-            for section in ctx.delivery_sections:
-                for collection in ctx.plex.find_owned_collections(section, user.label):
-                    _promote_one(ctx, collection, placements.get(collection.title), user.user_type)
+            # `into=promoted`, not `promoted |= ...`: a PMS failure part-way through this user must
+            # still leave behind the ratingKeys already promoted, or converge would see them as
+            # untouched and demote rows this run had just correctly set.
+            promote_user_rows(ctx, user, user_report.placement_titles if user_report else {}, into=promoted)
         except Exception as e:
-            user_report.status = "error"
-            user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
+            if user_report is not None:
+                user_report.status = "error"
+                user_report.error = (user_report.error or "") + f" | promote: {type(e).__name__}: {e}"
             logger.exception("{}: promote failed", user.username)
 
     # Promote the shared rows too — public, so everyone with library access sees them.
     for spec, agg in shared_to_promote if not ctx.config.dry_run and filters_ok else []:
         shared_report = next((r for r in report.users if r.slug == agg.slug), None)
         try:
-            for section in ctx.delivery_sections:
+            # Every library, same reason as the per-user loop above: a shared row whose library_keys
+            # narrowed leaves its collection in the dropped library, otherwise never revisited.
+            for section in ctx.plex.sections():
                 for collection in ctx.plex.find_owned_collections(section, spec.label):
                     _promote_one(ctx, collection, spec)
+                    promoted.add(int(collection.ratingKey))
         except Exception as e:
             if shared_report is not None:
                 shared_report.status = "error"
                 shared_report.error = (shared_report.error or "") + f" | promote: {type(e).__name__}: {e}"
             logger.exception("shared row '{}': promote failed", spec.slug)
 
+    return promoted
+
+
+def promote_user_rows(
+    ctx: EngineContext,
+    user: UserProfile,
+    placement_titles: dict[str, str] | None = None,
+    *,
+    placement_keys: dict[int, str] | None = None,
+    into: set[int] | None = None,
+) -> set[int]:
+    """Put every collection under one user's label onto the surfaces its row asks for.
+
+    Split out of ``_promote_phase`` so that un-pausing someone can reuse it. A paused user's rows were
+    only DEMOTED (the collections and their labels survive, so every other account's exclude still
+    matches), which makes restoring them a re-promote rather than a rebuild — and the flags to set are
+    exactly the ones a run would have set.
+
+    Which row a collection belongs to is answered from two sources, and IDENTITY WINS:
+
+    * ``placement_keys`` — {Plex ratingKey -> row slug}, from the delivery ledger. Authoritative, and
+      the only thing that works for a ``{top_seed}`` row, whose title is different every run and so
+      matches nothing computed. The restore path passes it.
+    * ``placement_titles`` — {delivered title -> row slug}, recorded live by a run. What
+      ``_promote_phase`` passes, where it is complete by construction.
+
+    With neither, a static-titled row still matches via the rendered-title fallback below, and only a
+    ``{top_seed}`` row with no ledger entry falls to ``_promote_one``'s no-spec branch — which shows it
+    on its own audience's Home. Right direction for a restore (the row was visible before the pause),
+    but not the row's configured placement, which is why the ledger is consulted first.
+
+    Returns the ratingKeys touched, and writes them into ``into`` as it goes when given one — so a
+    caller that catches a mid-loop PMS failure still knows which collections were already set. Raises
+    on a PMS failure; the caller owns how that is reported.
+    """
+    # Which row produced each of this user's collections, so promotion honours that row's placement
+    # (Home / Library) and pin-to-top. Keyed by the exact title delivery wrote and recorded per library
+    # during this user's run (a {top_seed} title differs per library).
+    # `per_person_rows()`, NOT `config.rows`: with no rows configured it synthesizes the legacy default
+    # spec, which is what every other phase builds from (_build_indexes, delivery). Reading the raw
+    # list here meant an unmanaged-rows config had an EMPTY map, so every title lookup missed and every
+    # collection fell to the no-spec fallback — placement silently ignored.
+    effective_rows = ctx.config.per_person_rows()
+    spec_by_slug = {spec.slug: spec for spec in effective_rows}
+    placements = {title: spec_by_slug[slug] for title, slug in (placement_titles or {}).items() if slug in spec_by_slug}
+    # Fallback for rows that EXIST but got no picks this run (so they're absent from placement_titles):
+    # a STATIC-titled row's title is stable, so map it to its spec by that title — otherwise
+    # _promote_one would fall to the everywhere-visible default and yank a "Library only" row onto Home
+    # for this one run. Dynamic ({top_seed}) titles can't be predicted without picks, so those keep the
+    # safe hide-everywhere fallback. resolve_row_template is the shared source of truth for the template
+    # precedence delivery also uses — they must not drift.
+    marker = row_marker(user.plex_account_id)
+    for spec in effective_rows:
+        if spec.audience is not None and user.plex_account_id not in spec.audience:
+            continue
+        title_template = resolve_row_template(spec, user, ctx.config)
+        if "{top_seed}" not in title_template:
+            # A {library_name} title differs per library, so map one per library — across EVERY library
+            # of the row's media type, not just where it delivers now. `library_keys` says where the row
+            # goes today; its collections may still sit in a library it was narrowed away from, and
+            # since promotion now reaches those, an unmatched one would take the no-spec fallback EVERY
+            # run rather than never being touched. A synthesized title matching no collection is inert,
+            # and setdefault leaves the recorded per-library titles (placement_titles) winning.
+            for section in target_sections(ctx.plex.sections(), replace(spec, library_keys=[])):
+                name = render_row_name(title_template, user, [], library_name=getattr(section, "title", "") or "")
+                placements.setdefault(name + marker, spec)
+
+    promoted = into if into is not None else set()
+    # Every row the user has, in every library — they can have several rows (all sharing their label),
+    # and promoting only one would leave the others invisible to the one person meant to see them.
+    # EVERY library, not just the ones a row currently targets: `delivery_sections` is narrowed to
+    # targeted libraries, so a row whose `library_keys` was narrowed left its old collection stranded in
+    # the dropped library — never re-promoted (out of scope) and never demoted either, keeping whatever
+    # surfaces it last claimed indefinitely. The sweep and the removal paths already walk
+    # `plex.sections()` for exactly this reason.
+    # Identity beats a title — but a ratingKey is only trusted for a row this user is actually in the
+    # audience for. The title path applies that check above; without the same one here, a ledger entry
+    # left by a row whose audience later shrank (and whose reconcile failed) would promote it back with
+    # that row's placement. `spec_by_slug` is already per-person-only, so a shared row cannot leak in.
+    by_key = {
+        key: spec_by_slug[slug]
+        for key, slug in (placement_keys or {}).items()
+        if slug in spec_by_slug
+        and (spec_by_slug[slug].audience is None or user.plex_account_id in spec_by_slug[slug].audience)
+    }
+    for section in ctx.plex.sections():
+        for collection in ctx.plex.find_owned_collections(section, user.label):
+            if ctx.config.dry_run:
+                # The dry-run guard lives HERE, not in the callers (plex-safety rule 8). `_promote_phase`
+                # has its own `continue` further up, so this was invisible until `user.restore` became a
+                # second caller — and `PlexClient.promote` has no dry-run branch of its own, so under
+                # SHORTLIST_DRY_RUN an un-pause previewed the hiding and performed the showing.
+                logger.info("[dry-run] {}: would promote for {}", collection.title, user.username)
+                continue
+            # Identity first: a ratingKey cannot be wrong, a title can be stale or unrenderable.
+            spec = by_key.get(int(collection.ratingKey)) or placements.get(collection.title)
+            _promote_one(ctx, collection, spec, user.user_type)
+            promoted.add(int(collection.ratingKey))
+    return promoted
+
+
+def _converge_phase(
+    ctx: EngineContext, promoted: set[int], report: RunReport, *, may_delete: bool | None = None
+) -> None:
+    """Take every Shortlist row this run did NOT promote off the owner's Home.
+
+    Promotion is write-only and reaches a collection ONLY when its owner is in tonight's run. So a
+    row belonging to anyone paused, disabled, deselected in a scoped run, errored, cancelled — or
+    simply promoted by an older build with different rules — keeps whatever flags it last got, for
+    ever. That is how 5 other people's rows ended up parked on the maintainer's Home screen (SFLIX,
+    2026-07-28): the user-type-aware promote landed on 2026-07-27, but nothing went back for the
+    collections it no longer visits.
+
+    Scope is deliberately narrow — ONLY `promotedToOwnHome`, and only ever clearing it:
+
+    * It is the single surface with no defence. The owner is never restricted (rule 5), so no
+      `label!=` exclude can hide a row that lands there; every other surface is filtered per account.
+    * Clearing it is monotonically private, so it needs no `filters_ok` gate and cannot leak even
+      when run against a partially-understood server.
+
+    Anything wider — deleting orphans, converging Recommended, restoring a paused row — can make the
+    server LESS private if the picture is wrong, so it stays out until the desired state is derived
+    rather than inferred. Walks `plex.sections()` (every library), not `delivery_sections`, because a
+    row stranded in a library no enabled row still targets is exactly the case promotion cannot see.
+    """
+    if not ctx.owner_slug:
+        # No owner known (direct engine runs, some tests): every label would look foreign and we would
+        # demote the owner's own legitimate row. Do nothing rather than guess.
+        logger.debug("converge: owner slug unknown — skipping")
+        return
+    # Labels ALLOWED on the owner's Home. Not just the owner's own row: a SHARED row is one public
+    # collection labelled `shortlist__shared_<rowslug>`, and it legitimately sits on the owner's Home
+    # whenever its placement asks for it (_promote_one gives user_type=None `home=spec.show_home`).
+    # Matching only the owner's label demoted every shared row on every pass that did not rebuild it
+    # — which is most of them: a no-user run, a scoped cron run, a cancelled run, a sync check.
+    allowed = {f"{LABEL_PREFIX}_{ctx.owner_slug}".lower()}
+    allowed |= {spec.label.lower() for spec in ctx.config.rows if spec.shared and spec.show_home and spec.label}
+    prefix = f"{LABEL_PREFIX}_".lower()
+    paused_labels = {f"{LABEL_PREFIX}_{slug}".lower() for slug in ctx.paused_slugs}
+    shared_prefix = SHARED_LABEL_PREFIX.lower()
+    live_shared = {spec.label.lower() for spec in ctx.config.shared_rows() if spec.label}
+    # Neither depends on the collection being examined — hoisted out of the loop below rather than
+    # rebuilt (rebuilding `known` re-lowercased every slug Shortlist has, per collection scanned).
+    allowed_to_delete = ctx.may_delete_orphans if may_delete is None else (may_delete and ctx.may_delete_orphans)
+    known = {slug.lower() for slug in ctx.known_slugs.values()}
+    demoted: list[str] = []
+    deleted: list[str] = []
+    try:
+        for section in ctx.plex.sections():
+            for collection in section.collections():
+                if int(collection.ratingKey) in promoted:
+                    continue
+                label = next((t.tag for t in collection.labels if t.tag.lower().startswith(prefix)), None)
+                if label is None:
+                    continue  # not ours (rule 4)
+
+                # A DISABLED shared row's collection is retired the same way. `retired_rows` only
+                # covers PER-PERSON rows (rows.py filters `not s.shared`), so switching a shared row
+                # off left its collection claiming Friends' Home and the Recommended shelf for ever.
+                # Non-owners stop seeing it (their filter excludes any label the config no longer
+                # declares shared) but the OWNER has no filter, so it sat on their server unchanged.
+                retired_shared = label.lower().startswith(shared_prefix) and label.lower() not in live_shared
+
+                # A PAUSED user's row comes off EVERY surface, not just the owner's Home. Pause means
+                # "stop showing it", and a paused person is by definition absent from every run, so
+                # this is the only place it can happen. The collection and its label stay, so
+                # everyone else's exclude still matches and unpausing is a re-promote, not a rebuild.
+                if label.lower() in paused_labels or retired_shared:
+                    reason = "row switched off" if retired_shared else "paused"
+                    # Read first, exactly as the own-home branch does: a preview must list what would
+                    # actually change, not every candidate considered.
+                    if not ctx.plex.claims_any_surface(collection):
+                        continue
+                    if ctx.config.dry_run:
+                        logger.info("[dry-run] {}: would take off every surface", collection.title)
+                        demoted.append(label)
+                        continue
+                    with ctx.write_lock:
+                        if ctx.plex.demote_all(collection, reason=reason):
+                            demoted.append(label)
+                    continue
+
+                # ORPHAN: a per-person label whose user Shortlist no longer knows. Deleting is what
+                # clears it out of the Collections tab; demoting only takes it off the shelves and
+                # leaves it there.
+                #
+                # It does NOT clear the exclude. `privacy.prune` only ever removes shared labels and a
+                # person's own label from their own filter — private-row excludes are union-only by
+                # design — so `label!=shortlist_ghost` survives in every account's filter whether the
+                # collection is deleted or not. An earlier version of this comment claimed deleting
+                # was the only way to clear the filters, which was the stated reason for taking the
+                # irreversible option.
+                #
+                # Gated on `may_delete_orphans` AND a non-empty roster, both deliberately. Deleting is
+                # the one irreversible action here, and "I could not read the users" is
+                # indistinguishable from "this user does not exist" — so an incomplete picture hides
+                # rather than destroys. Owner decision 2026-07-28: delete, but only when sure.
+                # DELETE authority belongs to the CALLER, not the context. `ctx.may_delete_orphans`
+                # only says "the roster read succeeded, so the picture is complete" — it never said
+                # "this particular pass is entitled to destroy something". Every path reaching here
+                # inherited it, including `privacy.sync`, which documents itself as creating and
+                # deleting nothing and fires from routine mutations like disabling one person.
+                own_slug = label[len(prefix) :].lower()
+                is_orphan = bool(known) and not label.lower().startswith(shared_prefix) and own_slug not in known
+
+                if is_orphan and not allowed_to_delete:
+                    if ctx.plex.claims_any_surface(collection):
+                        wrote = ctx.config.dry_run or ctx.plex.demote_all(collection, reason="unknown owner")
+                        if wrote:
+                            demoted.append(label)
+                    continue
+
+                if is_orphan:
+                    if ctx.config.dry_run:
+                        logger.info("[dry-run] {}: would DELETE (no such user)", collection.title)
+                    else:
+                        with ctx.write_lock:
+                            ctx.plex.delete_owned_collection(collection, LABEL_PREFIX)
+                    deleted.append(label)
+                    continue
+
+                if label.lower() in allowed:
+                    continue  # legitimately on the owner's Home
+                # Read the hub even in dry-run: the preview an operator reads before running for real
+                # has to be the actual list, not every candidate we considered.
+                if not ctx.plex.reads_as_on_owner_home(collection):
+                    continue
+                if ctx.config.dry_run:
+                    logger.info("[dry-run] {}: would demote off the owner's Home (converge)", collection.title)
+                    demoted.append(label)
+                    continue
+                with ctx.write_lock:
+                    if ctx.plex.demote_own_home(collection):
+                        demoted.append(label)
+    except Exception:
+        # Best-effort: the run's real work is already done and this only ever removes visibility, so a
+        # PMS wobble here must not fail the run. Next run converges again.
+        logger.exception("converge: could not finish demoting stranded rows — next run retries")
+    if deleted:
+        report.orphans_removed = sorted(deleted)
+        logger.warning(
+            "converge: removed {} orphaned collection(s) whose user no longer exists ({})",
+            len(deleted),
+            ", ".join(sorted(set(deleted))),
+        )
+    if demoted:
+        report.converged = sorted(demoted)
+        logger.warning(
+            "converge: corrected {} stranded row(s) ({})",
+            len(demoted),
+            ", ".join(sorted(set(demoted))),
+        )
+
 
 def _promote_one(ctx: EngineContext, collection, spec: RowSpec | None, user_type: UserType | None = None) -> None:
     """Promote one collection with its row's placement, respecting the user type.
 
-    Friends (shared users) use the Friends' Home flag; home users and the owner use the Home flag.
-    Each user's per-person collection gets only the flag relevant to their type, so a friend's row
-    doesn't clutter the owner's Home and vice versa.
+    Every person gets their OWN collection, so all three Plex flags are chosen per collection from
+    whose row it is: the owner's uses Home, everyone else's uses Friends' Home, and the
+    Recommended-shelf flag comes from that same side of the row's placement. That is what keeps
+    someone else's row off the owner's Home — and lets the owner keep their own row on the
+    Recommended shelf without dragging everyone else's onto it.
+
+    MANAGED users go with SHARED, not with the owner. Plex's own docs are explicit: Home
+    (``promotedToOwnHome``) "applies to the server owner", while Shared Users' Home
+    (``promotedToSharedHome``) "applies to all shared users, INCLUDING managed users"
+    (https://support.plex.tv/articles/manage-recommendations/). Routing a managed user through the
+    owner flag would hide their row from them and put it on the owner's Home instead.
     """
     if spec is None:
-        if user_type == UserType.SHARED:
-            ctx.plex.promote(collection, shared=True, home=False)
+        # No spec could be matched to this title. This is NOT a rare path — the title->spec map
+        # misses routinely (the full-stack suite reaches it for every collection), so whatever this
+        # branch does is what most rows get. It therefore keeps each audience's own Home flag: making
+        # it claim nothing hid every row in the integration suite, which on a real server means
+        # people's rows silently disappearing. Under-showing here is NOT the safe direction.
+        #
+        # `recommended=False` is still deliberate. That flag is the one surface where the OWNER sees
+        # every row (no share filter can hide it from them), so defaulting it on — as this used to —
+        # forced rows onto the owner's shelf regardless of placement, including rows switched fully
+        # off. Home flags stay per-audience: each only ever shows the row to its own owner.
+        if user_type is UserType.OWNER:
+            ctx.plex.promote(collection, shared=False, home=True, recommended=False)
         elif user_type is not None:
-            ctx.plex.promote(collection, shared=False, home=True)
+            # SHARED or MANAGED — both are covered by Shared Users' Home, never the owner's.
+            ctx.plex.promote(collection, shared=True, home=False, recommended=False)
         else:
-            ctx.plex.promote(collection, shared=True)
+            ctx.plex.promote(collection, shared=True, recommended=False)
         return
-    # A friend's collection shows on Friends' Home; a home user's shows on Home.
-    # Shared rows (user_type=None) set both flags from the spec.
-    if user_type == UserType.SHARED:
+    if user_type in (UserType.SHARED, UserType.MANAGED):
         home = False
         shared = spec.show_friends_home
+        recommended = spec.show_friends_library
     elif user_type is None:
-        # Shared row or legacy call — both flags from spec
+        # A SHARED row: ONE public collection for everyone rather than one per person, so it carries
+        # both Home flags and the union of the two Recommended settings — there is no "whose row is
+        # this" to split on.
         home = spec.show_home
         shared = spec.show_friends_home
+        recommended = spec.show_library
     else:
-        # Owner or managed/home user — only Home flag
+        # The owner's (or a managed user's) own collection — only the owner side of the placement.
         home = spec.show_home
         shared = False
+        recommended = spec.show_owner_library
     ctx.plex.promote(
         collection,
         shared=shared,
         home=home,
-        recommended=spec.show_library,
+        recommended=recommended,
         pin_top=spec.pin_top,
     )
 
@@ -742,7 +1000,7 @@ def _apply_order(ctx: EngineContext, report: RunReport, section, anchor, only_ti
         with ctx.write_lock:
             result = ctx.plex.order_owned_hubs(
                 section,
-                label_prefix=ctx.config.label_prefix,
+                label_prefix=LABEL_PREFIX,
                 anchor_title=anchor.anchor_title,
                 before=anchor.before,
                 to_top=anchor.to_top,

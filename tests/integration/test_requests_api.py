@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from shortlist.engine import requests as requests_mod
-from shortlist.engine.models import ArrTarget, RequestConfig
+from shortlist.engine.models import ArrTarget, MediaType, RequestConfig
 from shortlist.server.auth import CSRF_HEADER, SESSION_COOKIE, session_serializer
 from shortlist.server.db.models import RequestCandidate, Server
 from shortlist.server.main import create_app
@@ -47,6 +47,7 @@ def client(tmp_path: Path):
                     demand=2,
                     tags=["kids", "sarah"],  # per-user + per-row tags recorded when it was queued
                     wanters=["Sarah", "Mike"],  # the two people whose picks wanted it
+                    poster_path="/wanted-film.jpg",  # the inbox shows the artwork
                 )
             )
             session.add(
@@ -93,6 +94,11 @@ class FakeTmdb:
     def imdb_id(self, tmdb_id: int, media_type) -> str | None:
         return None
 
+    def poster_path(self, tmdb_id: int, media_type) -> str:
+        # Must exist: the engine's poster backfill runs inside a bare `except Exception`, so a stub
+        # missing this method turns into a swallowed AttributeError rather than a failing test.
+        return f"/poster-{tmdb_id}.jpg"
+
 
 def _fake_requests_ctx(cfg: RequestConfig | None):
     """Stand in for RunService.build_requests_context() -> (RequestConfig | None, TmdbClient)."""
@@ -107,16 +113,44 @@ class TestRequestsApi:
         client.cookies.delete(SESSION_COOKIE)
         assert client.get("/api/requests").status_code == 401
 
+    def test_an_over_long_id_list_is_refused_rather_than_500ing(self, client: TestClient):
+        """`ids` feeds `.in_()` in five handlers, one bind parameter each. Past SQLite's compiled
+        ceiling that is an OperationalError reaching the client as a 500 with a SQL string in it, so
+        the list is bounded at the schema and comes back as the 422 every other bad input gets."""
+        assert client.post("/api/requests/reject", json={"ids": list(range(1001))}).status_code == 422
+        assert client.post("/api/requests/reject", json={"ids": list(range(1000))}).status_code == 200
+
     def test_list_is_pending_first_then_most_wanted(self, client: TestClient):
         rows = client.get("/api/requests").json()
         # Pending before sent; within pending, higher demand first.
         assert [r["tmdb_id"] for r in rows] == [20, 10, 30]
         assert rows[-1]["status"] == "sent"
 
+    def test_poster_path_is_served_as_a_path_never_a_url(self, client: TestClient):
+        """The inbox builds the image URL, so the API must hand over TMDB's raw path.
+
+        Storing a full URL would bake today's image host and size bucket into every row; a title with
+        no artwork gets "" (never null), which is what lets the UI draw a placeholder tile.
+        """
+        rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
+        assert rows[10]["poster_path"] == "/wanted-film.jpg"
+        assert rows[20]["poster_path"] == ""  # seeded without one — absent, not null
+
     def test_reject_marks_rejected_and_drops_from_pending(self, client: TestClient):
-        assert client.post("/api/requests/reject", json={"ids": [1]}).json()["rejected"] == 1
+        body = client.post("/api/requests/reject", json={"ids": [1]}).json()
+        assert body["rejected"] == 1
+        # Each inbox action now declares a Pydantic response model, and a model missing its one key
+        # would return `{}` with a 200 — the button would look like it worked and report nothing.
+        assert set(body) == {"rejected"}
         rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
         assert rows[10]["status"] == "rejected"
+
+    def test_every_inbox_action_returns_its_own_count_and_nothing_else(self, client: TestClient):
+        """One assertion per action, because each names its count differently and the UI reads the
+        name — `deleted` arriving where `cleared` was expected is a silent no-op in the inbox."""
+        assert set(client.post("/api/requests/restore", json={"ids": [1]}).json()) == {"restored"}
+        assert set(client.post("/api/requests/clear", json={"ids": [3]}).json()) == {"cleared"}
+        assert set(client.post("/api/requests/delete", json={"ids": [1]}).json()) == {"deleted"}
 
     def test_delete_removes_the_row_entirely_leaving_no_tombstone(self, client: TestClient):
         # Delete (unlike reject) removes the row outright, so a later run can re-surface the title.
@@ -193,6 +227,10 @@ class TestRequestsApi:
         body = client.post("/api/requests/send", json={"ids": [1]}).json()
         assert body["sent"] == 1 and fake.movie_calls == [(10, False)]
         assert fake.tag_calls == [{"kids", "sarah"}]  # the queued tags are applied on send
+        # The per-title outcomes are how the owner sees WHY something didn't go, so the nested key
+        # set is asserted too — a response model that dropped `detail` would hide every skip reason.
+        assert set(body) == {"sent", "dry_run", "outcomes"}
+        assert [set(o) for o in body["outcomes"]] == [{"id", "title", "status", "detail"}]
         rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
         assert rows[10]["status"] == "sent" and rows[10]["detail"] == "queued in Radarr"
         assert rows[10]["arr_slug"] == "movie-10"  # captured at send time -> the inbox deep-links to it
@@ -204,5 +242,113 @@ class TestRequestsApi:
         monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
         body = client.post("/api/requests/send", json={"ids": [1], "dry_run": True}).json()
         assert body["dry_run"] is True and fake.movie_calls == [(10, True)]
+        assert set(body) == {"sent", "dry_run", "outcomes"}
         rows = {r["tmdb_id"]: r for r in client.get("/api/requests").json()}
         assert rows[10]["status"] == "pending"  # a preview leaves the inbox untouched
+
+
+class FakeRadarrStatus:
+    def __init__(self, statuses: dict[int, str]):
+        self._statuses = statuses
+
+    def status_by_tmdb(self) -> dict[int, str]:
+        return dict(self._statuses)
+
+
+class FakeSonarrStatus:
+    def __init__(self, by_tvdb: dict[int, str], by_tmdb: dict[int, str]):
+        self._by_tvdb, self._by_tmdb = by_tvdb, by_tmdb
+
+    def status_by_ids(self) -> tuple[dict[int, str], dict[int, str]]:
+        return dict(self._by_tvdb), dict(self._by_tmdb)
+
+
+_SONARR = ArrTarget(url="http://sonarr", api_key="k", quality_profile_id=1, root_folder="/tv")
+
+
+class TestArrStatusEndpoint:
+    """`GET /requests/status` — what Sonarr/Radarr has for each row, for the inbox's badges."""
+
+    @staticmethod
+    def _patch(monkeypatch, client: TestClient, cfg: RequestConfig, *, radarr=None, sonarr=None):
+        from shortlist.engine.clients import arr as arr_mod
+
+        monkeypatch.setattr(arr_mod, "RadarrClient", lambda *a, **k: radarr)
+        monkeypatch.setattr(arr_mod, "SonarrClient", lambda *a, **k: sonarr)
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(cfg))
+
+    def test_shows_are_keyed_on_show_not_tv(self, client: TestClient, monkeypatch):
+        """Regression: the endpoint used to branch on media_type == "tv", but MediaType.SHOW stores
+        "show" — so Sonarr status silently never resolved for a single series."""
+        cfg = RequestConfig(enabled=True, sonarr=_SONARR)
+        self._patch(monkeypatch, client, cfg, sonarr=FakeSonarrStatus({}, {20: "downloading"}))
+
+        # Row id 2 is the pending SHOW (tmdb_id 20) from the fixture.
+        assert client.get("/api/requests/status").json()["2"] == "downloading"
+
+    def test_covers_waiting_rows_not_only_sent_ones(self, client: TestClient, monkeypatch):
+        """A waiting title someone added to the Arr by hand is exactly the "why is this still here?"
+        case — it must carry a status, which the sent-only version could never show."""
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded", 30: "downloading"}))
+
+        body = client.get("/api/requests/status").json()
+        assert body["1"] == "downloaded"  # pending
+        assert body["3"] == "downloading"  # sent
+
+    def test_untracked_title_is_null_not_missing(self, client: TestClient, monkeypatch):
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({}))
+
+        assert client.get("/api/requests/status").json()["1"] is None
+
+    def test_rejected_rows_are_skipped(self, client: TestClient, monkeypatch):
+        client.post("/api/requests/reject", json={"ids": [1]})
+        cfg = RequestConfig(enabled=True, radarr=_RADARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded"}))
+
+        assert "1" not in client.get("/api/requests/status").json()
+
+    def test_one_arr_failing_does_not_lose_the_other(self, client: TestClient, monkeypatch):
+        """Sonarr being down must not blank out every movie's status too."""
+
+        class Broken:
+            def status_by_ids(self):
+                raise RuntimeError("sonarr down")
+
+        cfg = RequestConfig(enabled=True, radarr=_RADARR, sonarr=_SONARR)
+        self._patch(monkeypatch, client, cfg, radarr=FakeRadarrStatus({10: "downloaded"}), sonarr=Broken())
+
+        body = client.get("/api/requests/status").json()
+        assert body["1"] == "downloaded"
+        assert body["2"] is None
+
+    def test_sonarr_v3_falls_back_to_a_tvdb_lookup_keyed_on_show(self, client: TestClient, monkeypatch):
+        """Sonarr v3 carries no tmdbId on a series, so the only way to resolve a show is TMDB→TVDB.
+
+        That fallback asked TMDB for `MediaType.TV` — which does not exist, `MediaType` is MOVIE/SHOW
+        — and the AttributeError was swallowed by a bare `except Exception` into a debug line. So on
+        every v3 server the fallback silently no-op'd for ever and every show showed a blank status.
+        """
+        from shortlist.engine.clients import arr as arr_mod
+
+        asked: list = []
+
+        class TmdbRecordingExternalIds(FakeTmdb):
+            def external_ids(self, tmdb_id: int, media_type) -> dict:
+                asked.append((tmdb_id, media_type))
+                return {"tvdb_id": 7777}
+
+        cfg = RequestConfig(enabled=True, sonarr=_SONARR)
+        monkeypatch.setattr(arr_mod, "SonarrClient", lambda *a, **k: FakeSonarrStatus({7777: "downloaded"}, {}))
+        monkeypatch.setattr(
+            client.app.state.run_service, "build_requests_context", lambda: (cfg, TmdbRecordingExternalIds())
+        )
+
+        # Row id 2 is the pending SHOW (tmdb_id 20) from the fixture.
+        assert client.get("/api/requests/status").json()["2"] == "downloaded"
+        assert asked == [(20, MediaType.SHOW)]
+
+    def test_requests_not_configured_returns_empty(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(client.app.state.run_service, "build_requests_context", lambda: _fake_requests_ctx(None))
+        assert client.get("/api/requests/status").json() == {}

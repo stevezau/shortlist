@@ -99,3 +99,45 @@ class TestPollRateLimit:
             auth._rate_limit_poll()
         clock["now"] += auth._PIN_WINDOW_S + 1  # window elapses
         auth._rate_limit_poll()  # allowed again
+
+
+class TestApiTokenBruteForce:
+    """An unthrottled `Bearer` check is a free oracle: it answers on every request, at network speed,
+    with no lockout and nothing in the log to notice.
+
+    Counted globally rather than per-IP on purpose — the shipped `--forwarded-allow-ips=*` (so a
+    reverse proxy on any host works out of the box) means `request.client.host` comes from a header
+    the caller controls, so a per-IP bucket is evaded by rotating it.
+    """
+
+    def _client(self, tmp_path):
+        from starlette.testclient import TestClient
+
+        from shortlist.server.main import create_app
+
+        return TestClient(create_app(config_dir=tmp_path))
+
+    def test_repeated_bad_tokens_start_getting_429(self, tmp_path, monkeypatch):
+        from shortlist.server import auth
+
+        monkeypatch.setattr(auth, "_TOKEN_FAILS", auth.deque())
+        with self._client(tmp_path) as client:
+            codes = [
+                client.get("/api/users", headers={"Authorization": f"Bearer wrong-{i}"}).status_code
+                for i in range(auth._TOKEN_MAX_FAILS + 3)
+            ]
+
+        assert codes[0] in (401, 403), "an early guess should be a plain rejection"
+        assert 429 in codes, "guessing must eventually be throttled"
+
+    def test_only_failures_are_counted(self, tmp_path, monkeypatch):
+        """A busy legitimate integration must never be throttled — the limit is invisible unless
+        something is actually guessing."""
+        from shortlist.server import auth
+
+        monkeypatch.setattr(auth, "_TOKEN_FAILS", auth.deque())
+        with self._client(tmp_path) as client:
+            for _ in range(auth._TOKEN_MAX_FAILS + 3):
+                client.get("/api/system/health")  # no bearer at all
+
+        assert len(auth._TOKEN_FAILS) == 0

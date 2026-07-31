@@ -1,0 +1,20 @@
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "text": "Based on the articles, I'd recommend The Wild Robot and Severance."
+          }
+        ]
+      },
+      "finish_reason": "STOP"
+    }
+  ],
+  "usage_metadata": {
+    "prompt_token_count": 150,
+    "candidates_token_count": 14,
+    "total_token_count": 164
+  }
+}

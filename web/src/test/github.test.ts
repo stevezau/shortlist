@@ -13,6 +13,8 @@ function makeRun(overrides: Partial<RunDetail> = {}): RunDetail {
     dry_run: false,
     stats: { users_ok: 4, users_error: 1 },
     users: [],
+    error: null,
+    promotion_blockers: [],
     ...overrides,
   };
 }
@@ -29,6 +31,10 @@ function makeResult(overrides: Partial<RunUserResult> = {}): RunUserResult {
     diff: {},
     picks: [],
     breakdown: [],
+    display_name: "Sarah",
+    llm_tokens_by_step: {},
+    exa_searches: 0,
+    has_trace: false,
     ...overrides,
   };
 }

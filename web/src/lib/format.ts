@@ -43,7 +43,17 @@ export function formatDate(iso: string | null): string {
   });
 }
 
-export function formatDuration(ms: number): string {
+/** Bytes → "512 B" / "48 KB" / "1.2 MB", for a backup file listing. */
+export function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** A duration in ms, or "—" when there isn't one yet — a run user who hasn't started has
+ *  `duration_ms: null`, which used to render as the literal "nullms". */
+export function formatDuration(ms: number | null): string {
+  if (ms === null) return "—";
   if (ms < 1000) return `${ms}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
@@ -53,10 +63,10 @@ export function formatDuration(ms: number): string {
 
 /** Wall-clock a run took: finished − started in ms, or null while it's still running / unparseable. */
 export function runElapsedMs(
-  startedAt: string,
+  startedAt: string | null,
   finishedAt: string | null,
 ): number | null {
-  if (!finishedAt) return null;
+  if (!startedAt || !finishedAt) return null;
   const start = Date.parse(startedAt);
   const end = Date.parse(finishedAt);
   if (Number.isNaN(start) || Number.isNaN(end) || end < start) return null;
@@ -219,4 +229,20 @@ export function renderRowName(
   return template.includes("{library_name}")
     ? rendered.replace(/\s+/g, " ").trim()
     : rendered;
+}
+
+/**
+ * How a background job's state reads to a person.
+ *
+ * A job back in `queued` AFTER an attempt is the queue retrying it, not work that has yet to start
+ * — rendering that as "Queued" would say "nothing has happened yet", the opposite of the truth.
+ */
+export function jobStatusLabel(job: {
+  status: string;
+  attempts: number;
+}): string {
+  if (job.status === "done") return "Done";
+  if (job.status === "failed") return `Failed after ${job.attempts} attempts`;
+  if (job.status === "running") return "Running…";
+  return job.attempts > 0 ? `Retrying (attempt ${job.attempts})` : "Queued";
 }

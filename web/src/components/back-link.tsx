@@ -1,5 +1,5 @@
 import { ArrowLeft } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 /** The consistent "← back to the list" link used at the top of every detail page. */
 export function BackLink({ to, label }: { to: string; label: string }) {

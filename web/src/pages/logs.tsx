@@ -1,4 +1,4 @@
-import { Check, Copy, Download, ScrollText } from "lucide-react";
+import { Check, Copy, Download, ScrollText, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { PageHeader } from "@/components/page-header";
@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { useLogs } from "@/lib/queries";
 import type { LogLine, LogPage } from "@/lib/types";
+import { useCopy } from "@/lib/use-copy";
 import { useDebouncedValue } from "@/lib/use-debounced-value";
 import { cn } from "@/lib/utils";
 
@@ -73,7 +74,7 @@ export function LogsPage() {
   const quieter = LEVELS[LEVELS.indexOf(level) - 1];
   const [search, setSearch] = useState("");
   const [follow, setFollow] = useState(true);
-  const [copied, setCopied] = useState(false);
+  const { state: copyState, copy } = useCopy();
   const debouncedSearch = useDebouncedValue(search, 300);
   const query = useLogs(level, debouncedSearch, LIMIT, follow);
   const endRef = useRef<HTMLDivElement>(null);
@@ -92,17 +93,6 @@ export function LogsPage() {
     });
   }, [lines.length, follow]);
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(toPlainText(lines));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard is unavailable over plain http or without permission; the button simply stays
-      // put — the log text is on screen and the download still works.
-    }
-  };
-
   return (
     <div>
       <PageHeader
@@ -113,15 +103,21 @@ export function LogsPage() {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => void copy()}
+              onClick={() => copy(toPlainText(lines))}
               disabled={lines.length === 0}
             >
-              {copied ? (
+              {copyState === "copied" ? (
                 <Check aria-hidden="true" />
+              ) : copyState === "error" ? (
+                <TriangleAlert aria-hidden="true" />
               ) : (
                 <Copy aria-hidden="true" />
               )}
-              {copied ? "Copied" : "Copy"}
+              {copyState === "copied"
+                ? "Copied"
+                : copyState === "error"
+                  ? "Couldn’t copy — try again"
+                  : "Copy"}
             </Button>
             <Button asChild variant="outline">
               <a href={api.logsDownloadUrl()} download>

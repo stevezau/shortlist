@@ -34,6 +34,21 @@ def _sanitize_tag(label: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")
 
 
+def _status_for(*, has_all: bool, has_some: bool, in_queue: bool, monitored: bool) -> str:
+    """One title's download state, in the vocabulary the request inbox shows.
+
+    Ordered most-certain first: what's on disk beats what a queue claims, because a finished title
+    can linger in the queue as an import. ``queued`` means Sonarr/Radarr is monitoring and hunting
+    but has nothing yet; ``unmonitored`` means it isn't even looking, which is the one state that
+    needs the owner to do something.
+    """
+    if has_all:
+        return "downloaded"
+    if in_queue or has_some:
+        return "downloading"
+    return "queued" if monitored else "unmonitored"
+
+
 class ArrError(RuntimeError):
     """A Sonarr/Radarr call failed — connection, auth, or a rejected add.
 
@@ -47,7 +62,15 @@ class _ArrClient:
 
     app_name = "Arr"
 
-    def __init__(self, target: ArrTarget, *, timeout: float = 30.0, min_write_interval: float = 1.0):
+    def __init__(
+        self,
+        target: ArrTarget,
+        *,
+        # Radarr/Sonarr run on the same LAN as Plex, not across the internet — the shared default is
+        # already generous for a local call, so no override is needed.
+        timeout: float = http_retry.DEFAULT_TIMEOUT_S,
+        min_write_interval: float = 1.0,
+    ):
         self._target = target
         self._base = target.url.rstrip("/")
         self._timeout = timeout
@@ -136,6 +159,52 @@ class _ArrClient:
                     continue
         return out
 
+    _QUEUE_PAGE_SIZE = 1000
+    # A hard stop if the app ignores `page` and keeps answering with a full page forever — 50k
+    # records is far past any real download queue, so hitting this means paging itself is broken,
+    # not that the queue is genuinely that large.
+    _MAX_QUEUE_PAGES = 50
+
+    def _queued_ids(self, key: str) -> set[int]:
+        """The movieIds/seriesIds currently in the app's download queue.
+
+        The queue is paginated and defaults to 20 records, so a busy server would otherwise report
+        older downloads as merely "queued". This pages through the whole queue rather than trusting
+        one 1000-record page — a server with more active downloads than that used to have its tail
+        silently missed, with no signal that the read was short. Fails OPEN — a queue the app won't
+        serve costs us the downloading/queued distinction, never the whole status fetch.
+        """
+        ids: set[int] = set()
+        fetched = 0
+        for page in range(1, self._MAX_QUEUE_PAGES + 1):
+            try:
+                queue = self._get("/api/v3/queue", page=page, pageSize=self._QUEUE_PAGE_SIZE)
+            except ArrError as e:
+                logger.debug("{}: queue unavailable ({}) — treating nothing as downloading", self.app_name, e)
+                return set()
+            records = queue.get("records") if isinstance(queue, dict) else None
+            record_list = records if isinstance(records, list) else []
+            ids |= self._ids_from(record_list, key)
+            fetched += len(record_list)
+            total = queue.get("totalRecords") if isinstance(queue, dict) else None
+            if len(record_list) < self._QUEUE_PAGE_SIZE:
+                if isinstance(total, int) and fetched < total:
+                    logger.warning(
+                        "{}: queue paging stopped on a short page having read only {} of {} records",
+                        self.app_name,
+                        fetched,
+                        total,
+                    )
+                return ids
+            if isinstance(total, int) and fetched >= total:
+                return ids
+        logger.warning(
+            "{}: queue paging hit the {}-page safety cap — reporting a partial queue",
+            self.app_name,
+            self._MAX_QUEUE_PAGES,
+        )
+        return ids
+
     def _tag_ids(self, extra: set[str] | None = None) -> list[int]:
         """Resolve the labels to apply for one add: the target's global tag unioned with ``extra``
         (per-user + per-row tags carried on the title). Each distinct label is created in the app if
@@ -185,42 +254,27 @@ class RadarrClient(_ArrClient):
         """tmdbIds on Radarr's import-exclusion list (usually left by a past delete)."""
         return self._id_set("/api/v3/exclusions", "tmdbId")
 
-    def get_status(self, tmdb_id: int) -> dict | None:
-        """Fetch Radarr's status for one TMDB id: downloaded, queued, monitored, etc.
+    def status_by_tmdb(self) -> dict[int, str]:
+        """Every movie Radarr tracks, as ``{tmdbId: status}``.
 
-        Returns None if not found, or a dict with: {'monitored': bool, 'downloaded': bool, 'status': str}
-        where status is 'downloaded' | 'downloading' | 'queued' | 'monitored' | 'unmonitored'.
+        Status is one of ``downloaded`` | ``downloading`` | ``queued`` | ``unmonitored``. Two calls
+        for the whole library, not three per title: the inbox asks about every row it shows at once,
+        and the per-title form (lookup + fetch + queue, each round-tripped) made that cost scale with
+        the number of rows on screen.
         """
-        resource = self._get(f"/api/v3/movie/lookup/tmdb?tmdbId={tmdb_id}")
-        if not isinstance(resource, dict) or not resource.get("tmdbId"):
-            return None
-        if not resource.get("id"):  # not tracked by Radarr
-            return None
-        # Fetch the full movie record to get hasFile and queue status
-        movie_id = resource["id"]
-        movie = self._get(f"/api/v3/movie/{movie_id}")
-        if not isinstance(movie, dict):
-            return None
-
-        monitored = bool(movie.get("monitored"))
-        has_file = bool(movie.get("hasFile"))
-
-        # Check if it's downloading (in queue)
-        queue = self._get("/api/v3/queue")
-        in_queue = False
-        if isinstance(queue, dict) and isinstance(queue.get("records"), list):
-            in_queue = any(r.get("movieId") == movie_id for r in queue["records"])
-
-        if has_file:
-            status = "downloaded"
-        elif in_queue:
-            status = "downloading"
-        elif monitored:
-            status = "queued"
-        else:
-            status = "unmonitored"
-
-        return {"monitored": monitored, "downloaded": has_file, "status": status}
+        movies = self._get("/api/v3/movie")
+        downloading = self._queued_ids("movieId")
+        statuses: dict[int, str] = {}
+        for movie in movies if isinstance(movies, list) else []:
+            if not isinstance(movie, dict) or not movie.get("tmdbId"):
+                continue
+            statuses[int(movie["tmdbId"])] = _status_for(
+                has_all=bool(movie.get("hasFile")),
+                has_some=bool(movie.get("hasFile")),
+                in_queue=movie.get("id") in downloading,
+                monitored=bool(movie.get("monitored")),
+            )
+        return statuses
 
     def add_movie(
         self, tmdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None
@@ -256,10 +310,6 @@ class RadarrClient(_ArrClient):
 class SonarrClient(_ArrClient):
     app_name = "Sonarr"
 
-    def library_tvdb_ids(self) -> set[int]:
-        """Every tvdbId Sonarr already tracks (Sonarr keys shows on TVDB, not TMDB)."""
-        return self._id_set("/api/v3/series", "tvdbId")
-
     def library_ids(self) -> tuple[set[int], set[int]]:
         """(tvdbIds, tmdbIds) Sonarr already tracks, from ONE /series fetch.
 
@@ -274,47 +324,36 @@ class SonarrClient(_ArrClient):
         """tvdbIds on Sonarr's import-exclusion list (usually left by a past delete)."""
         return self._id_set("/api/v3/importlistexclusion", "tvdbId")
 
-    def get_status_by_tvdb(self, tvdb_id: int) -> dict | None:
-        """Fetch Sonarr's status for one TVDB id: downloaded, queued, monitored, etc.
+    def status_by_ids(self) -> tuple[dict[int, str], dict[int, str]]:
+        """Every series Sonarr tracks, as ``({tvdbId: status}, {tmdbId: status})``.
 
-        Returns None if not found, or a dict with: {'monitored': bool, 'downloaded': bool, 'status': str}
-        where status is 'downloaded' | 'downloading' | 'queued' | 'monitored' | 'unmonitored'.
-        'downloaded' means all aired episodes are on disk; partial = downloading or queued depending on queue.
+        Two calls for the whole library (see ``RadarrClient.status_by_tmdb``). Both keyings come from
+        the one ``/series`` fetch: TVDB is Sonarr's native key, and the TMDB map — populated on v4,
+        empty on v3 — lets the tmdb-keyed request inbox answer without a per-title TVDB lookup.
+        A show counts as ``downloaded`` only when every aired episode is on disk; some-but-not-all is
+        ``downloading``, which is what a part-way season looks like to the person waiting on it.
         """
-        results = self._get(f"/api/v3/series/lookup?term=tvdb:{tvdb_id}")
-        resource = _match_tvdb(results, tvdb_id)
-        if resource is None:
-            return None
-        if not resource.get("id"):  # not tracked by Sonarr
-            return None
-
-        series_id = resource["id"]
-        series = self._get(f"/api/v3/series/{series_id}")
-        if not isinstance(series, dict):
-            return None
-
-        monitored = bool(series.get("monitored"))
-        # Sonarr's statistics tell us if all/some/none of aired episodes exist
-        stats = series.get("statistics", {})
-        episode_count = stats.get("episodeCount", 0)
-        episode_file_count = stats.get("episodeFileCount", 0)
-
-        # Check if it's downloading (in queue)
-        queue = self._get("/api/v3/queue")
-        in_queue = False
-        if isinstance(queue, dict) and isinstance(queue.get("records"), list):
-            in_queue = any(r.get("seriesId") == series_id for r in queue["records"])
-
-        if episode_count > 0 and episode_file_count >= episode_count:
-            status = "downloaded"
-        elif in_queue or episode_file_count > 0:
-            status = "downloading"
-        elif monitored:
-            status = "queued"
-        else:
-            status = "unmonitored"
-
-        return {"monitored": monitored, "downloaded": episode_file_count >= episode_count, "status": status}
+        series_list = self._get("/api/v3/series")
+        downloading = self._queued_ids("seriesId")
+        by_tvdb: dict[int, str] = {}
+        by_tmdb: dict[int, str] = {}
+        for series in series_list if isinstance(series_list, list) else []:
+            if not isinstance(series, dict):
+                continue
+            stats = series.get("statistics") or {}
+            episodes = stats.get("episodeCount") or 0
+            on_disk = stats.get("episodeFileCount") or 0
+            status = _status_for(
+                has_all=episodes > 0 and on_disk >= episodes,
+                has_some=on_disk > 0,
+                in_queue=series.get("id") in downloading,
+                monitored=bool(series.get("monitored")),
+            )
+            if series.get("tvdbId"):
+                by_tvdb[int(series["tvdbId"])] = status
+            if series.get("tmdbId"):
+                by_tmdb[int(series["tmdbId"])] = status
+        return by_tvdb, by_tmdb
 
     def add_series(
         self, tvdb_id: int, *, dry_run: bool, extra_tags: set[str] | None = None
@@ -349,8 +388,16 @@ class SonarrClient(_ArrClient):
 
 
 def make_arr_client(service: str, target: ArrTarget) -> _ArrClient:
-    """Radarr for ``"radarr"``, Sonarr for ``"sonarr"`` — the one place that maps the name to a client."""
-    return (RadarrClient if service == "radarr" else SonarrClient)(target)
+    """Radarr for ``"radarr"``, Sonarr for ``"sonarr"`` — the one place that maps the name to a client.
+
+    Raises ``ValueError`` on anything else — a typo here used to fall through to Sonarr silently,
+    talking to the wrong app with the wrong app's api key.
+    """
+    if service == "radarr":
+        return RadarrClient(target)
+    if service == "sonarr":
+        return SonarrClient(target)
+    raise ValueError(f"unknown Arr service {service!r} — expected 'radarr' or 'sonarr'")
 
 
 def _match_tvdb(results: object, tvdb_id: int) -> dict | None:
@@ -364,15 +411,21 @@ def _match_tvdb(results: object, tvdb_id: int) -> dict | None:
 
 
 def _first_error(response: httpx.Response) -> str:
-    """Pull the app's own human message out of a validation-error body, if there is one."""
+    """Pull the app's own human message out of a validation-error body, if there is one.
+
+    Passed through ``redact()`` on every return path: this text lands straight in an ``ArrError``
+    message, and ``ArrError``'s own docstring promises the URL/api key never appear in it — a
+    non-JSON body (a proxy or error page) is the one case that isn't the app's own well-formed
+    validation JSON, so it gets no special trust.
+    """
     try:
         payload = response.json()
     except ValueError:
-        return response.text[:200]
+        return http_retry.redact(response.text[:200])
     if isinstance(payload, list) and payload:
         first = payload[0]
         if isinstance(first, dict):
-            return str(first.get("errorMessage") or first.get("message") or first)
+            return http_retry.redact(str(first.get("errorMessage") or first.get("message") or first))
     if isinstance(payload, dict):
-        return str(payload.get("message") or payload)
-    return str(payload)[:200]
+        return http_retry.redact(str(payload.get("message") or payload))
+    return http_retry.redact(str(payload)[:200])

@@ -10,6 +10,7 @@ import httpx
 
 from shortlist.engine.clients.plex_pms import MIN_PMS_VERSION, PlexClient, parse_pms_version
 from shortlist.engine.clients.plextv import PLEXTV
+from shortlist.server.net_guard import check_url
 
 
 def plextv_account(token: str, client_id: str) -> dict:
@@ -32,9 +33,21 @@ def run_capability_probe(
     tautulli_url: str | None = None,
     tautulli_apikey: str | None = None,
 ) -> dict:
-    """Build the wizard's step-1 checklist. Raises on unreachable server (endpoint maps to 502)."""
+    """Build the wizard's step-1 checklist. Raises on unreachable server (endpoint maps to 502).
+
+    Both URLs come straight from the wizard form, and on a FRESH install this runs before any owner
+    exists — so it is the one server-side fetch an unauthenticated caller can aim. `check_url` refuses
+    a non-HTTP scheme and the cloud metadata addresses; private/LAN addresses stay allowed, because
+    pointing at `192.168.1.50:32400` or `http://plex:32400` is the normal configuration for a
+    self-hosted app (see `net_guard`).
+    """
+    check_url(plex_url, what="The Plex URL")
+    if tautulli_url:
+        check_url(tautulli_url, what="The Tautulli URL")
     result: dict = {"checks": {}}
-    plex = PlexClient(plex_url, token)
+    # No redirects on this path: it is the one server-side fetch an UNAUTHENTICATED caller can aim,
+    # so a permitted host answering 302 must not be able to bounce it onto a blocked address.
+    plex = PlexClient(plex_url, token, follow_redirects=False)
     version = plex.version
     version_ok = parse_pms_version(version) >= MIN_PMS_VERSION
     result["checks"]["pms_version"] = {

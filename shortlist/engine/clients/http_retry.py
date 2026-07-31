@@ -28,15 +28,54 @@ from loguru import logger
 
 _SECRET_RE = re.compile(r"((?:X-Plex-Token|api_?key)=)[^&\s\"']+", re.IGNORECASE)
 
+# Credentials that can appear in a string but NOT as a query parameter, so `_SECRET_RE` misses them —
+# a header form, a JSON/dict body, or a bare provider key. Most of these were previously in
+# `server/services/log_reader.scrub` alone; `redact()` is what guards API 502 details and `events`
+# rows (plex-safety rule 9 applies equally there), so it must be at least as strong. `X-Api-Key` —
+# the header `arr.py` sends — was missed by BOTH ladders before this: `api_?key` in the JSON pattern
+# below only matches a quoted key of exactly "api_key"/"apikey", not "X-Api-Key". Each pattern keeps
+# its label and replaces only the secret.
+_EXTRA_SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # Header form: `X-Plex-Token: abc123`, `'X-Plex-Token': 'abc123'`, `X-Api-Key: abc123` (Sonarr/Radarr).
+    # The value stops at `&` too, not just whitespace/quotes/brackets — this pattern runs AFTER
+    # `_SECRET_RE` above, so on a query-string form it would otherwise re-match the just-redacted
+    # `X-Plex-Token=REDACTED` and swallow the rest of the query string with it (e.g. `&foo=1`).
+    (
+        re.compile(r"((?:X-Plex-Token|X-Plex-Client-Identifier|X-Api-Key)['\"]?\s*[:=]\s*['\"]?)[^\s,&'\"}\]]+", re.I),
+        r"\1REDACTED",
+    ),
+    # `Authorization: Bearer abc123` — our own API token, and any other bearer credential.
+    (re.compile(r"((?:Authorization['\"]?\s*[:=]\s*['\"]?)?Bearer\s+)[A-Za-z0-9._\-]{8,}", re.I), r"\1REDACTED"),
+    # JSON/dict form: `"token": "abc"`, `'apikey': 'abc'`, `"api_key": "abc"`.
+    (re.compile(r"(['\"](?:token|api_?key|authToken|accessToken)['\"]\s*:\s*['\"])[^'\"]+", re.I), r"\1REDACTED"),
+    # Provider key shapes, wherever they appear: Anthropic, OpenAI, Google, xAI, Groq.
+    # The OpenAI pattern must allow `-` and `_` INSIDE the key, not just after `sk-`: every key
+    # issued since 2024 is `sk-proj-…`, and OpenRouter — which this provider now supports — uses
+    # `sk-or-v1-…`. An alnum-only class stops dead at the hyphen after `proj`/`or` and matches
+    # neither. Over-redaction is the safe direction here.
+    (re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{16,}"), "REDACTED"),
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{20,}"), "REDACTED"),
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}"), "REDACTED"),
+    (re.compile(r"\bxai-[A-Za-z0-9_\-]{20,}"), "REDACTED"),
+    (re.compile(r"\bgsk_[A-Za-z0-9_\-]{20,}"), "REDACTED"),
+    # Plex tokens are 20-char alnum; catch the bare `token=`/`X-Plex-Token` path form too.
+    (re.compile(r"(plex\.direct[^\s]*?token[=/])[A-Za-z0-9_\-]+", re.I), r"\1REDACTED"),
+)
+
 
 def redact(text: str) -> str:
-    """Strip service credentials from a string before it is logged or persisted (plex-safety rule 9).
+    """Strip every credential shape we know of from a string before it is logged or persisted
+    (plex-safety rule 9).
 
     plexapi/PMS error text (and other clients' errors) can embed the full request URL, credential and
-    all — a Plex ``X-Plex-Token``, or a Tautulli/TMDB/OMDb ``apikey``/``api_key`` query param.
-    Anything derived from an exception message must pass through here before it reaches a log line or
-    an ``events`` row. Over-redaction is fine; a leaked key is not."""
-    return _SECRET_RE.sub(r"\1REDACTED", text)
+    all — a Plex ``X-Plex-Token`` or ``X-Plex-Client-Identifier`` header, a Tautulli/TMDB/OMDb
+    ``apikey``/``api_key`` query param, a bearer token, a JSON-shaped credential field, or a bare
+    provider API key. Anything derived from an exception message must pass through here before it
+    reaches a log line or an ``events`` row. Over-redaction is fine; a leaked key is not."""
+    cleaned = _SECRET_RE.sub(r"\1REDACTED", text)
+    for pattern, replacement in _EXTRA_SECRETS:
+        cleaned = pattern.sub(replacement, cleaned)
+    return cleaned
 
 
 DEFAULT_ATTEMPTS = 3
@@ -44,6 +83,11 @@ BASE_BACKOFF_S = 1.0
 MAX_BACKOFF_S = 20.0
 MAX_RETRY_AFTER_S = 60.0  # cap an honoured Retry-After here — a longer server hint is clamped, not obeyed,
 #                            so one slow endpoint can't stall the whole run on its own say-so.
+
+# Shared ceiling for the engine's read APIs (TMDB/Trakt/Arr/Tautulli/plex.tv): long enough that a
+# slow host doesn't fail a normal call, short enough that one dead endpoint doesn't stall a whole
+# run. Each client may override with its own one-line reason (e.g. MDBList's shorter fail-fast).
+DEFAULT_TIMEOUT_S = 30.0
 
 # GET (idempotent): any transient network error is retriable, as is a rate-limit or server error.
 _GET_RETRY_EXC: tuple[type[Exception], ...] = (httpx.TimeoutException, httpx.TransportError)

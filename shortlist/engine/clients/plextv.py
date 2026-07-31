@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import httpx
 from loguru import logger
@@ -48,6 +48,18 @@ class PlexTvUser:
     protected: bool
     avatar_url: str = ""
     filters: dict[str, str] = field(default_factory=dict)
+    # The parental preset applied to a MANAGED account: "little_kid" | "older_kid" | "teen", or "" for
+    # none. Only `/api/home/users` reports it — `/api/users` says `restricted="1"` for every managed
+    # account and cannot tell the two apart, which is the whole of issue #20.
+    #
+    # It decides whether a share-filter write is even possible. Plex's own documentation: "For Managed
+    # users, the restriction profile must be set to None if you wish to edit Rating and Label
+    # restrictions on the library types."
+    # (support.plex.tv/articles/204232573-restricting-the-shares/). Live-confirmed on a real server
+    # 2026-07-29: a `little_kid` account 422s the write AND sees 0 collections of any kind, so skipping
+    # it is both necessary and harmless; a profile-less managed account is an ordinary user that has
+    # simply never been given its excludes.
+    restriction_profile: str = ""
 
 
 class PlexTvClient:
@@ -60,13 +72,26 @@ class PlexTvClient:
     _SLOW_TO = 1.0  # the first 429 jumps the pace to at least this (the old conservative rate)
     _MAX_PACE = 30.0  # never space writes further apart than this, even after repeated 429s
 
-    def __init__(self, token: str, machine_id: str, *, min_write_interval: float = 0.0, timeout: float = 30.0):
+    def __init__(
+        self,
+        token: str,
+        machine_id: str,
+        *,
+        min_write_interval: float = 0.0,
+        # plex.tv is shared infra outside our control, no closer than the other read APIs — the
+        # shared ceiling gives it the same tolerance.
+        timeout: float = http_retry.DEFAULT_TIMEOUT_S,
+    ):
         self._token = token
         self._machine_id = machine_id
         self._floor = max(0.0, min_write_interval)  # fastest allowed spacing between writes
         self._pace = self._floor  # current adaptive spacing; grows on 429, decays on success
         self._timeout = timeout
         self._last_write = 0.0
+        # Cached `/api/home/users` lookup — profiles do not change during a run, and `list_users()` is
+        # called several times (privacy sync, the read-back verification, uninstall's per-user restore).
+        # Without this, every one of those paid a second plex.tv GET for a value most never read.
+        self._home_profiles: dict[int, str] | None = None
 
     def _slow_down(self) -> None:
         """A 429 means we're going too fast — widen the spacing for the writes that follow."""
@@ -103,6 +128,12 @@ class PlexTvClient:
         r.raise_for_status()
         users = []
         for el in ET.fromstring(r.text):
+            if el.tag != "User":
+                # Only `<User>` children are accounts. Without this, any other element plex.tv adds to
+                # the container (a `<Server>` block, an error node) becomes a user with `id=0` and no
+                # filters — and callers that compare their own roster against this list would read that
+                # as "everybody left the share" (rule 11: assume nothing about the response shape).
+                continue
             home = el.get("home") == "1"
             restricted = el.get("restricted") == "1"
             users.append(
@@ -120,7 +151,73 @@ class PlexTvClient:
                     },
                 )
             )
+        # Fold in the one field `/api/users` does not carry. Best-effort: a failure here leaves every
+        # profile blank, which reads as "no preset" — so the caller ATTEMPTS the write and plex.tv gets
+        # the final say (a 422 is already handled). Failing the whole roster read over an enrichment
+        # would be far worse than trying a write that might be refused.
+        profiles = self.home_restriction_profiles()
+        if profiles:
+            users = [replace(u, restriction_profile=profiles.get(u.id, "")) for u in users]
         return users
+
+    def home_restriction_profiles(self) -> dict[int, str]:
+        """``{plex_account_id: restrictionProfile}`` for every Plex Home account, "" when none is set.
+
+        `/api/users` reports `restricted="1"` for EVERY managed account and offers nothing to tell a
+        parental-controlled one from a plain one — so Shortlist skipped both, and a managed user with no
+        age restriction never got the `label!=` excludes that hide other people's rows (issue #20).
+
+        `/api/home/users` carries `restrictionProfile` ("little_kid" | "older_kid" | "teen", absent for
+        none), which is exactly that distinction. It matters because Plex will not accept label
+        restrictions at all while a preset is applied — "For Managed users, the restriction profile must
+        be set to None if you wish to edit Rating and Label restrictions on the library types"
+        (support.plex.tv/articles/204232573-restricting-the-shares/).
+
+        Returns {} on any failure, which the caller treats as "no presets known".
+        """
+        if self._home_profiles is not None:
+            return self._home_profiles  # profiles do not change mid-run; one read per client
+        profiles: dict[int, str] = {}
+        try:
+            r = http_retry.get(f"{PLEXTV}/api/home/users", headers=self._headers(), timeout=self._timeout)
+            r.raise_for_status()
+            # Parsing is INSIDE the try. It used to sit outside, so a single non-numeric id raised out
+            # of `list_users()` — which the pipeline reads as "could not read the plex.tv user list" and
+            # writes no filters for anyone, promoting nothing, for the whole server. The exact opposite
+            # of the best-effort behaviour this method promises (rule 11: assume nothing about a shape).
+            for el in ET.fromstring(r.text):
+                if el.tag != "User" or not el.get("id"):
+                    continue
+                try:
+                    profiles[int(el.get("id", "0"))] = el.get("restrictionProfile") or ""
+                except (TypeError, ValueError):
+                    logger.debug("skipping a Home user with a non-numeric id: {!r}", el.get("id"))
+        except Exception as e:
+            logger.warning("could not read Plex Home restriction profiles ({}) — assuming none", type(e).__name__)
+            return {}
+        self._home_profiles = profiles
+        return profiles
+
+    def home_profile_known(self, plex_account_id: int) -> bool:
+        """Do we actually know THIS account's parental profile?
+
+        Without this, "this account has no parental profile" and "we could not find out" are the same
+        value — an empty string — and a caller deciding whether a 422 is expected cannot tell them
+        apart. That matters for a PERMANENT failure: this is the v1 XML surface, and if it ever goes
+        away every profiled account would 422, be treated as an unknown failure, and block promotion
+        for the whole server every night. Which is exactly the shape of #14.
+
+        Answered PER ACCOUNT, not once for the whole read, because a 200 is not the same as a
+        complete answer. `/api/home/users` returning an empty `<MediaContainer>`, or a roster that
+        simply omits somebody, used to satisfy a global "the read succeeded" flag — so a genuinely
+        profiled child read as having NO profile, their 422 looked unexpected, and promotion was
+        blocked for every user on the server, every night, behind a green test suite. An account the
+        roster never mentioned is unknown, whatever the HTTP status was.
+
+        False until a read succeeds, and failures are deliberately not cached, so a blip recovers
+        within the same run.
+        """
+        return self._home_profiles is not None and plex_account_id in self._home_profiles
 
     def get_user(self, plex_account_id: int) -> PlexTvUser:
         for user in self.list_users():
@@ -165,6 +262,11 @@ class PlexTvClient:
         """
         url = f"{PLEXTV}/api/users/{plex_account_id}"
         net_backoff = 2.0
+        # What the LAST attempt actually failed with — reported if every attempt is exhausted, so the
+        # final error names its real cause instead of always blaming throttling (a repeated connect
+        # failure used to raise "still throttling", sending the operator to the wrong diagnosis on
+        # the most privacy-sensitive write path).
+        last_failure = "no attempt was made"
         for attempt in range(6):
             self._throttle()
             try:
@@ -174,6 +276,7 @@ class PlexTvClient:
                 # is safe (it's a full-value PUT, not a delta — rule 3's merge already happened). A
                 # read timeout is deliberately NOT retried here: the write may have applied.
                 logger.warning("plex.tv unreachable on filter write (attempt {}): {}", attempt + 1, type(e).__name__)
+                last_failure = f"plex.tv was unreachable ({type(e).__name__})"
                 time.sleep(net_backoff)
                 net_backoff = min(net_backoff * 2, 30.0)
                 continue
@@ -186,6 +289,7 @@ class PlexTvClient:
                 logger.warning(
                     "plex.tv 429 on filter write (attempt {}); slowing to {:.1f}s/write", attempt + 1, self._pace
                 )
+                last_failure = "plex.tv is rate-limiting filter writes (HTTP 429)"
                 continue  # the loop-top _throttle now waits the new, larger pace before retrying
             # Carry plex.tv's own words. "HTTP 400" alone leaves the operator guessing which of
             # their accounts plex.tv won't accept a filter for, and why (issue #1). The body is
@@ -198,7 +302,9 @@ class PlexTvClient:
             if r.status_code == 422:
                 raise FilterWriteRefused(msg)
             raise RuntimeError(msg)
-        raise RuntimeError(f"plex.tv still throttling filter update for {plex_account_id} after retries")
+        raise RuntimeError(
+            f"plex.tv filter update for {plex_account_id} failed after {attempt + 1} attempts: {last_failure}"
+        )
 
     def home_users(self) -> list[dict]:
         r = http_retry.get(f"{PLEXTV}/api/v2/home/users", headers=self._headers(json=True), timeout=self._timeout)

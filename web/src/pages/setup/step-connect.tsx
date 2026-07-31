@@ -66,6 +66,10 @@ export function StepConnect({ data, update }: StepProps) {
   });
 
   // Preselect the first address that actually answered — the common case is one click.
+  // Suppressed deliberately: this seeds a user-editable field once from data that arrives async,
+  // and then must stop (note the `plexUrl ||` guard). Deriving it would fight the user's own
+  // choice on every refetch.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (plexUrl || !servers.data) return;
     for (const server of servers.data) {
@@ -76,6 +80,7 @@ export function StepConnect({ data, update }: StepProps) {
       }
     }
   }, [servers.data, plexUrl]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const probe = useMutation({
     mutationFn: () => api.setupProbe({ plex_url: plexUrl }),
@@ -209,14 +214,29 @@ export function StepConnect({ data, update }: StepProps) {
               <CardContent className="space-y-2 pt-6">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{server.name}</span>
-                  {server.owned ? <Badge>owned</Badge> : null}
+                  {server.owned ? (
+                    <Badge>owned</Badge>
+                  ) : (
+                    <Badge variant="secondary">shared with you</Badge>
+                  )}
                   {server.version ? (
                     <span className="text-xs text-muted-foreground">
                       {server.version}
                     </span>
                   ) : null}
                 </div>
-                <fieldset className="space-y-1.5">
+                {/* Shown but not selectable. Shortlist creates collections and rewrites share
+                    filters, which only the server's owner may do — and the backend rejects a link
+                    to someone else's server, so offering it here would only lead to a dead end. */}
+                {!server.owned ? (
+                  <p className="text-sm text-muted-foreground">
+                    You can&rsquo;t set Shortlist up on this one &mdash; it
+                    belongs to someone else, and Shortlist has to create
+                    collections and manage sharing. Ask its owner to run their
+                    own Shortlist.
+                  </p>
+                ) : null}
+                <fieldset className="space-y-1.5" disabled={!server.owned}>
                   <legend className="sr-only">
                     Addresses for {server.name}
                   </legend>
@@ -233,7 +253,7 @@ export function StepConnect({ data, update }: StepProps) {
                       // hostname, so selecting one fills the URL and re-runs the real check — and the
                       // owner can then edit it to their LAN address if that hostname won't route.
                       onClick={() => setPlexUrl(connection.uri)}
-                      className="h-auto w-full items-start justify-start gap-2 whitespace-normal break-all py-1.5 text-left font-mono text-xs"
+                      className="h-auto w-full items-start justify-start gap-2 whitespace-normal break-all py-1.5 text-left font-mono text-xs disabled:opacity-50"
                     >
                       {connection.ok ? (
                         <Check

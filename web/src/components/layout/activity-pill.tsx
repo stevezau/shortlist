@@ -1,7 +1,8 @@
 import { Loader2 } from "lucide-react";
 import { useRef, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink } from "react-router";
 
+import { runOutcome } from "@/lib/run-outcome";
 import { STAGE_LABELS } from "@/lib/run-stages";
 import { useSSE } from "@/lib/sse";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,12 @@ const LINGER_MS = 8_000;
  * activity is never invisible. Terminal states linger briefly, then the pill
  * disappears — no activity means Shortlist is idle.
  */
+const RUN_PILL_TEXT = {
+  ok: "run finished — ok",
+  stopped: "run stopped",
+  failed: "run failed",
+} as const;
+
 export function ActivityPill() {
   const [activity, setActivity] = useState<Activity | null>(null);
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,8 +54,8 @@ export function ActivityPill() {
     onRunFinished: (event) =>
       show(
         {
-          text: event.status === "ok" ? "run finished — ok" : "run failed",
-          tone: event.status === "ok" ? "ok" : "error",
+          text: RUN_PILL_TEXT[runOutcome(event.status)],
+          tone: runOutcome(event.status) === "failed" ? "error" : "ok",
         },
         true,
       ),

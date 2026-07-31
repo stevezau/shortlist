@@ -64,7 +64,7 @@ describe("api", () => {
   it("sends PATCH bodies as JSON with the content-type and CSRF headers", async () => {
     fetchMock.mockResolvedValue(jsonResponse({ id: 3 }));
 
-    await api.patchUser(3, { enabled: false, prefs: { row_size: 10 } });
+    await api.patchUser(3, { enabled: false, prefs: { paused: true } });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/users/3");
@@ -75,7 +75,7 @@ describe("api", () => {
     });
     expect(JSON.parse(init.body as string)).toEqual({
       enabled: false,
-      prefs: { row_size: 10 },
+      prefs: { paused: true },
     });
   });
 

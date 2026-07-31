@@ -32,6 +32,11 @@ web/.vite/
 .DS_Store
 .idea/
 
-# Browser/session artifacts
+# Browser/session artifacts (ad hoc screenshots dropped at the repo root — not fixture images,
+# which live under tests/fixtures/ or docs/images/ and must stay tracked)
 .playwright-mcp/
-*.jpeg
+/*.jpeg
+
+# hypothesis's own example database (test_privacy.py's @given properties) — not fixtures, and one
+# `git add -A` away from being committed if left untracked-but-unignored
+.hypothesis/

@@ -10,6 +10,7 @@ from loguru import logger
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.poster import PosterArtist
 from shortlist.engine.models import (
+    LABEL_PREFIX,
     SHARED_SLUG_PREFIX,
     CollectionDiff,
     EngineConfig,
@@ -228,6 +229,7 @@ def deliver_rows(
     spec: RowSpec | None = None,
     *,
     sole_row: bool = True,
+    delivered_keys: dict[str, int] | None = None,
     dry_run: bool = False,
     stored_labels: dict[str, str] | None = None,
     diff: CollectionDiff | None = None,
@@ -242,6 +244,10 @@ def deliver_rows(
 
     `spec` is the row being delivered; when omitted (legacy callers) it defaults to the
     single per-person row, whose name falls through to the profile's / config's template.
+
+    `delivered_keys` is {section key -> ratingKey} for THIS row and user, from the delivery ledger. It
+    is how a title that no longer renders is recognised as this row's rather than orphaned and rebuilt
+    — see `_deliver_one`. Empty is always safe: delivery falls back to matching by title.
 
     `stored_labels` and `diff` are caller-owned accumulators, written the moment the PMS confirms
     each library's row. A user gets a row per library, so delivery can half-succeed: if the second
@@ -273,7 +279,7 @@ def deliver_rows(
         spec = config.default_row_spec()
     # Per-person rows carry the user's shared label; shared rows carry their own. Shared rows use a
     # fixed marker (there's no single owner account) so they resolve to one stable membership.
-    wanted_label = spec.label or f"{config.label_prefix}_{profile.slug}"
+    wanted_label = spec.label or f"{LABEL_PREFIX}_{profile.slug}"
     marker = row_marker(0) if spec.shared else row_marker(profile.plex_account_id)
     template = resolve_row_template(spec, profile, config)
     # The key `stored_labels` is filed under: per-person rows collapse to one entry per user (all
@@ -323,8 +329,10 @@ def deliver_rows(
             wanted_label,
             marker,
             sole_row,
+            # This library's entry only: a row has one collection per library, and a key from a
+            # DIFFERENT library must never be allowed to match here.
+            delivered_key=(delivered_keys or {}).get(str(section.key)),
             dry_run=dry_run,
-            label_prefix=config.label_prefix,
             poster=spec.poster if spec else None,
             artist=poster_artist,
             order_work=order_work,
@@ -350,6 +358,10 @@ def deliver_rows(
                 {
                     "row_slug": spec.slug,
                     "row_title": one.collection_title,
+                    # The ledger's handle on this collection. Everything else in this entry describes
+                    # what CHANGED; this says WHICH Plex object it changed, which is the one thing a
+                    # later reconcile cannot recompute — a `{top_seed}` title is different every run.
+                    "rating_key": one.rating_key,
                     "library_key": str(section.key),
                     "library_title": getattr(section, "title", str(section.key)),
                     "added": list(one.added),
@@ -401,10 +413,18 @@ def remove_row(
     until it's gone), so this is always safe. A row whose title depends on its picks (a `{top_seed}`
     template) can't be reconstructed without them, so it's left for a later sweep; static-titled rows
     — the default row and most custom rows — match exactly and are removed here.
+
+    "Left for a later sweep" has to mean left ALONE. A `{top_seed}` (or blank) template renders to the
+    bare `DEFAULT_ROW_NAME` with no picks — and per-person rows share one label, told apart only by
+    title, so matching on that would find and DELETE whatever else is titled that: the user's live
+    default row, or a cold-start row, in every library, every run. `_retired_rows` guards the identical
+    collision for DISABLED rows (`context_builder._retired_rows`) and its docstring claims the mute
+    path already did the same. It did not.
     """
-    wanted_label = spec.label or f"{config.label_prefix}_{profile.slug}"
+    wanted_label = spec.label or f"{LABEL_PREFIX}_{profile.slug}"
     marker = row_marker(0) if spec.shared else row_marker(profile.plex_account_id)
     template = resolve_row_template(spec, profile, config)
+
     # Look in every library, not just the row's current targets: if its library_keys changed, an
     # earlier copy may linger in a library it no longer targets, and a muted row must leave them all.
     scan = sections if sections is not None else list(plex.sections_by_type().values())
@@ -412,6 +432,23 @@ def remove_row(
         # Render the title with THIS library's name so a {library_name} row matches its own per-library
         # collection (delivery wrote "✨ Movies Picked for You" in Movies, "✨ TV Shows …" in TV).
         display = render_row_name(template, profile, [], library_name=getattr(section, "title", "") or "")
+        if display == DEFAULT_ROW_NAME and template != DEFAULT_ROW_NAME:
+            # The title collapsed to the bare default because it could not be rendered — a `{top_seed}`
+            # template with no picks, or a blank one. Per-person rows share one label and are told apart
+            # by title ONLY, so matching on that would find and DELETE whatever else is titled that: the
+            # user's live default row, or a cold-start row, in this library, every run.
+            #
+            # Tested per LIBRARY, not once up front: a `{library_name}` template renders to the bare
+            # default only when there is no library name, and here there always is — so a legitimate
+            # "✨ Movies Picked for You" removal still happens.
+            logger.debug(
+                "{}: muted row '{}' has no renderable title in '{}' — left for a sweep rather than "
+                "matched, which would delete a different row",
+                profile.username,
+                spec.slug,
+                section.title,
+            )
+            continue
         title = display + marker
         for collection in plex.find_owned_collections(section, wanted_label):
             if collection.title != title:
@@ -421,7 +458,7 @@ def remove_row(
                     "[dry-run] {}: would remove muted row '{}' in '{}'", profile.username, display, section.title
                 )
             else:
-                plex.delete_owned_collection(collection, config.label_prefix)
+                plex.delete_owned_collection(collection, LABEL_PREFIX)
                 logger.info("{}: removed muted row '{}' in '{}'", profile.username, display, section.title)
             diff.deleted.append(display)
 
@@ -433,6 +470,8 @@ def remove_row_collections(
     label: str,
     displays: set[str] | None,
     dry_run: bool,
+    in_sections: set[str] | None = None,
+    rating_keys: set[int] | None = None,
 ) -> list[str]:
     """Delete Shortlist collections carrying ``label`` — an on-demand reconcile OUTSIDE a run (a
     config change, or a manual "remove from Plex").
@@ -442,23 +481,37 @@ def remove_row_collections(
     by title. With ``None``, every collection under the label — a shared row's own label, or a user's
     whole label when the user is removed.
 
+    ``rating_keys`` matches by Plex IDENTITY instead, from the delivery ledger, and is unioned with
+    ``displays`` rather than replacing it. It is the only thing that can find a ``{top_seed}`` row,
+    whose title is different every run and so matches no computed ``displays`` entry. Both are still
+    scoped to ``label``, so neither can reach another user's row or a foreign (Kometa) collection —
+    identity narrows the search, it never widens ownership.
+
+    ``in_sections`` (section keys) limits WHERE: used when a row is narrowed rather than removed —
+    its ``media`` changed from both to movie, or a library was dropped from ``library_keys`` — so only
+    the collections in libraries it no longer targets go, and the ones it still uses stay. ``None``
+    means every library, which is right for a removal.
+
     Removal only — it never creates or promotes, so it can never leak: deleting a row can only make
-    the server more private. Scans EVERY library,
+    the server more private. Scans EVERY library by default,
     so a copy left in a library the row no longer targets is still removed. ``delete_owned_collection``
     refuses anything without a ``shortlist_`` label, so a foreign (Kometa) collection is never touched.
     Returns the display titles removed (or, in a dry run, that would be).
     """
     removed: list[str] = []
     for section in plex.sections():
+        if in_sections is not None and str(section.key) not in in_sections:
+            continue
         for collection in plex.find_owned_collections(section, label):
             display = strip_marker(collection.title)
-            if displays is not None and display not in displays:
+            by_key = bool(rating_keys) and _rating_key(collection) in rating_keys
+            if displays is not None and display not in displays and not by_key:
                 continue
             removed.append(display)
             if dry_run:
                 logger.info("[dry-run] would remove '{}' in '{}' (label {})", display, section.title, label)
             else:
-                plex.delete_owned_collection(collection, config.label_prefix)
+                plex.delete_owned_collection(collection, LABEL_PREFIX)
                 logger.info("removed '{}' in '{}' (label {})", display, section.title, label)
     return removed
 
@@ -485,7 +538,7 @@ def rename_row_collections(
     foreign (Kometa) collection never carries our label and ``find_owned_collections`` only returns
     ours. Returns the library titles renamed (or, in a dry run, that would be).
     """
-    if not label.startswith(config.label_prefix):
+    if not label.startswith(LABEL_PREFIX):
         # Belt-and-suspenders (rule 4): only ever retitle under one of OUR labels, matching the delete
         # path's ownership re-check. find_owned_collections already scopes to this label, so this only
         # guards against a caller ever passing a foreign one.
@@ -519,7 +572,7 @@ def reset_row_posters(
     promotion are untouched). Matches only OUR-labelled collections; ``displays`` limits to those
     marker-stripped titles (per-person rows), or ``None`` resets every collection under ``label``
     (a shared row's single membership). Returns the library titles reset (or that would be)."""
-    if not label.startswith(config.label_prefix):
+    if not label.startswith(LABEL_PREFIX):
         logger.warning("refusing to reset posters under a non-Shortlist label {!r}", label)
         return []
     reset: list[str] = []
@@ -537,6 +590,18 @@ def reset_row_posters(
     return reset
 
 
+def _rating_key(collection) -> int:
+    """A collection's Plex ratingKey as an int, or 0 when the PMS didn't give one.
+
+    Never raises: the ledger is a convenience for later reconciles, and failing a delivery over a
+    missing key would trade a real row for a bookkeeping detail.
+    """
+    try:
+        return int(getattr(collection, "ratingKey", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _create_labelled_collection(
     plex: PlexClient,
     section,
@@ -549,13 +614,14 @@ def _create_labelled_collection(
     poster: PosterSpec | None = None,
     artist: PosterArtist | None = None,
     order_work: list[tuple] | None = None,
-) -> str:
+) -> tuple[str, int]:
     """Create the collection, apply its label, and delete it if the label doesn't stick.
 
     A collection with no shortlist_* label is invisible to every lookup we have — all of them key off
     that prefix — so nothing would ever find it again, no filter could hide it, and it would be
     visible to everyone forever. Create and label must therefore succeed together or not at all.
-    Returns the stored (Plex title-cased) label.
+    Returns the stored (Plex title-cased) label and the new collection's ratingKey — the ledger's
+    handle on it, and the only one that survives a title the next run renders differently.
     """
     items = plex.fetch_items([p.rating_key for p in picks])
     collection = plex.create_collection(section, title, items)
@@ -591,7 +657,95 @@ def _create_labelled_collection(
         len(picks),
         stored,
     )
-    return stored
+    return stored, _rating_key(collection)
+
+
+def _find_this_rows_collection(
+    plex: PlexClient,
+    section,
+    owned: list,
+    title: str,
+    marker: str,
+    delivered_key: int | None,
+    sole_row: bool,
+    who: str,
+) -> object | None:
+    """Which (if any) of this user's OWNED collections in `section` is this row.
+
+    A user can have several rows, all carrying their label and told apart by title, so the right one is
+    the labelled collection whose title matches. When it does NOT match — a changed name template, a
+    renamed library, a nickname edit — the row has to be recognised some other way or it is orphaned
+    and rebuilt, leaving a stale duplicate nothing sweeps.
+
+    Two answers, in order, once the title match fails:
+
+    1. ``delivered_key`` — the ratingKey the LEDGER says this row put in this library. An identity, so
+       it is right for a multi-row user and cannot be confused by a title that no longer renders.
+    2. ``sole_row`` and exactly one labelled collection — the legacy fallback, for rows delivered
+       before the ledger existed (nothing backfills it; there is no source to backfill from), for
+       direct engine/CLI runs, and whenever a ledger entry was dropped as ambiguous. Safe only because
+       `sole_row` now counts every row that could HAVE a collection here. Counting was the sole answer
+       once, and it was wrong three ways: it read the run's SCOPE rather than the user's rows, it
+       ignored muted rows whose unrenderable collections cannot be removed, and it could not help a
+       multi-row user at all. See jobs-and-runs-design.md §16-§17.
+
+    The key is exactly as right as the ledger is — it is not magic. Both fallbacks bound the damage to
+    ANOTHER ROW OF THE SAME PERSON (every candidate comes from `owned`, this user's own label), never
+    another user's row and never a foreign collection.
+
+    Finally, a match of the wrong Plex type (the sweep already caught it, or will) is treated as no
+    match at all: the caller must rebuild, since Plex won't re-type a collection in place.
+
+    Args:
+        plex: The Plex client, used only for `matches_section`.
+        section: The library section this row is being delivered to.
+        owned: This user's currently OWNED (our-label) collections in `section`.
+        title: The exact marked title this row would be given (display name + invisible marker).
+        marker: This user's invisible per-account marker — bounds the ledger/sole-row fallbacks to
+            collections already exclusively theirs.
+        delivered_key: The ratingKey the ledger recorded for this row in this library, or None.
+        sole_row: Whether this is the only row this user could have in this library.
+        who: The username, for the log lines only. A run narrates 45 people through this function and
+            every one of them can render the same row title, so the log is unreadable without it.
+
+    Returns:
+        The matching Collection, or None when this row has no existing collection here (the caller
+        must create one).
+    """
+    collection = next((c for c in owned if c.title == title), None)
+    if collection is None and delivered_key:
+        # The ledger names the exact object this row built here. If it is still under our label, it IS
+        # this row — whatever it is currently called, and however many rows the user has.
+        #
+        # `endswith(marker)` is the same clause the sole_row branch below insists on, and for the same
+        # reason: a pre-marker collection shares its tag with other users, so retitling one would hand
+        # this person exclusive ownership of an object holding several people's picks. The sweep
+        # removes those before delivery, but that guarantee lives in another module — restate it here.
+        collection = next((c for c in owned if _rating_key(c) == delivered_key and c.title.endswith(marker)), None)
+        if collection is not None:
+            logger.debug(
+                "{}: matched '{}' in '{}' by ledger ratingKey {} — retitling in place",
+                who,
+                title,
+                section.title,
+                delivered_key,
+            )
+    if collection is None and sole_row and len(owned) == 1 and owned[0].title.endswith(marker):
+        # The sole row was renamed by a template change but still carries this account's marker, so
+        # its membership is its own: update it in place rather than leave a stale duplicate. Only
+        # when there's exactly one (otherwise we can't tell which row moved) and only a MARKED row —
+        # a pre-marker row shares its tag with others and must be rebuilt, never renamed.
+        collection = owned[0]
+
+    if collection is not None and not plex.matches_section(collection, section):
+        # The sweep already deleted this one (or, in a dry run, already reported that it would),
+        # so treat it as gone — the caller builds a fresh, correctly-typed row in its place. Plex will
+        # not re-type a collection: swapping its contents leaves the old subtype, and the row goes on
+        # being visible to everyone. It must be rebuilt, never edited.
+        logger.info("{}: rebuilding a row in '{}' — the old one was the wrong type", who, section.title)
+        return None
+
+    return collection
 
 
 def _deliver_one(
@@ -604,20 +758,21 @@ def _deliver_one(
     marker: str,
     sole_row: bool,
     *,
+    delivered_key: int | None = None,
     dry_run: bool,
-    label_prefix: str = "shortlist",
+    label_prefix: str = LABEL_PREFIX,
     poster: PosterSpec | None = None,
     artist: PosterArtist | None = None,
     order_work: list[tuple] | None = None,
 ) -> tuple[CollectionDiff, str]:
     """Upsert one library's collection to exactly `picks`, in order. Returns (diff, stored_label).
 
-    A user can have several rows, all carrying their label and told apart by title, so the right one
-    is the labelled collection whose title matches. When this is the user's ONLY row (`sole_row`) and
-    exactly one labelled collection exists, a title mismatch is treated as an in-place rename — so a
-    changed name template updates the row rather than orphaning it. With more than one row that guess
-    is unsafe (which row was renamed?), so a mismatch builds a fresh row and the stale one, still
-    labelled, stays hidden. Foreign (e.g. Kometa) collections never carry our label, so are untouched.
+    Finds this row's existing collection via `_find_this_rows_collection` (title match, then the
+    ledger's ratingKey, then the sole-row fallback — see its docstring for why, in that order), then
+    applies whichever of four write strategies fits: create, rebuild (large turnover), in-place
+    update, or a no-op when membership already matches. `wanted_label` is this user's own label, so
+    every candidate the identity match can land on is one of THEIR rows — never another user's row
+    and never a foreign (e.g. Kometa) collection, which never carries our label at all.
     """
     # This library's own name fills {library_name}; every match/promote/retire caller renders with the
     # same section title, so the titles stay in lockstep (a mismatch would leave a row unhidden).
@@ -628,23 +783,9 @@ def _deliver_one(
     title = display + marker
     label = wanted_label
     owned = plex.find_owned_collections(section, label)
-    collection = next((c for c in owned if c.title == title), None)
-    if collection is None and sole_row and len(owned) == 1 and owned[0].title.endswith(marker):
-        # The sole row was renamed by a template change but still carries this account's marker, so
-        # its membership is its own: update it in place rather than leave a stale duplicate. Only
-        # when there's exactly one (otherwise we can't tell which row moved) and only a MARKED row —
-        # a pre-marker row shares its tag with others and must be rebuilt, never renamed.
-        collection = owned[0]
-
-    if collection is not None and not plex.matches_section(collection, section):
-        # The sweep already deleted this one (or, in a dry run, already reported that it would),
-        # so treat it as gone and build a fresh, correctly-typed row in its place. Plex will not
-        # re-type a collection: swapping its contents leaves the old subtype, and the row goes on
-        # being visible to everyone. It must be rebuilt, never edited.
-        logger.info(
-            "{}: rebuilding their row in '{}' — the old one was the wrong type", profile.username, section.title
-        )
-        collection = None
+    collection = _find_this_rows_collection(
+        plex, section, owned, title, marker, delivered_key, sole_row, profile.username
+    )
 
     wanted_titles = [p.title for p in picks]
     if collection is None:
@@ -659,7 +800,7 @@ def _deliver_one(
             )
             apply_poster(plex, None, poster, profile, picks, library_name=section.title, artist=artist, dry_run=True)
             return diff, label
-        stored = _create_labelled_collection(
+        stored, diff.rating_key = _create_labelled_collection(
             plex,
             section,
             profile,
@@ -726,7 +867,7 @@ def _deliver_one(
             to_remove_count,
         )
         plex.delete_owned_collection(collection, label_prefix)
-        stored = _create_labelled_collection(
+        stored, diff.rating_key = _create_labelled_collection(
             plex,
             section,
             profile,
@@ -752,6 +893,7 @@ def _deliver_one(
             order_work.append((collection, wanted_keys))
         apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
         stored = plex.stored_label(collection, label)
+        diff.rating_key = _rating_key(collection)
         logger.info(
             "{}: '{}' in '{}' unchanged ({} items) — no membership write",
             profile.username,
@@ -771,6 +913,7 @@ def _deliver_one(
     apply_poster(plex, collection, poster, profile, picks, library_name=section.title, artist=artist, dry_run=False)
 
     stored = plex.stored_label(collection, label)
+    diff.rating_key = _rating_key(collection)
     # Promotion is deliberately NOT done here: the pipeline promotes only after every user's
     # share filters have been merged, so a new row is never visible before its exclusions exist.
     logger.info(
@@ -826,7 +969,7 @@ def sweep_broken_rows(
     any of which can raise — and a leaking row must not survive the night because a rate limit
     stopped us from computing what to put in the row that replaces it.
     """
-    prefix = f"{config.label_prefix}_".lower()
+    prefix = f"{LABEL_PREFIX}_".lower()
     markers = markers or {}
     slug_by_marker = {marker: slug for slug, marker in markers.items()}  # attribute an unlabelled orphan
     deleted = {} if deleted is None else deleted
@@ -852,7 +995,7 @@ def sweep_broken_rows(
                 )
                 title = collection.title
                 if not dry_run:
-                    plex.delete_owned_collection(collection, config.label_prefix)
+                    plex.delete_owned_collection(collection, LABEL_PREFIX)
                 deleted.setdefault(orphan_slug, []).append(title)
                 continue
             slug = label[len(prefix) :].lower()
@@ -874,6 +1017,6 @@ def sweep_broken_rows(
             # the delete the object no longer refers to anything on the server.)
             title = collection.title
             if not dry_run:
-                plex.delete_owned_collection(collection, config.label_prefix)
+                plex.delete_owned_collection(collection, LABEL_PREFIX)
             deleted.setdefault(slug, []).append(title)
     return deleted

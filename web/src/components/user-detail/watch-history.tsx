@@ -1,8 +1,12 @@
+import { Ban } from "lucide-react";
+
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo } from "@/lib/format";
-import { useUserHistory } from "@/lib/queries";
-import type { WatchItem } from "@/lib/types";
+import { useBlockSeed, useUserHistory } from "@/lib/queries";
+import { blockedSeeds } from "@/lib/types";
+import type { User, WatchItem } from "@/lib/types";
 
 /** "S2 · E5 · Episode title" for a show watch — as much as the source reported, or null if none. */
 function episodeLabel(item: WatchItem): string | null {
@@ -14,9 +18,19 @@ function episodeLabel(item: WatchItem): string | null {
   return parts.length ? parts.join(" · ") : null;
 }
 
-/** A user's recent watches, read from Plex per user. All four states via QueryBoundary. */
-export function WatchHistory({ userId }: { userId: number }) {
+/** A user's recent watches, read from Plex per user. All four states via QueryBoundary.
+ *
+ *  Each watch carries a Block control, because THIS is where you realise a watch shouldn't be shaping
+ *  their picks — you're looking at the sport, or the thing they put on for a friend. Sending someone
+ *  to a separate settings panel to retype a title that's already on screen is the kind of small
+ *  friction that means the feature never gets used.
+ */
+export function WatchHistory({ userId, user }: { userId: number; user?: User }) {
   const query = useUserHistory(userId);
+  const block = useBlockSeed(userId);
+  const alreadyBlocked = new Set(
+    blockedSeeds(user?.prefs).map((seed) => seed.tmdb_id),
+  );
   return (
     <QueryBoundary
       query={query}
@@ -52,9 +66,41 @@ export function WatchHistory({ userId }: { userId: number }) {
                     </span>
                   ) : null}
                 </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
+                <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                   {item.media_type === "show" ? "Show" : "Movie"} ·{" "}
                   {timeAgo(item.watched_at)}
+                  {/* No tmdb:// GUID means nothing a block could key on, so no button rather than one
+                      that fails. */}
+                  {item.tmdb_id !== null &&
+                    (alreadyBlocked.has(item.tmdb_id) ? (
+                      <span
+                        className="inline-flex items-center gap-1 text-muted-foreground/70"
+                        title="Already blocked — it stays in their history but no longer shapes their picks"
+                      >
+                        <Ban className="h-3 w-3" aria-hidden />
+                        blocked
+                      </span>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                        disabled={block.isPending}
+                        title={`Stop "${item.title}" shaping their picks`}
+                        aria-label={`Block ${item.title} as a seed`}
+                        onClick={() =>
+                          block.mutate({
+                            tmdbId: item.tmdb_id as number,
+                            title: item.title,
+                            mediaType: item.media_type,
+                            year: item.year ?? undefined,
+                          })
+                        }
+                      >
+                        <Ban className="h-3 w-3" aria-hidden />
+                        Block
+                      </Button>
+                    ))}
                 </span>
               </li>
             );

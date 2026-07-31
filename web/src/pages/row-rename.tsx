@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, Pen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useLocation, useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
 import { Badge } from "@/components/ui/badge";
@@ -107,12 +107,16 @@ export function RowRenamePage() {
   }
 
   // Auto-start if we came from the row-card dialog (oldTemplate is set).
+  // Suppressed deliberately: this fires an async mutation on mount, not a state sync. Triggering
+  // work when a condition first holds is exactly what an effect is for.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (confirmed && collection && !running && events.length === 0) {
       startRename("", oldTemplate);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [confirmed, collection]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -129,7 +133,11 @@ export function RowRenamePage() {
       await api.updateCollection(collection.id, {
         name: newName,
         name_template: newName,
-      } as never);
+        // This page streams the rename itself below. Without this the PATCH also renamed everything
+        // inline, so the stream found nothing left to do and told the owner "renamed 0 collections"
+        // straight after a rename that had in fact rewritten every one.
+        defer_rename: true,
+      });
       setOldTemplate(prev);
       setConfirmed(true);
       startRename(newName, prev);
@@ -168,8 +176,18 @@ export function RowRenamePage() {
             />
             <p className="text-xs text-muted-foreground">
               Use {"{library_name}"} for the library, {"{user}"} for each
-              person's name.
+              person's name, {"{top_seed}"} for a title they recently watched.
             </p>
+            {newName.includes("{top_seed}") && (
+              <p className="rounded-md bg-muted/60 p-3 text-xs text-muted-foreground">
+                A {"{top_seed}"} name promises the row is about one title. By
+                default the row is built from their 30 most recent watches, so
+                the name says one thing and the contents come from thirty. Lower{" "}
+                <strong>Watches to build from</strong> in the row editor to make
+                the name true &mdash; it tells you the right number for this
+                row.
+              </p>
+            )}
           </div>
           <Button
             loading={saving}

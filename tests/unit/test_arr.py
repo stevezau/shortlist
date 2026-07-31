@@ -366,13 +366,187 @@ class TestArrStateIdSets:
         assert client.excluded_tmdb_ids() == {99}
 
     @respx.mock
-    def test_sonarr_library_and_exclusion_tvdb_ids(self):
-        respx.get("http://sonarr.test/api/v3/series").mock(
-            return_value=httpx.Response(200, json=[{"tvdbId": 371980}, {"tvdbId": 81189}])
-        )
+    def test_sonarr_exclusion_tvdb_ids(self):
         respx.get("http://sonarr.test/api/v3/importlistexclusion").mock(
             return_value=httpx.Response(200, json=[{"tvdbId": 12345, "title": "Gone"}])
         )
         client = SonarrClient(SONARR)
-        assert client.library_tvdb_ids() == {371980, 81189}
         assert client.excluded_tvdb_ids() == {12345}
+
+
+class TestArrDownloadStatus:
+    """The whole-library status maps behind the request inbox's Downloaded/Downloading badges.
+
+    Covers the matrix each app branches on: on disk / partly on disk / in the download queue /
+    monitored-but-empty / not monitored. The count of HTTP calls is asserted too — the point of the
+    map form is that it does NOT scale with the number of rows on screen.
+    """
+
+    @respx.mock
+    def test_radarr_status_per_state(self):
+        library = respx.get("http://radarr.test/api/v3/movie").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"id": 1, "tmdbId": 11, "hasFile": True, "monitored": True},
+                    {"id": 2, "tmdbId": 22, "hasFile": False, "monitored": True},  # in the queue below
+                    {"id": 3, "tmdbId": 33, "hasFile": False, "monitored": True},
+                    {"id": 4, "tmdbId": 44, "hasFile": False, "monitored": False},
+                    {"id": 5, "hasFile": True, "monitored": True},  # no tmdbId — unkeyable, skipped
+                ],
+            )
+        )
+        queue = respx.get("http://radarr.test/api/v3/queue").mock(
+            return_value=httpx.Response(200, json={"records": [{"movieId": 2}]})
+        )
+
+        assert RadarrClient(RADARR).status_by_tmdb() == {
+            11: "downloaded",
+            22: "downloading",
+            33: "queued",
+            44: "unmonitored",
+        }
+        # Two calls for the whole library, however many titles the inbox is asking about.
+        assert library.call_count == 1
+        assert queue.call_count == 1
+        # The queue is paginated and defaults to 20 records — without this a busy server would report
+        # older downloads as merely "queued".
+        assert queue.calls.last.request.url.params["pageSize"] == "1000"
+
+    @respx.mock
+    def test_sonarr_status_per_state_keyed_by_both_ids(self):
+        respx.get("http://sonarr.test/api/v3/series").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 1,
+                        "tvdbId": 100,
+                        "tmdbId": 900,
+                        "monitored": True,
+                        "statistics": {"episodeCount": 10, "episodeFileCount": 10},
+                    },
+                    {
+                        "id": 2,
+                        "tvdbId": 200,
+                        "tmdbId": 901,
+                        "monitored": True,
+                        "statistics": {"episodeCount": 10, "episodeFileCount": 3},
+                    },
+                    {
+                        "id": 3,
+                        "tvdbId": 300,
+                        "monitored": True,  # v3: no tmdbId, and nothing on disk yet
+                        "statistics": {"episodeCount": 10, "episodeFileCount": 0},
+                    },
+                    {"id": 4, "tvdbId": 400, "monitored": False, "statistics": {}},
+                ],
+            )
+        )
+        respx.get("http://sonarr.test/api/v3/queue").mock(return_value=httpx.Response(200, json={"records": []}))
+
+        by_tvdb, by_tmdb = SonarrClient(SONARR).status_by_ids()
+
+        # A part-way season reads as "downloading" — that is what the person waiting on it sees.
+        assert by_tvdb == {100: "downloaded", 200: "downloading", 300: "queued", 400: "unmonitored"}
+        # Only the v4 rows carry a tmdbId, so the tmdb-keyed inbox can answer without a TVDB lookup.
+        assert by_tmdb == {900: "downloaded", 901: "downloading"}
+
+    @respx.mock
+    def test_zero_episode_series_is_not_downloaded(self):
+        """A show Sonarr has added but not yet populated has 0 of 0 episodes — that is 'searching',
+        not 'complete'. A naive `on_disk >= episodes` would call it downloaded."""
+        respx.get("http://sonarr.test/api/v3/series").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 1,
+                        "tvdbId": 100,
+                        "monitored": True,
+                        "statistics": {"episodeCount": 0, "episodeFileCount": 0},
+                    }
+                ],
+            )
+        )
+        respx.get("http://sonarr.test/api/v3/queue").mock(return_value=httpx.Response(200, json={"records": []}))
+
+        by_tvdb, _ = SonarrClient(SONARR).status_by_ids()
+        assert by_tvdb == {100: "queued"}
+
+    @respx.mock
+    def test_unavailable_queue_does_not_fail_the_whole_map(self):
+        """A queue the app won't serve costs the downloading/queued distinction, never every status."""
+        respx.get("http://radarr.test/api/v3/movie").mock(
+            return_value=httpx.Response(200, json=[{"id": 1, "tmdbId": 11, "hasFile": False, "monitored": True}])
+        )
+        respx.get("http://radarr.test/api/v3/queue").mock(return_value=httpx.Response(500))
+
+        assert RadarrClient(RADARR).status_by_tmdb() == {11: "queued"}
+
+
+class TestArrQueuePaging:
+    """`_queued_ids` used to read only the first 1000-record page with no check against
+    `totalRecords`, so a server with a bigger active queue silently under-reported which titles were
+    downloading. Exercised directly through `status_by_tmdb`, the one production caller."""
+
+    @staticmethod
+    def _movie(tmdb_id: int) -> dict:
+        return {"id": tmdb_id, "tmdbId": tmdb_id, "hasFile": False, "monitored": True}
+
+    @respx.mock
+    def test_pages_past_the_first_1000_records(self):
+        respx.get("http://radarr.test/api/v3/movie").mock(
+            return_value=httpx.Response(200, json=[self._movie(11), self._movie(22)])
+        )
+        full_page = [{"movieId": i} for i in range(2000, 3000)]  # none of ours
+        short_page = [{"movieId": 11}]  # movieId 11 is on the second page only
+
+        def respond(request: httpx.Request) -> httpx.Response:
+            page = int(request.url.params["page"])
+            body = full_page if page == 1 else short_page
+            return httpx.Response(200, json={"records": body, "totalRecords": 1001})
+
+        queue = respx.get("http://radarr.test/api/v3/queue").mock(side_effect=respond)
+
+        # movie id 11's Radarr `id` is 11 (see `_movie`), and it only appears on page 2 of the queue —
+        # a client that stopped after page 1 would report it merely "queued", not "downloading".
+        assert RadarrClient(RADARR).status_by_tmdb()[11] == "downloading"
+        assert queue.call_count == 2
+        assert queue.calls[0].request.url.params["page"] == "1"
+        assert queue.calls[1].request.url.params["page"] == "2"
+
+    @respx.mock
+    def test_a_short_page_below_totalRecords_logs_a_warning_but_still_returns_what_it_read(self):
+        """A short page usually means the end. If the app also reports a bigger `totalRecords`, the
+        two disagree — this must not raise (rule: fails OPEN), but it must say so."""
+        respx.get("http://radarr.test/api/v3/movie").mock(return_value=httpx.Response(200, json=[self._movie(11)]))
+        respx.get("http://radarr.test/api/v3/queue").mock(
+            return_value=httpx.Response(200, json={"records": [{"movieId": 11}], "totalRecords": 500})
+        )
+        lines: list[str] = []
+        from shortlist.engine.clients import arr as arr_mod
+
+        sink = arr_mod.logger.add(lines.append, level="WARNING", format="{message}")
+        try:
+            status = RadarrClient(RADARR).status_by_tmdb()
+        finally:
+            arr_mod.logger.remove(sink)
+
+        assert status[11] == "downloading"  # what WAS read is still used
+        assert any("read only" in line and "500" in line for line in lines)
+
+    @respx.mock
+    def test_a_server_that_never_returns_a_short_page_stops_at_the_safety_cap(self):
+        """If paging never legitimately ends (the app ignores `page` and always answers a full page),
+        this must still terminate rather than loop forever."""
+        respx.get("http://radarr.test/api/v3/movie").mock(return_value=httpx.Response(200, json=[self._movie(11)]))
+        full_page = [{"movieId": i} for i in range(2000, 3000)]  # none of ours
+        respx.get("http://radarr.test/api/v3/queue").mock(
+            return_value=httpx.Response(200, json={"records": full_page})  # no totalRecords, always full
+        )
+
+        status = RadarrClient(RADARR).status_by_tmdb()
+
+        assert status[11] == "queued"  # 11 never appeared in any page, so no crash — just not found
+        assert RadarrClient(RADARR)._MAX_QUEUE_PAGES == 50

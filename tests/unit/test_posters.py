@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from shortlist.engine.delivery import apply_poster, render_poster_text
-from shortlist.engine.models import PosterSpec, UserProfile, UserType
+from shortlist.engine.models import LABEL_PREFIX, PosterSpec, UserProfile, UserType
 from shortlist.server.db.models import Base
 from shortlist.server.services.poster_service import (
     PosterStudio,
@@ -389,7 +389,7 @@ class TestPosterReset:
         plex.find_owned_collections.return_value = [keep, target]
 
         reset = reset_row_posters(
-            plex, engine_config, label=f"{engine_config.label_prefix}_alex", displays={"Weekend Picks"}, dry_run=False
+            plex, engine_config, label=f"{LABEL_PREFIX}_alex", displays={"Weekend Picks"}, dry_run=False
         )
         plex.reset_poster.assert_called_once_with(target)  # only the targeted title, not the other row
         assert reset == ["Movies"]
@@ -411,9 +411,7 @@ class TestPosterReset:
         coll = MagicMock()
         coll.title = "Weekend Picks"
         plex.find_owned_collections.return_value = [coll]
-        reset = reset_row_posters(
-            plex, engine_config, label=f"{engine_config.label_prefix}_alex", displays=None, dry_run=True
-        )
+        reset = reset_row_posters(plex, engine_config, label=f"{LABEL_PREFIX}_alex", displays=None, dry_run=True)
         plex.reset_poster.assert_not_called()
         assert reset == ["Movies"]
 
@@ -441,7 +439,6 @@ class TestPosterReset:
 
         state = MagicMock()
         ctx = MagicMock()
-        ctx.config.label_prefix = "shortlist"
         state.run_service.build_context.return_value = ctx
         captured = {}
 

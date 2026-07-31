@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RequestCandidate } from "@/lib/types";
@@ -57,6 +57,7 @@ function candidate(
     title: "Dune: Part Two",
     year: 2024,
     imdb_id: "",
+    poster_path: "",
     rating: 8.3,
     vote_count: 5000,
     demand: 4,
@@ -329,7 +330,7 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     await screen.findByText("High Rated");
-    await userEvent.click(screen.getByRole("button", { name: "Top rated" }));
+    await userEvent.selectOptions(screen.getByLabelText("Sort"), "Top rated");
     const high = screen.getByText("High Rated");
     const low = screen.getByText("Low Rated");
     // High is rendered before Low once sorted by rating.
@@ -347,7 +348,7 @@ describe("RequestsPage", () => {
     await screen.findByText("Acclaimed");
     expect(screen.getByText("Middling")).toBeTruthy();
     // Raise the floor to 8+ — the 5.2 title drops out, the 9.1 stays.
-    await userEvent.click(screen.getByRole("button", { name: "8+" }));
+    await userEvent.selectOptions(screen.getByLabelText("Rating"), "8+");
     expect(screen.getByText("Acclaimed")).toBeTruthy();
     expect(screen.queryByText("Middling")).toBeNull();
   });
@@ -366,9 +367,68 @@ describe("RequestsPage", () => {
     await screen.findByText("Well Attested");
     expect(screen.getByText("Barely Rated")).toBeTruthy();
     // A high score on 12 votes is noise — the 500+ floor drops it.
-    await userEvent.click(screen.getByRole("button", { name: "500+" }));
+    await userEvent.selectOptions(screen.getByLabelText("Votes"), "500+");
     expect(screen.getByText("Well Attested")).toBeTruthy();
     expect(screen.queryByText("Barely Rated")).toBeNull();
+  });
+
+  it("shows the poster from TMDB's image CDN, and a placeholder when there is none", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Has Art", poster_path: "/abc.jpg" }),
+      candidate({ id: 2, tmdb_id: 200, title: "No Art", poster_path: "" }),
+    ]);
+    renderPage();
+    await screen.findByText("Has Art");
+
+    // Built from the stored PATH — the host and size bucket are the UI's call, not the database's.
+    const posters = Array.from(document.querySelectorAll("img"));
+    expect(posters).toHaveLength(1); // only the title that has artwork
+    const [poster] = posters;
+    expect(poster?.getAttribute("src")).toBe(
+      "https://image.tmdb.org/t/p/w154/abc.jpg",
+    );
+    // Off-screen posters must not be fetched on load — a 40-title inbox would be megabytes.
+    expect(poster?.getAttribute("loading")).toBe("lazy");
+    // Decorative: the title sits beside it as real text, so it must not be announced twice.
+    expect(poster?.getAttribute("alt")).toBe("");
+    // The art-less title still renders (a placeholder tile), rather than vanishing or breaking.
+    expect(screen.getByText("No Art")).toBeTruthy();
+  });
+
+  it("falls back to the placeholder when the poster fails to load", async () => {
+    // TMDB's CDN is a third-party host: a restrictive network or an ad-blocker fails the request
+    // long after the path looked valid. That must not leave a broken-image icon in every row.
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, title: "Has Art", poster_path: "/abc.jpg" }),
+    ]);
+    renderPage();
+    await screen.findByText("Has Art");
+
+    const poster = document.querySelector("img");
+    expect(poster).toBeTruthy();
+    fireEvent.error(poster as HTMLImageElement);
+    await waitFor(() => expect(document.querySelector("img")).toBeNull());
+    expect(screen.getByText("Has Art")).toBeTruthy(); // the row itself survives
+  });
+
+  it("says the filters emptied the queue rather than showing a blank list", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, tmdb_id: 100, title: "Middling", rating: 5.2 }),
+      candidate({ id: 2, tmdb_id: 200, title: "Also Middling", rating: 5.4 }),
+    ]);
+    renderPage();
+    await screen.findByText("Middling");
+    await userEvent.selectOptions(screen.getByLabelText("Rating"), "9+");
+    expect(screen.queryByText("Middling")).toBeNull();
+    // Not a blank panel: it says how many are waiting and how to get them back.
+    expect(
+      screen.getByText(/No waiting title clears these filters/i),
+    ).toBeTruthy();
+    // ...and one click restores them.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear filters" }),
+    );
+    expect(screen.getByText("Middling")).toBeTruthy();
   });
 
   it("offers no library split when the queue is a single media type", async () => {

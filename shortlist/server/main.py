@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import hmac
 import logging
 import os
 import secrets as pysecrets
-import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import FileResponse
 
 import shortlist
@@ -26,6 +27,7 @@ from shortlist.server.api import (
     report,
     requests,
     runs,
+    schedule,
     setup,
     system,
     user_rows,
@@ -43,12 +45,62 @@ from shortlist.server.settings_store import SECRET_KEYS, SettingsStore
 WEB_DIST = Path(__file__).parent.parent.parent / "web" / "dist"
 
 
+#: Shortest secret we will trust. `token_urlsafe(48)` yields 64 chars, so anything materially shorter
+#: was not written by us — a truncated write, a disk-full first boot, or a `touch`.
+_MIN_SECRET_LEN = 32
+
+
 def _instance_secret(config_dir: Path, name: str) -> str:
+    """The instance's signing secret, regenerating it if what's on disk is unusable.
+
+    A blank or truncated file used to be returned as-is, and `itsdangerous` will happily sign AND
+    verify with an empty key — so a zero-byte `session.secret` meant anyone could forge an owner
+    cookie, with nothing logged. Treat too-short as absent: regenerating invalidates live sessions,
+    which is the correct trade against accepting a forgeable one.
+    """
     path = config_dir / name
-    if not path.exists():
-        path.write_text(pysecrets.token_urlsafe(48))
-        os.chmod(path, 0o600)
-    return path.read_text().strip()
+    existing = path.read_text().strip() if path.exists() else ""
+    if len(existing) < _MIN_SECRET_LEN:
+        if path.exists():
+            logger.warning("{} was empty or truncated — generating a new one (existing sessions end)", name)
+        # Create with the mode already set, rather than write-then-chmod: between those two calls the
+        # file is world-readable at whatever the umask allows.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as fh:
+            fh.write(pysecrets.token_urlsafe(48))
+        return path.read_text().strip()
+    return existing
+
+
+# Baseline response headers. Deliberately NOT a locked-down CSP: Shortlist renders Plex avatars and
+# TMDB artwork from hosts that vary per install, and Vite's build emits inline styles — a strict
+# policy would blank the UI on somebody else's server, which is how security headers get switched off
+# entirely. This is the subset that is safe everywhere.
+_SECURITY_HEADERS = {
+    # Clickjacking: nothing here should ever be framed.
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    # Stop a browser second-guessing a declared Content-Type (an uploaded "image" sniffed as HTML).
+    "X-Content-Type-Options": "nosniff",
+    # Don't leak the instance URL — which often carries the server name — to TMDB/plex.tv/GitHub.
+    "Referrer-Policy": "same-origin",
+    # This app needs none of these.
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), interest-cohort=()",
+}
+
+
+class _SecurityHeaders(BaseHTTPMiddleware):
+    """Add the baseline headers to every response, without clobbering one a handler set itself."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        for header, value in _SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        # HSTS only when the request actually arrived over TLS — sending it over plain HTTP is
+        # meaningless, and sending it from a LAN install could strand someone on https they don't have.
+        if request.url.scheme == "https":
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+        return response
 
 
 class _AccessNoiseFilter(logging.Filter):
@@ -82,8 +134,13 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         app.state.secrets = secret_box
         app.state.bus = bus
         app.state.session_secret = _instance_secret(config_dir, "session.secret")
-        app.state.client_id = _instance_secret(config_dir, "client.id")[:32] or str(uuid.uuid4())
+        app.state.client_id = _instance_secret(config_dir, "client.id")[:32]
         app.state.run_service = RunService(sessions, bus, config_dir, secret_box)
+        # Handed back so a finished run can drain the queue it was blocking, instead of the jobs
+        # waiting out the worker's next 60s tick. Set after construction because `run_pending` needs
+        # the whole state (handlers reach for `run_service`, `secrets`, `sessions`), and that state
+        # is not complete until this line.
+        app.state.run_service.state = app.state
         app.state.started_at = datetime.now(UTC)
         # Plex tokens minted during setup, held server-side only (account_id -> token).
         app.state.pending_plex_tokens = {}
@@ -134,6 +191,12 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         with sessions() as session:
             store = SettingsStore(session, secret_box)
             store.purge_legacy()  # drop stale rows from removed settings (e.g. old API-token hash)
+            # Heal any secret still stored in the clear — `tmdb.apikey` was, on every install that
+            # predates it joining SECRET_KEYS (rule 9).
+            if healed := store.encrypt_plaintext_secrets():
+                logger.warning(
+                    "encrypted {} setting(s) that were stored in the clear: {}", len(healed), ", ".join(healed)
+                )
             store.seed_from_env(dict(os.environ))
             # Configure logging from the DB setting (seeded from LOG_LEVEL on first boot). The
             # rotating file sink under /config/logs always captures DEBUG, so a quiet console still
@@ -153,6 +216,30 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
             if stale:
                 logger.warning("aborted {} orphaned run(s) from a previous process", len(stale))
             session.commit()
+        crashed_runs = len(stale)
+
+        # Requeue jobs a previous process died inside. Handlers are idempotent (converge-to-desired,
+        # never a delta), so replaying is safe — and losing the work is not: a disable cleanup lost to
+        # a restart is never retried by anything, because no run revisits a disabled user.
+        from shortlist.server.services.jobs import recover_stale
+
+        recover_stale(sessions, boot=True)
+
+        # A run the previous process died inside leaves rows DELIVERED BUT UNPROMOTED — safe, but
+        # nobody sees them and nothing would rebuild until the next schedule, potentially a day away.
+        # Queue a share-filter pass so the half-finished state is at least made consistent; a full
+        # rebuild waits for the schedule rather than firing an expensive LLM run on every restart
+        # (a crash-loop would otherwise re-curate the whole server repeatedly).
+        if crashed_runs:
+            from shortlist.server.services.jobs import enqueue
+
+            with contextlib.suppress(Exception):
+                enqueue(sessions, "privacy.sync", {})
+                logger.warning(
+                    "{} run(s) were interrupted by a restart — queued a privacy sync to make the "
+                    "server consistent; rows rebuild on the next scheduled run",
+                    crashed_runs,
+                )
 
         scheduler = build_scheduler(app)
         scheduler.start()
@@ -182,6 +269,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         docs_url="/api/docs" if docs_enabled else None,
         openapi_url="/api/openapi.json" if docs_enabled else None,
     )
+    app.add_middleware(_SecurityHeaders)
 
     app.include_router(auth.router, prefix="/api")
     for module in (
@@ -196,6 +284,7 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         events,
         report,
         notifications,
+        schedule,
     ):
         app.include_router(module.router, prefix="/api")
 

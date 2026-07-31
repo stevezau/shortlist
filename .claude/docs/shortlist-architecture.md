@@ -15,24 +15,24 @@ framework-agnostic; the app layer (Flask+SocketIO+Jinja in MPG) is NOT what Shor
 
 ### Reuse manifest (port from MPG → shortlist)
 
-| Asset                                                                                                                                                                                | Action                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `.claude/rules/{python,testing,commenting,docker,docs,shell}.md`                                                                                                                     | Port near-verbatim; add `frontend.md` (React/TS) + `plex-safety.md` (Shortlist-specific, §8)                                                |
-| `.claude/CLAUDE.md`                                                                                                                                                                  | Rewrite content, keep the proven section structure (Commands / Architecture / Code Style / Conventions / Security / Test Fixtures)          |
-| `.claude/agents/architecture-review.md`                                                                                                                                              | Port — pre-commit arch-review agent, blocking on HIGH findings (this caught 8 production-bug shapes in MPG; keep the discipline from day 1) |
-| `.claude/skills/release`                                                                                                                                                             | Port release skill                                                                                                                          |
-| `.claude/settings.json`                                                                                                                                                              | Port permission-allowlist pattern (+ pnpm/vitest/playwright allows, same `.env` denies)                                                     |
-| `.github/workflows/ci.yml`                                                                                                                                                           | Adapt: ruff + pytest/codecov jobs stay; add `web` job (pnpm lint/typecheck/vitest/build); docker buildx multi-arch publish                  |
-| `.github/workflows/docker-pr.yml` + `docker-pr-cleanup.yml`                                                                                                                          | Port — **PR preview images** (each PR gets a pullable tag; this is how Steve already tests MPG `:dev` on the plex host)                     |
-| `.github/workflows/architecture-review.yml`                                                                                                                                          | Port                                                                                                                                        |
-| `.github/ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`                                                                                                                                | Port                                                                                                                                        |
-| `.pre-commit-config.yaml`, `.codecov.yml`, `.gitattributes`, `.dockerignore`                                                                                                         | Port                                                                                                                                        |
-| `README.md` structure                                                                                                                                                                | Port the shape: shields (+ AI-Assisted badge), logo, About/Problem/Solution, screenshots table, Quick Start, docs-hub table                 |
-| `docs/` hub (`README/getting-started/guides/reference/faq`)                                                                                                                          | Port structure                                                                                                                              |
-| `docker-compose.example.yml`, `unraid-templates/`                                                                                                                                    | Port patterns (Unraid = big homelab reach)                                                                                                  |
-| `llms.txt`                                                                                                                                                                           | Port (AI-readable repo summary)                                                                                                             |
-| `CONTRIBUTING.md`                                                                                                                                                                    | Port + adapt                                                                                                                                |
-| Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                              |
+| Asset                                                                                                                                                                                | Action                                                                                                                                                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.claude/rules/{python,testing,commenting,docker,docs,shell}.md`                                                                                                                     | Port near-verbatim; add `frontend.md` (React/TS) + `plex-safety.md` (Shortlist-specific, §8)                                                             |
+| `.claude/CLAUDE.md`                                                                                                                                                                  | Rewrite content, keep the proven section structure (Commands / Architecture / Code Style / Conventions / Security / Test Fixtures)                       |
+| `.claude/agents/architecture-review.md`                                                                                                                                              | Port — pre-commit arch-review agent, blocking on HIGH findings (this caught 8 production-bug shapes in MPG; keep the discipline from day 1)              |
+| `.claude/skills/release`                                                                                                                                                             | Port release skill                                                                                                                                       |
+| `.claude/settings.json`                                                                                                                                                              | Port permission-allowlist pattern (+ pnpm/vitest/playwright allows, same `.env` denies)                                                                  |
+| `.github/workflows/ci.yml`                                                                                                                                                           | Adapt: ruff + pytest/codecov jobs stay; add `web` job (pnpm lint/typecheck/vitest/build); docker buildx multi-arch publish                               |
+| `.github/workflows/docker-pr.yml` + `docker-pr-cleanup.yml`                                                                                                                          | **Not ported.** PR preview images were dropped — `ci.yml` publishes on `dev` pushes and `v*` tags only. Revisit if per-PR pullable tags are wanted again |
+| `.github/workflows/architecture-review.yml`                                                                                                                                          | **Not ported.** The Architecture Review runs as an on-demand agent, not a workflow — see the dispatch criteria in CLAUDE.md                              |
+| `.github/ISSUE_TEMPLATE/`, `PULL_REQUEST_TEMPLATE.md`                                                                                                                                | Port                                                                                                                                                     |
+| `.pre-commit-config.yaml`, `.codecov.yml`, `.gitattributes`, `.dockerignore`                                                                                                         | Port                                                                                                                                                     |
+| `README.md` structure                                                                                                                                                                | Port the shape: shields (+ AI-Assisted badge), logo, About/Problem/Solution, screenshots table, Quick Start, docs-hub table                              |
+| `docs/` hub (`README/getting-started/guides/reference/faq`)                                                                                                                          | Port structure                                                                                                                                           |
+| `docker-compose.example.yml`, `unraid-templates/`                                                                                                                                    | Port patterns (Unraid = big homelab reach)                                                                                                               |
+| `llms.txt`                                                                                                                                                                           | Port (AI-readable repo summary)                                                                                                                          |
+| `CONTRIBUTING.md`                                                                                                                                                                    | Port + adapt                                                                                                                                             |
+| Code patterns: `logging_config.py` (loguru+Rich), `version_check.py` (GitHub release check → UI banner), env-seed→persisted-config migration, PUID/PGID init, never-log-tokens rules | Reimplement in Shortlist shape                                                                                                                           |
 
 ### Deliberate deltas from MPG
 
@@ -79,7 +79,7 @@ shortlist/
 │   │   ├── services/             # run_service (engine adapter + SSE emit), snapshot_service, hit_rate, secrets (Fernet @ /config/secret.key)
 │   │   └── settings_store.py     # typed settings table access; env-var seeding on first boot (MPG pattern)
 │   └── logging_config.py         # loguru + Rich (ported)
-├── web/                          # React 18 + Vite + TypeScript + Tailwind + shadcn/ui
+├── web/                          # React 19 + Vite + TypeScript + Tailwind + shadcn/ui
 │   └── src/
 │       ├── features/wizard/      # steps 0–7 (see design doc §3), state machine, resumable
 │       ├── features/dashboard/ · users/ · runs/ · settings/
@@ -87,16 +87,15 @@ shortlist/
 │       ├── components/           # shadcn + PlexRowPreview, PosterGrid, LiveLog (SSE), CapabilityChecklist
 │       └── lib/                  # sse.ts, theme, format
 ├── tests/
-│   ├── conftest.py               # mock_plex, mock_tautulli, mock_tmdb, mock_curator fixtures (MPG discipline: ALL external I/O mocked)
+│   ├── conftest.py               # mock_plex, mock_plextv, mock_tmdb, mock_curator fixtures (MPG discipline: ALL external I/O mocked)
 │   ├── unit/ · integration/
 │   ├── fakes/fake_plex.py        # FastAPI stub emulating PMS+plex.tv endpoints Shortlist touches → enables full-wizard e2e with NO real server
-│   └── e2e/                      # Playwright vs built image + fake_plex
+│   └── e2e/                      # Playwright vs an in-process app (uvicorn + built SPA) + fake_plex
 ├── docs/                         # hub: README, getting-started, guides, reference, faq (MPG structure)
 ├── unraid-templates/
 ├── Dockerfile                    # multi-stage: node:22 build web → python:3.12-slim runtime; PUID/PGID init; HEALTHCHECK
 ├── docker-compose.example.yml
 ├── pyproject.toml                # ruff config, pytest config (cov target 80%), hatchling
-├── Makefile                      # dev, test, lint, e2e, build
 └── README.md · CONTRIBUTING.md · LICENSE(MIT) · llms.txt
 ```
 
@@ -115,12 +114,35 @@ server                id · machine_id · name · url · token_enc · version ·
 users                 id · plex_account_id · username · slug · avatar_url · user_type(shared|managed|owner)
                       · enabled BOOL · cold_start BOOL · label ("shortlist_<slug>") · prefs JSON
                       (row_name_tpl, row_size, excluded_genres, max_rating, paused)
+collections           id · slug · name · build(per_person|shared) · audience(everyone|subset) · enabled BOOL
+                      · schedule (this row's OWN 5-field cron; "" = manual only — there is no global one)
+                      · size · media(movie|show|both) · library_keys JSON · name_template · min_watchers
+                      · placement / placement_friends (both|home|library|off) · pin_top BOOL · hub_anchor JSON
+                      · poster JSON · candidate_sources JSON · watched_pct · freshness · recent_count · max_seeds
+collection_audience   collection_id FK · user_id FK          (a `subset` row's members)
+collection_user_overrides  collection_id FK · user_id FK · muted BOOL · row_size · history_depth
+poster_assets         id · collection_id FK · kind(upload|preview) · bytes · created_at
+deliveries            collection_slug · user_slug · library_key  (composite PK) · rating_key · title · updated_at
+                      ← the DELIVERY LEDGER: which Plex collection is which row, for whom, in which
+                        library. Written per delivery, read by every on-demand reconcile. Keyed by SLUG
+                        not FK on purpose — the row it describes is usually the one being deleted.
+                        It exists because a title cannot answer that question: a `{top_seed}` row
+                        renders differently every run. See jobs-and-runs-design.md §13.
+jobs                  id · kind · payload JSON · status(queued|running|done|failed) · attempts · max_attempts
+                      · detail · error · result JSON · created_at · started_at · finished_at
+                      ← the durable queue for maintenance that must not be lost. APScheduler is only
+                        the trigger; this table is what survives a restart. See §5 of that doc.
 runs                  id · trigger(schedule|manual|wizard) · started_at · finished_at · status · dry_run BOOL · stats JSON
-run_users             run_id FK · user_id FK · status · error · duration_ms · llm_tokens · diff JSON (added/removed/kept) · trace JSON (per-user pipeline trace: seeds, per-source queries/returns, web-search+RAG prompts; {} when none)
+run_users             run_id FK · user_id FK · status · error · reason · duration_ms · llm_tokens · exa_searches
+                      · diff JSON (added/removed/kept) · breakdown JSON (per row+library: titles, ratingKey, picks)
+                      · trace JSON (per-user pipeline trace: seeds, per-source queries/returns, web-search+RAG prompts; {} when none)
 picks                 id · run_id FK · user_id FK · tmdb_id · rating_key · rank · reason · seed_tmdb_id · seed_title
+                      · collection_slug · section_key · library · sources · affinity
                       · created_at · watched_at NULL          ← watched_at backfilled nightly = hit-rate
+request_candidates    id · tmdb_id · media_type · title · year · imdb_id · poster_path · rating · demand
+                      · status(waiting|sent|rejected) · why JSON · first_seen_run_id
 restriction_snapshots id · user_id FK · taken_at · reason(initial|sync|uninstall_restore) · filters_before JSON · filters_after JSON
-caches                kind(tmdb|library_index) · key · value JSON · expires_at
+caches                kind(tmdb|trakt|library_index) · key · value JSON · expires_at
 events                id · ts · level · scope · message JSON   ← audit trail surfaced in UI
 ```
 
@@ -131,19 +153,30 @@ done relationally).
 
 ## 4. API surface (FastAPI, all under `/api`, OpenAPI auto-docs)
 
+**[docs/reference.md](../../docs/reference.md) is the authoritative list** — it ships with the app and
+is updated in the same PR as any endpoint change (`.claude/rules/docs.md`). This section is the
+architectural shape only; a second copy of ~60 endpoints in a design doc drifts, and did.
+
 ```
-POST /auth/pin                 create PIN → {id, code}          GET  /auth/pin/{id}    poll → token exchange
-GET  /auth/session · POST /auth/logout                          (owner-only: account.id == server.owner_account_id)
-POST /setup/probe              capability probe (version/pass/libraries/tautulli-detect)
-GET/PUT /setup/state           wizard progress (resumable)
-GET  /users                    list + badges (history depth, cold-start, managed-flag)
-PATCH /users/{id}              enable/prefs
-GET  /runs · GET /runs/{id}    list/detail (diffs, errors)      POST /runs {user_ids?, dry_run?} → run_id
-GET  /events                   SSE stream: run.progress, run.user.stage, version.update
-GET/PUT /settings              typed settings                   POST /settings/test/{plex|tautulli|llm|radarr|sonarr|seerr}
-GET  /system/health · /system/version (+ GitHub release check)
-POST /system/uninstall {confirm} → restore snapshots, delete collections/labels, report
+/auth/*        PIN → token exchange, session, logout   (owner-only: account.id == server.owner_account_id)
+/setup/*       capability probe + resumable wizard state
+/users/*       roster, enable/pause/prefs, per-person row overrides, sync from plex.tv + Tautulli
+/collections/* the multi-row surface: CRUD, audience, placement, posters, rename (SSE), cleanup
+/runs/*        list/detail/trace/cancel, POST to run (optionally scoped to users and/or rows)
+/requests/*    the approval inbox — send to Radarr/Sonarr, reject, restore
+/settings/*    typed settings + per-service connection tests
+/system/*      health · version · logs · libraries · backups · api-token · uninstall
+               · jobs  ← the durable maintenance queue (GET history, POST to trigger the two safe kinds)
+/events        SSE: run.progress, run.user.stage, sync.progress, version.update
 ```
+
+Two rules that are not obvious from the routes:
+
+- **Mutations that change who can SEE what queue a job rather than writing Plex inline** — see
+  `jobs-and-runs-design.md` §12. A handler that returns 200 having only written the database is the
+  bug class that doc exists to close.
+- **`POST /system/jobs` takes an allow-list, not the handler registry.** `user.cleanup` deletes a
+  person's rows and `user.restore` makes rows visible; neither may be reachable from a generic button.
 
 Security: session cookie (signed, httpOnly, SameSite=Lax), CSRF token on mutations, admin Plex
 token encrypted at rest (Fernet, key file `/config/secret.key`, chmod 600), tokens never logged
@@ -169,14 +202,14 @@ API), same as the *arr convention.
 
 ## 6. Testing strategy (MPG discipline, adapted)
 
-| Layer         | Tooling                                                                                      | Rules                                                                                                                                                                         |
-| ------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Engine unit   | pytest, `-n auto`, cov ≥ 80%                                                                 | ALL external I/O mocked via conftest fixtures; recorded real plex.tv/PMS XML+JSON as fixture files                                                                            |
-| Privacy logic | dedicated suite                                                                              | filter parse/merge round-trips property-tested (hypothesis); snapshot/restore invariants; **the merge code is the highest-consequence code in the repo — test it like money** |
-| Server        | pytest + httpx AsyncClient                                                                   | API contract tests against the OpenAPI schema                                                                                                                                 |
-| Frontend      | vitest + testing-library                                                                     | wizard state machine fully unit-tested                                                                                                                                        |
-| E2E           | Playwright vs built Docker image + `tests/fakes/fake_plex.py`                                | full wizard → first run → dashboard, no real Plex needed; CI-shardable (MPG's e2e sharding pattern)                                                                           |
-| Live smoke    | A dry-run **Run now**, then a manual view-check from a non-owner account (rows stay private) | run against Steve's real server pre-release                                                                                                                                   |
+| Layer         | Tooling                                                                                      | Rules                                                                                                                                                                                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Engine unit   | pytest, `-n auto`, cov ≥ 80%                                                                 | ALL external I/O mocked via conftest fixtures; recorded real plex.tv/PMS XML+JSON as fixture files                                                                                                                                                                             |
+| Privacy logic | dedicated suite                                                                              | filter parse/merge round-trips property-tested (hypothesis); snapshot/restore invariants; **the merge code is the highest-consequence code in the repo — test it like money**                                                                                                  |
+| Server        | pytest + httpx AsyncClient                                                                   | API contract tests against the OpenAPI schema                                                                                                                                                                                                                                  |
+| Frontend      | vitest + testing-library                                                                     | wizard state machine fully unit-tested                                                                                                                                                                                                                                         |
+| E2E           | Playwright vs the app in-process (uvicorn + built SPA) + `tests/fakes/fake_plex.py`          | full wizard → first run → dashboard, no real Plex needed; the built Docker image itself is untested — the `docker` CI job builds and pushes it but never runs it, so the PUID/PGID drop, the `HEALTHCHECK`, and `web/dist` landing where the app expects it are all unverified |
+| Live smoke    | A dry-run **Run now**, then a manual view-check from a non-owner account (rows stay private) | run against Steve's real server pre-release                                                                                                                                                                                                                                    |
 
 `fake_plex.py` is a deliberate investment (~300 lines): stubs `/identity`, `/library/sections`,
 `/status/sessions/history/all`, `/hubs`, collection CRUD, plus plex.tv `/api/v2/pins`, `/api/users`,
@@ -185,13 +218,56 @@ competitor tests.
 
 ---
 
-## 7. CI/CD (ported ci.yml shape)
+## 7. CI/CD
 
-`lint (ruff)` → `test-python (pytest+codecov)` → `test-web (pnpm typecheck/vitest/build)` →
-`e2e (playwright, sharded)` → `docker (buildx multi-arch)` → publish by ref (`master→dev`,
-`tag→latest+semver`, `PR→pr-<n>`); `architecture-review.yml` on PRs; `docker-pr-cleanup` on close.
-Release via the ported `.claude/skills/release` skill: Conventional Commits → changelog → tag →
-GitHub Release → images.
+One workflow, `.github/workflows/ci.yml`. Six jobs:
+
+`lint (ruff)`, `test-python (pytest + codecov)`, `test-web (pnpm lint/vitest/build)` and `e2e`
+(playwright) all run in parallel — `e2e` deliberately does NOT wait on `test-web`'s `web-dist`
+artifact; it builds its own copy of the SPA so it can start at t=0 instead of queuing behind
+`test-web`, trading one extra `vite build` for keeping that wait off the critical path.
+
+`docker-smoke` is the only job that runs the actual IMAGE. Everything else tests the source — `e2e`
+boots uvicorn in-process — so nothing else would notice the PUID/PGID drop failing, `web/dist`
+landing where the app doesn't look, or a runtime package missing from the image. It builds
+linux/amd64 with `load: true` (no push), boots the container, waits for the Dockerfile's own
+HEALTHCHECK, then asserts `/` serves the SPA and that every provider SDK imports. Those last two
+matter because `/api/system/health` is answered by Python and passes with no SPA in the image at
+all, and because the providers are imported lazily — the container is healthy right up until
+someone picks one, which is how `549631f` shipped.
+
+`docker` (buildx, linux/amd64 + linux/arm64) waits on all five and is the publish gate.
+
+The two image builds use **separate** `type=gha` cache scopes (`scope=smoke` / `scope=publish`), and
+that is load-bearing rather than tidiness. Sharing the default key made the amd64-only smoke build
+write `mode=max` over a cache holding both platforms, so every publish rebuilt arm64 from scratch
+under QEMU — measured at 1m04s → 4m51s the day the smoke job landed. Note a scope change costs one
+cold run before the saving shows up.
+
+What runs, by event:
+
+| Event         | Jobs                | Publishes                         |
+| ------------- | ------------------- | --------------------------------- |
+| push `dev`    | all six             | `:dev`                            |
+| push `master` | the five test jobs  | nothing                           |
+| pull request  | the five test jobs  | nothing                           |
+| push tag `v*` | all six             | `:latest` + `:<version>` + `:dev` |
+
+`docker` is gated on `github.event_name == 'push' && (ref == refs/heads/dev || ref starts with
+refs/tags/v)`. The ref half is load-bearing, not defensive: `master` is a push trigger so the stable
+branch gets CI, but every tag rule in `metadata-action` is gated on dev-or-tag, so a master push
+reaching `build-push-action` would arrive with `push: true` and an **empty tag list**.
+
+Concurrency: pull requests supersede their own older runs; pushes key the group on the SHA so they
+run in parallel. Only `docker` serialises, via its own job-level group — two overlapping builds can
+interleave a partial manifest push.
+
+Both branches are protected: force-pushes and deletions are blocked on each, and `master`
+additionally requires `lint`/`test-python`/`test-web`/`e2e` to pass, so it can only advance through
+a green promotion PR. `dev` deliberately has no required checks — they would block the direct
+pushes that are the normal way to work on it.
+
+Releases are cut by hand: promote `dev` → `master` via PR, then tag `vX.Y.Z` on `master`.
 
 ---
 

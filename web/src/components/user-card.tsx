@@ -1,5 +1,5 @@
 import { Play, Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { UserAvatar } from "@/components/user-avatar";
 import { UserBadges } from "@/components/user-badges";

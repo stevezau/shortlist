@@ -16,6 +16,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from datetime import UTC, datetime
+from itertools import pairwise
 
 import requests
 from loguru import logger
@@ -42,6 +43,24 @@ def _has_shortlist_marker(title: str) -> bool:
     return len(suffix) == 64 and all(c in _MARKER_CHARS for c in suffix)
 
 
+def log_title(title: str) -> str:
+    """A collection title fit for a LOG LINE — never for matching or writing to Plex.
+
+    The per-account marker is 64 zero-width characters, so a raw title renders as
+    `✨ Movies Picked for You` followed by 64 invisible chars. Every delivery, promote and ordering
+    line carried them: the log looked corrupted, wrapped absurdly, and — worst — two users' rows were
+    IMPOSSIBLE to tell apart by eye, because the only thing distinguishing them is invisible.
+
+    Strip the marker and print the account id it encodes instead. Same information, legible, and
+    actually more useful: you can now see whose row a line is about.
+    """
+    if not _has_shortlist_marker(title):
+        return title
+    suffix = title[-64:]
+    account = sum((1 << bit) for bit, c in enumerate(suffix) if c == _MARKER_CHARS[1])
+    return f"{title[:-64]} [acct {account}]"
+
+
 def parse_pms_version(version: str) -> tuple[int, ...]:
     """'1.43.3.10793-cd55560bb' -> (1, 43, 3, 10793)."""
     numbers = version.split("-")[0].split(".")
@@ -52,7 +71,13 @@ def _tmdb_guid(item) -> int | None:
     """The item's TMDB id, or None. The one place the ``tmdb://`` guid grammar lives."""
     for guid in getattr(item, "guids", []):
         if guid.id.startswith("tmdb://"):
-            return int(guid.id.removeprefix("tmdb://"))
+            try:
+                return int(guid.id.removeprefix("tmdb://"))
+            except ValueError:
+                # A malformed guid must not raise out of a whole section scan — every other
+                # tolerant spot in this file (label parsing, watched-item ids) skips a bad row
+                # rather than failing the caller; this one didn't, and one bad guid killed it.
+                continue
     return None
 
 
@@ -153,10 +178,48 @@ def _retry_idempotent(operation: Callable[[], None], *, label: str, attempts: in
             time.sleep(delay)
 
 
+def _forbid_redirects(session) -> None:
+    """Make every request on this session refuse to follow redirects.
+
+    Wraps `request` rather than setting an attribute: `requests` decides per call, so a library that
+    issues its own requests (plexapi does) would otherwise silently follow them.
+    """
+    original = session.request
+
+    def request(method, url, **kwargs):
+        kwargs["allow_redirects"] = False
+        return original(method, url, **kwargs)
+
+    session.request = request
+
+
+def _is_newest_first(entries: list) -> bool:
+    """Are this page's `lastViewedAt` stamps in non-increasing order?
+
+    Rows without the attribute are ignored rather than treated as 1970 — a data gap is not evidence
+    that the sort broke, and treating it as such would throw away the incremental read for everyone.
+    """
+    stamps: list[int] = []
+    for el in entries:
+        raw = el.get("lastViewedAt")
+        if raw is None:
+            continue
+        try:
+            stamps.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return all(a >= b for a, b in pairwise(stamps))
+
+
 class PlexClient:
     """PMS operations, restricted to collections Shortlist owns (label-gated)."""
 
-    def __init__(self, base_url: str, token: str, *, timeout: int = 20):
+    # Class-level fallback ONLY for test doubles built via `PlexClient.__new__` (see
+    # `tests/conftest.py`'s `mock_plex`, which skips `__init__`); every real instance overrides this
+    # in `__init__` below with the operator's configured `plex.timeout_s`.
+    _timeout: int = 20
+
+    def __init__(self, base_url: str, token: str, *, timeout: int = 20, follow_redirects: bool = True):
         # This 20s default is for the fast-fail connection probes (setup/test-connection/section list).
         # The RUN's client is built by context_builder with the configurable `plex.timeout_s` (default
         # 45), because a large TV library's collection rebuild legitimately takes 15-20s and 20s timed
@@ -166,7 +229,19 @@ class PlexClient:
         # 4x = ~240s, serialized behind the write-lock; SFLIX run 3, 2026-07-19). The retrying session's
         # backoff still covers real transients, and the reorder no longer holds the write-lock (deferred,
         # best-effort) so the old "keep the ceiling high for the busy reorder" reason is gone.
-        self._server = PlexServer(base_url, token, session=_retrying_session(), timeout=timeout)
+        session = _retrying_session()
+        if not follow_redirects:
+            # `net_guard.check_url` validates the ADDRESS, and its own docstring says the check is
+            # worthless unless the caller also refuses redirects — a permitted host can answer 302 and
+            # bounce the fetch to a blocked one. Enforced at the session, not per call, because
+            # plexapi issues the requests and would otherwise have to be trusted to pass the flag.
+            _forbid_redirects(session)
+        self._server = PlexServer(base_url, token, session=session, timeout=timeout)
+        # Every raw (non-plexapi) PMS read in this class must use THIS, not a hardcoded number —
+        # plexapi's own calls already get `timeout` via the PlexServer above; `user_hubs` and
+        # `_read_watched_page` used to hardcode 30/45 here, silently ignoring the operator's
+        # configured `plex.timeout_s` on exactly the two heaviest raw reads.
+        self._timeout = timeout
         # Per-run read caches. A PlexClient is built fresh for each run (the server adapter
         # constructs one per run), so these live exactly one run — no cross-run staleness. Library
         # sections don't change mid-run; a section's collection LIST changes only when WE create or
@@ -390,7 +465,10 @@ class PlexClient:
         collection: Collection,
         *,
         shared: bool = True,
-        home: bool = True,
+        # Defaults to OFF: `home` is promotedToOwnHome, the SERVER OWNER's Home shelf, and the owner
+        # has no share filter — anything landing there is visible to them with nothing able to hide
+        # it. A privacy tool must never put a row on that surface by omission; callers say so.
+        home: bool = False,
         recommended: bool = True,
         pin_top: bool = False,
     ) -> None:
@@ -413,15 +491,85 @@ class PlexClient:
 
         # Retry the whole promote on a PMS timeout — it's idempotent, and a busy server can time out a
         # single mutation that a retry (with the server given room to breathe) then completes.
-        _retry_idempotent(_apply, label=collection.title)
+        _retry_idempotent(_apply, label=log_title(collection.title))
         logger.info(
             "{}: promoted (home={} library={} pin={}) in {:.1f}s",
-            collection.title,
+            log_title(collection.title),
             home,
             recommended,
             pin_top,
             time.monotonic() - start,
         )
+
+    def reads_as_on_owner_home(self, collection: Collection) -> bool:
+        """Is this collection currently on the owner's Home shelf? A read, never a write.
+
+        Split out so a DRY RUN can report the real list. Previewing by title alone would name every
+        collection considered rather than the ones actually stranded, and the preview is what an
+        operator reads before authorising the live pass.
+        """
+        return bool(getattr(collection.visibility(), "promotedToOwnHome", False))
+
+    def claims_any_surface(self, collection: Collection) -> bool:
+        """Does this collection claim ANY surface right now? A read, never a write.
+
+        The dry-run twin of ``demote_all``. Without it a preview counts every candidate rather than
+        the ones that would actually change — so the Tools button offered to "fix" rows that were
+        already down (caught on the live server: preview said 2, the live pass corrected 0).
+        """
+        hub = collection.visibility()
+        return any(
+            (
+                bool(getattr(hub, "promotedToRecommended", False)),
+                bool(getattr(hub, "promotedToOwnHome", False)),
+                bool(getattr(hub, "promotedToSharedHome", False)),
+            )
+        )
+
+    def demote_all(self, collection: Collection, *, reason: str = "") -> bool:
+        """Take a collection off EVERY surface, leaving it (and its label) in place.
+
+        This is what "pause" means: the person stops seeing their row, but the collection and its
+        label survive, so every other account's `label!=` exclude still matches it and unpausing is
+        a re-promote rather than a rebuild. Deleting would cost a full LLM re-curation to undo.
+
+        Monotonically private — it only ever removes visibility — so it needs no privacy gate.
+        Idempotent: reads first and writes nothing when the collection already claims nothing.
+        """
+        hub = collection.visibility()
+        claims = (
+            bool(getattr(hub, "promotedToRecommended", False)),
+            bool(getattr(hub, "promotedToOwnHome", False)),
+            bool(getattr(hub, "promotedToSharedHome", False)),
+        )
+        if not any(claims):
+            return False
+        hub.updateVisibility(recommended=False, home=False, shared=False)
+        logger.info("{}: taken off every surface{}", log_title(collection.title), f" ({reason})" if reason else "")
+        return True
+
+    def demote_own_home(self, collection: Collection) -> bool:
+        """Take a collection off the SERVER OWNER's Home shelf, leaving its other surfaces alone.
+
+        The one convergence write that is always safe: ``promotedToOwnHome`` is the owner's Home, the
+        owner has no share filter, and so nothing can hide a row that lands there. Clearing it only
+        ever makes the server MORE private, which is why this needs no privacy gate and can run for
+        collections the promote phase never reached.
+
+        Idempotent by design — reads the hub first and writes nothing when the flag is already off,
+        so a nightly converge over hundreds of collections costs reads, not writes. Returns True only
+        when a write actually happened.
+        """
+        hub = collection.visibility()
+        if not getattr(hub, "promotedToOwnHome", False):
+            return False
+        hub.updateVisibility(
+            recommended=bool(getattr(hub, "promotedToRecommended", False)),
+            home=False,
+            shared=bool(getattr(hub, "promotedToSharedHome", False)),
+        )
+        logger.info("{}: demoted off the owner's Home (converge)", log_title(collection.title))
+        return True
 
     def order_owned_hubs(
         self,
@@ -536,7 +684,13 @@ class PlexClient:
         if to_remove:
             collection.removeItems(to_remove)
         collection.sortUpdate(sort="custom")
-        logger.info("{}: items +{} -{}", collection.title, len(add_items), len(to_remove))
+        # INFO only when the membership actually MOVED. A steady row is the common case on a nightly
+        # converge, and "items +0 -0" once per collection buried the lines that mattered — a
+        # 96-collection server logged ~96 of them a night saying nothing happened.
+        if add_items or to_remove:
+            logger.info("{}: items +{} -{}", log_title(collection.title), len(add_items), len(to_remove))
+        else:
+            logger.debug("{}: items unchanged", log_title(collection.title))
 
     def order_collection(self, collection: Collection, wanted_keys: list[int]) -> int:
         """Order a collection's visible head to ``wanted_keys`` (ranked) via ``moveItem`` — the expensive
@@ -562,7 +716,11 @@ class PlexClient:
             previous = key
         if moves:
             logger.info(
-                "{}: reordered {}/{} in {:.1f}s", collection.title, moves, len(target), time.monotonic() - start
+                "{}: reordered {}/{} in {:.1f}s",
+                log_title(collection.title),
+                moves,
+                len(target),
+                time.monotonic() - start,
             )
         return moves
 
@@ -635,7 +793,7 @@ class PlexClient:
         r = http_retry.get(
             self._server.url(path, includeToken=False),
             headers={"X-Plex-Token": canary_token, "Accept": "application/json"},
-            timeout=30,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return r.json().get("MediaContainer", {}).get("Hub", []) or []
@@ -646,7 +804,14 @@ class PlexClient:
     # already-watched filter — the very 200-row bug the share-token read exists to end).
     _WATCHED_PAGE = 500
 
-    def watched_titles(self, section_key: str | int, media_type: MediaType, token: str) -> list[WatchedItem]:
+    def watched_titles(
+        self,
+        section_key: str | int,
+        media_type: MediaType,
+        token: str,
+        *,
+        since: datetime | None = None,
+    ) -> list[WatchedItem]:
         """Every title in one library this user has watched, read from the PMS AS that user.
 
         ``unwatched=0`` filters to ``viewCount>0`` — Plex's own binary "watched" flag, which INCLUDES a
@@ -664,6 +829,20 @@ class PlexClient:
             media_type: Which type the section holds — selects Plex's ``type`` (1=movie, 2=show).
             token: The server-scoped ``X-Plex-Token`` to read as (this user's, not the owner's) — a
                 live per-user credential, never logged (rule 9).
+            since: Return only titles last viewed at or after this moment — an INCREMENTAL read.
+
+                Done by ORDERING, not filtering: the read is sorted ``lastViewedAt:desc`` and stops at
+                the first title older than the cutoff. A `lastViewedAt>=` query filter was tried first
+                and is **silently ignored** by PMS 1.43.3 (live-probed 2026-07-30 against SFLIX:
+                unfiltered, `>=` and `>>=` all returned the same totalSize of 1077 — as did a `year>>=`
+                control, so param filtering on this endpoint does not work at all). Ignoring a filter
+                is the worst failure mode available: it returns everything while looking like it
+                worked. Sorting IS honoured, so the cutoff is applied client-side against an order the
+                server guarantees.
+
+                Still a partial answer by construction — it cannot see a title that was un-watched or
+                deleted — so callers must keep doing a periodic full read. ``None`` (the default) reads
+                everything, unsorted, exactly as before.
 
         Returns:
             One WatchedItem per distinct watched title, newest watch first is NOT guaranteed (callers
@@ -672,37 +851,104 @@ class PlexClient:
         plex_type = 1 if media_type is MediaType.MOVIE else 2
         items: list[WatchedItem] = []
         start = 0
+        reached_cutoff = False
         while True:
-            root = self._read_watched_page(section_key, plex_type, token, start)
+            root = self._read_watched_page(section_key, plex_type, token, start, since=since)
             entries = list(root)
+            # Validate the ORDER before trusting the early stop, not while walking it. The stop is
+            # only sound while the server honours `sort=lastViewedAt:desc` — and `lastViewedAt>=` was
+            # also documented as supported and is silently ignored by this PMS, so the sort earns the
+            # same suspicion. Checked up front because an ascending page puts its OLDEST row first:
+            # detecting mid-walk is too late, the stop has already fired and truncated the read to
+            # something that looks exactly like a quiet night.
+            if since is not None and not _is_newest_first(entries):
+                logger.warning(
+                    "PMS returned watched items out of order for section {} — the incremental sort "
+                    "was not honoured, so this read falls back to a complete one",
+                    section_key,
+                )
+                since = None
             for el in entries:
                 item = self._watched_item(el, media_type)
-                if item is not None:
-                    items.append(item)
-            total = int(root.get("totalSize") or root.get("size") or len(entries))
+                if item is None:
+                    continue
+                if since is not None and item.watched_at < since:
+                    # An item with NO `lastViewedAt` is stamped 1970 by `_watched_item`, so it looks
+                    # older than any cutoff. Treating that as "everything after this is older" would
+                    # end the walk on a data gap and silently drop every title behind it — the read
+                    # would look like a quiet night rather than a truncation. Skip it and keep going;
+                    # only a real timestamp may end the walk.
+                    if el.get("lastViewedAt") is None:
+                        continue
+                    # Sorted newest-first, so everything from here on is older. Stop reading — this
+                    # is where the saving actually comes from, since the server ignores the filter.
+                    reached_cutoff = True
+                    break
+                items.append(item)
+            # NEVER fall back to `size`: on a paged response that is the size of THIS PAGE, so a
+            # server omitting `totalSize` made `total` equal the page length and the walk stopped
+            # after one page — a partial watched set reported as complete, which is exactly the
+            # already-watched-titles-recommended bug this paging exists to prevent. `totalSize` is
+            # now an upper bound only; a SHORT page is what proves the end.
+            reported_total = root.get("totalSize")
+            total = int(reported_total) if reported_total is not None else None
             start += len(entries)
-            # Stop when this page was short (fewer than we asked for) or we've reached the reported
-            # total. An empty page also stops us — never loop forever on a server that ignores paging.
-            if not entries or start >= total:
+            # Two ways to know we are done, and which one applies depends on whether the server told
+            # us a total:
+            #
+            # * `totalSize` present -> trust it. A server may legitimately return fewer rows per page
+            #   than we asked for, so a short page does NOT mean the end when a bigger total is known.
+            # * `totalSize` absent  -> a short page is the only end-signal available. Falling back to
+            #   `size` (the PAGE size) made `total` equal the page length and stopped the walk after
+            #   one page — a partial watched set reported as complete.
+            #
+            # An empty page always stops us, so a server ignoring the paging headers cannot loop.
+            done = start >= total if total is not None else len(entries) < self._WATCHED_PAGE
+            if reached_cutoff or not entries or done:
                 break
-        logger.debug("watched read: section {} ({}) -> {} titles", section_key, media_type.value, len(items))
+            if total is None:
+                logger.warning(
+                    "PMS gave no totalSize for section {} — paging on short-page detection alone",
+                    section_key,
+                )
+        logger.debug(
+            "watched read: section {} ({}) -> {} titles{}",
+            section_key,
+            media_type.value,
+            len(items),
+            f" since {since.isoformat()}" if since else "",
+        )
         return items
 
-    def _read_watched_page(self, section_key: str | int, plex_type: int, token: str, start: int) -> ET.Element:
+    def _read_watched_page(
+        self,
+        section_key: str | int,
+        plex_type: int,
+        token: str,
+        start: int,
+        *,
+        since: datetime | None = None,
+    ) -> ET.Element:
         """One page of a section's watched titles as XML, read as ``token``. Retries transient reads."""
         # Query params rather than plexapi: we need the raw per-user response as a specific token, and
         # includeGuids inlines the TMDB id so no library index is consulted. includeToken=False keeps
         # the OWNER's token out of the URL — we set the per-user token in the header instead (rule 9).
         url = self._server.url(f"/library/sections/{section_key}/all", includeToken=False)
+        params: dict[str, object] = {"type": plex_type, "unwatched": 0, "includeGuids": 1}
+        if since is not None:
+            # SORT, not filter. `lastViewedAt>=` (and `>>=`) are silently ignored by PMS 1.43.3 —
+            # live-probed 2026-07-30, see `watched_titles`. Sorting newest-first IS honoured, and the
+            # caller stops at the first title older than the cutoff.
+            params["sort"] = "lastViewedAt:desc"
         r = http_retry.get(
             url,
-            params={"type": plex_type, "unwatched": 0, "includeGuids": 1},
+            params=params,
             headers={
                 "X-Plex-Token": token,
                 "X-Plex-Container-Start": str(start),
                 "X-Plex-Container-Size": str(self._WATCHED_PAGE),
             },
-            timeout=45,
+            timeout=self._timeout,
         )
         r.raise_for_status()
         return ET.fromstring(r.text)
@@ -714,7 +960,12 @@ class PlexClient:
         for guid in el.iter("Guid"):
             gid = guid.get("id") or ""
             if gid.startswith("tmdb://"):
-                tmdb_id = int(gid.removeprefix("tmdb://"))
+                try:
+                    tmdb_id = int(gid.removeprefix("tmdb://"))
+                except ValueError:
+                    # A malformed guid must not raise out of the whole watched-titles read — treat
+                    # it the same as no guid at all (see `_tmdb_guid`'s tolerance for the same case).
+                    continue
                 break
         if tmdb_id is None:
             return None

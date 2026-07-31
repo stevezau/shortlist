@@ -1,7 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- plex.tv GET /api/users — shape field-verified live in Phase 0 (2026-07-12).
-     Share filters are attributes of <User>; values here are sanitized. -->
-<MediaContainer friendlyName="myPlex" identifier="com.plexapp.plugins.myplex" size="2">
+     Share filters are attributes of <User>; values here are sanitized.
+
+     555000300 ("teen") is the issue-#20 cell: restricted="1" here, but NO restrictionProfile in
+     plextv_home_users.xml.txt. It lived only in the Home fixture, so the join that issue #20's fix
+     actually changed had no row to carry it end to end.
+
+     The shared id space between this endpoint and /api/home/users is VERIFIED LIVE, not assumed:
+     against a real server (2026-07-29) /api/users returned 49 accounts and /api/home/users 3, with
+     2 ids in common (the third being the owner, whom /api/users omits) and every restricted="1"
+     account covered by the Home roster. Matching ids here therefore reflect production, rather than
+     being chosen so the join test cannot fail. -->
+<MediaContainer friendlyName="myPlex" identifier="com.plexapp.plugins.myplex" size="3">
   <User id="555000100" title="sarah" username="sarah" email="sarah@example.com"
         thumb="https://plex.tv/users/abc/avatar" home="0" restricted="0" protected="0"
         filterAll="" filterMovies="label!=Shortlist_mike" filterTelevision="" filterMusic="" filterPhotos="">
@@ -11,6 +21,11 @@
   <User id="555000200" title="kid" username="" email="" thumb="" home="1" restricted="1" protected="0"
         filterAll="" filterMovies="" filterTelevision="" filterMusic="" filterPhotos="">
     <Server id="2" serverId="1" machineIdentifier="fixture-machine-1" name="FixtureServer"
+            lastSeenAt="1752300000" numLibraries="3" allLibraries="1" owned="0" pending="0"/>
+  </User>
+  <User id="555000300" title="teen" username="" email="" thumb="" home="1" restricted="1" protected="0"
+        filterAll="" filterMovies="" filterTelevision="" filterMusic="" filterPhotos="">
+    <Server id="3" serverId="1" machineIdentifier="fixture-machine-1" name="FixtureServer"
             lastSeenAt="1752300000" numLibraries="3" allLibraries="1" owned="0" pending="0"/>
   </User>
 </MediaContainer>

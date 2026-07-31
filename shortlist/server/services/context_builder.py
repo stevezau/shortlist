@@ -20,6 +20,7 @@ from shortlist.engine.clients.plextv import PlexTvClient
 from shortlist.engine.clients.search import ExaClient
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
+from shortlist.engine.context import EngineContext
 from shortlist.engine.curator import make_curator
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, render_row_name
 from shortlist.engine.history import ShareTokenWatchSource, distinct_recent
@@ -36,19 +37,21 @@ from shortlist.engine.models import (
     UserProfile,
     UserType,
 )
-from shortlist.engine.pipeline import EngineContext
 from shortlist.server.db.adapters import DbCache, DbSnapshotStore
 from shortlist.server.db.models import (
     DEFAULT_SLUG,
     Collection,
     CollectionAudience,
     CollectionUserOverride,
+    Delivery,
     PickRow,
     RequestCandidate,
+    Server,
     User,
     iso_utc,
     utcnow,
 )
+from shortlist.server.prefs import blocked_ids
 from shortlist.server.services.poster_service import load_upload, make_studio
 from shortlist.server.services.sse import EventBus
 from shortlist.server.settings_store import SettingsStore
@@ -78,6 +81,29 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
     return kwargs
 
 
+def _refuse_a_different_server(session, machine_id: str) -> None:
+    """Abort before touching a Plex server that is not the one this instance is linked to.
+
+    Every record Shortlist holds is scoped to one machine: the delivery ledger says which collection is
+    whose, `restriction_snapshots` holds each account's filters as they were before we touched them,
+    and the user table says who the owner is. Run any of that against a different server and the
+    bookkeeping describes a machine nobody is talking to.
+
+    The concrete danger is the privacy sync: a stranger's PMS enumerates ZERO Shortlist collections,
+    which reads as "every row is gone" — and the merge would then rewrite share filters on plex.tv
+    from that. Settings already refuses a repoint (`api/settings._reject_a_different_server`), but only
+    when the new server ANSWERS at save time; a box that is down then, and up later, slips past. This
+    is the check at the point of use, where it cannot be skipped.
+    """
+    server = session.query(Server).first()
+    if server is None or not server.machine_id or server.machine_id == machine_id:
+        return
+    raise RuntimeError(
+        f"Plex at this URL reports machine {machine_id}, but Shortlist is linked to {server.machine_id}. "
+        "Refusing to run against a different server — re-link from setup if the move is intentional."
+    )
+
+
 class ContextBuilder:
     """Builds an EngineContext and user profiles from DB settings — the engine's server adapter."""
 
@@ -104,6 +130,7 @@ class ContextBuilder:
             # A large TV library's collection rebuild legitimately takes 15-20s+; the configured
             # per-call timeout (default 45s) gives those headroom instead of timing out + retrying.
             plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
+            _refuse_a_different_server(session, plex.machine_id)
             plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
             tmdb = TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions))
             trakt = (
@@ -130,12 +157,16 @@ class ContextBuilder:
                 # Fallback matches the seeded default and the UI's, so a never-saved setting behaves
                 # the same everywhere (gather_candidates still floors an explicit [] at tmdb_similar).
                 candidate_sources=list(store.get("candidates.sources") or ["tmdb_similar", "tmdb_discover"]),
+                blocked_shared_seeds={
+                    tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
+                },
                 web_search_provider=store.get("llm_web.search_provider") or "auto",
                 hub_anchors=self._build_hub_anchors(store),
                 manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
                 watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
                 freshness=float(store.get("recommendations.freshness") or 0.0),
                 recent_count=int(store.get("recommendations.recent_count") or 10),
+                max_seeds=int(store.get("recommendations.max_seeds") or 30),
                 hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
                 dry_run=dry_run,
                 rows=self._build_rows(session, store),
@@ -153,6 +184,7 @@ class ContextBuilder:
                 requests=self._build_requests(store),
             )
             previous = self._previous_picks(session)
+            delivered_keys = self._delivered_keys(session)
             # Opted-out accounts: with hide_shared_from_disabled, even public shared rows are hidden
             # from them, so disabling a user removes them from Shortlist entirely.
             disabled_account_ids = {u.plex_account_id for u in session.query(User).filter_by(enabled=False).all()}
@@ -160,45 +192,65 @@ class ContextBuilder:
             # Every user Shortlist knows, enabled or not: the engine answers "whose row is this?"
             # by account id, because a name can change and two names can slugify alike.
             known_slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
+            # Whose rows are allowed on the owner's Home. Read from the DB rather than this run's
+            # profiles, because the owner may be paused, disabled, or simply not in a scoped run —
+            # and converge still has to know which single label is legitimately there.
+            owner = session.query(User).filter_by(user_type=UserType.OWNER.value).first()
+            owner_slug = owner.slug if owner else ""
+            # Paused users never appear in a run, so converge is the only pass that can take their
+            # rows down. Read from the DB rather than this run's profiles for exactly that reason.
+            paused_slugs = {u.slug for u in session.query(User).all() if (u.prefs or {}).get("paused")}
 
-        def progress(slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
-            # Runs in the engine's executor thread. One entry both STREAMS (SSE, live) and, via
-            # log_sink, lands in the run's in-memory activity log so a page reload can replay it.
-            # `reason` is kept OUT of `counts`, which is a map of numbers the UI renders as a
-            # "113 history · 40 seeds" tally — a sentence in there would render as garbage.
-            entry = {"ts": iso_utc(utcnow()), "run_id": run_id, "user": slug, "stage": stage, "counts": counts}
-            if reason:
-                entry["reason"] = reason
-            if log_sink is not None:
-                log_sink(entry)
-            if loop is not None:
-                loop.call_soon_threadsafe(self._bus.publish, "run.user.stage", entry)
+            # INSIDE the `with`, deliberately. Two of the arguments below still touch `session`
+            # (`_handled_requests`, and `_build_mdblist` via `SettingsStore.get`). Built after the
+            # block closed, SQLAlchemy silently re-opened a transaction that nothing ever closed, so
+            # every `build_context()` checked a connection out of the pool and kept it until GC —
+            # and `build_context` is on the path of every run, job and reconcile. The pool is 5 + 10,
+            # so the eleventh build blocked for 30s and surfaced as "Plex is unreachable".
+            def progress(slug: str, stage: str, counts: dict, reason: str | None = None) -> None:
+                # Runs in the engine's executor thread. One entry both STREAMS (SSE, live) and, via
+                # log_sink, lands in the run's in-memory activity log so a page reload can replay it.
+                # `reason` is kept OUT of `counts`, which is a map of numbers the UI renders as a
+                # "113 history · 40 seeds" tally — a sentence in there would render as garbage.
+                entry = {"ts": iso_utc(utcnow()), "run_id": run_id, "user": slug, "stage": stage, "counts": counts}
+                if reason:
+                    entry["reason"] = reason
+                if log_sink is not None:
+                    log_sink(entry)
+                if loop is not None:
+                    loop.call_soon_threadsafe(self._bus.publish, "run.user.stage", entry)
 
-        return EngineContext(
-            config=config,
-            plex=plex,
-            plextv=plextv,
-            tmdb=tmdb,
-            trakt=trakt,
-            search=search,
-            poster_artist=poster_artist,
-            # The engine reads each user's COMPLETE watched set by reading the PMS AS them, with the
-            # per-user server token plex.tv mints for every share. That set carries their own
-            # viewCount/viewedLeafCount — so a mark-as-watched (which the playback-history API never
-            # returns, and which capped at ~200 plays) is seen, with no PMS database mount.
-            history_source=history,
-            curator=curator,
-            snapshots=DbSnapshotStore(self._sessions),
-            index_cache=DbCache(self._sessions, kind="library_index"),
-            web_search_cache=DbCache(self._sessions, kind="websearch"),
-            mdblist=self._build_mdblist(store),
-            concurrency=concurrency,
-            previous_picks=previous,
-            disabled_account_ids=disabled_account_ids,
-            known_slugs=known_slugs,
-            handled_requests=self._handled_requests(session),
-            progress=progress,
-        )
+            return EngineContext(
+                config=config,
+                plex=plex,
+                plextv=plextv,
+                tmdb=tmdb,
+                trakt=trakt,
+                search=search,
+                poster_artist=poster_artist,
+                # The engine reads each user's COMPLETE watched set by reading the PMS AS them, with the
+                # per-user server token plex.tv mints for every share. That set carries their own
+                # viewCount/viewedLeafCount — so a mark-as-watched (which the playback-history API never
+                # returns, and which capped at ~200 plays) is seen, with no PMS database mount.
+                history_source=history,
+                curator=curator,
+                snapshots=DbSnapshotStore(self._sessions),
+                index_cache=DbCache(self._sessions, kind="library_index"),
+                web_search_cache=DbCache(self._sessions, kind="websearch"),
+                mdblist=self._build_mdblist(store),
+                concurrency=concurrency,
+                previous_picks=previous,
+                delivered_keys=delivered_keys,
+                disabled_account_ids=disabled_account_ids,
+                known_slugs=known_slugs,
+                owner_slug=owner_slug,
+                paused_slugs=paused_slugs,
+                # The DB read above succeeded, so `known_slugs` lists every user Shortlist has — the
+                # complete picture converge needs before it may DELETE an unattributable collection.
+                may_delete_orphans=True,
+                handled_requests=self._handled_requests(session),
+                progress=progress,
+            )
 
     def _build_mdblist(self, store: SettingsStore) -> MdbListClient | None:
         """A cache-backed MDBList client when the chosen rating source needs it (any non-TMDB source
@@ -222,6 +274,40 @@ class ContextBuilder:
         """
         rows = session.query(RequestCandidate).filter(RequestCandidate.status.in_(("sent", "rejected"))).all()
         return {(row.tmdb_id, row.media_type) for row in rows}
+
+    def build_plex_only(self, *, dry_run: bool) -> EngineContext:
+        """A context with the PMS, plex.tv and the watch-history source — and nothing else.
+
+        For the handlers that only ever walk collections under a label: removing a disabled user's
+        rows, hiding a paused user's, the row reconciles, the poster reset, the rename, and the
+        read-only watch-history sync. `build()` opens TMDB, Trakt, Exa and MDBList clients, constructs
+        the LLM curator, and scans the whole `Collection` table to decide whether to build the poster
+        studio — none of which any of those touch, and all of which couple them to the availability of
+        services they never call. A watch sync failing because an LLM key is wrong is not a failure
+        anyone can act on.
+
+        The curator is the NullCurator and TMDB is unkeyed-but-real, because `EngineContext` requires
+        both; nothing on these paths calls either. `_refuse_a_different_server` still runs — it is what
+        stops a reconcile enumerating a stranger's PMS and concluding every row is gone.
+        """
+        with self._sessions() as session:
+            store = SettingsStore(session, self._secrets)
+            plex_url = store.get("plex.url")
+            plex_token = store.get("plex.token")
+            if not plex_url or not plex_token:
+                raise RuntimeError("Plex connection is not configured yet — finish setup first")
+            plex = PlexClient(plex_url, plex_token, timeout=int(store.get("plex.timeout_s") or 45))
+            _refuse_a_different_server(session, plex.machine_id)
+            plextv = PlexTvClient(plex_token, plex.machine_id, min_write_interval=float(store.get("plextv.throttle_s")))
+            return EngineContext(
+                config=EngineConfig(dry_run=dry_run),
+                plex=plex,
+                plextv=plextv,
+                tmdb=TmdbClient(store.get("tmdb.apikey"), cache=DbCache(self._sessions)),
+                history_source=ShareTokenWatchSource(plex, plextv, owner_token=plex_token),
+                curator=make_curator(""),
+                snapshots=DbSnapshotStore(self._sessions),
+            )
 
     def build_requests_only(self) -> tuple[RequestConfig | None, TmdbClient]:
         """Just the pieces the approval inbox's manual send needs: the request config and a TMDB client.
@@ -265,6 +351,10 @@ class ContextBuilder:
         return [
             {
                 "title": w.title,
+                # Carried so the UI can block a seed straight from a watch. It is the ONLY identifier
+                # a block can key on, and it is None for anything with no tmdb:// GUID — the caller
+                # must treat "no id" as "not blockable from here" rather than inventing one.
+                "tmdb_id": w.tmdb_id,
                 "media_type": w.media_type.value,
                 "watched_at": w.watched_at.isoformat(),
                 "year": w.year,
@@ -274,6 +364,34 @@ class ContextBuilder:
             }
             for w in distinct_recent(items, limit)
         ]
+
+    def _delivered_keys(self, session: Session) -> dict[tuple[str, str, str], int]:
+        """The delivery ledger as the engine wants it: (user_slug, row_slug, section_key) -> ratingKey.
+
+        Delivery uses it to answer "is this collection mine, under a title I no longer render?" by
+        IDENTITY rather than by counting rows — see `_deliver_one`. Same key shape as
+        `_previous_picks`, so the two read alike at the call site.
+
+        An ambiguous key (two rows naming one collection — reachable if a run died between the delete
+        and the persist on the rebuild path) is dropped rather than arbitrated: delivery then falls back
+        to the title, which is where it was before the ledger.
+        """
+        rows = list(session.query(Delivery).filter(Delivery.rating_key != 0))
+        claims: dict[int, int] = {}
+        for row in rows:
+            claims[row.rating_key] = claims.get(row.rating_key, 0) + 1
+        keys = {
+            (row.user_slug, row.collection_slug, row.library_key): row.rating_key
+            for row in rows
+            if claims[row.rating_key] == 1
+        }
+        if len(keys) != len(rows):
+            logger.warning(
+                "delivery ledger: {} entr(ies) name a collection another row also claims — those fall "
+                "back to matching by title",
+                len(rows) - len(keys),
+            )
+        return keys
 
     def _previous_picks(self, session: Session) -> dict[tuple[str, str, str], list[Pick]]:
         """Each row+library's picks from the run that last built it, keyed (user_slug, row_slug, section_key).
@@ -356,7 +474,22 @@ class ContextBuilder:
         overrides = self._row_overrides(session)
         profiles = []
         for user in query.all():
-            if user.restricted:
+            # A parental PROFILE, not the `restricted` flag: plex.tv sets that for every Plex Home
+            # account. Keying on it dropped ordinary managed users from every run — while the Users
+            # page now lets you enable them and the docs promise they get a row. An account with a
+            # profile still gets none: Plex hides every collection from it, so a row is invisible.
+            #
+            # `restriction_profile` is "" until the next user sync backfills it, so immediately after
+            # an upgrade a profiled account is briefly eligible. Harmless — it sees no collections
+            # either way, and the next sync settles it.
+            #
+            # BOTH flags, matching `privacy.py`'s skip exactly. They come from different endpoints
+            # and nothing enforces a relationship between them, so a `restricted=False` account that
+            # somehow reports a profile is a real cell — and privacy.py deliberately keeps writing
+            # its excludes. Keying on the profile alone here denied that same account a row, so it
+            # held excludes for rows it was never given: two modules disagreeing about whether one
+            # person can see anything.
+            if user.restricted and user.restriction_profile:
                 continue
             prefs = user.prefs or {}
             if prefs.get("paused"):
@@ -374,7 +507,9 @@ class ContextBuilder:
                     slug=user.slug,
                     nickname=user.nickname or user.friendly_name,
                     excluded_genres=set(prefs.get("excluded_genres") or []),
-                    blocked_seeds=set(prefs.get("blocked_seeds") or []),
+                    # Through the reader, not straight off prefs: the list holds bare ints on an
+                    # older install and records on a newer one, and the engine only wants ids.
+                    blocked_seeds=blocked_ids(prefs),
                     row_name_template=prefs.get("row_name_tpl"),
                     request_tag=request_tag,
                     row_overrides=overrides.get(user.id, {}),
@@ -460,8 +595,11 @@ class ContextBuilder:
                     request_tag=(collection.request_tag or "").strip(),
                     candidate_sources=list(collection.candidate_sources or []),
                     watched_pct=collection.watched_pct,  # None -> inherit the global watched cap
+                    rewatch=bool(collection.rewatch),
+                    unstarted_only=bool(collection.unstarted_only),
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
+                    max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
                     placement=collection.placement or "both",
                     placement_friends=collection.placement_friends or "both",
                     pin_top=bool(collection.pin_top),

@@ -108,3 +108,39 @@ class TestEventBus:
             await stream.aclose()
 
         asyncio.run(scenario())
+
+
+class TestSecurityHeaders:
+    """Baseline headers on every response. Deliberately NOT a locked-down CSP — this app renders Plex
+    avatars and TMDB artwork from hosts that vary per install, and a policy that blanks the UI on
+    somebody else's server is a policy they will switch off."""
+
+    def _client(self, tmp_path):
+        from starlette.testclient import TestClient
+
+        from shortlist.server.main import create_app
+
+        return TestClient(create_app(config_dir=tmp_path))
+
+    def test_the_baseline_headers_are_present(self, tmp_path):
+        with self._client(tmp_path) as client:
+            headers = client.get("/api/system/health").headers
+
+        assert headers["X-Frame-Options"] == "DENY"
+        assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+        assert headers["X-Content-Type-Options"] == "nosniff"
+        assert headers["Referrer-Policy"] == "same-origin"
+
+    def test_hsts_only_over_tls(self, tmp_path):
+        """Sending HSTS over plain HTTP is meaningless, and from a LAN install it could strand
+        someone on an https they have no certificate for."""
+        with self._client(tmp_path) as client:
+            assert "Strict-Transport-Security" not in client.get("/api/system/health").headers
+
+    def test_health_does_not_advertise_the_version(self, tmp_path):
+        """The one unauthenticated endpoint. An anonymous caller does not need to know which build to
+        look advisories up for; the UI reads the version from the owner-gated endpoint."""
+        with self._client(tmp_path) as client:
+            body = client.get("/api/system/health").json()
+
+        assert body == {"status": "ok"}
