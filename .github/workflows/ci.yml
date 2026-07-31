@@ -216,6 +216,23 @@ jobs:
           # into the image, so it cannot catch a missing SPA on its own.
           curl -fsS http://localhost:5959/ | grep -qi '<div id="root"' \
             || { echo "::error::/ did not serve the built SPA"; exit 1; }
+
+      - name: Every provider the wizard offers can actually be imported
+        run: |
+          set -euo pipefail
+          # Guards the exact bug in 549631f: the image installed a bare `pip install .`, so none of
+          # the LLM SDKs were present and picking any provider in setup dead-ended on an ImportError
+          # the owner could not fix — the container IS the product, they cannot pip install into it.
+          # Booting proves nothing here, because every provider is imported LAZILY at first use, so
+          # this has to import them on purpose. Extras are declared in pyproject's
+          # [project.optional-dependencies]; keep this list in step with what the wizard offers.
+          docker exec smoke python -c "
+          import importlib.util, sys
+          missing = [m for m in ('anthropic', 'openai', 'google.genai', 'PIL') if not importlib.util.find_spec(m)]
+          if missing:
+              sys.exit('::error::the image is missing provider SDK(s): ' + ', '.join(missing))
+          print('all provider SDKs present')
+          "
       - if: always()
         run: docker rm -f smoke >/dev/null 2>&1 || true
 
