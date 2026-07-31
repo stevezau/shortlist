@@ -1,4 +1,8 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  MutationCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 
 import { AppShell } from "@/components/layout/app-shell";
@@ -24,6 +28,16 @@ import { UserDetailPage } from "@/pages/user-detail";
 import { UsersPage } from "@/pages/users";
 
 const queryClient = new QueryClient({
+  // Any mutation might enqueue background work — disabling someone, pausing them, editing a row —
+  // and the activity poll idles at 30s, so its toast could arrive half a minute after the click that
+  // caused it. Refreshing the job queue after EVERY mutation is one cheap request and means no future
+  // enqueue site has to remember to do it; wiring each call site individually is what left this one
+  // silent for 30 seconds in the first place.
+  mutationCache: new MutationCache({
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 15_000,
