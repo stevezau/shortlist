@@ -90,8 +90,10 @@ export function ActivityFeed({ catalog }: { catalog: JobCatalogEntry[] }) {
   const jobs = useQuery({
     queryKey: ["jobs", "activity", limit],
     queryFn: () => api.getJobs(undefined, limit),
+    // Slow when idle rather than stopping: a feed of "every background job this server has run" that
+    // never refetches shows a job appearing only if you happen to reload.
     refetchInterval: (query) =>
-      (query.state.data ?? []).some(isActiveJob) ? 3_000 : false,
+      (query.state.data ?? []).some(isActiveJob) ? 3_000 : 15_000,
   });
   // A full page back means there is probably more; a short one means we reached the end.
   const maybeMore = (jobs.data ?? []).length >= limit;

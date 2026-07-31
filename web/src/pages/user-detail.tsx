@@ -113,7 +113,7 @@ function UserDetailBody({ user }: { user: User }) {
           <SectionHeading>Watch history</SectionHeading>
           <Card>
             <CardContent className="pt-6">
-              <WatchHistory userId={user.id} />
+              <WatchHistory userId={user.id} user={user} />
             </CardContent>
           </Card>
         </section>

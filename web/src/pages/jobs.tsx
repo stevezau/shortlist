@@ -91,6 +91,7 @@ function pendingEntry(kind: string): JobCatalogEntry {
     description: "",
     manual: true,
     schedule_optional: false,
+    schedule_setting: "",
     trigger: "",
     scheduled: false,
     next_run: null,
@@ -123,6 +124,48 @@ function SyncCronPanel({
   onChange: (cron: string) => void;
 }) {
   return <CronPicker value={value} onChange={onChange} />;
+}
+
+/**
+ * The frequency editor, for any job that owns a cron.
+ *
+ * Generic on purpose. Panels used to be wired job by job, so the two that nobody wired — privacy sync
+ * and the drift check — had no way to set a schedule at all: you could see when they would next run
+ * and not change it. Anything with a `schedule_setting` now gets this.
+ */
+function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
+  const settings = useSettings();
+  const saveSettings = useSaveSettings();
+  if (!entry.schedule_setting) return null;
+
+  const stored =
+    ((settings.data ?? {})[entry.schedule_setting] as string | undefined) ?? "";
+
+  return (
+    <div className="space-y-2">
+      <CronPicker
+        value={stored}
+        onChange={(cron) =>
+          saveSettings.mutate({ [entry.schedule_setting]: cron })
+        }
+      />
+      {/* Only offered where blank genuinely means OFF. Everywhere else a blank cron falls back to the
+          built-in default, so a "turn off" button there would be a lie. */}
+      {entry.schedule_optional && stored !== "" && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-xs text-muted-foreground"
+          disabled={saveSettings.isPending}
+          onClick={() =>
+            saveSettings.mutate({ [entry.schedule_setting]: "" })
+          }
+        >
+          Turn this schedule off
+        </Button>
+      )}
+    </div>
+  );
 }
 
 /** Backups: what's in one, where it lives, how often, how many to keep, and the restore list. */
@@ -360,12 +403,14 @@ export function JobsPage() {
   const catalog = useQuery({
     queryKey: ["jobs", "catalog"],
     queryFn: api.getJobCatalog,
-    // Poll only while something is in flight, then stop — a job started here finishes without a
-    // reload, but an idle page isn't hitting the API forever.
+    // Fast while something is in flight, SLOW when idle — never `false`. Stopping altogether meant a
+    // job queued anywhere else (the scheduler firing, another tab, a row edit) never showed up here:
+    // the page that exists to show background work was the one place that didn't know it had started,
+    // while the header's activity icon — which always polls — did.
     refetchInterval: (query) =>
       (query.state.data ?? []).some((e) => e.running + e.queued > 0)
         ? 3_000
-        : false,
+        : 15_000,
   });
 
   // One EventSource for the whole page (rules/frontend.md); the two sync jobs read the slice of
@@ -457,11 +502,22 @@ export function JobsPage() {
   const automatic = entries.filter((e) => !e.manual);
   const totals = entries.reduce(
     (acc, e) => ({
-      active: acc.active + e.running + e.queued,
+      running: acc.running + e.running,
+      queued: acc.queued + e.queued,
       failed: acc.failed + e.failed,
     }),
-    { active: 0, failed: 0 },
+    { running: 0, queued: 0, failed: 0 },
   );
+  const active = totals.running + totals.queued;
+  // "2 running · 1 queued" rather than "3 in flight": queued and running are different situations —
+  // one is working, the other is waiting on the writer lock or a busy queue — and lumping them hides
+  // which. Clicking goes to Activity, where you can see WHICH jobs they are.
+  const activeLabel = [
+    totals.running > 0 ? `${totals.running} running` : null,
+    totals.queued > 0 ? `${totals.queued} queued` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const watchedRunning = watchedProgress !== null;
   const drifted =
@@ -499,18 +555,23 @@ export function JobsPage() {
         {/* Health at a glance, and only when there is something to say — a permanent "0 failed"
             teaches you to stop reading it. */}
         <div className="flex flex-wrap items-center gap-2">
-          {totals.active > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+          {active > 0 && (
+            <button
+              type="button"
+              onClick={() => setSearchParams({ tab: "activity" }, { replace: true })}
+              className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title="See which jobs are running"
+            >
               <span className="size-1.5 animate-pulse rounded-full bg-primary" />
-              {totals.active} in flight
-            </span>
+              {activeLabel}
+            </button>
           )}
           {totals.failed > 0 && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
               {totals.failed} failed
             </span>
           )}
-          {totals.active === 0 && totals.failed === 0 && entries.length > 0 && (
+          {active === 0 && totals.failed === 0 && entries.length > 0 && (
             <span className="text-xs text-muted-foreground">
               All jobs healthy
             </span>
@@ -684,6 +745,7 @@ export function JobsPage() {
               <JobRow
                 entry={entryFor("sync.check")}
                 icon={ShieldCheck}
+                panel={<SchedulePanel entry={entryFor("sync.check")} />}
                 action={{
                   label: "Check for drift",
                   run: () => driftPreview.mutate(),
@@ -767,6 +829,7 @@ export function JobsPage() {
               <JobRow
                 entry={entryFor("privacy.sync")}
                 icon={Lock}
+                panel={<SchedulePanel entry={entryFor("privacy.sync")} />}
                 action={{
                   label: "Run",
                   run: () => privacySync.mutate(),

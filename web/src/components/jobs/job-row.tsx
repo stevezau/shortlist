@@ -5,6 +5,7 @@ import { useState } from "react";
 import { JobHistory } from "@/components/jobs/job-history";
 import { Button } from "@/components/ui/button";
 import { timeAgo, timeUntil } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { jobDuration } from "@/lib/job-status";
 import type { JobCatalogEntry } from "@/lib/types";
 
@@ -81,8 +82,22 @@ export function JobRow({
   const last = entry.last;
 
   return (
-    <div className={first ? "" : "border-t"} data-testid={`job-${entry.kind}`}>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+    // An OPEN row is tinted end to end — header included — so the panel reads as belonging to the job
+    // above it. Without that the body just ran into the next row and "Back up the database" looked
+    // like part of Privacy sync's settings.
+    <div
+      className={cn(
+        first ? "" : "border-t",
+        open && "bg-muted/30 ring-1 ring-inset ring-border",
+      )}
+      data-testid={`job-${entry.kind}`}
+    >
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5",
+          open && "border-b border-border/60",
+        )}
+      >
         <button
           type="button"
           onClick={() => setOpen(!open)}
@@ -145,7 +160,7 @@ export function JobRow({
       )}
 
       {open && (
-        <div className="space-y-4 border-t bg-muted/20 px-3 py-3">
+        <div className="space-y-4 border-l-2 border-primary/40 px-3 py-3">
           <p className="text-sm text-muted-foreground">{entry.description}</p>
           {/* A job with no button has to say what DOES start it, or the row reads as broken. */}
           {!entry.manual && entry.trigger && (

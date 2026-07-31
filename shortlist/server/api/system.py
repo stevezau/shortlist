@@ -604,6 +604,10 @@ async def jobs_catalog(request: Request) -> list[dict]:
                     # an optional schedule left blank has a job_id but no trigger.
                     "scheduled": bool(entry.schedule_job_id),
                     "schedule_optional": entry.schedule_optional,
+                    # The settings key holding this job's cron, so the UI can offer an editor for any
+                    # schedulable job rather than each being wired by hand — which is how privacy sync
+                    # and the drift check ended up with no way to set a schedule at all.
+                    "schedule_setting": entry.schedule_setting or "",
                     "next_run": next_run(entry.schedule_job_id),
                     "last": _job_dict(last) if last else None,
                     "total": sum(counts.values()),

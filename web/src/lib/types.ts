@@ -1033,6 +1033,8 @@ export interface JobCatalogEntry {
   scheduled: boolean;
   /** True when the schedule is opt-in, so a blank cron means "off by choice" rather than "broken". */
   schedule_optional: boolean;
+  /** Settings key holding this job's cron, or "" when it has no schedule of its own. */
+  schedule_setting: string;
   /** ISO time of the next scheduled firing, when this kind runs on a timer. */
   next_run: string | null;
   /** The most recent job of this kind, or null if it has never run. */
