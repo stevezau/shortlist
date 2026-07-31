@@ -724,6 +724,54 @@ class TestHybridSplit:
         assert sorted(m.tmdb_id for m in report.queued) == [2, 3]  # the borderline ones wait for approval
         assert report.considered == 3
 
+    def _blocked_log(self, cfg, demand) -> str:
+        """The request pass's INFO lines. Loguru doesn't feed stdlib logging, so `caplog` sees
+        nothing here — the suite's convention is a sink on the module's own logger."""
+        lines: list[str] = []
+        sink = requests_mod.logger.add(lines.append, level="INFO", format="{message}")
+        try:
+            requests_mod.request_missing(cfg, FakeTmdb(), demand, dry_run=False)
+        finally:
+            requests_mod.logger.remove(sink)
+        return "\n".join(lines)
+
+    def test_the_log_names_which_bar_blocked_each_queued_title(self, monkeypatch):
+        """ "0 auto-sent" alone is unanswerable — the run must say WHICH bar stopped each title.
+
+        Every bar here is owner-tunable, so a run can queue everything simply because the settings
+        at the time were stricter than the ones you read afterwards. Reconstructing that took a full
+        forensic pass (settings timestamps vs run times vs persisted ratings, 2026-08-01); the run
+        already holds all four facts, so it logs them.
+        """
+        fake = FakeArr(excluded={4})
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)
+        demand = self._demand(
+            MissingTitle(2, "few wanters", MediaType.MOVIE, 2020, rating=8.5, vote_count=900, demand=1),
+            MissingTitle(3, "lower rated", MediaType.MOVIE, 2020, rating=7.2, vote_count=900, demand=5),
+            MissingTitle(4, "excluded", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=5),
+        )
+        text = self._blocked_log(self._hybrid(), demand)
+
+        assert fake.movie_calls == []
+        assert "auto_min_demand (3)" in text, "the demand-blocked title must name its bar"
+        assert "auto_min_rating (8.0)" in text, "the rating-blocked title must name its bar"
+        assert "exclusion list" in text, "the excluded title must name its reason"
+
+    def test_the_log_names_auto_send_being_off_as_the_reason(self, monkeypatch):
+        """The commonest cause of a silent inbox, and the one the old line hid completely."""
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
+        demand = self._demand(MissingTitle(1, "strong", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=9))
+        assert "auto-send is off" in self._blocked_log(self._hybrid(auto_send=False), demand)
+
+    def test_the_log_names_the_cap_when_it_is_what_blocked_the_overflow(self, monkeypatch):
+        """An overflow title is queued for a completely different reason than a weak one — raising
+        `max_per_run` fixes it, and nothing else does. The line has to tell them apart."""
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
+        demand = self._demand(
+            *[MissingTitle(i, f"t{i}", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=5) for i in range(4)]
+        )
+        assert "max_per_run (2) already filled" in self._blocked_log(self._hybrid(max_per_run=2), demand)
+
     def test_auto_send_off_queues_every_qualifying_title(self, monkeypatch):
         fake = FakeArr()
         monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: fake)

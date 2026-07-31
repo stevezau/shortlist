@@ -9,6 +9,8 @@ can fail without affecting a single row's visibility.
 
 from __future__ import annotations
 
+from collections import Counter
+
 from loguru import logger
 
 from shortlist.engine.clients.arr import ArrError, RadarrClient, SonarrClient
@@ -188,14 +190,34 @@ def request_missing(
     # excluded title is never auto-sent (the Arr would refuse it) — it's surfaced for a manual call.
     cap = max(0, cfg.max_per_run)
     auto: list[MissingTitle] = []
+    # Which bar stopped each title, tallied. "0 auto-sent" on its own is unanswerable: every setting
+    # here is owner-tunable and the run may have used values since changed, so reconstructing the
+    # reason afterwards means diffing settings timestamps against run times against persisted
+    # ratings (a full forensic pass, 2026-08-01). The run has all four facts in hand — say so.
+    blocked: Counter[str] = Counter()
     for m in qualifying:  # already ranked best-first by the gate
-        clears_auto = (
-            cfg.auto_send and not m.excluded and m.demand >= cfg.auto_min_demand and m.rating >= cfg.auto_min_rating
-        )
-        if clears_auto and len(auto) < cap:
-            auto.append(m)
+        if not cfg.auto_send:
+            reason = "auto-send is off"
+        elif m.excluded:
+            reason = "on an Arr exclusion list"
+        elif m.demand < cfg.auto_min_demand:
+            reason = f"demand below auto_min_demand ({cfg.auto_min_demand})"
+        elif m.rating < cfg.auto_min_rating:
+            reason = f"rating below auto_min_rating ({cfg.auto_min_rating})"
+        elif len(auto) >= cap:
+            reason = f"max_per_run ({cap}) already filled"
         else:
-            report.queued.append(m)
+            auto.append(m)
+            continue
+        blocked[reason] += 1
+        report.queued.append(m)
+
+    if blocked:
+        logger.info(
+            "requests: {} queued rather than auto-sent — {}",
+            sum(blocked.values()),
+            "; ".join(f"{n} {reason}" for reason, n in blocked.most_common()),
+        )
 
     if not auto:
         logger.info("requests: {} qualifying, 0 auto-sent, {} queued for approval", len(qualifying), len(report.queued))
