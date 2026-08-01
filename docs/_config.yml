@@ -9,6 +9,11 @@ description: >-
 url: https://stevezau.github.io
 baseurl: /shortlist
 
+# The card Reddit, Discord, Slack and X render when someone shares a docs link.
+# The real Plex row is the whole pitch in one image, so it's worth more here than
+# any logo would be.
+image: /images/plex-picked-for-you.jpg
+
 theme: jekyll-theme-cayman
 
 # jekyll-relative-links rewrites the .md links these pages use for each other so
