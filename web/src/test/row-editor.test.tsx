@@ -812,3 +812,32 @@ describe("RowEditor — order", () => {
     ).toBe("newest");
   });
 });
+
+describe("RowEditor — rating source is answerable where the order is chosen", () => {
+  it("reveals the source only when the order actually uses one", async () => {
+    // "Highest rated" raises "rated by whom?" at that moment. Answering it in Settings — a different
+    // screen, under a different heading — is how the setting stayed undiscovered.
+    settingsData.current = { "recommendations.rating_source": "imdb" };
+    renderEditor(row({ pick_order: "best" }));
+    expect(screen.queryByLabelText("Rated by")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Highest rated" }));
+
+    expect(await screen.findByLabelText("Rated by")).toHaveValue("imdb");
+  });
+
+  it("groups the settings under headings instead of one flat scroll", () => {
+    renderEditor(row());
+
+    for (const section of [
+      "Who gets it",
+      "What goes in it",
+      "How it reads",
+      "Where it appears",
+    ]) {
+      expect(
+        screen.getByRole("heading", { name: section }),
+      ).toBeInTheDocument();
+    }
+  });
+});

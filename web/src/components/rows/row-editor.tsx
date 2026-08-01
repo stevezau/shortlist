@@ -30,7 +30,11 @@ import { RecentCountField } from "@/components/recent-count-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
-import { useSaveCollection, useSettings } from "@/lib/queries";
+import {
+  useSaveCollection,
+  useSaveSettings,
+  useSettings,
+} from "@/lib/queries";
 import type { RowTemplate } from "@/lib/row-templates";
 import {
   freshnessGlobal,
@@ -41,7 +45,11 @@ import {
   watchedPctGlobal,
   watchedPctSeed,
 } from "@/lib/row-globals";
-import { asRatingSource, RATING_LABELS } from "@/lib/rating-sources";
+import {
+  asRatingSource,
+  RATING_LABELS,
+  RATING_SOURCES,
+} from "@/lib/rating-sources";
 import type { Collection, CollectionInput, User } from "@/lib/types";
 
 /** The tightest seed budget a row named after ONE title can actually use.
@@ -74,6 +82,23 @@ function pickOrderHelp(
     default:
       return "Strongest suggestions first — how well each title matches what they watch.";
   }
+}
+
+/** A chapter heading inside the row dialog.
+ *
+ *  The dialog carries ~19 settings. They were already in a sensible order, but as one flat scroll
+ *  separated only by hairlines there was nothing to navigate by — finding "the ordering one" meant
+ *  reading every block on the way past. These group the same controls, in the same order, under the
+ *  question each group answers. */
+function SectionHeading({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div className="border-t pt-6">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {title}
+      </h3>
+      <p className="mt-1 text-sm text-muted-foreground">{hint}</p>
+    </div>
+  );
 }
 
 /**
@@ -195,8 +220,13 @@ export function RowEditor({
   onRename?: () => void;
 }) {
   const save = useSaveCollection();
+  const saveSettings = useSaveSettings();
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
   const settings = useSettings();
+  const ratingSource = asRatingSource(
+    settings.data?.["recommendations.rating_source"],
+  );
+  const ratingLabel = RATING_LABELS[ratingSource];
   const [input, setInput] = useState<CollectionInput>(
     collection
       ? toInput(collection)
@@ -291,6 +321,11 @@ export function RowEditor({
             hasImage={collection?.poster?.has_image ?? false}
           />
 
+          <SectionHeading
+            title="Who gets it"
+            hint="Whether everyone shares one row or each person gets their own, and who that includes."
+          />
+
           <div className="space-y-2">
             <Label>Built how?</Label>
             <Segmented
@@ -320,6 +355,11 @@ export function RowEditor({
             audienceUserIds={input.audience_user_ids}
             users={users}
             onChange={set}
+          />
+
+          <SectionHeading
+            title="What goes in it"
+            hint="When it rebuilds, how big it is, and which titles it can draw on."
           />
 
           <RowScheduleField
@@ -557,6 +597,11 @@ export function RowEditor({
             />
           </InheritableField>
 
+          <SectionHeading
+            title="How it reads"
+            hint="The order the titles appear in on the shelf."
+          />
+
           <div className="space-y-2">
             <Label>Order</Label>
             <Segmented
@@ -571,14 +616,50 @@ export function RowEditor({
               ]}
             />
             <p className="text-sm text-muted-foreground">
-              {pickOrderHelp(
-                input.pick_order,
-                RATING_LABELS[asRatingSource(settings.data?.["recommendations.rating_source"])],
-              )}
+              {pickOrderHelp(input.pick_order, ratingLabel)}
             </p>
+            {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
+                question "rated by whom?" at exactly this moment, and answering it by sending someone
+                to another screen is how the setting stayed undiscovered. It is still one server-wide
+                value, so the note says so rather than implying it is per-row. */}
+            {input.pick_order === "rating" && (
+              <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
+                <Label htmlFor="row-rating-source">Rated by</Label>
+                <select
+                  id="row-rating-source"
+                  value={ratingSource}
+                  onChange={(e) =>
+                    saveSettings.mutate({
+                      "recommendations.rating_source": asRatingSource(
+                        e.target.value,
+                      ),
+                    })
+                  }
+                  disabled={saveSettings.isPending}
+                  className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
+                >
+                  {RATING_SOURCES.map((source) => (
+                    <option key={source} value={source}>
+                      {RATING_LABELS[source]}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {ratingSource === "tmdb"
+                    ? "TMDB needs no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic come from MDBList and need its API key in Settings → Requests."
+                    : `Scores come from MDBList — without its API key in Settings → Requests, ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
+                  Shared by every row ordered by rating.
+                </p>
+              </div>
+            )}
           </div>
 
-          <div className="space-y-3 border-t pt-4">
+          <SectionHeading
+            title="Where it appears"
+            hint="Which Plex screens carry this row, and where it sits on the shelf."
+          />
+
+          <div className="space-y-3">
             <Label>Where it shows</Label>
             <p className="text-sm text-muted-foreground">
               Which Plex screens this row appears on — matches Plex&rsquo;s
