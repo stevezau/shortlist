@@ -11,8 +11,13 @@ baseurl: /shortlist
 
 # The card Reddit, Discord, Slack and X render when someone shares a docs link.
 # The real Plex row is the whole pitch in one image, so it's worth more here than
-# any logo would be.
-image: /images/plex-picked-for-you.jpg
+# any logo would be. This has to go through `defaults` rather than a top-level
+# `image:` — jekyll-seo-tag only ever reads page.image, never site.image.
+defaults:
+  - scope:
+      path: ""
+    values:
+      image: /images/plex-picked-for-you.jpg
 
 theme: jekyll-theme-cayman
 
