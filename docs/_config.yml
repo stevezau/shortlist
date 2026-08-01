@@ -19,6 +19,10 @@ defaults:
     values:
       image: /images/plex-picked-for-you.jpg
 
+# Ownership proof for Google Search Console (where the sitemap is submitted).
+# Public by design — it's served as a meta tag on every page.
+google_site_verification: cqlqedFcoobifs1lLaDIdbBPCPurJ-JlDAIVOTs_02k
+
 theme: jekyll-theme-cayman
 
 # jekyll-relative-links rewrites the .md links these pages use for each other so
