@@ -1,3 +1,8 @@
+---
+title: Guides — rows, schedules and troubleshooting
+description: A tour of the Shortlist web interface, how to configure rows and refresh schedules, per-user overrides, and how to troubleshoot a run that didn't deliver.
+---
+
 # Guides
 
 ## The web interface

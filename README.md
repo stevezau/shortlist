@@ -1,6 +1,8 @@
 # Shortlist ✨
 
-> A private, personalized **"Picked for You"** row for every user on your Plex server.
+> **Per-user movie & TV recommendations for Plex.** A private, personalized **"Picked for You"** row
+> on every user's Plex home screen — built from their own watch history, visible only to them.
+> Self-hosted, one Docker container, works with or without AI.
 
 [![CI](https://github.com/stevezau/shortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/stevezau/shortlist/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/codecov/c/github/stevezau/shortlist)](https://codecov.io/gh/stevezau/shortlist)
@@ -20,11 +22,13 @@
 ## The problem: "what should I watch next?"
 
 Everyone on your Plex server faces the same blank-screen problem — a huge library and no idea what
-to put on. Plex's built-in rows are the same for everyone and ignore what _you've_ actually watched.
+to put on. Plex's built-in recommendation rows are the same for everyone and ignore what _you've_
+actually watched.
 
-**Shortlist fixes that, per person.** For each user it looks at their own watch history and builds a
-personalized collection — "Picked for You" — of things from your library they haven't seen but
-probably want to, and puts it on their Plex home screen. It's **private**: each person sees only
+**Shortlist gives every user their own recommendations.** For each person it reads their own Plex
+watch history and builds a personalized collection — "Picked for You" — of titles from your library
+they haven't seen but probably want to, then puts it on their Plex home screen. Netflix-style
+per-user recommendations, self-hosted on your own server. It's **private**: each person sees only
 their own row, nobody else's. It refreshes automatically. It turns your library into something
 everyone can actually discover from.
 
@@ -107,6 +111,22 @@ account is told to hide that label, so only its owner ever sees it.
 
 <sub>App screenshots use placeholder titles (a test library); the Plex row above is a real server.</sub>
 
+## How it compares
+
+Shortlist does one thing the rest of the stack doesn't: build a **different** collection for each
+person and keep it private. It's designed to sit alongside what you already run, not replace it.
+
+| Tool                                    | What it does                                              | How Shortlist relates                                                                                                                                                                                                  |
+| --------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Kometa** (formerly Plex Meta Manager) | Builds collections and applies metadata/artwork from YAML | Kometa's collections are the same for everyone. Shortlist builds a different one per person and hides it from everyone else. They coexist — Shortlist never touches a collection it didn't create.                     |
+| **Tautulli**                            | Monitors and reports on Plex watch activity               | Complementary. Shortlist reads watch history straight from Plex; Tautulli is optional and only improves the names people are shown by. Tautulli tells you what _was_ watched — Shortlist decides what to watch _next_. |
+| **Overseerr / Jellyseerr**              | Request management — users ask for titles, it grabs them  | Complementary. Overseerr is request-driven: someone has to already know what they want. Shortlist suggests it first, and can send the gaps to Radarr/Sonarr itself.                                                    |
+| **Plex's own "Recommended for You"**    | Plex's built-in discovery shelves                         | Server-wide, and weighted towards Plex's own streaming catalogue. Shortlist is per-account and built only from titles that are actually in _your_ library.                                                             |
+| **Jellyfin / Emby**                     | Alternative media servers                                 | Shortlist is Plex-only — it depends on Plex's label-based share filters (PMS 1.43.2+) to keep each row private. There's no equivalent mechanism to port to.                                                            |
+
+Curious how the per-user privacy actually works?
+See [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md).
+
 ## Quick start
 
 **With Docker Compose:**
@@ -147,6 +167,9 @@ Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-starte
 | [Guides](docs/guides.md)                   | UI tour, schedules, troubleshooting |
 | [Reference](docs/reference.md)             | Settings, API, env vars             |
 | [FAQ](docs/faq.md)                         | Privacy model, Kometa, uninstall    |
+
+**Background:** [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md)
+— the label + share-filter mechanism this is built on, and the ordering mistake that leaks.
 
 ## License
 

@@ -1,0 +1,23 @@
+title: Shortlist
+tagline: Per-user movie & TV recommendations for Plex
+description: >-
+  Self-hosted, per-user movie and TV recommendations for Plex. A private
+  "Picked for You" row on every user's Plex home screen, built from their own
+  watch history and visible only to them. One Docker container, works with or
+  without AI.
+
+url: https://stevezau.github.io
+baseurl: /shortlist
+
+theme: jekyll-theme-cayman
+
+# jekyll-relative-links rewrites the .md links these pages use for each other so
+# they work both on github.com and on the built site.
+plugins:
+  - jekyll-relative-links
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+relative_links:
+  enabled: true
+  collections: false
