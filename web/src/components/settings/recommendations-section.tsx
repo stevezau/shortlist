@@ -225,12 +225,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="freshness">Freshness</Label>
               <p className="text-sm text-muted-foreground">
-                How often a row refreshes — not a nightly reshuffle. Most nights
-                a row stays exactly as it is (nothing rewritten to Plex); on its
-                refresh night the strongest picks stay and the weakest are
-                swapped for new ones. Lower = stickier and cheaper; higher =
-                fresher. The default every row inherits; any row can choose its
-                own.
+                How often a row swaps in new titles. Most nights a row keeps
+                the same set (nothing rewritten to Plex); on its refresh night
+                the strongest picks stay and the weakest are swapped for new
+                ones. Lower = stickier and cheaper; higher = fresher. This
+                decides <strong>which</strong> titles a row holds — the order
+                they appear in is that row’s own <strong>Order</strong> setting.
+                The default every row inherits; any row can choose its own.
               </p>
               <FreshnessSlider
                 id="freshness"

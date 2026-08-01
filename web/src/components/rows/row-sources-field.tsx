@@ -93,7 +93,7 @@ export function RowSourcesField({
       )}
       {!custom ? (
         <p className="text-sm text-muted-foreground">
-          This row uses the sources you enabled in Settings → Recommendations
+          This row uses the sources you enabled in Settings → Finding titles
           {globalSourceLabels(settings.data) &&
             ` — currently ${globalSourceLabels(settings.data)}`}
           .
@@ -132,7 +132,7 @@ export function RowSourcesField({
             // so it's role="status".
             <p role="status" className="text-sm text-warning">
               Nothing ticked, so this row falls back to the global default from
-              Settings → Recommendations. Tick at least one source to give it
+              Settings → Finding titles. Tick at least one source to give it
               its own.
             </p>
           ) : (

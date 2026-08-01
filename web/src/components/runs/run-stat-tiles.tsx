@@ -81,7 +81,7 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
           label="AI tokens"
           value={tokens.toLocaleString()}
           hint={stepInline ? `${stepInline} tokens` : "curate + AI sources"}
-          title="Total AI tokens this run cost, split by what the AI did. Turn AI sources off in Settings → Recommendations to lower it."
+          title="Total AI tokens this run cost, split by what the AI did. Turn AI sources off in Settings → Finding titles to lower it."
         />
       )}
       {(exa > 0 || exaCacheHits > 0) && (

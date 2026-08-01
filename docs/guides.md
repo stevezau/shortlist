@@ -197,7 +197,7 @@ watched titles every discovery source searches from. Fewer means a tighter, more
 a couple of things; more means broader coverage of someone's taste. It is separate from **Recent
 watches to search**, which only caps the AI web-search source.
 
-There is a server-wide default for it in **Settings → Recommendations**, and any row can override it.
+There is a server-wide default for it in **Settings → Finding titles**, and any row can override it.
 The global stops at 5 while a row goes down to 1 — a single seed is a deliberate choice for one row,
 not something to impose on every row at once.
 

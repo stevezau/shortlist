@@ -26,6 +26,10 @@ export function RecentCountField({
 }: {
   value: number;
   onChange: (count: number) => void;
+  /** Caption above the input. Pass "" when the surrounding block already renders one — an
+   *  `InheritableField` does, and rendering both printed the same heading twice with the toggle
+   *  sandwiched between them. The input keeps an `aria-label` either way, so suppressing the
+   *  visible caption never costs the field its accessible name. */
   label?: string;
 }) {
   const id = useId();
@@ -46,9 +50,10 @@ export function RecentCountField({
 
   return (
     <div className="space-y-1.5">
-      <Label htmlFor={id}>{label}</Label>
+      {label ? <Label htmlFor={id}>{label}</Label> : null}
       <Input
         id={id}
+        aria-label="Recent watches to search"
         type="number"
         inputMode="numeric"
         min={RECENT_COUNT_MIN}

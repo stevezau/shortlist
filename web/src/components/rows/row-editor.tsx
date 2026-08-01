@@ -241,7 +241,9 @@ export function RowEditor({
             <strong className="text-foreground">
               {template.emoji} {template.title}
             </strong>
-            . Change anything you like —{" "}
+            {/* Several template titles end in an ellipsis ("Because you watched…"), which the
+                sentence stop then doubled into "…." — so the separator is a dash, not a full stop. */}
+            {" — change anything you like. "}
             {template.highlights.join(", ").toLowerCase()}.
           </p>
         )}
@@ -384,7 +386,7 @@ export function RowEditor({
           <InheritableField
             label="Already-watched titles"
             labelFor="row-watched-pct"
-            description="How much of this row may be things a person has already finished. Leave on the global default to follow Settings → Recommendations."
+            description="How much of this row may be things a person has already finished. Leave on the global default to follow Settings → Finding titles."
             ariaLabel="Use the global already-watched default"
             inheriting={input.watched_pct === null}
             globalValue={watchedPctGlobal(settings.data)}
@@ -470,7 +472,7 @@ export function RowEditor({
           <InheritableField
             label="Freshness"
             labelFor="row-freshness"
-            description="How much this row changes day to day. Leave on the global default to follow Settings → Recommendations."
+            description="How often this row swaps in new titles — which titles it holds, not the sequence they appear in (that’s Order, below). Leave on the global default to follow Settings → Finding titles."
             ariaLabel="Use the global freshness default"
             inheriting={input.freshness === null}
             globalValue={freshnessGlobal(settings.data)}
@@ -487,7 +489,7 @@ export function RowEditor({
 
           <InheritableField
             label="Recent watches to search"
-            description="How many of a person’s most recent watches the AI web-search source looks up for this row (one cached search each). Only affects rows using AI web search. Leave on the global default to follow Settings → Recommendations."
+            description="How many of a person’s most recent watches the AI web-search source looks up for this row (one cached search each). Only affects rows using AI web search. Leave on the global default to follow Settings → Finding titles."
             ariaLabel="Use the global recent-watches default"
             inheriting={input.recent_count === null}
             globalValue={recentCountGlobal(settings.data)}
@@ -498,6 +500,7 @@ export function RowEditor({
             }
           >
             <RecentCountField
+              label=""
               value={input.recent_count ?? 0}
               onChange={(next) => set({ recent_count: next })}
             />
@@ -548,6 +551,7 @@ export function RowEditor({
             }
           >
             <MaxSeedsField
+              label=""
               value={input.max_seeds ?? 0}
               onChange={(next) => set({ max_seeds: next })}
             />
