@@ -96,8 +96,15 @@ def render_row_name(template: str, profile: UserProfile, picks: list[Pick], libr
 
     A cold-start user has no seed, so a `{top_seed}` template would otherwise render the
     dangling half-sentence "Because you watched" onto a real Plex Home screen.
+
+    The seed comes from the BEST-MATCHING pick (lowest `rank`), not from `picks[0]`. Those were the
+    same thing until a row could choose its own display order: `picks` now arrives in the order it is
+    written to Plex, so reading position 0 renamed a `{top_seed}` row after whichever pick happened to
+    sort first — a shuffled one would have picked a new name most nights, rewriting the title on Plex
+    each time. `rank` is stamped before ordering and still means "how good a match".
     """
-    top_seed = picks[0].seed_title if picks and picks[0].seed_title else ""
+    lead = min(picks, key=lambda p: p.rank) if picks else None
+    top_seed = lead.seed_title if lead and lead.seed_title else ""
     if "{top_seed}" in template and not top_seed:
         return DEFAULT_ROW_NAME
     rendered = (

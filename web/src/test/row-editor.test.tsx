@@ -56,6 +56,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     recent_count: null,
     max_seeds: null,
+    pick_order: "best",
     placement: "both",
     placement_friends: "both",
     pin_top: false,
@@ -754,5 +755,60 @@ describe("RowEditor — name template variables", () => {
 
     await user.type(screen.getByLabelText("Name"), "Hidden Gems");
     expect(screen.queryByText(/would see/)).not.toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — order", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("marks the row's current order as the pressed option", () => {
+    renderEditor(row({ pick_order: "rating" }));
+
+    expect(
+      screen.getByRole("button", { name: "Highest rated" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Best match" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("names the rating service the server is configured for", async () => {
+    // "Highest rated" alone does not say WHOSE score. The answer lives in a setting the owner may
+    // never have opened, so the editor states it where the choice is made.
+    settingsData.current = { "recommendations.rating_source": "imdb" };
+    renderEditor(row({ pick_order: "rating" }));
+
+    expect(
+      await screen.findByText(/Highest IMDb score first/i),
+    ).toBeInTheDocument();
+  });
+
+  it("explains what the chosen order does, and names shuffle's cost", async () => {
+    renderEditor(row({ pick_order: "best" }));
+    expect(screen.getByText(/Strongest suggestions first/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Shuffled" }));
+
+    // The one order that rewrites the collection on Plex when nothing else changed — the owner
+    // should not have to discover that from their run history.
+    expect(screen.getByText(/different order every day/i)).toBeInTheDocument();
+    expect(screen.getByText(/writes to Plex/i)).toBeInTheDocument();
+  });
+
+  it("round-trips the chosen order into the PATCH body", async () => {
+    renderEditor(row({ pick_order: "best" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Newest" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).pick_order,
+    ).toBe("newest");
   });
 });

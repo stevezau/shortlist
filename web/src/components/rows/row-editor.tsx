@@ -41,6 +41,7 @@ import {
   watchedPctGlobal,
   watchedPctSeed,
 } from "@/lib/row-globals";
+import { asRatingSource, RATING_LABELS } from "@/lib/rating-sources";
 import type { Collection, CollectionInput, User } from "@/lib/types";
 
 /** The tightest seed budget a row named after ONE title can actually use.
@@ -50,6 +51,29 @@ import type { Collection, CollectionInput, User } from "@/lib/types";
  *  candidates for its other half, so that library's collection never builds. */
 function namedRowSeeds(media: string): number {
   return media === "both" ? 2 : 1;
+}
+
+/** What each pick order actually does, in the row editor's voice: says what happens, not what it is.
+ *
+ *  "Shuffled" names its cost out loud. It is the only order that rewrites the collection on Plex on
+ *  nights when nothing about the row has changed — the other three ride along with a refresh the row
+ *  was doing anyway, so they cost nothing extra. */
+function pickOrderHelp(
+  order: CollectionInput["pick_order"],
+  ratingLabel: string,
+): string {
+  switch (order) {
+    case "rating":
+      // Names the service the server is actually configured for: "Highest rated" alone leaves the
+      // owner guessing whose score they get, and the answer is a setting they may not have visited.
+      return `Highest ${ratingLabel} score first, whatever the match.`;
+    case "newest":
+      return "Most recently released first.";
+    case "shuffle":
+      return "A different order every day, from the same titles. The only order that writes to Plex on days the row is otherwise unchanged.";
+    default:
+      return "Strongest suggestions first — how well each title matches what they watch.";
+  }
 }
 
 /**
@@ -528,6 +552,27 @@ export function RowEditor({
               onChange={(next) => set({ max_seeds: next })}
             />
           </InheritableField>
+
+          <div className="space-y-2">
+            <Label>Order</Label>
+            <Segmented
+              value={input.pick_order}
+              onChange={(pick_order) => set({ pick_order })}
+              ariaLabel="How the titles in this row are ordered"
+              options={[
+                { value: "best", label: "Best match" },
+                { value: "rating", label: "Highest rated" },
+                { value: "newest", label: "Newest" },
+                { value: "shuffle", label: "Shuffled" },
+              ]}
+            />
+            <p className="text-sm text-muted-foreground">
+              {pickOrderHelp(
+                input.pick_order,
+                RATING_LABELS[asRatingSource(settings.data?.["recommendations.rating_source"])],
+              )}
+            </p>
+          </div>
 
           <div className="space-y-3 border-t pt-4">
             <Label>Where it shows</Label>

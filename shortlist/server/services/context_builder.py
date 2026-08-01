@@ -167,6 +167,7 @@ class ContextBuilder:
                 freshness=float(store.get("recommendations.freshness") or 0.0),
                 recent_count=int(store.get("recommendations.recent_count") or 10),
                 max_seeds=int(store.get("recommendations.max_seeds") or 30),
+                rating_source=store.get("recommendations.rating_source") or "tmdb",
                 hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
                 dry_run=dry_run,
                 rows=self._build_rows(session, store),
@@ -253,10 +254,20 @@ class ContextBuilder:
             )
 
     def _build_mdblist(self, store: SettingsStore) -> MdbListClient | None:
-        """A cache-backed MDBList client when the chosen rating source needs it (any non-TMDB source
-        with a key set), else None. Shares the persistent DB cache so ratings are looked up at most
-        once per title per week — the whole point of caching against MDBList's daily request cap."""
-        if (store.get("requests.rating_source") or "tmdb") == "tmdb":
+        """A cache-backed MDBList client when any feature needs a non-TMDB rating, else None. Shares
+        the persistent DB cache so ratings are looked up at most once per title per week — the whole
+        point of caching against MDBList's daily request cap.
+
+        TWO settings can ask for one, and either alone is enough: `requests.rating_source` gates which
+        missing titles are worth requesting, and `recommendations.rating_source` decides what a row
+        ordered by "Highest rated" sorts on. Checking only the requests one left row ordering silently
+        inert on every default install — the engine no-opped while the row editor said "Highest IMDb
+        score first", which is the worst of both (nothing happens, and the UI says otherwise)."""
+        wants = {
+            store.get("requests.rating_source") or "tmdb",
+            store.get("recommendations.rating_source") or "tmdb",
+        }
+        if wants == {"tmdb"}:
             return None
         key = store.get("requests.mdblist.apikey")
         if not key:
@@ -449,6 +460,10 @@ class ContextBuilder:
                     affinity=r.affinity,
                     seed_tmdb_id=r.seed_tmdb_id,
                     seed_title=r.seed_title,
+                    # Same reason as the provenance above: a row ordered by rating or year re-sorts
+                    # its carried-forward picks every run, so these have to survive the round trip.
+                    rating=r.rating or 0.0,
+                    year=r.year,
                     collection_slug=r.collection_slug,
                     section_key=r.section_key,
                     library=r.library,
@@ -600,6 +615,7 @@ class ContextBuilder:
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
+                    pick_order=collection.pick_order or "best",
                     placement=collection.placement or "both",
                     placement_friends=collection.placement_friends or "both",
                     pin_top=bool(collection.pin_top),

@@ -176,6 +176,7 @@ VALIDATORS = {
     "recommendations.freshness": _bounded_float(0.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
     "recommendations.max_seeds": _bounded_int(5, 100),
+    "recommendations.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     "recommendations.blocked_shared_seeds": _int_list,
     # Above 1 only affects READ-ONLY jobs — Plex writers stay exclusive whatever this says.
     "jobs.max_parallel_readonly": _bounded_int(1, 8),

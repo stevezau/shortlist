@@ -181,3 +181,24 @@ def test_the_two_placement_columns_are_saved_independently(page: Page, app: Shor
     created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == "Split Row")
     assert created["placement"] == "both"
     assert created["placement_friends"] == "home"
+
+
+def test_the_pick_order_chosen_in_the_editor_reaches_the_api(page: Page, app: ShortlistApp):
+    """The Order control is the only way to change how a row's titles are arranged on Plex, so its
+    round trip is worth an end-to-end check: Plex offers no 'random' collection sort, and the value
+    saved here is what the engine turns into the custom order it writes."""
+    _open_rows(page)
+    _add_a_row(page)
+    page.get_by_label("Name", exact=True).fill("Shuffled Row")
+
+    # Default first, so a control that silently ignored the click couldn't pass this.
+    expect(page.get_by_role("button", name="Best match")).to_have_attribute("aria-pressed", "true")
+    page.get_by_role("button", name="Shuffled").click()
+    expect(page.get_by_text("different order every day")).to_be_visible()
+
+    page.get_by_role("button", name="Add row").click()
+
+    expect(page.get_by_text("Shuffled Row").first).to_be_visible(timeout=LOAD)
+    rows = {c["slug"]: c for c in app.api("GET", "/api/collections").json()}
+    assert rows["shuffled_row"]["pick_order"] == "shuffle"
+    assert rows["picked"]["pick_order"] == "best", "an untouched row keeps the default"

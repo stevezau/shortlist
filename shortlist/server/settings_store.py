@@ -106,6 +106,10 @@ DEFAULTS: dict[str, Any] = {
     # Row-overridable, and the row is where a deliberately narrow value belongs: the floor here is 5
     # because a server-wide 1 or 2 would starve every movies-and-TV row of one of its media types.
     "recommendations.max_seeds": 30,
+    # Which service's score a row ordered by "Highest rated" sorts on. "tmdb" needs no setup and is
+    # already on every candidate; the rest come from MDBList (one cached lookup per title, shared by
+    # every row and user) and need `requests.mdblist.apikey` — without it, ordering falls back to TMDB.
+    "recommendations.rating_source": "tmdb",
     # TMDB ids that must never seed a SHARED row. Separate from each person's own blocked seeds on
     # purpose: a shared row is public, so letting one person's block reshape what everyone sees would
     # make an individual preference into a server-wide edit nobody else can see or undo.

@@ -41,7 +41,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     title: "Because you watched…",
     blurb:
       "Names one recent watch and fills the row with things like it. The title tells them why it's there.",
-    highlights: ["Built from 1 watch", "Named after that title"],
+    highlights: ["Built from 1 watch", "Follows their latest watch"],
     values: {
       name: "🎯 Because you watched {top_seed}",
       build: "per_person",
@@ -51,6 +51,11 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       recent_count: 3,
       media: "movie",
       size: 20,
+      // Nightly, not the global default. This row is ABOUT recency: at the default cadence (~8 days)
+      // it keeps naming last week's film for a week after they've moved on, which reads as broken
+      // rather than as a setting. The row only rebuilds when its seed actually changes, so a nightly
+      // cadence costs a Plex write on the days their viewing moved on — which is the point.
+      freshness: 1,
     },
   },
   {
@@ -142,7 +147,8 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     // Now literally true: `unstarted_only` (engine) drops any series with a single viewed episode,
     // where the normal filter only drops FINISHED ones — so a show they are three episodes into no
     // longer turns up on a shelf that calls itself "to start".
-    blurb: "Series they have never opened — not one they're part-way through. A shelf of things to start.",
+    blurb:
+      "Series they have never opened — not one they're part-way through. A shelf of things to start.",
     highlights: ["TV only", "Never started"],
     values: {
       name: "📺 More {library_name} to watch",

@@ -95,9 +95,15 @@ class EngineContext:
     # Keeps a slow download from re-winning a request slot every night, and a "no" from being undone
     # by a later auto-send. Empty for direct engine runs, which have no inbox.
     handled_requests: set[tuple[int, str]] = field(default_factory=set)
-    # MDBList client (cache-backed) for the chosen non-TMDB rating source; None when requests gate on
-    # TMDB or no MDBList key is set. Built by the server adapter so it shares the persistent cache.
+    # MDBList client (cache-backed) for the chosen non-TMDB rating source; None when neither the
+    # request gate nor row ordering asks for one, or no MDBList key is set. Built by the server
+    # adapter so it shares the persistent cache.
     mdblist: MdbListClient | None = None
+    # Latched by row ordering the first time MDBList answers 429, so the rest of the run orders on
+    # TMDB instead of re-attempting once per rating-ordered row PER USER — each attempt is retried
+    # three times honouring Retry-After (up to 60s), so an unlatched quota failure costs minutes of
+    # stall for results that are discarded anyway.
+    mdblist_rate_limited: bool = False
     # (user_slug, stage, counts, reason) -> None. `reason` explains a non-failing outcome (a
     # skipped user) in plain English; None for every stage that needs no explaining.
     progress: Callable[[str, str, dict, str | None], None] | None = None

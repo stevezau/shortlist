@@ -118,7 +118,7 @@ collections           id · slug · name · build(per_person|shared) · audience
                       · schedule (this row's OWN 5-field cron; "" = manual only — there is no global one)
                       · size · media(movie|show|both) · library_keys JSON · name_template · min_watchers
                       · placement / placement_friends (both|home|library|off) · pin_top BOOL · hub_anchor JSON
-                      · poster JSON · candidate_sources JSON · watched_pct · freshness · recent_count · max_seeds
+                      · poster JSON · candidate_sources JSON · watched_pct · freshness · recent_count · max_seeds · pick_order
 collection_audience   collection_id FK · user_id FK          (a `subset` row's members)
 collection_user_overrides  collection_id FK · user_id FK · muted BOOL · row_size · history_depth
 poster_assets         id · collection_id FK · kind(upload|preview) · bytes · created_at

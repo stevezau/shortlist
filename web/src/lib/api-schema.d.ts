@@ -1837,6 +1837,13 @@ export interface components {
              */
             name_template: string;
             /**
+             * Pick Order
+             * @description How the delivered collection is ordered.
+             * @default best
+             * @enum {string}
+             */
+            pick_order: "best" | "newest" | "rating" | "shuffle";
+            /**
              * Pin Top
              * @default false
              */
@@ -1940,6 +1947,12 @@ export interface components {
             name: string;
             /** Name Template */
             name_template: string;
+            /**
+             * Pick Order
+             * @description How the delivered collection is ordered.
+             * @enum {string}
+             */
+            pick_order: "best" | "newest" | "rating" | "shuffle";
             /** Pin Top */
             pin_top: boolean;
             /**

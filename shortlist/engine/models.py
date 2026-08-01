@@ -168,6 +168,12 @@ class Pick:
     # came from the tail of TMDB's list should LOOK different to one an LLM chose deliberately.
     sources: list[str] = field(default_factory=list)
     affinity: float = 1.0
+    # Carried from the Candidate purely so a row can be ORDERED by them (RowSpec.order). Persisted on
+    # PickRow, because a carried-forward pick is rebuilt from the DB and would otherwise sort as if it
+    # had no rating and no release year. TMDB's vote_average and release year — the only two the
+    # candidate pool already holds, so ordering by them costs no extra lookups.
+    rating: float = 0.0
+    year: int | None = None
 
 
 @dataclass
@@ -297,6 +303,15 @@ class RowSpec:
     # actually watched, which is what a `{top_seed}` ("Because you watched X") title claims; the default
     # blends the whole recent history. None -> inherit EngineConfig.max_seeds.
     max_seeds: int | None = None
+    # How this row's picks are ORDERED in the delivered collection — "best" (our ranking), "rating"
+    # (highest TMDB score first), "newest" (most recent release first) or "shuffle" (a different order
+    # each day). Plex only sorts a collection by release date, alphabetically, or by the custom order
+    # we write, so every one of these is applied here and delivered as that custom order.
+    #
+    # Per-row with a plain default rather than an inheritable global (like `media` and `rewatch`, not
+    # like `freshness`): the right order is a property of what a row IS, so a server-wide default
+    # would be a setting nobody sets.
+    pick_order: str = "best"
     # Which surfaces the OWNER's own collection appears on: "both" (Home + Library Recommended, the
     # default), "home", "library", or "off" (neither — the Collections tab only, since promote()
     # always browse-hides). "off" is a STRING, not None: `placement_friends=None` already means
@@ -556,6 +571,10 @@ class EngineConfig:
     # How many watched titles seed a row (the most recently watched win, balanced across media types).
     # Row-overridable via RowSpec.max_seeds.
     max_seeds: int = 30
+    # Which service's score a row with `pick_order="rating"` sorts on: tmdb (free, already on every
+    # candidate) or imdb/trakt/tomatoes/metacritic via MDBList. Deliberately NOT `requests.rating_source`:
+    # ordering a row must not depend on whether the request feature is configured at all.
+    rating_source: str = "tmdb"
     # Titles that must never seed a SHARED row, server-wide.
     #
     # Per-person blocks deliberately do NOT apply here: a shared row is public, and letting one

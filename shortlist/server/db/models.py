@@ -171,6 +171,10 @@ class Collection(Base):
     # How many watched titles SEED this row — what every source searches from, not just the web one.
     # NULL -> inherit the engine default (30).
     max_seeds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # How the delivered collection is ORDERED: best | rating | newest | shuffle. Not nullable and not
+    # inheritable — unlike freshness/max_seeds there is no global default to fall back to, because the
+    # right order belongs to what a row IS rather than to the server.
+    pick_order: Mapped[str] = mapped_column(String(16), default="best")
     # Specific Plex library section keys this row builds in; [] -> every library of its media type.
     library_keys: Mapped[list] = mapped_column(JSON, default=list)
     min_watchers: Mapped[int] = mapped_column(Integer, default=2)  # shared: aggregate-privacy threshold
@@ -319,6 +323,12 @@ class PickRow(Base):
     affinity: Mapped[float] = mapped_column(Float, default=1.0)
     seed_tmdb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     seed_title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # TMDB score and release year, carried so a row ordered by either can sort its CARRIED-FORWARD
+    # picks too — those are rebuilt from this table, so without them a "highest rated" row would sort
+    # every surviving pick as unrated. NULL on rows delivered before 0056; such picks sort last and
+    # keep their relative order until the row next rebuilds.
+    rating: Mapped[float | None] = mapped_column(Float, nullable=True)
+    year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Both indexed: the effectiveness report is windowed, so every aggregate on it filters by one of
     # these two, over the largest table in this schema (retention prunes it, but only by whole runs).
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
