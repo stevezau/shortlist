@@ -1486,6 +1486,39 @@ class TestPerRowOverrides:
         titles = [strip_marker(t) for t in report.users[0].placement_titles]
         assert titles == ["Because you watched Fargo"]
 
+    def test_a_named_row_rebuilds_when_RANKING_moves_the_seed_its_title_uses(self, ctx: EngineContext, mock_plextv):
+        """The cell the single-seed tests could never reach: a `{top_seed}` row with MORE than one seed.
+
+        `_seed_moved` asks whether the POOL still leads with the named seed. The title asks something
+        subtly different — it renders from the best-matching DELIVERED pick — so re-ranking survivors
+        against newcomers can put a differently-seeded newcomer first while the pool's top seed never
+        moved. The row then renamed itself while still carrying the old seed's picks, which is the
+        stale claim the whole mechanism exists to prevent.
+        """
+        self._two_seed_named_row_ctx(ctx, "best")
+        # Last run's row is seeded by Fargo and carries Fargo's weaker (F1x) titles, so tonight's
+        # ranking hands the lead to a Chernobyl-seeded newcomer.
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by([10, 11, 12, 13, 14], seed_tmdb_id=900, seed_title="Fargo")
+        }
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        lead = min(picks, key=lambda p: p["rank"])
+        titles = [strip_marker(t) for t in report.users[0].placement_titles]
+        assert titles == [f"Because you watched {lead['seed_title']}"], f"got {titles}, lead {lead}"
+        # Not "every pick shares that seed" — above one seed a `{top_seed}` row names its strongest
+        # watch and legitimately holds others, which is the trade-off the seed-budget callout warns
+        # about. The guarantee is narrower and is the one that was broken: the row never keeps
+        # claiming a watch it is no longer led by.
+        assert lead["seed_title"] in {p["seed_title"] for p in picks}
+        assert titles != ["Because you watched Fargo"] or lead["seed_title"] == "Fargo", (
+            f"the title cannot outlive the seed that earned it, got {titles} with lead {lead}"
+        )
+
     def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
         """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —
         re-deriving a normal 30-seed row on any seed change would make every refresh a full rebuild."""

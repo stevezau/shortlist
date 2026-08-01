@@ -318,6 +318,11 @@ def _reusable_prior(
     return out
 
 
+def _names_a_seed(spec: RowSpec) -> bool:
+    """Whether this row's TITLE claims a particular watch, and so has to keep answering to it."""
+    return "{top_seed}" in spec.name_template
+
+
 def _seed_moved(spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate]) -> bool:
     """Whether a row NAMED after its seed is now built from a different one than last run's picks.
 
@@ -328,12 +333,18 @@ def _seed_moved(spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate]) ->
     exactly what a one-seed row exists to prevent (measured on a real run: history seeded only by
     Fargo still delivered "Because you watched Chernobyl").
 
-    Keyed on the NAME making the claim, not on a seed budget: a two-seed `media=both` named row has
-    the same problem, and a hand-written `{top_seed}` row at any budget gets the same protection.
-    Rows that name no seed keep the cheap carry-forward — re-deriving them on every seed drift would
-    turn a normal 30-seed row's refresh into a near-total rebuild.
+    Keyed on the NAME making the claim, not on a seed budget, so the two-seed `media=both` named row
+    is covered too. Rows that name no seed keep the cheap carry-forward — re-deriving them on every
+    seed drift would turn a normal 30-seed row's refresh into a near-total rebuild.
+
+    Note what this does NOT promise above one seed. It asks whether the POOL still leads with the
+    named seed; the title renders from the best-matching DELIVERED pick (`render_row_name` takes the
+    lowest `rank`). Re-ranking survivors against newcomers can hand the lead to a differently-seeded
+    newcomer while the pool's own top seed never moved, and the row then renames itself to match. That
+    is the title correctly following its lead rather than a stale claim — the two only diverge above
+    one seed, where a `{top_seed}` row already names its strongest watch while holding others.
     """
-    if "{top_seed}" not in spec.name_template or not prior_valid or not sub:
+    if not _names_a_seed(spec) or not prior_valid or not sub:
         return False
     current = sub[0].top_seed
     return prior_valid[0].seed_tmdb_id != (current.tmdb_id if current else None)
@@ -1283,6 +1294,13 @@ def _build_section_picks(
             sec_picks = _rank_against_pool(survivors, sub)[:k]
             if len(sec_picks) < k:
                 sec_picks = _pad_picks(sec_picks, fresh_pool, k)
+            # `_seed_moved` above asked whether the POOL still leads with the seed this row is named
+            # after. That is not quite the question the title asks: the name renders from the
+            # best-matching DELIVERED pick, and re-ranking survivors against newcomers can put a
+            # differently-seeded newcomer first even when the pool's own top seed never moved. Left
+            # here, the row would rename itself while still carrying the old seed's picks — the exact
+            # stale claim `_seed_moved` exists to prevent. Only reachable above one seed, which is
+            # why the single-seed tests never saw it.
         else:
             # Bootstrap: this row+library has never been built (or its picks predate row/library
             # stamping) — build a fresh full row, exactly like a first run. Also reached on a refresh
