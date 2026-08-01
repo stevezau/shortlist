@@ -7,6 +7,7 @@ import { LibraryPicker } from "@/components/rows/library-picker";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
+import { RowSection } from "@/components/rows/row-section";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import { RowSourcesField } from "@/components/rows/row-sources-field";
 import { TemplateVarsHintWithPreview } from "@/components/rows/template-vars-hint";
@@ -82,23 +83,6 @@ function pickOrderHelp(
     default:
       return "Strongest suggestions first — how well each title matches what they watch.";
   }
-}
-
-/** A chapter heading inside the row dialog.
- *
- *  The dialog carries ~19 settings. They were already in a sensible order, but as one flat scroll
- *  separated only by hairlines there was nothing to navigate by — finding "the ordering one" meant
- *  reading every block on the way past. These group the same controls, in the same order, under the
- *  question each group answers. */
-function SectionHeading({ title, hint }: { title: string; hint: string }) {
-  return (
-    <div className="border-t pt-6">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {title}
-      </h3>
-      <p className="mt-1 text-sm text-muted-foreground">{hint}</p>
-    </div>
-  );
 }
 
 /**
@@ -237,6 +221,49 @@ export function RowEditor({
   const set = (patch: Partial<CollectionInput>) =>
     setInput((prev) => ({ ...prev, ...patch }));
 
+  // What each folded section says about itself while closed. A disclosure that hides both its
+  // controls AND what they are currently set to is worse than the flat list it replaced — these are
+  // what let someone skip a section rather than open it to find out they didn't need it.
+  const posterSummary =
+    (
+      {
+        "": "Plex’s own artwork",
+        upload: "Uploaded image",
+        text: "Generated from text",
+        ai: "AI image",
+        generate: "AI image",
+      } as Record<string, string>
+    )[input.poster.mode] ?? "Plex’s own artwork";
+  const drawsOnSummary = [
+    input.library_keys.length === 0
+      ? "every library"
+      : `${input.library_keys.length} librar${input.library_keys.length === 1 ? "y" : "ies"}`,
+    input.candidate_sources.length === 0
+      ? "default sources"
+      : `${input.candidate_sources.length} source${input.candidate_sources.length === 1 ? "" : "s"}`,
+    input.freshness === null
+      ? "default freshness"
+      : input.freshness >= 1
+        ? "refreshes nightly"
+        : input.freshness <= 0
+          ? "frozen"
+          : `${Math.round(input.freshness * 100)}% fresh`,
+    input.max_seeds === null ? null : `${input.max_seeds} watch${input.max_seeds === 1 ? "" : "es"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const placementSummary = (() => {
+    const mine = input.placement === "off" ? 0 : 1;
+    const theirs = input.placement_friends === "off" ? 0 : 1;
+    if (mine && theirs) return "You and everyone else";
+    if (theirs) return "Everyone else only";
+    if (mine) return "You only";
+    return "Hidden from every shelf";
+  })();
+  const requestSummary = input.request_tag
+    ? `Tagged “${input.request_tag}”`
+    : "No tag";
+
   const submit = () => {
     // Keep 'Top' entries and real anchors; drop a half-set library (mode chosen, no collection yet) so
     // it inherits the global default rather than being POSTed as an empty anchor (which the API rejects).
@@ -273,7 +300,7 @@ export function RowEditor({
             </strong>
             {/* Several template titles end in an ellipsis ("Because you watched…"), which the
                 sentence stop then doubled into "…." — so the separator is a dash, not a full stop. */}
-            {" — change anything you like. "}
+            {" — change anything you like: "}
             {template.highlights.join(", ").toLowerCase()}.
           </p>
         )}
@@ -314,17 +341,8 @@ export function RowEditor({
             )}
           </div>
 
-          <PosterField
-            value={input.poster}
-            onChange={(poster) => set({ poster })}
-            collectionId={collection?.id ?? null}
-            hasImage={collection?.poster?.has_image ?? false}
-          />
 
-          <SectionHeading
-            title="Who gets it"
-            hint="Whether everyone shares one row or each person gets their own, and who that includes."
-          />
+
 
           <div className="space-y-2">
             <Label>Built how?</Label>
@@ -357,35 +375,9 @@ export function RowEditor({
             onChange={set}
           />
 
-          <SectionHeading
-            title="What goes in it"
-            hint="When it rebuilds, how big it is, and which titles it can draw on."
-          />
 
-          <RowScheduleField
-            value={input.schedule}
-            onChange={(schedule) => set({ schedule })}
-          />
 
-          {!isDefault && (
-            <RowSizeField
-              value={input.size}
-              onChange={(size) => set({ size })}
-            />
-          )}
 
-          <LibraryPicker
-            libraryKeys={input.library_keys}
-            onChange={(next) =>
-              set({
-                ...next,
-                // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
-                // without anyone touching the flag. Its control is hidden then, and the API refuses
-                // the combination — which would be a save failing with no visible cause.
-                ...(next.media !== "show" ? { unstarted_only: false } : {}),
-              })
-            }
-          />
 
           {input.build === "shared" && (
             <div className="space-y-2">
@@ -417,6 +409,97 @@ export function RowEditor({
               />
             </div>
           )}
+
+          <div className="space-y-2">
+            <Label>Order</Label>
+            <Segmented
+              value={input.pick_order}
+              onChange={(pick_order) => set({ pick_order })}
+              ariaLabel="How the titles in this row are ordered"
+              options={[
+                { value: "best", label: "Best match" },
+                { value: "rating", label: "Highest rated" },
+                { value: "newest", label: "Newest" },
+                { value: "shuffle", label: "Shuffled" },
+              ]}
+            />
+            <p className="text-sm text-muted-foreground">
+              {pickOrderHelp(input.pick_order, ratingLabel)}
+            </p>
+            {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
+                question "rated by whom?" at exactly this moment, and answering it by sending someone
+                to another screen is how the setting stayed undiscovered. It is still one server-wide
+                value, so the note says so rather than implying it is per-row. */}
+            {input.pick_order === "rating" && (
+              <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
+                <Label htmlFor="row-rating-source">Rated by</Label>
+                <select
+                  id="row-rating-source"
+                  value={ratingSource}
+                  onChange={(e) =>
+                    saveSettings.mutate({
+                      "recommendations.rating_source": asRatingSource(
+                        e.target.value,
+                      ),
+                    })
+                  }
+                  disabled={saveSettings.isPending}
+                  className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
+                >
+                  {RATING_SOURCES.map((source) => (
+                    <option key={source} value={source}>
+                      {RATING_LABELS[source]}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {ratingSource === "tmdb"
+                    ? "TMDB needs no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic come from MDBList and need its API key in Settings → Requests."
+                    : `Scores come from MDBList — without its API key in Settings → Requests, ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
+                  Shared by every row ordered by rating.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <RowScheduleField
+            value={input.schedule}
+            onChange={(schedule) => set({ schedule })}
+          />
+
+          {!isDefault && (
+            <RowSizeField
+              value={input.size}
+              onChange={(size) => set({ size })}
+            />
+          )}
+
+          <RowSection
+            title="Artwork"
+            summary={posterSummary}
+          >
+          <PosterField
+            value={input.poster}
+            onChange={(poster) => set({ poster })}
+            collectionId={collection?.id ?? null}
+            hasImage={collection?.poster?.has_image ?? false}
+          />
+          </RowSection>
+
+          <RowSection title="What it draws on" summary={drawsOnSummary}>
+
+          <LibraryPicker
+            libraryKeys={input.library_keys}
+            onChange={(next) =>
+              set({
+                ...next,
+                // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
+                // without anyone touching the flag. Its control is hidden then, and the API refuses
+                // the combination — which would be a save failing with no visible cause.
+                ...(next.media !== "show" ? { unstarted_only: false } : {}),
+              })
+            }
+          />
 
           <RowSourcesField
             value={input.candidate_sources}
@@ -596,68 +679,9 @@ export function RowEditor({
               onChange={(next) => set({ max_seeds: next })}
             />
           </InheritableField>
+          </RowSection>
 
-          <SectionHeading
-            title="How it reads"
-            hint="The order the titles appear in on the shelf."
-          />
-
-          <div className="space-y-2">
-            <Label>Order</Label>
-            <Segmented
-              value={input.pick_order}
-              onChange={(pick_order) => set({ pick_order })}
-              ariaLabel="How the titles in this row are ordered"
-              options={[
-                { value: "best", label: "Best match" },
-                { value: "rating", label: "Highest rated" },
-                { value: "newest", label: "Newest" },
-                { value: "shuffle", label: "Shuffled" },
-              ]}
-            />
-            <p className="text-sm text-muted-foreground">
-              {pickOrderHelp(input.pick_order, ratingLabel)}
-            </p>
-            {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
-                question "rated by whom?" at exactly this moment, and answering it by sending someone
-                to another screen is how the setting stayed undiscovered. It is still one server-wide
-                value, so the note says so rather than implying it is per-row. */}
-            {input.pick_order === "rating" && (
-              <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
-                <Label htmlFor="row-rating-source">Rated by</Label>
-                <select
-                  id="row-rating-source"
-                  value={ratingSource}
-                  onChange={(e) =>
-                    saveSettings.mutate({
-                      "recommendations.rating_source": asRatingSource(
-                        e.target.value,
-                      ),
-                    })
-                  }
-                  disabled={saveSettings.isPending}
-                  className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
-                >
-                  {RATING_SOURCES.map((source) => (
-                    <option key={source} value={source}>
-                      {RATING_LABELS[source]}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  {ratingSource === "tmdb"
-                    ? "TMDB needs no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic come from MDBList and need its API key in Settings → Requests."
-                    : `Scores come from MDBList — without its API key in Settings → Requests, ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
-                  Shared by every row ordered by rating.
-                </p>
-              </div>
-            )}
-          </div>
-
-          <SectionHeading
-            title="Where it appears"
-            hint="Which Plex screens carry this row, and where it sits on the shelf."
-          />
+          <RowSection title="Where it appears" summary={placementSummary}>
 
           <div className="space-y-3">
             <Label>Where it shows</Label>
@@ -694,7 +718,9 @@ export function RowEditor({
               />
             </div>
           </div>
+          </RowSection>
 
+          <RowSection title="Requests" summary={requestSummary}>
           {input.build !== "shared" && (
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="row-request-tag">Request tag (optional)</Label>
@@ -713,6 +739,7 @@ export function RowEditor({
               </p>
             </div>
           )}
+          </RowSection>
         </div>
 
         {save.isError && (

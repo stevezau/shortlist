@@ -826,18 +826,35 @@ describe("RowEditor — rating source is answerable where the order is chosen", 
     expect(await screen.findByLabelText("Rated by")).toHaveValue("imdb");
   });
 
-  it("groups the settings under headings instead of one flat scroll", () => {
+});
+
+describe("RowEditor — the essentials are visible, the rest folds away", () => {
+  it("shows the settings that define a row, and folds the ones with good defaults", () => {
     renderEditor(row());
 
+    // Visible without opening anything.
+    expect(screen.getByLabelText("Name", { exact: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Best match" })).toBeVisible();
+    expect(screen.getByText("Row size")).toBeVisible();
+
+    // Folded, but each says what is inside so you can skip it.
     for (const section of [
-      "Who gets it",
-      "What goes in it",
-      "How it reads",
+      "Artwork",
+      "What it draws on",
       "Where it appears",
+      "Requests",
     ]) {
-      expect(
-        screen.getByRole("heading", { name: section }),
-      ).toBeInTheDocument();
+      expect(screen.getByText(section)).toBeInTheDocument();
     }
+    expect(screen.getByText(/every library/)).toBeInTheDocument();
+  });
+
+  it("summarises a folded section from its CURRENT values, not a fixed caption", () => {
+    // The whole point of the summary: a section that hides both its controls and what they are set
+    // to is worse than the flat list it replaced.
+    renderEditor(row({ request_tag: "family-picks", library_keys: ["1"] }));
+
+    expect(screen.getByText(/family-picks/)).toBeInTheDocument();
+    expect(screen.getByText(/1 library/)).toBeInTheDocument();
   });
 });
