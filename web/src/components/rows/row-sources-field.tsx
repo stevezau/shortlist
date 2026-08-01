@@ -7,6 +7,15 @@ import { useSettings } from "@/lib/queries";
 import { SOURCES, sourceBlockedReason } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
 
+/** The sources a row actually gathers from: its own override, else the server's set. Exported so
+ *  the editor can hide settings that only affect a source this row does not use. */
+export function effectiveSources(
+  rowSources: string[],
+  settings: Settings | undefined,
+): string[] {
+  return rowSources.length > 0 ? rowSources : globalSources(settings);
+}
+
 function globalSources(settings: Settings | undefined): string[] {
   const value = settings?.["candidates.sources"];
   return Array.isArray(value)

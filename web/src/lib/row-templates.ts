@@ -40,8 +40,12 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     emoji: "🎯",
     title: "Because you watched…",
     blurb:
-      "Names one recent watch and fills the row with things like it. The title tells them why it's there.",
-    highlights: ["Built from 1 watch", "Follows their latest watch"],
+      "Names one recent film and fills the row with things like it. The title tells them why it's there.",
+    // "Films only" is first because it is the one thing about this template someone would not guess:
+    // a single seed can only cover ONE media type (seeds balance across the types present), so a
+    // one-seed row has to pick one. Leaving it unsaid meant the card promised a row about "a recent
+    // watch" and quietly delivered a movies-only one.
+    highlights: ["Films only", "Built from 1 watch", "Follows their latest watch"],
     values: {
       name: "🎯 Because you watched {top_seed}",
       build: "per_person",
@@ -101,7 +105,7 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     title: "From the vault",
     blurb:
       "Built once and left alone. A shelf that stays put, for a curated set you don't want reshuffled.",
-    highlights: ["Never rebuilds on its own", "Pin it and forget it"],
+    highlights: ["Never rebuilds on its own", "Set it once, it stays"],
     values: {
       name: "🕰️ {library_name} from the vault",
       build: "per_person",

@@ -22,7 +22,7 @@ function clampRecentCount(n: number): number {
 export function RecentCountField({
   value,
   onChange,
-  label = "Recent watches to search",
+  label = "Watches the AI searches from",
 }: {
   value: number;
   onChange: (count: number) => void;
@@ -53,7 +53,7 @@ export function RecentCountField({
       {label ? <Label htmlFor={id}>{label}</Label> : null}
       <Input
         id={id}
-        aria-label="Recent watches to search"
+        aria-label="Watches the AI searches from"
         type="number"
         inputMode="numeric"
         min={RECENT_COUNT_MIN}

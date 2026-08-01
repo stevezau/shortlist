@@ -150,8 +150,10 @@ export function LibraryPicker({
                 })}
               </div>
               <p className="text-sm text-muted-foreground">
-                This row builds a collection in each ticked library. All ticked
-                = every library, including any you add later.
+                This row builds a collection in each ticked library.{" "}
+                {media === "both"
+                  ? "All ticked = every library, including any you add later."
+                  : `All ticked = every ${media === "movie" ? "movie" : "TV"} library, including any you add later. Tick one of the others and this row covers both types.`}
               </p>
             </>
           );

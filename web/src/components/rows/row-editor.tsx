@@ -9,7 +9,10 @@ import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
 import { RowSection } from "@/components/rows/row-section";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
-import { RowSourcesField } from "@/components/rows/row-sources-field";
+import {
+  effectiveSources,
+  RowSourcesField,
+} from "@/components/rows/row-sources-field";
 import { TemplateVarsHintWithPreview } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
@@ -210,8 +213,7 @@ export function RowEditor({
   const ratingSource = asRatingSource(
     settings.data?.["recommendations.rating_source"],
   );
-  const ratingLabel = RATING_LABELS[ratingSource];
-  const [input, setInput] = useState<CollectionInput>(
+  const ratingLabel = RATING_LABELS[ratingSource];  const [input, setInput] = useState<CollectionInput>(
     collection
       ? toInput(collection)
       : { ...blankInput(), ...(template?.values ?? {}) },
@@ -220,6 +222,15 @@ export function RowEditor({
 
   const set = (patch: Partial<CollectionInput>) =>
     setInput((prev) => ({ ...prev, ...patch }));
+
+  // "Watches the AI searches from" caps ONE source's lookups. On a row that doesn't use AI web
+  // search it changes nothing, so showing it invites someone to tune a setting with no effect —
+  // and it sat directly beneath "Watches to build from", which is the row-wide one, making the two
+  // read as rival answers to the same question.
+  const usesWebSearch = effectiveSources(
+    input.candidate_sources,
+    settings.data,
+  ).includes("llm_web");
 
   // What each folded section says about itself while closed. A disclosure that hides both its
   // controls AND what they are currently set to is worse than the flat list it replaced — these are
@@ -235,8 +246,13 @@ export function RowEditor({
       } as Record<string, string>
     )[input.poster.mode] ?? "Plex’s own artwork";
   const drawsOnSummary = [
+    // "[]" means every library OF THIS ROW'S TYPE — saying "every library" on a movies row
+    // contradicted the picker right below it, which ticks only the movie ones.
     input.library_keys.length === 0
-      ? "every library"
+      ? ({ movie: "every movie library", show: "every TV library" } as Record<
+          string,
+          string
+        >)[input.media] ?? "every library"
       : `${input.library_keys.length} librar${input.library_keys.length === 1 ? "y" : "ies"}`,
     input.candidate_sources.length === 0
       ? "default sources"
@@ -519,24 +535,27 @@ export function RowEditor({
             }
             after={
               <>
-                {/* The setting above is a CEILING — it permits finished titles, it never prefers
+                {/* The percentage above is a CEILING — it permits finished titles, it never prefers
                     them, so on a library with plenty of unwatched candidates even 100% yields an
-                    unwatched row. This is the switch that actually makes a rewatch shelf. */}
+                    unwatched row. This switch is what actually makes a rewatch shelf, which is why
+                    it is named after the row someone wants rather than after its effect on the
+                    setting above: "lead with things they've seen" could only be understood by
+                    someone who had already understood the ceiling. */}
                 <div className="flex items-start justify-between gap-4 rounded-md border p-3">
                   <div className="space-y-1">
                     <Label htmlFor="row-rewatch">
-                      Lead with things they&rsquo;ve seen
+                      Make this a &ldquo;watch it again&rdquo; row
                     </Label>
                     <p className="text-sm text-muted-foreground">
-                      A rewatch shelf: titles they&rsquo;ve finished come first,
-                      and new ones only fill what&rsquo;s left. Without this,
-                      the setting above merely <em>allows</em> rewatches &mdash;
-                      it never puts them first.
+                      Films and shows they&rsquo;ve already finished lead the
+                      row, and new suggestions fill whatever is left. Turning
+                      this on also lets already-watched titles into the row, so
+                      there is nothing else to set.
                     </p>
                   </div>
                   <Switch
                     id="row-rewatch"
-                    aria-label="Lead with things they have already seen"
+                    aria-label="Make this a watch it again row"
                     checked={input.rewatch}
                     onCheckedChange={(rewatch) =>
                       set({
@@ -611,8 +630,9 @@ export function RowEditor({
             />
           </InheritableField>
 
+          {usesWebSearch && (
           <InheritableField
-            label="Recent watches to search"
+            label="Watches the AI searches from"
             description="How many of a person’s most recent watches the AI web-search source looks up for this row (one cached search each). Only affects rows using AI web search. Leave on the global default to follow Settings → Finding titles."
             ariaLabel="Use the global recent-watches default"
             inheriting={input.recent_count === null}
@@ -629,6 +649,7 @@ export function RowEditor({
               onChange={(next) => set({ recent_count: next })}
             />
           </InheritableField>
+          )}
 
           <InheritableField
             label="Watches to build from"

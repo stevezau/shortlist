@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +114,7 @@ describe("RowEditor — inherited globals", () => {
       "recommendations.watched_pct": 0.4,
       "recommendations.freshness": 0.5,
       "recommendations.recent_count": 8,
+      "candidates.sources": ["tmdb_similar", "llm_web"],
       "recommendations.max_seeds": 30,
     };
     renderEditor(
@@ -558,16 +559,21 @@ describe("RowEditor — recent watches to search", () => {
     updateCollection.mockClear();
   });
 
-  it("shows the number field only when the row overrides the global default", () => {
+  it("shows the number field only when the row overrides the global default", async () => {
+    settingsData.current = { "candidates.sources": ["llm_web"] };
     renderEditor(row({ recent_count: 5 }));
-    expect(screen.getByLabelText(/Recent watches to search/i)).toHaveValue(5);
+    expect(
+      await screen.findByLabelText(/Watches the AI searches from/i),
+    ).toHaveValue(5);
     expect(
       screen.getByRole("switch", { name: /global recent-watches default/i }),
     ).not.toBeChecked();
   });
 
   it("round-trips a per-row recent_count into the PATCH body", async () => {
+    settingsData.current = { "candidates.sources": ["llm_web"] };
     renderEditor(row({ recent_count: null }));
+    await screen.findByRole("switch", { name: /global recent-watches default/i });
 
     await userEvent.click(
       screen.getByRole("switch", { name: /global recent-watches default/i }),
@@ -856,5 +862,55 @@ describe("RowEditor — the essentials are visible, the rest folds away", () => 
 
     expect(screen.getByText(/family-picks/)).toBeInTheDocument();
     expect(screen.getByText(/1 library/)).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — a typed row says so", () => {
+  it("summarises an empty library selection as that row's TYPE, not every library", async () => {
+    // "[]" means every library OF THIS ROW'S TYPE. Saying "every library" on a movies row
+    // contradicted the picker directly below it, which ticks only the movie ones.
+    renderEditor(row({ media: "movie", library_keys: [] }));
+    expect(screen.getByText(/every movie library/)).toBeInTheDocument();
+
+    cleanup();
+    renderEditor(row({ media: "show", library_keys: [] }));
+    expect(screen.getByText(/every TV library/)).toBeInTheDocument();
+
+    cleanup();
+    renderEditor(row({ media: "both", library_keys: [] }));
+    expect(screen.getByText(/every library/)).toBeInTheDocument();
+  });
+
+  it("names the rewatch switch after the row someone wants", () => {
+    // The old label ("Lead with things they've seen") could only be understood by someone who had
+    // already understood that the percentage above is a ceiling.
+    renderEditor(row());
+    expect(
+      screen.getByLabelText("Make this a watch it again row"),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — settings that would do nothing are not offered", () => {
+  it("hides the AI-search cap on a row that doesn't use AI web search", async () => {
+    // It caps ONE source's lookups. On a row without that source it changes nothing, and it sat
+    // directly beneath "Watches to build from" — the row-wide setting — so the two read as rival
+    // answers to the same question.
+    settingsData.current = { "candidates.sources": ["tmdb_similar"] };
+    renderEditor(row({ recent_count: 5 }));
+
+    expect(await screen.findByText("Watches to build from")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Watches the AI searches from/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers it once the row's own sources include AI web search", async () => {
+    settingsData.current = { "candidates.sources": ["tmdb_similar"] };
+    renderEditor(row({ recent_count: 5, candidate_sources: ["llm_web"] }));
+
+    expect(
+      await screen.findByLabelText(/Watches the AI searches from/i),
+    ).toBeInTheDocument();
   });
 });
