@@ -3,6 +3,7 @@ and the leak-safe ordering (deliver unpromoted → sync filters → promote last
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -13,7 +14,7 @@ import shortlist.engine.pipeline as pipeline_mod
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.tmdb import NullCache
 from shortlist.engine.context import EngineContext
-from shortlist.engine.delivery import render_row_name, resolve_row_template, row_marker
+from shortlist.engine.delivery import render_row_name, resolve_row_template, row_marker, strip_marker
 from shortlist.engine.models import EngineConfig, MediaType, OwnedRow, Pick, RowOverride, RowSpec, UserType
 from tests.conftest import MemorySnapshotStore, fake_media_item, make_profile, make_watched, plextv_user
 
@@ -1390,7 +1391,9 @@ class TestPerRowOverrides:
         picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
         assert [p["tmdb_id"] for p in picks] == [12, 13, 14, 15, 16]  # exactly last run's row, in order
 
-    def test_refresh_night_keeps_the_strong_top_and_swaps_the_rest(self, ctx: EngineContext, mock_plextv, monkeypatch):
+    def test_refresh_night_keeps_the_strong_two_thirds_and_swaps_the_rest(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
         """On a refresh night the strongest ~two-thirds carry over and the rest are swapped for titles
         NOT already in the row, so a just-rotated-out pick can't immediately bounce back."""
         self._movie_row_ctx(ctx, freshness=1.0, run_day=5)  # 1.0 = refresh every night
@@ -1404,8 +1407,416 @@ class TestPerRowOverrides:
         assert built  # a refresh night DOES rebuild the swapped-in slots
         picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
         ids = [p["tmdb_id"] for p in picks]
-        assert ids[:3] == [12, 13, 14], f"keep the strongest two-thirds of last run's row, got {ids}"
-        assert set(ids[3:]).isdisjoint({12, 13, 14, 15, 16}), f"swapped slots are genuinely new, got {ids}"
+        assert {12, 13, 14} <= set(ids), f"the strongest two-thirds of last run's row survive, got {ids}"
+        assert {15, 16}.isdisjoint(ids), f"the weakest third is swapped out, got {ids}"
+        assert not {15, 16} & set(ids), f"a just-rotated-out pick can't bounce straight back, got {ids}"
+
+    def test_refresh_night_lets_a_newcomer_outrank_a_survivor(self, ctx: EngineContext, mock_plextv):
+        """Survivors and newcomers are ranked TOGETHER against tonight's pool, so a better newcomer
+        takes the head of the row. Concatenating `kept + new` instead pinned last run's top
+        two-thirds to positions 1..keep_n for ever — on a 20-title row, 13 slots that never moved
+        again however the candidates scored."""
+        self._movie_row_ctx(ctx, freshness=1.0, run_day=5)
+        # Last run held the pool's WEAKER half; 10 and 11 rank above all of them tonight.
+        ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([12, 13, 14, 15, 16])}
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        ids = [p["tmdb_id"] for p in picks]
+        assert ids == [10, 11, 12, 13, 14], f"row ordered by tonight's ranking, not last run's, got {ids}"
+        assert ids[0] not in {12, 13, 14, 15, 16}, f"a newcomer can reach position 1, got {ids}"
+        assert [p["rank"] for p in picks] == [1, 2, 3, 4, 5], "ranks renumbered to the delivered order"
+
+    def _named_row_ctx(self, ctx, *, freshness: float, max_seeds: int = 1):
+        """The `_movie_row_ctx` world, but with a row NAMED after the watch it is built from."""
+        self._movie_row_ctx(ctx, freshness=freshness, run_day=5)
+        ctx.config.rows = [
+            RowSpec(
+                slug="picked",
+                name_template="Because you watched {top_seed}",
+                size=5,
+                media="movie",
+                freshness=freshness,
+                max_seeds=max_seeds,
+            )
+        ]
+
+    def _prior_seeded_by(self, tmdb_ids, *, seed_tmdb_id: int, seed_title: str):
+        return [replace(p, seed_tmdb_id=seed_tmdb_id, seed_title=seed_title) for p in self._prior_movies(tmdb_ids)]
+
+    def test_a_named_row_rebuilds_when_the_seed_it_names_has_changed(self, ctx: EngineContext, mock_plextv):
+        """A `{top_seed}` row's title renders from pick #1's seed, and the refresh branch always
+        carries pick #1 forward — so without the seed check the row stays named after the FIRST watch
+        that ever seeded it while its tail fills from newer ones. This person's only seed is Fargo."""
+        self._named_row_ctx(ctx, freshness=1.0)
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by(
+                [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
+            )
+        }
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        titles = [strip_marker(t) for t in report.users[0].placement_titles]
+        assert titles == ["Because you watched Fargo"]
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        assert {p["seed_title"] for p in picks} == {"Fargo"}, "every pick answers to the seed the row names"
+
+    def test_a_named_row_carries_forward_while_its_seed_is_unchanged(self, ctx: EngineContext, mock_plextv):
+        """The seed check must not turn every refresh into a full rebuild: while the row is still
+        built from the seed it is named after, the normal keep-two-thirds carry-forward applies."""
+        self._named_row_ctx(ctx, freshness=1.0)
+        # 900 is what "Fargo" resolves to in this fixture, so the seed has NOT moved.
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by([12, 13, 14, 15, 16], seed_tmdb_id=900, seed_title="Fargo")
+        }
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        ids = [p["tmdb_id"] for p in picks]
+        assert {12, 13, 14} <= set(ids), f"unchanged seed keeps the normal carry-forward, got {ids}"
+        titles = [strip_marker(t) for t in report.users[0].placement_titles]
+        assert titles == ["Because you watched Fargo"]
+
+    def test_a_named_row_rebuilds_when_RANKING_moves_the_seed_its_title_uses(self, ctx: EngineContext, mock_plextv):
+        """The cell the single-seed tests could never reach: a `{top_seed}` row with MORE than one seed.
+
+        `_seed_moved` asks whether the POOL still leads with the named seed. The title asks something
+        subtly different — it renders from the best-matching DELIVERED pick — so re-ranking survivors
+        against newcomers can put a differently-seeded newcomer first while the pool's top seed never
+        moved. The row then renamed itself while still carrying the old seed's picks, which is the
+        stale claim the whole mechanism exists to prevent.
+        """
+        self._two_seed_named_row_ctx(ctx, "best")
+        # Last run's row is seeded by Fargo and carries Fargo's weaker (F1x) titles, so tonight's
+        # ranking hands the lead to a Chernobyl-seeded newcomer.
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by([10, 11, 12, 13, 14], seed_tmdb_id=900, seed_title="Fargo")
+        }
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        lead = min(picks, key=lambda p: p["rank"])
+        titles = [strip_marker(t) for t in report.users[0].placement_titles]
+        assert titles == [f"Because you watched {lead['seed_title']}"], f"got {titles}, lead {lead}"
+        # Not "every pick shares that seed" — above one seed a `{top_seed}` row names its strongest
+        # watch and legitimately holds others, which is the trade-off the seed-budget callout warns
+        # about. The guarantee is narrower and is the one that was broken: the row never keeps
+        # claiming a watch it is no longer led by.
+        assert lead["seed_title"] in {p["seed_title"] for p in picks}
+        assert titles != ["Because you watched Fargo"] or lead["seed_title"] == "Fargo", (
+            f"the title cannot outlive the seed that earned it, got {titles} with lead {lead}"
+        )
+
+    def test_an_unnamed_row_ignores_the_seed_check(self, ctx: EngineContext, mock_plextv):
+        """A row that names no seed keeps the cheap carry-forward however far its seeds have drifted —
+        re-deriving a normal 30-seed row on any seed change would make every refresh a full rebuild."""
+        self._movie_row_ctx(ctx, freshness=1.0, run_day=5)  # name_template="" — names no seed
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by(
+                [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
+            )
+        }
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        assert {12, 13, 14} <= {p["tmdb_id"] for p in picks}, "seed drift alone does not rebuild an unnamed row"
+
+    def test_a_named_row_does_not_rebuild_outside_its_refresh_night(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """The seed check lives on the refresh branch only: a frozen row stays frozen, seed or no seed.
+        Otherwise `freshness` would stop meaning anything for the rows most likely to use it."""
+        self._named_row_ctx(ctx, freshness=0.0)  # 0.0 = never refresh once built
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by(
+                [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
+            )
+        }
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        built = spy_build_picks(monkeypatch)
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert built == [], "a frozen row is redelivered, never rebuilt"
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        assert [p["tmdb_id"] for p in picks] == [12, 13, 14, 15, 16]
+
+    def _ordered_row_ctx(self, ctx, pick_order: str, *, run_day: int = 5):
+        """`_movie_row_ctx`, but the pool carries DISTINCT ratings and years so an order is visible.
+
+        tmdb 10..19 get descending ratings (10 is best) and ascending years (19 is newest), so
+        "rating" and "newest" produce opposite orders and neither can be confused with the ranking.
+        """
+        self._movie_row_ctx(ctx, freshness=1.0, run_day=run_day)
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": 9.5 - (i - 10) * 0.5,
+                "release_date": f"{2000 + i}-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=5, media="movie", pick_order=pick_order)]
+
+    def _delivered_ids(self, report):
+        """The row as DELIVERED, in the order it is written to Plex.
+
+        `rank` is deliberately NOT the delivered position: it is stamped from the selection order and
+        means "how good a match", which is what names a `{top_seed}` row and what carry-forward keeps
+        the strongest two-thirds by. So every pick still carries a distinct 1..n rank, but for any
+        order other than "best" those ranks are a permutation of the delivered order, not equal to it.
+        """
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        ranks = [p["rank"] for p in picks]
+        assert sorted(ranks) == list(range(1, len(picks) + 1)), f"each pick keeps a distinct match rank, got {ranks}"
+        return [p["tmdb_id"] for p in picks]
+
+    def test_pick_order_best_leaves_the_ranking_alone(self, ctx: EngineContext, mock_plextv):
+        """The default must be a genuine no-op — it is what every existing row is migrated to."""
+        self._ordered_row_ctx(ctx, "best")
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        assert self._delivered_ids(pipeline_mod.run(ctx, [sarah])) == [10, 11, 12, 13, 14]
+
+    def test_pick_order_rating_puts_the_best_scored_first(self, ctx: EngineContext, mock_plextv):
+        self._ordered_row_ctx(ctx, "rating")
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+        assert ids == sorted(ids, key=lambda t: -(9.5 - (t - 10) * 0.5)), f"descending TMDB score, got {ids}"
+
+    def test_pick_order_newest_puts_the_most_recent_release_first(self, ctx: EngineContext, mock_plextv):
+        """Asserted as its own case, not just 'not the rating order': the two are deliberately
+        opposite in this fixture, so a mix-up between them would otherwise pass one of the tests."""
+        self._ordered_row_ctx(ctx, "newest")
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+        assert ids == sorted(ids, reverse=True), f"newest release first, got {ids}"
+
+    def test_pick_order_shuffle_is_stable_within_a_day_and_moves_between_days(self, ctx: EngineContext, mock_plextv):
+        """Shuffle is a hash of (row, user, day), never `random`: a re-run the same night must
+        reproduce the same row (or every retry rewrites the collection), and the next day must not."""
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        self._ordered_row_ctx(ctx, "shuffle", run_day=5)
+        day5 = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+        self._ordered_row_ctx(ctx, "shuffle", run_day=5)
+        day5_again = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+        self._ordered_row_ctx(ctx, "shuffle", run_day=6)
+        day6 = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert day5 == day5_again, "a re-run on the same night reproduces the same order"
+        assert day5 != day6, f"the order moves day to day, got {day5} both days"
+        assert sorted(day5) == sorted(day6), "shuffling reorders the row, it never changes membership"
+
+    def test_pick_order_shuffle_differs_between_two_users_on_the_same_day(self, ctx: EngineContext, mock_plextv):
+        """Keyed on the user as well as the day, so two people's copies of one row don't shuffle in
+        lockstep — otherwise the whole server shows the same 'random' order every night."""
+        self._ordered_row_ctx(ctx, "shuffle")
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(101, "mike")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=101)])
+
+        by_user = {
+            u.slug: [p["tmdb_id"] for e in u.breakdown if e["library_title"] == "Movies" for p in e["picks"]]
+            for u in report.users
+        }
+        assert by_user["sarah"] != by_user["mike"], f"per-user shuffle, got {by_user}"
+
+    def test_pick_order_shuffle_reorders_a_frozen_row_without_rebuilding_it(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """Shuffle on a row that never refreshes — the combination that makes the feature worth
+        having, and the one that exercises delivery's unchanged-membership write-skip. Ordering is
+        applied on the carry-forward path too, so the row moves without a single curator call; the
+        deferred order pass then carries the new order to Plex."""
+        prior = self._prior_movies([12, 13, 14, 15, 16])
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        self._ordered_row_ctx(ctx, "shuffle", run_day=5)
+        ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=0.0)  # 0.0 = never refresh
+        ctx.previous_picks = {("sarah", "picked", "1"): prior}
+        built = spy_build_picks(monkeypatch)
+        day5 = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        self._ordered_row_ctx(ctx, "shuffle", run_day=6)
+        ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=0.0)
+        ctx.previous_picks = {("sarah", "picked", "1"): prior}
+        day6 = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert built == [], "a frozen row still never rebuilds — ordering is presentation, not selection"
+        assert sorted(day5) == sorted([12, 13, 14, 15, 16]), f"membership is exactly last run's, got {day5}"
+        assert day5 != day6, f"the frozen row's ORDER still moves day to day, got {day5} both days"
+
+    def _two_seed_named_row_ctx(self, ctx, pick_order: str, *, run_day: int = 5):
+        """A `{top_seed}` row seeded by TWO watches, whose candidates sort differently by each order.
+
+        One seed is required per distinct `seed_title` in the row — with a single seed every pick
+        carries the same one and NO ordering could ever change the rendered title, which is exactly
+        what made an earlier version of this test pass against the bug it was written to catch.
+
+        Fargo's candidates are old and poorly rated; Chernobyl's are new and highly rated. So "rating"
+        and "newest" both put a Chernobyl-seeded pick first, while the ranking does not.
+        """
+        self._movie_row_ctx(ctx, freshness=1.0, run_day=run_day)
+        ctx.history_source.fetch.return_value = [
+            make_watched("Fargo", days_ago=1, rating_key=999),
+            make_watched("Chernobyl", days_ago=2, rating_key=998),
+        ]
+        ctx.plex.build_library_index.return_value = {900: 999, 555: 998, **{i: 1000 + i for i in range(10, 20)}}
+        by_seed = {
+            900: [
+                {"id": i, "title": f"F{i}", "genre_ids": [], "vote_average": 5.0, "release_date": "1996-01-01"}
+                for i in range(10, 15)
+            ],
+            555: [
+                {"id": i, "title": f"C{i}", "genre_ids": [], "vote_average": 9.5, "release_date": "2024-01-01"}
+                for i in range(15, 20)
+            ],
+        }
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(by_seed.get(tid, []))
+        ctx.config.rows = [
+            RowSpec(
+                slug="picked",
+                name_template="Because you watched {top_seed}",
+                size=5,
+                media="movie",
+                freshness=1.0,
+                pick_order=pick_order,
+            )
+        ]
+
+    def test_a_named_rows_title_is_the_same_whatever_order_it_is_displayed_in(self, ctx: EngineContext, mock_plextv):
+        """The cell where display order and match quality could be confused: a `{top_seed}` row that
+        also chooses its own order.
+
+        The title renders from the BEST-MATCHING pick, never from whichever pick sorted first. A row
+        is named after the watch it was built from, and that does not change because the owner asked
+        for the titles in a different sequence. Reading `picks[0]` instead, this row renamed itself
+        whenever the order put another seed's pick on top — and a shuffled one did so most nights,
+        rewriting its title on Plex each time.
+
+        Asserted as "all four agree" rather than against a hardcoded name, so the test states the
+        invariant that matters and cannot be satisfied by one order happening to match a literal.
+        """
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        titles = {}
+        for pick_order in ("best", "rating", "newest", "shuffle"):
+            self._two_seed_named_row_ctx(ctx, pick_order)
+            report = pipeline_mod.run(ctx, [sarah])
+            titles[pick_order] = [strip_marker(t) for t in report.users[0].placement_titles]
+
+        assert len({tuple(t) for t in titles.values()}) == 1, f"the order must not rename the row, got {titles}"
+        # Tied back to the data rather than a literal name: whichever seed wins the ranking, the title
+        # must be the one carried by the pick ranked #1 — that is what "named after its seed" means.
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        lead = min(picks, key=lambda p: p["rank"])
+        assert titles["best"] == [f"Because you watched {lead['seed_title']}"], f"got {titles}, lead {lead}"
+
+    def test_the_display_order_still_changes_which_pick_leads_the_row(self, ctx: EngineContext, mock_plextv):
+        """The other half of the invariant above: the ORDER genuinely does change the delivered row,
+        so 'the title never moves' is not passing merely because ordering did nothing here."""
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        self._two_seed_named_row_ctx(ctx, "best")
+        best = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+        self._two_seed_named_row_ctx(ctx, "rating")
+        by_rating = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert best != by_rating, f"ordering changes the delivered row, got {best} vs {by_rating}"
+        # The ranking interleaves seeds so each taste is represented; ordering by rating does not, so
+        # the 9.5-rated (Chernobyl-seeded) picks group ahead of the 5.0-rated (Fargo-seeded) ones.
+        assert by_rating[:3] == sorted(by_rating[:3]) and min(by_rating[:3]) >= 15, (
+            f"the highly-rated picks lead as a block, got {by_rating}"
+        )
+        assert sorted(best) == sorted(by_rating), "ordering rearranges the row, it never changes membership"
+
+    @pytest.mark.parametrize("pick_order", ["rating", "newest"])
+    def test_rank_records_match_quality_not_the_delivered_position(self, pick_order, ctx: EngineContext, mock_plextv):
+        """`rank` is stamped BEFORE the display order is applied, so for any order but "best" the
+        delivered sequence and the ranks disagree.
+
+        This is the guarantee the two `{top_seed}` bugs came from breaking. `rank` is what
+        `render_row_name` names the row from and what `previous_picks` is ordered by — so if it were
+        stamped after ordering, a shuffled row would rename itself nightly and `_seed_moved` would
+        compare against an arbitrary pick and rebuild the row every refresh night.
+        """
+        self._two_seed_named_row_ctx(ctx, pick_order)
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        ranks = [p["rank"] for p in picks]
+        assert sorted(ranks) == list(range(1, len(picks) + 1)), f"every pick keeps a distinct rank, got {ranks}"
+        assert ranks != sorted(ranks), (
+            f"{pick_order} reorders the row, so rank must NOT follow the delivered position — got {ranks}"
+        )
+
+    @pytest.mark.parametrize("pick_order", ["rating", "newest", "shuffle"])
+    def test_a_named_row_carries_forward_whatever_order_it_is_displayed_in(
+        self, pick_order, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """`_seed_moved` compares against the best-matching prior pick, which `previous_picks` returns
+        first because it is ordered by the persisted rank column. Comparing against the DISPLAYED
+        first pick instead made this row look reseeded every refresh night, so it rebuilt for ever and
+        carry-forward silently stopped applying to every non-default order."""
+        self._ordered_row_ctx(ctx, pick_order)
+        ctx.config.rows[0] = replace(ctx.config.rows[0], name_template="Because you watched {top_seed}", max_seeds=1)
+        # Seeded by 900 ("Fargo"), which is still this person's only seed — so the seed has NOT moved.
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by([12, 13, 14, 15, 16], seed_tmdb_id=900, seed_title="Fargo")
+        }
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert {12, 13, 14} <= set(ids), f"{pick_order} row still carries its strongest two-thirds, got {ids}"
+
+    def test_pick_order_sorts_picks_missing_the_value_last(self, ctx: EngineContext, mock_plextv):
+        """Carried-forward picks delivered before 0056 have no rating or year. They must sort last
+        and keep their order, so such a row degrades to its ranking for one cycle rather than
+        scrambling — and the run must not raise on the None."""
+        from shortlist.engine.rows import _apply_order
+
+        picks = [
+            Pick(tmdb_id=1, rating_key=0, title="no data A", rank=1, reason="", media_type=MediaType.MOVIE),
+            Pick(tmdb_id=2, rating_key=0, title="rated", rank=2, reason="", media_type=MediaType.MOVIE, rating=8.0),
+            Pick(tmdb_id=3, rating_key=0, title="no data B", rank=3, reason="", media_type=MediaType.MOVIE),
+        ]
+
+        by_rating = _apply_order(picks, "rating", row_slug="r", user_slug="u", run_day=5)
+        by_year = _apply_order(picks, "newest", row_slug="r", user_slug="u", run_day=5)
+
+        assert [p.tmdb_id for p in by_rating] == [2, 1, 3], "the rated pick leads; the rest keep their order"
+        assert [p.tmdb_id for p in by_year] == [1, 2, 3], "no years at all leaves the order untouched"
 
     def test_a_shared_row_also_records_a_breakdown(self, ctx: EngineContext, mock_plextv):
         """A shared 'popular on this server' row records a per-library breakdown too, keyed by its own
@@ -2914,3 +3325,143 @@ class TestOrphanDeletion:
 
         ctx.plex.delete_owned_collection.assert_not_called()
         assert report.orphans_removed == ["Shortlist_ghost"]
+
+
+class TestRatingSource:
+    """Ordering by "Highest rated" when the owner picked a non-TMDB service (IMDb, Trakt, …).
+
+    The score comes from MDBList, which the request gate already uses. Only rows actually ordered by
+    rating pay for it, and only for the picks that survived into the row.
+    """
+
+    def _rating_ctx(self, ctx, source: str, mdblist):
+        from tests.unit.test_pipeline import TestPerRowOverrides as T
+
+        T()._ordered_row_ctx(ctx, "rating")
+        ctx.config.rating_source = source
+        ctx.mdblist = mdblist
+
+    def _ids(self, report):
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        return [p["tmdb_id"] for p in picks]
+
+    def test_a_rating_row_sorts_on_the_configured_service_not_tmdb(self, ctx: EngineContext, mock_plextv):
+        """The whole point: TMDB rates 10 highest and 19 lowest in this fixture, so an IMDb order that
+        reverses them cannot be TMDB's numbers by coincidence."""
+        from tests.unit.test_requests import FakeMdbList
+
+        mdblist = FakeMdbList({tid: (float(tid), 5000) for tid in range(10, 20)})  # IMDb: 19 best, 10 worst
+        self._rating_ctx(ctx, "imdb", mdblist)
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert ids == sorted(ids, reverse=True), f"sorted by the IMDb score, got {ids}"
+        assert mdblist.calls == len(ids), f"one lookup per delivered pick, not per candidate, got {mdblist.calls}"
+
+    def test_the_default_source_costs_no_lookups_at_all(self, ctx: EngineContext, mock_plextv):
+        """TMDB is already on every candidate, so the default must not touch MDBList — otherwise every
+        rating-ordered row on the server would spend quota for a number it already had."""
+        from tests.unit.test_requests import FakeMdbList
+
+        mdblist = FakeMdbList({})
+        self._rating_ctx(ctx, "tmdb", mdblist)
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert mdblist.calls == 0, "the TMDB default is a no-op"
+        assert ids == sorted(ids, key=lambda t: -(9.5 - (t - 10) * 0.5)), f"still ordered by TMDB score, got {ids}"
+
+    def test_a_spent_quota_falls_the_whole_row_back_to_tmdb(self, ctx: EngineContext, mock_plextv):
+        """A row must never be sorted on two services' scales at once. Falling back only for the
+        titles AFTER the 429 would interleave IMDb scores with TMDB ones, which is worse than either.
+        """
+        from tests.unit.test_requests import FakeMdbList
+
+        # Reversed vs TMDB, so a partial application would be obvious in the delivered order.
+        mdblist = FakeMdbList({tid: (float(tid), 5000) for tid in range(10, 20)}, rate_limit_after=2)
+        self._rating_ctx(ctx, "imdb", mdblist)
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert ids == sorted(ids, key=lambda t: -(9.5 - (t - 10) * 0.5)), f"whole row on TMDB scores, got {ids}"
+
+    def test_a_title_the_service_cannot_score_sorts_last(self, ctx: EngineContext, mock_plextv):
+        """An unrated title is not an error — IMDb simply has no score for some titles. It goes to the
+        end of the row rather than dropping out of it or failing the run."""
+        from tests.unit.test_requests import FakeMdbList
+
+        ratings: dict[int, tuple[float, int] | None] = {tid: (float(tid), 5000) for tid in range(10, 20)}
+        # 12 is one of the five titles that actually reach this row (selection takes the top 5 by
+        # ranking), and would otherwise sit mid-row on the IMDb scale — so "sorts last" is a real move.
+        ratings[12] = None
+        mdblist = FakeMdbList(ratings)
+        self._rating_ctx(ctx, "imdb", mdblist)
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert ids[-1] == 12, f"the unscored title sorts last, got {ids}"
+        assert sorted(ids) == [10, 11, 12, 13, 14], f"and is still delivered, not dropped, got {ids}"
+
+    def test_no_mdblist_key_configured_leaves_the_row_on_tmdb(self, ctx: EngineContext, mock_plextv):
+        """`ctx.mdblist` is None when no key is set. Choosing IMDb without one must degrade to TMDB,
+        which is what the setting documents — not raise on every rating-ordered row."""
+        self._rating_ctx(ctx, "imdb", None)
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert ids == sorted(ids, key=lambda t: -(9.5 - (t - 10) * 0.5)), f"fell back to TMDB, got {ids}"
+
+    def test_the_service_score_never_overwrites_the_persisted_tmdb_rating(self):
+        """`Pick.rating` is TMDB's, is persisted as such, and comes back on every carried-forward pick.
+
+        The service score is returned as a separate override map instead of being written onto the
+        pick. Writing it made a fallback impossible to honour: a refresh night mixes carried picks
+        (holding last run's MDBList score) with newcomers (holding TMDB's), and once both sit in the
+        same field nothing can tell them apart — so a quota-spent night sorted one row on two
+        services' scales, which is worse than sorting it on either.
+        """
+        from shortlist.engine.rows import _apply_order, _rated_by_source
+        from tests.unit.test_requests import FakeMdbList
+
+        picks = [
+            Pick(tmdb_id=1, rating_key=1, title="A", rank=1, reason="", media_type=MediaType.MOVIE, rating=9.0),
+            Pick(tmdb_id=2, rating_key=2, title="B", rank=2, reason="", media_type=MediaType.MOVIE, rating=1.0),
+        ]
+        ctx = MagicMock()
+        ctx.config.rating_source = "imdb"
+        ctx.mdblist_rate_limited = False
+        ctx.mdblist = FakeMdbList({1: (2.0, 500), 2: (8.0, 500)})  # IMDb reverses TMDB's order
+
+        overrides = _rated_by_source(picks, ctx)
+        ordered = _apply_order(picks, "rating", row_slug="r", user_slug="u", run_day=5, ratings=overrides)
+
+        assert [p.rating for p in picks] == [9.0, 1.0], "the picks themselves still carry TMDB's score"
+        assert [p.tmdb_id for p in ordered] == [2, 1], "but the row is ordered on the IMDb score"
+        # And with no map (the quota-spent / no-key fallback) the SAME picks order on TMDB alone.
+        fallback = _apply_order(picks, "rating", row_slug="r", user_slug="u", run_day=5, ratings=None)
+        assert [p.tmdb_id for p in fallback] == [1, 2], "the fallback is one consistent TMDB scale"
+
+    def test_a_spent_quota_stops_being_retried_for_the_rest_of_the_run(self, ctx: EngineContext, mock_plextv):
+        """Without a latch, every rating-ordered row for every user re-attempts after the first 429 —
+        and each attempt is retried three times honouring Retry-After (up to 60s). On a 40-user server
+        that is minutes of stall for results that are thrown away."""
+        from tests.unit.test_requests import FakeMdbList
+
+        mdblist = FakeMdbList({tid: (float(tid), 5000) for tid in range(10, 20)}, rate_limit_after=0)
+        self._rating_ctx(ctx, "imdb", mdblist)
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(101, "mike")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=101)])
+
+        assert ctx.mdblist_rate_limited, "the run latched the spent quota"
+        assert mdblist.calls == 1, f"one failed call for the whole run, not one per row per user, got {mdblist.calls}"

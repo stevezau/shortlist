@@ -1183,6 +1183,32 @@ class TestWatchedTitles:
         assert mock_plex.watched_titles("1", MediaType.MOVIE, "TOK") == []
 
     @respx.mock
+    def test_a_403_raises_section_not_shared_not_a_generic_http_error(self, mock_plex: PlexClient):
+        """403 = this token cannot see this library, which callers must tell apart from a real error.
+
+        As a plain `HTTPStatusError` it read as "unreadable section", which invalidated the person's
+        entire watch cache on every sync and forced an uncached complete re-read for ever.
+        """
+        from shortlist.engine.clients.plex_pms import SectionNotShared
+
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(return_value=httpx.Response(403, text="<html>Forbidden</html>"))
+        with pytest.raises(SectionNotShared):
+            mock_plex.watched_titles("12", MediaType.SHOW, "TOK")
+
+    @respx.mock
+    def test_a_500_still_raises_a_generic_http_error(self, mock_plex: PlexClient):
+        """The other side of the 403 split: a real server fault must STAY a failure, so the cache
+        still invalidates and the complete-read fallback still fires."""
+        from shortlist.engine.clients.plex_pms import SectionNotShared
+
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(return_value=httpx.Response(500, text="boom"))
+        with pytest.raises(httpx.HTTPStatusError) as excinfo:
+            mock_plex.watched_titles("12", MediaType.SHOW, "TOK")
+        assert not isinstance(excinfo.value, SectionNotShared)
+
+    @respx.mock
     def test_a_malformed_tmdb_guid_is_dropped_not_raised(self, mock_plex: PlexClient):
         """A guid id that isn't a real integer must be treated like no guid at all — dropped, not a
         crash that ends the whole watched-titles read for this user (see the same tolerance in

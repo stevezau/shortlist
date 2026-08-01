@@ -7,8 +7,12 @@ import { LibraryPicker } from "@/components/rows/library-picker";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
+import { RowSection } from "@/components/rows/row-section";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
-import { RowSourcesField } from "@/components/rows/row-sources-field";
+import {
+  effectiveSources,
+  RowSourcesField,
+} from "@/components/rows/row-sources-field";
 import { TemplateVarsHintWithPreview } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
@@ -30,7 +34,11 @@ import { RecentCountField } from "@/components/recent-count-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
-import { useSaveCollection, useSettings } from "@/lib/queries";
+import {
+  useSaveCollection,
+  useSaveSettings,
+  useSettings,
+} from "@/lib/queries";
 import type { RowTemplate } from "@/lib/row-templates";
 import {
   freshnessGlobal,
@@ -41,6 +49,11 @@ import {
   watchedPctGlobal,
   watchedPctSeed,
 } from "@/lib/row-globals";
+import {
+  asRatingSource,
+  RATING_LABELS,
+  RATING_SOURCES,
+} from "@/lib/rating-sources";
 import type { Collection, CollectionInput, User } from "@/lib/types";
 
 /** The tightest seed budget a row named after ONE title can actually use.
@@ -50,6 +63,29 @@ import type { Collection, CollectionInput, User } from "@/lib/types";
  *  candidates for its other half, so that library's collection never builds. */
 function namedRowSeeds(media: string): number {
   return media === "both" ? 2 : 1;
+}
+
+/** What each pick order actually does, in the row editor's voice: says what happens, not what it is.
+ *
+ *  "Shuffled" names its cost out loud. It is the only order that rewrites the collection on Plex on
+ *  nights when nothing about the row has changed — the other three ride along with a refresh the row
+ *  was doing anyway, so they cost nothing extra. */
+function pickOrderHelp(
+  order: CollectionInput["pick_order"],
+  ratingLabel: string,
+): string {
+  switch (order) {
+    case "rating":
+      // Names the service the server is actually configured for: "Highest rated" alone leaves the
+      // owner guessing whose score they get, and the answer is a setting they may not have visited.
+      return `Highest ${ratingLabel} score first, whatever the match.`;
+    case "newest":
+      return "Most recently released first.";
+    case "shuffle":
+      return "A different order every day, from the same titles. The only order that writes to Plex on days the row is otherwise unchanged.";
+    default:
+      return "Strongest suggestions first — how well each title matches what they watch.";
+  }
 }
 
 /**
@@ -171,9 +207,13 @@ export function RowEditor({
   onRename?: () => void;
 }) {
   const save = useSaveCollection();
+  const saveSettings = useSaveSettings();
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
   const settings = useSettings();
-  const [input, setInput] = useState<CollectionInput>(
+  const ratingSource = asRatingSource(
+    settings.data?.["recommendations.rating_source"],
+  );
+  const ratingLabel = RATING_LABELS[ratingSource];  const [input, setInput] = useState<CollectionInput>(
     collection
       ? toInput(collection)
       : { ...blankInput(), ...(template?.values ?? {}) },
@@ -182,6 +222,63 @@ export function RowEditor({
 
   const set = (patch: Partial<CollectionInput>) =>
     setInput((prev) => ({ ...prev, ...patch }));
+
+  // "Watches the AI searches from" caps ONE source's lookups. On a row that doesn't use AI web
+  // search it changes nothing, so showing it invites someone to tune a setting with no effect —
+  // and it sat directly beneath "Watches to build from", which is the row-wide one, making the two
+  // read as rival answers to the same question.
+  const usesWebSearch = effectiveSources(
+    input.candidate_sources,
+    settings.data,
+  ).includes("llm_web");
+
+  // What each folded section says about itself while closed. A disclosure that hides both its
+  // controls AND what they are currently set to is worse than the flat list it replaced — these are
+  // what let someone skip a section rather than open it to find out they didn't need it.
+  const posterSummary =
+    (
+      {
+        "": "Plex’s own artwork",
+        upload: "Uploaded image",
+        text: "Generated from text",
+        ai: "AI image",
+        generate: "AI image",
+      } as Record<string, string>
+    )[input.poster.mode] ?? "Plex’s own artwork";
+  const drawsOnSummary = [
+    // "[]" means every library OF THIS ROW'S TYPE — saying "every library" on a movies row
+    // contradicted the picker right below it, which ticks only the movie ones.
+    input.library_keys.length === 0
+      ? ({ movie: "every movie library", show: "every TV library" } as Record<
+          string,
+          string
+        >)[input.media] ?? "every library"
+      : `${input.library_keys.length} librar${input.library_keys.length === 1 ? "y" : "ies"}`,
+    input.candidate_sources.length === 0
+      ? "default sources"
+      : `${input.candidate_sources.length} source${input.candidate_sources.length === 1 ? "" : "s"}`,
+    input.freshness === null
+      ? "default freshness"
+      : input.freshness >= 1
+        ? "refreshes nightly"
+        : input.freshness <= 0
+          ? "frozen"
+          : `${Math.round(input.freshness * 100)}% fresh`,
+    input.max_seeds === null ? null : `${input.max_seeds} watch${input.max_seeds === 1 ? "" : "es"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const placementSummary = (() => {
+    const mine = input.placement === "off" ? 0 : 1;
+    const theirs = input.placement_friends === "off" ? 0 : 1;
+    if (mine && theirs) return "You and everyone else";
+    if (theirs) return "Everyone else only";
+    if (mine) return "You only";
+    return "Hidden from every shelf";
+  })();
+  const requestSummary = input.request_tag
+    ? `Tagged “${input.request_tag}”`
+    : "No tag";
 
   const submit = () => {
     // Keep 'Top' entries and real anchors; drop a half-set library (mode chosen, no collection yet) so
@@ -217,7 +314,9 @@ export function RowEditor({
             <strong className="text-foreground">
               {template.emoji} {template.title}
             </strong>
-            . Change anything you like —{" "}
+            {/* Several template titles end in an ellipsis ("Because you watched…"), which the
+                sentence stop then doubled into "…." — so the separator is a dash, not a full stop. */}
+            {" — change anything you like: "}
             {template.highlights.join(", ").toLowerCase()}.
           </p>
         )}
@@ -258,12 +357,8 @@ export function RowEditor({
             )}
           </div>
 
-          <PosterField
-            value={input.poster}
-            onChange={(poster) => set({ poster })}
-            collectionId={collection?.id ?? null}
-            hasImage={collection?.poster?.has_image ?? false}
-          />
+
+
 
           <div className="space-y-2">
             <Label>Built how?</Label>
@@ -296,30 +391,9 @@ export function RowEditor({
             onChange={set}
           />
 
-          <RowScheduleField
-            value={input.schedule}
-            onChange={(schedule) => set({ schedule })}
-          />
 
-          {!isDefault && (
-            <RowSizeField
-              value={input.size}
-              onChange={(size) => set({ size })}
-            />
-          )}
 
-          <LibraryPicker
-            libraryKeys={input.library_keys}
-            onChange={(next) =>
-              set({
-                ...next,
-                // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
-                // without anyone touching the flag. Its control is hidden then, and the API refuses
-                // the combination — which would be a save failing with no visible cause.
-                ...(next.media !== "show" ? { unstarted_only: false } : {}),
-              })
-            }
-          />
+
 
           {input.build === "shared" && (
             <div className="space-y-2">
@@ -352,6 +426,98 @@ export function RowEditor({
             </div>
           )}
 
+          <div className="space-y-2">
+            <Label>Order</Label>
+            <Segmented
+              value={input.pick_order}
+              onChange={(pick_order) => set({ pick_order })}
+              ariaLabel="How the titles in this row are ordered"
+              options={[
+                { value: "best", label: "Best match" },
+                { value: "rating", label: "Highest rated" },
+                { value: "newest", label: "Newest" },
+                { value: "shuffle", label: "Shuffled" },
+              ]}
+            />
+            <p className="text-sm text-muted-foreground">
+              {pickOrderHelp(input.pick_order, ratingLabel)}
+            </p>
+            {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
+                question "rated by whom?" at exactly this moment, and answering it by sending someone
+                to another screen is how the setting stayed undiscovered. It is still one server-wide
+                value, so the note says so rather than implying it is per-row. */}
+            {input.pick_order === "rating" && (
+              <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
+                <Label htmlFor="row-rating-source">Rated by</Label>
+                <select
+                  id="row-rating-source"
+                  value={ratingSource}
+                  onChange={(e) =>
+                    saveSettings.mutate({
+                      "recommendations.rating_source": asRatingSource(
+                        e.target.value,
+                      ),
+                    })
+                  }
+                  disabled={saveSettings.isPending}
+                  className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
+                >
+                  {RATING_SOURCES.map((source) => (
+                    <option key={source} value={source}>
+                      {RATING_LABELS[source]}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {ratingSource === "tmdb"
+                    ? "TMDB needs no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic come from MDBList and need its API key in Settings → Requests."
+                    : `Scores come from MDBList — without its API key in Settings → Requests, ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
+                  Shared by every row ordered by rating.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <RowScheduleField
+            value={input.schedule}
+            onChange={(schedule) => set({ schedule })}
+          />
+
+          {!isDefault && (
+            <RowSizeField
+              value={input.size}
+              onChange={(size) => set({ size })}
+            />
+          )}
+
+          <RowSection
+            title="Artwork"
+            summary={posterSummary}
+          >
+          <PosterField
+            value={input.poster}
+            onChange={(poster) => set({ poster })}
+            collectionId={collection?.id ?? null}
+            hasImage={collection?.poster?.has_image ?? false}
+          />
+          </RowSection>
+
+          <RowSection title="What it draws on" summary={drawsOnSummary}>
+
+          <LibraryPicker
+            libraryKeys={input.library_keys}
+            media={input.media}
+            onChange={(next) =>
+              set({
+                ...next,
+                // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
+                // without anyone touching the flag. Its control is hidden then, and the API refuses
+                // the combination — which would be a save failing with no visible cause.
+                ...(next.media !== "show" ? { unstarted_only: false } : {}),
+              })
+            }
+          />
+
           <RowSourcesField
             value={input.candidate_sources}
             onChange={(candidate_sources) => set({ candidate_sources })}
@@ -360,7 +526,7 @@ export function RowEditor({
           <InheritableField
             label="Already-watched titles"
             labelFor="row-watched-pct"
-            description="How much of this row may be things a person has already finished. Leave on the global default to follow Settings → Recommendations."
+            description="How much of this row may be things a person has already finished. Leave on the global default to follow Settings → Finding titles."
             ariaLabel="Use the global already-watched default"
             inheriting={input.watched_pct === null}
             globalValue={watchedPctGlobal(settings.data)}
@@ -369,24 +535,27 @@ export function RowEditor({
             }
             after={
               <>
-                {/* The setting above is a CEILING — it permits finished titles, it never prefers
+                {/* The percentage above is a CEILING — it permits finished titles, it never prefers
                     them, so on a library with plenty of unwatched candidates even 100% yields an
-                    unwatched row. This is the switch that actually makes a rewatch shelf. */}
+                    unwatched row. This switch is what actually makes a rewatch shelf, which is why
+                    it is named after the row someone wants rather than after its effect on the
+                    setting above: "lead with things they've seen" could only be understood by
+                    someone who had already understood the ceiling. */}
                 <div className="flex items-start justify-between gap-4 rounded-md border p-3">
                   <div className="space-y-1">
                     <Label htmlFor="row-rewatch">
-                      Lead with things they&rsquo;ve seen
+                      Make this a &ldquo;watch it again&rdquo; row
                     </Label>
                     <p className="text-sm text-muted-foreground">
-                      A rewatch shelf: titles they&rsquo;ve finished come first,
-                      and new ones only fill what&rsquo;s left. Without this,
-                      the setting above merely <em>allows</em> rewatches &mdash;
-                      it never puts them first.
+                      Films and shows they&rsquo;ve already finished lead the
+                      row, and new suggestions fill whatever is left. Turning
+                      this on also lets already-watched titles into the row, so
+                      there is nothing else to set.
                     </p>
                   </div>
                   <Switch
                     id="row-rewatch"
-                    aria-label="Lead with things they have already seen"
+                    aria-label="Make this a watch it again row"
                     checked={input.rewatch}
                     onCheckedChange={(rewatch) =>
                       set({
@@ -446,7 +615,7 @@ export function RowEditor({
           <InheritableField
             label="Freshness"
             labelFor="row-freshness"
-            description="How much this row changes day to day. Leave on the global default to follow Settings → Recommendations."
+            description="How often this row swaps in new titles — which titles it holds, not the sequence they appear in (that’s Order, below). Leave on the global default to follow Settings → Finding titles."
             ariaLabel="Use the global freshness default"
             inheriting={input.freshness === null}
             globalValue={freshnessGlobal(settings.data)}
@@ -461,9 +630,10 @@ export function RowEditor({
             />
           </InheritableField>
 
+          {usesWebSearch && (
           <InheritableField
-            label="Recent watches to search"
-            description="How many of a person’s most recent watches the AI web-search source looks up for this row (one cached search each). Only affects rows using AI web search. Leave on the global default to follow Settings → Recommendations."
+            label="Watches the AI searches from"
+            description="How many of a person’s most recent watches the AI web-search source looks up for this row (one cached search each). Only affects rows using AI web search. Leave on the global default to follow Settings → Finding titles."
             ariaLabel="Use the global recent-watches default"
             inheriting={input.recent_count === null}
             globalValue={recentCountGlobal(settings.data)}
@@ -474,10 +644,12 @@ export function RowEditor({
             }
           >
             <RecentCountField
+              label=""
               value={input.recent_count ?? 0}
               onChange={(next) => set({ recent_count: next })}
             />
           </InheritableField>
+          )}
 
           <InheritableField
             label="Watches to build from"
@@ -524,12 +696,16 @@ export function RowEditor({
             }
           >
             <MaxSeedsField
+              label=""
               value={input.max_seeds ?? 0}
               onChange={(next) => set({ max_seeds: next })}
             />
           </InheritableField>
+          </RowSection>
 
-          <div className="space-y-3 border-t pt-4">
+          <RowSection title="Where it appears" summary={placementSummary}>
+
+          <div className="space-y-3">
             <Label>Where it shows</Label>
             <p className="text-sm text-muted-foreground">
               Which Plex screens this row appears on — matches Plex&rsquo;s
@@ -564,7 +740,9 @@ export function RowEditor({
               />
             </div>
           </div>
+          </RowSection>
 
+          <RowSection title="Requests" summary={requestSummary}>
           {input.build !== "shared" && (
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="row-request-tag">Request tag (optional)</Label>
@@ -583,6 +761,7 @@ export function RowEditor({
               </p>
             </div>
           )}
+          </RowSection>
         </div>
 
         {save.isError && (

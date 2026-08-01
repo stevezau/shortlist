@@ -1,0 +1,37 @@
+title: Shortlist
+tagline: Per-user movie & TV recommendations for Plex
+description: >-
+  Self-hosted, per-user movie and TV recommendations for Plex. A private
+  "Picked for You" row on every user's Plex home screen, built from their own
+  watch history and visible only to them. One Docker container, works with or
+  without AI.
+
+url: https://stevezau.github.io
+baseurl: /shortlist
+
+# The card Reddit, Discord, Slack and X render when someone shares a docs link.
+# The real Plex row is the whole pitch in one image, so it's worth more here than
+# any logo would be. This has to go through `defaults` rather than a top-level
+# `image:` — jekyll-seo-tag only ever reads page.image, never site.image.
+defaults:
+  - scope:
+      path: ""
+    values:
+      image: /images/plex-picked-for-you.jpg
+
+# Ownership proof for Google Search Console (where the sitemap is submitted).
+# Public by design — it's served as a meta tag on every page.
+google_site_verification: cqlqedFcoobifs1lLaDIdbBPCPurJ-JlDAIVOTs_02k
+
+theme: jekyll-theme-cayman
+
+# jekyll-relative-links rewrites the .md links these pages use for each other so
+# they work both on github.com and on the built site.
+plugins:
+  - jekyll-relative-links
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+relative_links:
+  enabled: true
+  collections: false

@@ -42,6 +42,7 @@ COLLECTION_KEYS = {
     "freshness",
     "recent_count",
     "max_seeds",
+    "pick_order",
     "placement",
     "placement_friends",
     "pin_top",

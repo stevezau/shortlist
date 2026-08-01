@@ -4,6 +4,45 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.9] - 2026-08-02
+
+### Added
+
+- **Rows choose their own order.** Best match (the ranking, unchanged and still the default),
+  Highest rated, Newest, or Shuffled. Plex only sorts a collection by release date, alphabetically,
+  or by a custom order, so every one of these is applied by Shortlist and written as that custom
+  order — which is what the Home row displays.
+- **Highest rated can use IMDb, Trakt, Rotten Tomatoes or Metacritic** instead of TMDB, via MDBList
+  (Settings → Finding titles → "Rated by", also editable straight from the row editor). TMDB needs no
+  setup and costs no lookups. Without an MDBList key, or once its daily quota is spent, a row falls
+  back to TMDB for its whole ordering rather than sorting half of itself on one scale and half on
+  another.
+
+### Fixed
+
+- **A "Because you watched X" row now follows the watch it names.** Its title renders from the top
+  pick, and every refresh carried that pick forward — so the row stayed named after the first thing
+  that ever seeded it while newer watches quietly filled its tail. It now rebuilds around the new
+  watch and renames itself when the seed moves. That template also refreshes nightly, since an
+  eight-day cadence kept it naming last week's film for a week.
+- **The top of a row moves again.** A refresh kept the strongest two-thirds pinned to the head, so on
+  a 20-title row thirteen positions could never change however the candidates scored. Survivors and
+  newcomers are now ranked together, so a better new suggestion can reach the front.
+- **The library picker no longer ticks libraries a row never builds in.** An empty selection means
+  "every library of this row's type"; it was drawn as every library, so a movies-only row showed its
+  TV ones ticked — and touching them flipped the row to cover both, which on a one-seed row silently
+  built an empty collection.
+
+### Changed
+
+- **The row editor is five decisions instead of nineteen.** Name, who gets it, order, schedule and
+  size stand alone; artwork, what it draws on, where it appears and requests fold away, each
+  captioned with its current values so a closed section still answers "is what I want in here?".
+- Several settings now say what they do: "Make this a 'watch it again' row" (was "Lead with things
+  they've seen"), "Watches the AI searches from" (was "Recent watches to search", and it is hidden on
+  rows that do not use AI web search, where it did nothing), and freshness now says it decides *which*
+  titles a row holds rather than the order they appear in.
+
 ## [0.1.0-beta.5] - 2026-07-22
 
 ### Fixed

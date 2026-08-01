@@ -7,6 +7,7 @@ only builds and delivers collections, always UNPROMOTED.
 
 from __future__ import annotations
 
+import hashlib
 import time
 import zlib
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from loguru import logger
 from shortlist.engine import candidates as candidates_mod
 from shortlist.engine import picker, ranking
 from shortlist.engine import requests as requests_mod
+from shortlist.engine.clients.mdblist import MdbListRateLimitError
 from shortlist.engine.clients.plex_pms import _retry_idempotent
 from shortlist.engine.context import EngineContext, _emit
 from shortlist.engine.delivery import (
@@ -314,6 +316,162 @@ def _reusable_prior(
             continue
         out.append(p)
     return out
+
+
+def _names_a_seed(spec: RowSpec) -> bool:
+    """Whether this row's TITLE claims a particular watch, and so has to keep answering to it."""
+    return "{top_seed}" in spec.name_template
+
+
+def _seed_moved(spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate]) -> bool:
+    """Whether a row NAMED after its seed is now built from a different one than last run's picks.
+
+    A `{top_seed}` title renders from ``picks[0].seed_title`` (``delivery.render_row_name``), and the
+    refresh branch always carries pick #1 forward — so without this the title stays pinned to the seed
+    of the very FIRST build while later refreshes quietly fill the row's tail from newer watches. The
+    row then claims "Because you watched X" over contents mostly chosen for something else, which is
+    exactly what a one-seed row exists to prevent (measured on a real run: history seeded only by
+    Fargo still delivered "Because you watched Chernobyl").
+
+    Keyed on the NAME making the claim, not on a seed budget, so the two-seed `media=both` named row
+    is covered too. Rows that name no seed keep the cheap carry-forward — re-deriving them on every
+    seed drift would turn a normal 30-seed row's refresh into a near-total rebuild.
+
+    Note what this does NOT promise above one seed. It asks whether the POOL still leads with the
+    named seed; the title renders from the best-matching DELIVERED pick (`render_row_name` takes the
+    lowest `rank`). Re-ranking survivors against newcomers can hand the lead to a differently-seeded
+    newcomer while the pool's own top seed never moved, and the row then renames itself to match. That
+    is the title correctly following its lead rather than a stale claim — the two only diverge above
+    one seed, where a `{top_seed}` row already names its strongest watch while holding others.
+    """
+    if not _names_a_seed(spec) or not prior_valid or not sub:
+        return False
+    current = sub[0].top_seed
+    return prior_valid[0].seed_tmdb_id != (current.tmdb_id if current else None)
+
+
+def _rated_by_source(picks: list[Pick], ctx: EngineContext) -> dict[tuple[int, MediaType], float] | None:
+    """The configured service's score for each pick, for a row about to be ordered by rating — or
+    None to order on the TMDB score every pick already carries.
+
+    Returns an OVERRIDE MAP rather than rewriting `Pick.rating`. The rating on a Pick is TMDB's, is
+    persisted as such, and comes back on every carried-forward pick next run; overwriting it made a
+    fallback impossible to honour, because a refresh night mixes carried picks (holding last run's
+    MDBList score) with newcomers (holding TMDB's) and nothing could tell them apart. Sorting one row
+    on two services' scales is worse than sorting it on either.
+
+    One MDBList lookup per title, cached for a week and shared across every row and user, so a warm
+    cache costs nothing and a cold one costs one call per distinct title. Only the picks that survived
+    into a row are looked up — never the whole candidate pool.
+
+    Degrades rather than fails, because an order is cosmetic and a run is not:
+
+    * no MDBList key configured -> None (TMDB), the setting's own documented fallback;
+    * quota spent (429) -> None for this row AND every later row this run (`mdblist_rate_limited`
+      latches), so a spent quota costs one failed call rather than one per row per user;
+    * a title that service has no score for -> 0.0, which `_apply_order` already sorts last.
+    """
+    source = ctx.config.rating_source
+    if source == "tmdb" or ctx.mdblist is None or not picks or ctx.mdblist_rate_limited:
+        return None
+    overrides: dict[tuple[int, MediaType], float] = {}
+    for pick in picks:
+        try:
+            found = ctx.mdblist.rating(pick.tmdb_id, pick.media_type, source)
+        except MdbListRateLimitError:
+            # Latched for the whole run: without this every remaining rating-ordered row for every
+            # user re-attempts, and each attempt is retried three times honouring Retry-After (up to
+            # 60s) — minutes of stall for a result that is discarded anyway.
+            ctx.mdblist_rate_limited = True
+            logger.warning(
+                "MDBList daily quota spent — ordering rows by TMDB score instead of {} for the rest of "
+                "this run (the quota resets daily)",
+                source,
+            )
+            return None
+        except Exception as e:  # one lookup hiccup makes that title unrated, never breaks the row
+            logger.debug("MDBList lookup failed for {} ({}) — treating as unrated", pick.title, e)
+            found = None
+        overrides[(pick.tmdb_id, pick.media_type)] = found[0] if found else 0.0
+    return overrides
+
+
+ROW_ORDERS = ("best", "rating", "newest", "shuffle")
+
+
+def _apply_order(
+    picks: list[Pick],
+    order: str,
+    *,
+    row_slug: str,
+    user_slug: str,
+    run_day: int,
+    ratings: dict[tuple[int, MediaType], float] | None = None,
+) -> list[Pick]:
+    """Order a row's picks for delivery. ``best`` (the default) leaves the ranking alone.
+
+    Applied to EVERY path — carried-forward, refreshed, freshly built and cold-start — so changing a
+    row's order takes effect on the next run without rebuilding it. Ordering is presentation, not selection: it
+    decides how the same picks are arranged, so it never needs a re-curate.
+
+    ``shuffle`` is deliberately NOT random: it is a stable hash of (row, user, day), so a row shifts
+    day to day but a re-run on the same night reproduces the same order. A genuinely random order
+    would rewrite the collection on every retry and could never be asserted in a test.
+
+    Picks missing the value being sorted on (``rating``/``year`` are None or 0 on rows delivered
+    before those were recorded) sort last but keep their relative order, so such a row degrades to
+    its existing ranking for one cycle rather than scrambling.
+
+    ``ratings`` replaces the score used by the ``rating`` order — see ``_rated_by_source``. It is all
+    or nothing on purpose: a partial map would mix two services' scales inside one row.
+    """
+    if order == "rating":
+        # `ratings` overrides the TMDB score a Pick carries when the owner chose another service; it
+        # covers every pick or none, so a row is never sorted on two services' scales (see
+        # `_rated_by_source`).
+        def score(pick: Pick) -> float:
+            if ratings is not None:
+                return ratings.get((pick.tmdb_id, pick.media_type), 0.0)
+            return pick.rating or 0.0
+
+        return sorted(picks, key=lambda p: -score(p))
+    if order == "newest":
+        return sorted(picks, key=lambda p: -(p.year or 0))
+    if order == "shuffle":
+        return sorted(picks, key=lambda p: _shuffle_key(row_slug, user_slug, run_day, p.tmdb_id))
+    return picks
+
+
+def _shuffle_key(row_slug: str, user_slug: str, run_day: int, tmdb_id: int) -> int:
+    """A stable per-(row, user, day, title) sort key for the ``shuffle`` order.
+
+    blake2b, NOT the ``zlib.crc32`` used for the refresh phase, and not Python's ``hash`` (salted per
+    process). CRC32 is LINEAR: every key here differs only in the day field, at the same offset, so
+    incrementing the day XORs one identical constant into all of a row's checksums — which frequently
+    leaves their relative order untouched. Measured before this was fixed: day 5 and day 6 shuffled a
+    five-title row into the exact same sequence, i.e. the row would not have moved at all.
+    """
+    digest = hashlib.blake2b(f"{row_slug}|{user_slug}|{run_day}|{tmdb_id}".encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big")
+
+
+def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
+    """Re-rank a refresh night's survivors and newcomers together, by the pool's CURRENT order.
+
+    ``sub`` is already best-first (``ranking.pre_rank`` output), so a title's index in it is tonight's
+    ranking. Without this the refresh branch concatenated ``kept + new``, which pinned last run's top
+    two-thirds to the head of the row for ever: a newcomer could never place above a survivor however
+    much better it scored, so on a 20-title row positions 1-13 never moved again. `ranking` already
+    promises "the single best-scoring title is always kept first" — this is what makes that true once
+    a row has history.
+
+    A pick no longer in the pool sorts to the END, keeping its relative order there (Python's sort is
+    stable) — it is still a valid delivery, just no longer a ranked candidate tonight. The caller
+    then truncates to `k`, so such a pick is the first to lose its slot when the row is over-full,
+    which is the right precedence: a ranked candidate outranks one the pool no longer holds.
+    """
+    order = {(c.tmdb_id, c.media_type): i for i, c in enumerate(sub)}
+    return sorted(picks, key=lambda p: order.get((p.tmdb_id, p.media_type), len(order)))
 
 
 def _rating_key_resolver(seed_index: dict[int, int]) -> Callable[[WatchedItem], int | None]:
@@ -1090,7 +1248,14 @@ def _build_section_picks(
             # Cold picks already come FROM a library (plex.top_rated), so they're in-library by
             # construction; delivery remaps each to the target library and drops any it lacks.
             cands = [p for p in base_cold if p.media_type is kind][:k]
-            section_picks[section.key] = [replace(p, rank=i + 1) for i, p in enumerate(cands)]
+            ranked_cold = [replace(p, rank=i + 1) for i, p in enumerate(cands)]
+            # Ordered like any other row: a cold-start user who set their row to Shuffled expects it
+            # to shuffle, and "their history is thin" is no reason to hand back a different feature.
+            # No `ratings` override — a cold row is drawn from the library's top-rated, and spending
+            # MDBList quota on a placeholder row is not worth it.
+            section_picks[section.key] = _apply_order(
+                ranked_cold, spec.pick_order, row_slug=spec.slug, user_slug=user.slug, run_day=ctx.run_day
+            )
             continue
         sec_idx = ctx.section_index.get(section.key, {})
         pct = policy.effective_watched_pct(spec)
@@ -1114,8 +1279,10 @@ def _build_section_picks(
             sec_picks = prior_valid[:k]
             if len(sec_picks) < k and sub:
                 sec_picks = _pad_picks(sec_picks, sub, k)
-        elif prior_valid:
-            # Refresh night: keep the strongest ~two-thirds, swap the rest for genuinely-new titles.
+        elif prior_valid and not _seed_moved(spec, prior_valid, sub):
+            # Refresh night: keep the strongest ~two-thirds by RANK (match quality — `prior_valid` is
+            # ordered by the persisted rank column, not by how the row was displayed), and swap the
+            # rest for genuinely-new titles.
             # Pick only from candidates NOT already in the row so a just-rotated-out title can't
             # bounce straight back — the internal anti-immediate-repeat guard that replaced staleness_runs.
             keep_n = min(len(prior_valid), round(_KEEP_FRACTION * k))
@@ -1123,12 +1290,22 @@ def _build_section_picks(
             prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
             fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
             new_picks = picker.build_picks(fresh_pool, k)
-            sec_picks = (kept + [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids])[:k]
+            survivors = kept + [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
+            sec_picks = _rank_against_pool(survivors, sub)[:k]
             if len(sec_picks) < k:
                 sec_picks = _pad_picks(sec_picks, fresh_pool, k)
+            # `_seed_moved` above asked whether the POOL still leads with the seed this row is named
+            # after. That is not quite the question the title asks: the name renders from the
+            # best-matching DELIVERED pick, and re-ranking survivors against newcomers can put a
+            # differently-seeded newcomer first even when the pool's own top seed never moved. Left
+            # here, the row would rename itself while still carrying the old seed's picks — the exact
+            # stale claim `_seed_moved` exists to prevent. Only reachable above one seed, which is
+            # why the single-seed tests never saw it.
         else:
             # Bootstrap: this row+library has never been built (or its picks predate row/library
-            # stamping) — build a fresh full row, exactly like a first run.
+            # stamping) — build a fresh full row, exactly like a first run. Also reached on a refresh
+            # night when `_seed_moved` says the seed this row is NAMED after has changed: carrying
+            # anything forward would leave the title claiming a watch the contents no longer answer to.
             if not sub:
                 # Say so: this is the ONLY exit that leaves a library with no collection and no
                 # trace entry, so without a line here "why is my Movies row empty?" cannot be
@@ -1156,7 +1333,26 @@ def _build_section_picks(
             # Let at most `pct` of this library's row be already-finished titles; backfill the
             # rest from its fresh candidates. (At pct == 0 the pool already dropped finished ones.)
             sec_picks = _apply_watched_cap(sec_picks, sub, policy.watched_titles, k, pct)
-        section_picks[section.key] = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
+        # `rank` is stamped from the SELECTION order and the display order is applied after it, so the
+        # two never collapse into one another. Everything that asks "which pick is this row's best
+        # match" reads rank — `render_row_name`, which the `{top_seed}` title comes from, and
+        # `_seed_moved`, which reads it back through `previous_picks` (ordered by the rank column).
+        # Ordering last WITHOUT this made both of those answer "whichever pick sorted first tonight":
+        # a `{top_seed}` row ordered by rating renamed itself after a different seed, and a shuffled
+        # one re-derived `_seed_moved` off an arbitrary pick and rebuilt itself every refresh night.
+        ranked = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
+        # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
+        ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
+        # "best" is a no-op, which is what keeps the rewatch/watched-cap orderings above intact
+        # unless the owner explicitly asked for a different one.
+        section_picks[section.key] = _apply_order(
+            ranked,
+            spec.pick_order,
+            row_slug=spec.slug,
+            user_slug=user.slug,
+            run_day=ctx.run_day,
+            ratings=ratings,
+        )
         _log_row_provenance(user, spec, section, section_picks[section.key], sub, k)
     return section_picks
 

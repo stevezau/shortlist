@@ -15,6 +15,7 @@ from shortlist.server.db.models import DEFAULT_SLUG, Server
 from shortlist.server.net_guard import BlockedUrl, check_url
 from shortlist.server.services import collection_reconcile as reconcile
 from shortlist.server.services import jobs
+from shortlist.server.services.audit import add_audit
 from shortlist.server.settings_store import DEFAULTS, PRIVATE_KEYS, SECRET_KEYS, SettingsStore
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_owner)])
@@ -22,6 +23,46 @@ router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(
 # Private keys (e.g. the API token) are managed only via their own endpoints — never settable here,
 # even though the token is a SECRET_KEY (which would otherwise make it PUT-able).
 KNOWN_KEYS = (set(DEFAULTS) | SECRET_KEYS) - PRIVATE_KEYS
+
+
+# The UI round-trips this in place of a secret it never received, so it means "leave it alone".
+REDACTED_PLACEHOLDER = "•••••"
+
+# What a secret's before/after reads as in the audit trail. The FACT of the change is auditable
+# (rule 10); the value never is, in either direction (rule 9).
+_AUDIT_SECRET = "<redacted>"
+
+# A few settings hold whole objects (`rows.hub_anchor`, `candidates.sources`). The audit wants the
+# fact and the shape of a change, not a second copy of the config, so long values are summarised.
+_MAX_AUDIT_VALUE_CHARS = 200
+
+
+def _audit_value(key: str, value: object) -> object:
+    """One settings value as it may be written to the audit log."""
+    if key in SECRET_KEYS:
+        return _AUDIT_SECRET
+    text = repr(value)
+    return value if len(text) <= _MAX_AUDIT_VALUE_CHARS else f"{text[:_MAX_AUDIT_VALUE_CHARS]}… ({len(text)} chars)"
+
+
+def _settings_diff(store: SettingsStore, values: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Old -> new for the keys this PUT actually CHANGES, ready for the audit log.
+
+    The settings form PUTs the whole object, so most keys arrive unchanged — recording those would
+    bury the one that moved. Secrets are compared (so a key rotation still registers as a change)
+    but never recorded: `_audit_value` replaces both sides before anything reaches the event.
+
+    Must be called BEFORE the writes — afterwards the old value is gone.
+    """
+    changed: dict[str, dict[str, object]] = {}
+    for key, new in values.items():
+        if key in SECRET_KEYS and new == REDACTED_PLACEHOLDER:
+            continue  # the placeholder is not a new value; the write loop skips it too
+        old = store.get(key)
+        if old == new:
+            continue
+        changed[key] = {"from": _audit_value(key, old), "to": _audit_value(key, new)}
+    return changed
 
 
 class SettingsUpdate(BaseModel):
@@ -135,6 +176,7 @@ VALIDATORS = {
     "recommendations.freshness": _bounded_float(0.0, 1.0),
     "recommendations.recent_count": _bounded_int(1, 25),
     "recommendations.max_seeds": _bounded_int(5, 100),
+    "recommendations.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
     "recommendations.blocked_shared_seeds": _int_list,
     # Above 1 only affects READ-ONLY jobs — Plex writers stay exclusive whatever this says.
     "jobs.max_parallel_readonly": _bounded_int(1, 8),
@@ -278,10 +320,18 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         # the server changed until the next nightly run — or, for the row name, ever.
         was_hiding = bool(store.get("privacy.hide_shared_from_disabled"))
         old_row_name = (store.get("row.name_template") or "") if "row.name_template" in update.values else ""
+        # Read the diff BEFORE the writes: afterwards there is no record of what the value was. Every
+        # threshold here is owner-tunable and silently changeable, so "the run used different settings
+        # than the ones you are reading" is invisible without this — reconstructing one such change
+        # took a full forensic pass over settings timestamps vs run times (2026-08-01).
+        changed = _settings_diff(store, update.values)
         for key, value in update.values.items():
-            if key in SECRET_KEYS and value == "•••••":
+            if key in SECRET_KEYS and value == REDACTED_PLACEHOLDER:
                 continue  # redacted placeholder round-tripped from the UI — no change
             store.set(key, value)
+        if changed:
+            add_audit(session, "settings.change", "info", changed=changed)
+            session.commit()
         if "log.level" in update.values:
             # Apply immediately so a live "turn on DEBUG to watch this run" takes effect without a
             # container restart. The file sink is preserved from boot.

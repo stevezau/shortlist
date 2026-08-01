@@ -49,6 +49,8 @@ MEDIA = {"movie", "show", "both"}
 # "off" = neither surface. promote() browse-hides unconditionally, so an "off" row still exists and
 # stays reachable from the library's Collections tab — it just claims no Home or Recommended slot.
 PLACEMENTS = {"both", "home", "library", "off"}
+#: How a row's picks are ordered in the delivered collection. Mirrors `engine.rows.ROW_ORDERS`.
+ORDERS = {"best", "rating", "newest", "shuffle"}
 # "" (Plex default), "upload", "text" (built-in Pillow), "ai" (image model). "generate" is the
 # pre-text-engine name for "ai", accepted for backward compatibility.
 POSTER_MODES = {"", "upload", "text", "ai", "generate"}
@@ -127,6 +129,7 @@ class CollectionIn(BaseModel):
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
+    pick_order: str = _closed_set(ORDERS, "best", "How the delivered collection is ordered.")
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
     placement: str = _closed_set(PLACEMENTS, "both", "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set(PLACEMENTS, "both", "Where each FRIEND's own collection appears.")
@@ -183,6 +186,7 @@ class CollectionOut(PassthroughModel):
     freshness: float | None
     recent_count: int | None
     max_seeds: int | None
+    pick_order: str = _closed_set_out(ORDERS, "How the delivered collection is ordered.")
     placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set_out(PLACEMENTS, "Where each FRIEND's own collection appears.")
     pin_top: bool
@@ -216,6 +220,8 @@ def _validate(body: CollectionIn) -> None:
         raise HTTPException(
             status_code=422, detail=f"unknown candidate source(s) {unknown}; valid: {sorted(KNOWN_SOURCES)}"
         )
+    if body.pick_order not in ORDERS:
+        raise HTTPException(status_code=422, detail=f"pick_order must be one of {sorted(ORDERS)}")
     if body.placement not in PLACEMENTS:
         raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")
     if body.placement_friends not in PLACEMENTS:
@@ -332,6 +338,7 @@ def _serialize(session, collection: Collection) -> dict:
         "freshness": collection.freshness,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
+        "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
         "placement_friends": collection.placement_friends or "both",
         "pin_top": bool(collection.pin_top),
@@ -415,6 +422,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             freshness=body.freshness,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
+            pick_order=body.pick_order,
             placement=body.placement,
             placement_friends=body.placement_friends,
             pin_top=body.pin_top,
@@ -451,6 +459,7 @@ _PATCHABLE_COLUMNS = (
     "freshness",
     "recent_count",
     "max_seeds",
+    "pick_order",
     "placement",
     "placement_friends",
     "pin_top",

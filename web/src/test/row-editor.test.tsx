@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,6 +56,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     recent_count: null,
     max_seeds: null,
+    pick_order: "best",
     placement: "both",
     placement_friends: "both",
     pin_top: false,
@@ -113,6 +114,7 @@ describe("RowEditor — inherited globals", () => {
       "recommendations.watched_pct": 0.4,
       "recommendations.freshness": 0.5,
       "recommendations.recent_count": 8,
+      "candidates.sources": ["tmdb_similar", "llm_web"],
       "recommendations.max_seeds": 30,
     };
     renderEditor(
@@ -557,16 +559,21 @@ describe("RowEditor — recent watches to search", () => {
     updateCollection.mockClear();
   });
 
-  it("shows the number field only when the row overrides the global default", () => {
+  it("shows the number field only when the row overrides the global default", async () => {
+    settingsData.current = { "candidates.sources": ["llm_web"] };
     renderEditor(row({ recent_count: 5 }));
-    expect(screen.getByLabelText(/Recent watches to search/i)).toHaveValue(5);
+    expect(
+      await screen.findByLabelText(/Watches the AI searches from/i),
+    ).toHaveValue(5);
     expect(
       screen.getByRole("switch", { name: /global recent-watches default/i }),
     ).not.toBeChecked();
   });
 
   it("round-trips a per-row recent_count into the PATCH body", async () => {
+    settingsData.current = { "candidates.sources": ["llm_web"] };
     renderEditor(row({ recent_count: null }));
+    await screen.findByRole("switch", { name: /global recent-watches default/i });
 
     await userEvent.click(
       screen.getByRole("switch", { name: /global recent-watches default/i }),
@@ -754,5 +761,156 @@ describe("RowEditor — name template variables", () => {
 
     await user.type(screen.getByLabelText("Name"), "Hidden Gems");
     expect(screen.queryByText(/would see/)).not.toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — order", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("marks the row's current order as the pressed option", () => {
+    renderEditor(row({ pick_order: "rating" }));
+
+    expect(
+      screen.getByRole("button", { name: "Highest rated" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Best match" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("names the rating service the server is configured for", async () => {
+    // "Highest rated" alone does not say WHOSE score. The answer lives in a setting the owner may
+    // never have opened, so the editor states it where the choice is made.
+    settingsData.current = { "recommendations.rating_source": "imdb" };
+    renderEditor(row({ pick_order: "rating" }));
+
+    expect(
+      await screen.findByText(/Highest IMDb score first/i),
+    ).toBeInTheDocument();
+  });
+
+  it("explains what the chosen order does, and names shuffle's cost", async () => {
+    renderEditor(row({ pick_order: "best" }));
+    expect(screen.getByText(/Strongest suggestions first/i)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Shuffled" }));
+
+    // The one order that rewrites the collection on Plex when nothing else changed — the owner
+    // should not have to discover that from their run history.
+    expect(screen.getByText(/different order every day/i)).toBeInTheDocument();
+    expect(screen.getByText(/writes to Plex/i)).toBeInTheDocument();
+  });
+
+  it("round-trips the chosen order into the PATCH body", async () => {
+    renderEditor(row({ pick_order: "best" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Newest" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).pick_order,
+    ).toBe("newest");
+  });
+});
+
+describe("RowEditor — rating source is answerable where the order is chosen", () => {
+  it("reveals the source only when the order actually uses one", async () => {
+    // "Highest rated" raises "rated by whom?" at that moment. Answering it in Settings — a different
+    // screen, under a different heading — is how the setting stayed undiscovered.
+    settingsData.current = { "recommendations.rating_source": "imdb" };
+    renderEditor(row({ pick_order: "best" }));
+    expect(screen.queryByLabelText("Rated by")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Highest rated" }));
+
+    expect(await screen.findByLabelText("Rated by")).toHaveValue("imdb");
+  });
+
+});
+
+describe("RowEditor — the essentials are visible, the rest folds away", () => {
+  it("shows the settings that define a row, and folds the ones with good defaults", () => {
+    renderEditor(row());
+
+    // Visible without opening anything.
+    expect(screen.getByLabelText("Name", { exact: true })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Best match" })).toBeVisible();
+    expect(screen.getByText("Row size")).toBeVisible();
+
+    // Folded, but each says what is inside so you can skip it.
+    for (const section of [
+      "Artwork",
+      "What it draws on",
+      "Where it appears",
+      "Requests",
+    ]) {
+      expect(screen.getByText(section)).toBeInTheDocument();
+    }
+    expect(screen.getByText(/every library/)).toBeInTheDocument();
+  });
+
+  it("summarises a folded section from its CURRENT values, not a fixed caption", () => {
+    // The whole point of the summary: a section that hides both its controls and what they are set
+    // to is worse than the flat list it replaced.
+    renderEditor(row({ request_tag: "family-picks", library_keys: ["1"] }));
+
+    expect(screen.getByText(/family-picks/)).toBeInTheDocument();
+    expect(screen.getByText(/1 library/)).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — a typed row says so", () => {
+  it("summarises an empty library selection as that row's TYPE, not every library", async () => {
+    // "[]" means every library OF THIS ROW'S TYPE. Saying "every library" on a movies row
+    // contradicted the picker directly below it, which ticks only the movie ones.
+    renderEditor(row({ media: "movie", library_keys: [] }));
+    expect(screen.getByText(/every movie library/)).toBeInTheDocument();
+
+    cleanup();
+    renderEditor(row({ media: "show", library_keys: [] }));
+    expect(screen.getByText(/every TV library/)).toBeInTheDocument();
+
+    cleanup();
+    renderEditor(row({ media: "both", library_keys: [] }));
+    expect(screen.getByText(/every library/)).toBeInTheDocument();
+  });
+
+  it("names the rewatch switch after the row someone wants", () => {
+    // The old label ("Lead with things they've seen") could only be understood by someone who had
+    // already understood that the percentage above is a ceiling.
+    renderEditor(row());
+    expect(
+      screen.getByLabelText("Make this a watch it again row"),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — settings that would do nothing are not offered", () => {
+  it("hides the AI-search cap on a row that doesn't use AI web search", async () => {
+    // It caps ONE source's lookups. On a row without that source it changes nothing, and it sat
+    // directly beneath "Watches to build from" — the row-wide setting — so the two read as rival
+    // answers to the same question.
+    settingsData.current = { "candidates.sources": ["tmdb_similar"] };
+    renderEditor(row({ recent_count: 5 }));
+
+    expect(await screen.findByText("Watches to build from")).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/Watches the AI searches from/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers it once the row's own sources include AI web search", async () => {
+    settingsData.current = { "candidates.sources": ["tmdb_similar"] };
+    renderEditor(row({ recent_count: 5, candidate_sources: ["llm_web"] }));
+
+    expect(
+      await screen.findByLabelText(/Watches the AI searches from/i),
+    ).toBeInTheDocument();
   });
 });

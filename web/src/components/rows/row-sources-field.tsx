@@ -7,6 +7,15 @@ import { useSettings } from "@/lib/queries";
 import { SOURCES, sourceBlockedReason } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
 
+/** The sources a row actually gathers from: its own override, else the server's set. Exported so
+ *  the editor can hide settings that only affect a source this row does not use. */
+export function effectiveSources(
+  rowSources: string[],
+  settings: Settings | undefined,
+): string[] {
+  return rowSources.length > 0 ? rowSources : globalSources(settings);
+}
+
 function globalSources(settings: Settings | undefined): string[] {
   const value = settings?.["candidates.sources"];
   return Array.isArray(value)
@@ -93,7 +102,7 @@ export function RowSourcesField({
       )}
       {!custom ? (
         <p className="text-sm text-muted-foreground">
-          This row uses the sources you enabled in Settings → Recommendations
+          This row uses the sources you enabled in Settings → Finding titles
           {globalSourceLabels(settings.data) &&
             ` — currently ${globalSourceLabels(settings.data)}`}
           .
@@ -132,7 +141,7 @@ export function RowSourcesField({
             // so it's role="status".
             <p role="status" className="text-sm text-warning">
               Nothing ticked, so this row falls back to the global default from
-              Settings → Recommendations. Tick at least one source to give it
+              Settings → Finding titles. Tick at least one source to give it
               its own.
             </p>
           ) : (

@@ -14,13 +14,21 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { ...actual, api: { getLibraries: () => getLibraries() } };
 });
 
-function renderPicker(libraryKeys: string[]) {
+function renderPicker(
+  libraryKeys: string[],
+  media: "movie" | "show" | "both" = "both",
+  onChange: (next: { library_keys: string[]; media: string }) => void = () => {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={client}>
-      <LibraryPicker libraryKeys={libraryKeys} onChange={() => {}} />
+      <LibraryPicker
+        libraryKeys={libraryKeys}
+        media={media}
+        onChange={onChange}
+      />
     </QueryClientProvider>,
   );
 }
@@ -75,5 +83,61 @@ describe("LibraryPicker", () => {
       await screen.findByText(/no movie or TV libraries yet/i),
     ).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("LibraryPicker — an empty selection means every library OF THE ROW'S TYPE", () => {
+  const BOTH_TYPES = [
+    { key: "1", title: "Movies", type: "movie" },
+    { key: "2", title: "TV Shows", type: "show" },
+  ];
+
+  it("does not tick libraries a typed row will never build in", async () => {
+    // A movies-only row rendered its TV libraries ticked while never building there — and the
+    // shelf-position list directly below it disagreed, naming only the movie ones.
+    getLibraries.mockResolvedValue(BOTH_TYPES);
+    renderPicker([], "movie");
+
+    expect(await screen.findByRole("checkbox", { name: /Movies/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /TV Shows/ })).not.toBeChecked();
+  });
+
+  it("still ticks everything for a row that covers both", async () => {
+    getLibraries.mockResolvedValue(BOTH_TYPES);
+    renderPicker([], "both");
+
+    expect(await screen.findByRole("checkbox", { name: /Movies/ })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /TV Shows/ })).toBeChecked();
+  });
+
+  it("keeps the follow-the-server form when a typed row's libraries are all ticked", async () => {
+    // Storing explicit keys here would quietly stop the row picking up a library added later.
+    // Compared against the libraries of that TYPE, not against every library on the server.
+    getLibraries.mockResolvedValue([
+      ...BOTH_TYPES,
+      { key: "3", title: "4K Movies", type: "movie" },
+    ]);
+    const onChange = vi.fn();
+    renderPicker(["1"], "movie", onChange);
+
+    await screen.findByRole("checkbox", { name: /4K Movies/ });
+    await userEvent.click(screen.getByRole("checkbox", { name: /4K Movies/ }));
+
+    expect(onChange).toHaveBeenCalledWith({ library_keys: [], media: "movie" });
+  });
+
+  it("switches the row to both when a library of the other type is added", async () => {
+    getLibraries.mockResolvedValue(BOTH_TYPES);
+    const onChange = vi.fn();
+    renderPicker([], "movie", onChange);
+
+    await screen.findByRole("checkbox", { name: /TV Shows/ });
+    await userEvent.click(screen.getByRole("checkbox", { name: /TV Shows/ }));
+
+    // Deliberate, and now visible: ticking a TV library on a movies row makes it a both row.
+    expect(onChange).toHaveBeenCalledWith({
+      library_keys: [],
+      media: "both",
+    });
   });
 });

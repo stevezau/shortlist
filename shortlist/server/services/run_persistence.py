@@ -379,6 +379,8 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
                     affinity=pick.affinity,
                     seed_tmdb_id=pick.seed_tmdb_id,
                     seed_title=pick.seed_title,
+                    rating=pick.rating,
+                    year=pick.year,
                 )
             )
     _add_event(

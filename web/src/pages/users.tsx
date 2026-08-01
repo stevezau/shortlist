@@ -135,7 +135,7 @@ export function UsersPage() {
       <PageHeader
         icon={UsersIcon}
         title="Users"
-        subtitle="Everyone on your Plex server. Turn a user on to give them a nightly Picked-for-You row."
+        subtitle="Everyone on your Plex server. Turn someone on and they start getting the rows you've built."
         actions={
           <div className="flex gap-2">
             <Button

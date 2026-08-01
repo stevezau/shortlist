@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { REDACTED } from "@/components/ui/secret-input";
 import { Switch } from "@/components/ui/switch";
+import type { RatingSource } from "@/lib/rating-sources";
+import { RATING_LABELS, RATING_SOURCES } from "@/lib/rating-sources";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { settingBool, settingNumber, settingString } from "@/lib/format";
 import { useArrOptions } from "@/lib/queries";
@@ -18,21 +20,6 @@ import type { Settings } from "@/lib/types";
 const MAX_PER_RUN = [3, 5, 10];
 
 // Which score gates a title. TMDB needs no setup; the rest come from MDBList (one call, cached).
-type RatingSource = "tmdb" | "imdb" | "tomatoes" | "metacritic" | "trakt";
-const RATING_SOURCES: RatingSource[] = [
-  "tmdb",
-  "imdb",
-  "tomatoes",
-  "metacritic",
-  "trakt",
-];
-const RATING_LABELS: Record<RatingSource, string> = {
-  tmdb: "TMDB",
-  imdb: "IMDb",
-  tomatoes: "Rotten Tomatoes",
-  metacritic: "Metacritic",
-  trakt: "Trakt",
-};
 
 type ArrForm = {
   qualityProfileId: number;

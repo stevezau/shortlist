@@ -532,6 +532,18 @@
             "title": "Name Template",
             "type": "string"
           },
+          "pick_order": {
+            "default": "best",
+            "description": "How the delivered collection is ordered.",
+            "enum": [
+              "best",
+              "newest",
+              "rating",
+              "shuffle"
+            ],
+            "title": "Pick Order",
+            "type": "string"
+          },
           "pin_top": {
             "default": false,
             "title": "Pin Top",
@@ -744,6 +756,17 @@
             "title": "Name Template",
             "type": "string"
           },
+          "pick_order": {
+            "description": "How the delivered collection is ordered.",
+            "enum": [
+              "best",
+              "newest",
+              "rating",
+              "shuffle"
+            ],
+            "title": "Pick Order",
+            "type": "string"
+          },
           "pin_top": {
             "title": "Pin Top",
             "type": "boolean"
@@ -847,6 +870,7 @@
           "freshness",
           "recent_count",
           "max_seeds",
+          "pick_order",
           "placement",
           "placement_friends",
           "pin_top",
@@ -5237,7 +5261,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "0.1.0b8"
+    "version": "0.1.0b9"
   },
   "openapi": "3.1.0",
   "paths": {

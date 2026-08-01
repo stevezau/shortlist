@@ -67,7 +67,7 @@ def _connect_plex(page: Page, pms_url: str) -> None:
     expect(page.get_by_text("Plex version:")).to_be_visible(timeout=LOAD)
     expect(page.get_by_text("Plex Media Server 1.43.3.10793 supports private rows")).to_be_visible()
     expect(page.get_by_text("Plex Pass active")).to_be_visible()
-    expect(page.get_by_text("2 librarie(s) found")).to_be_visible()
+    expect(page.get_by_text("2 libraries found")).to_be_visible()
     expect(page.get_by_text("Movies (30 movies)")).to_be_visible()
     expect(page.get_by_text("TV Shows (30 shows)")).to_be_visible()
 

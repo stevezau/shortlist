@@ -73,7 +73,11 @@ def run_capability_probe(
     sections = [{"key": s.key, "title": s.title, "type": s.type, "count": s.totalSize} for s in plex.sections()]
     result["checks"]["libraries"] = {
         "ok": bool(sections),
-        "message": f"{len(sections)} librarie(s) found" if sections else "No movie/show libraries found",
+        "message": (
+            f"{len(sections)} {'library' if len(sections) == 1 else 'libraries'} found"
+            if sections
+            else "No movie/show libraries found"
+        ),
     }
     result["libraries"] = sections
     if tautulli_url:

@@ -32,6 +32,16 @@ from shortlist.engine.models import MediaType, OwnedRow, WatchedItem
 # Label restrictions only apply on Home/Recommended/Related from this PMS build (PM-5174).
 MIN_PMS_VERSION = (1, 43, 2, 10687)
 
+
+class SectionNotShared(RuntimeError):
+    """A library this person's token cannot see — the PMS answered 403.
+
+    Not a failure: the owner simply hasn't shared that library with them, so "nothing watched there"
+    is the *correct* answer, not a degraded one. Callers must treat it as a skip rather than an
+    unreadable section — see `PlexPMS.watched_titles`.
+    """
+
+
 # Shortlist's invisible per-account title marker is exactly 64 zero-width chars (see
 # delivery.row_marker). Checked locally here rather than imported to avoid a delivery↔client import
 # cycle; the two definitions must stay in lockstep.
@@ -950,6 +960,12 @@ class PlexClient:
             },
             timeout=self._timeout,
         )
+        # 403 here is the PMS saying this token cannot see this library — an unshared library, not a
+        # broken read. It has to be a distinct signal: treated as a generic failure it invalidated the
+        # WHOLE person's watch cache on every sync, forcing an uncached complete re-read of every
+        # library for ever (SFLIX: two users, hourly, silently). See `SectionNotShared`.
+        if r.status_code == 403:
+            raise SectionNotShared(f"section {section_key} is not shared with this user")
         r.raise_for_status()
         return ET.fromstring(r.text)
 

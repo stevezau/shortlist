@@ -344,7 +344,10 @@ class TestMigration0055RestrictsUserDeletes:
         self._seed_at_0054(tmp_path)
         before = self._shape(tmp_path)
 
-        run_migrations(tmp_path)
+        # Stops at 0055 rather than running to head: this asserts what 0055's REBUILD preserved, and
+        # a later migration that legitimately adds a column to one of these tables (0056 adds
+        # `picks.rating`/`picks.year`) would otherwise fail it for the wrong reason.
+        command.upgrade(_alembic(tmp_path), "0055")
 
         assert self._shape(tmp_path) == before
         # Named explicitly, not just covered by the dict compare above: this is the value uninstall

@@ -10,6 +10,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import type { RatingSource } from "@/lib/rating-sources";
+import {
+  asRatingSource,
+  RATING_LABELS,
+  RATING_SOURCES,
+} from "@/lib/rating-sources";
 import { useAutosavedSettings } from "@/lib/autosave";
 import { FRESHNESS_DEFAULT, WATCHED_PCT_DEFAULT } from "@/lib/constants";
 import { hasTrakt, SOURCES, webSearchProvider } from "@/lib/sources";
@@ -72,6 +78,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     const value = Number(settings["recommendations.recent_count"]);
     return Number.isFinite(value) ? Math.min(25, Math.max(1, value)) : 10;
   });
+  const [ratingSource, setRatingSource] = useState<RatingSource>(() =>
+    asRatingSource(settings["recommendations.rating_source"]),
+  );
   const [maxSeeds, setMaxSeeds] = useState<number>(() => {
     const value = Number(settings["recommendations.max_seeds"]);
     return Number.isFinite(value) ? Math.min(100, Math.max(5, value)) : 30;
@@ -88,13 +97,14 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   // Persist the owner's INTENT (the enabled set as chosen). A source whose dependency isn't met yet
   // no-ops safely in the engine and shows an inline "here's what's needed" prompt — never a silent lie.
   const save = useAutosavedSettings(
-    { enabled, watchedPct, freshness, recentCount, maxSeeds, searchBackend },
+    { enabled, watchedPct, freshness, recentCount, maxSeeds, searchBackend, ratingSource },
     () => ({
       "candidates.sources": enabled,
       "recommendations.watched_pct": watchedPct / 100,
       "recommendations.freshness": freshness / 100,
       "recommendations.recent_count": recentCount,
       "recommendations.max_seeds": maxSeeds,
+      "recommendations.rating_source": ratingSource,
       "llm_web.search_provider": searchBackend,
     }),
   );
@@ -215,12 +225,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="freshness">Freshness</Label>
               <p className="text-sm text-muted-foreground">
-                How often a row refreshes — not a nightly reshuffle. Most nights
-                a row stays exactly as it is (nothing rewritten to Plex); on its
-                refresh night the strongest picks stay and the weakest are
-                swapped for new ones. Lower = stickier and cheaper; higher =
-                fresher. The default every row inherits; any row can choose its
-                own.
+                How often a row swaps in new titles. Most nights a row keeps
+                the same set (nothing rewritten to Plex); on its refresh night
+                the strongest picks stay and the weakest are swapped for new
+                ones. Lower = stickier and cheaper; higher = fresher. This
+                decides <strong>which</strong> titles a row holds — the order
+                they appear in is that row’s own <strong>Order</strong> setting.
+                The default every row inherits; any row can choose its own.
               </p>
               <FreshnessSlider
                 id="freshness"
@@ -229,7 +240,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               />
             </div>
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="recent-count">Recent watches to search</Label>
+              <Label htmlFor="recent-count">Watches the AI searches from</Label>
               <p className="text-sm text-muted-foreground">
                 How many of a person’s most recent watches the AI web-search
                 source looks up — one search each, “what to watch if you liked
@@ -278,6 +289,29 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 }
                 className="w-28"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="rating-source">Rate titles using</Label>
+              <p className="text-sm text-muted-foreground">
+                Which score a row set to <strong>Highest rated</strong> sorts
+                on. TMDB needs no setup. The others come from MDBList and need
+                its API key in <strong>Requests</strong> &mdash; without one,
+                those rows quietly fall back to TMDB.
+              </p>
+              <select
+                id="rating-source"
+                value={ratingSource}
+                onChange={(e) =>
+                  setRatingSource(asRatingSource(e.target.value))
+                }
+                className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
+              >
+                {RATING_SOURCES.map((source) => (
+                  <option key={source} value={source}>
+                    {RATING_LABELS[source]}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="pt-1">
               <SaveStatus

@@ -1,8 +1,9 @@
 <?xml version="1.0"?>
 <CommunityApplications>
   <Profile>
-    **Shortlist** builds a private, personalized *"Picked for You"* row for every user on your Plex
-    server, from that user's own watch history — visible only to them, never to anyone else.
+    **Shortlist** gives every user on your Plex server their own recommendations — a private,
+    personalized *"Picked for You"* row built from that user's own watch history, visible only to
+    them and never to anyone else.
 
     It runs as a single Docker container with a web UI and a ~10-minute setup wizard. Optional AI
     curation (Claude / OpenAI / Gemini / local Ollama) picks the titles and explains each one with a

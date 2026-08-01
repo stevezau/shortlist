@@ -1,3 +1,8 @@
+---
+title: FAQ — per-user Plex collections, privacy and Kometa
+description: How Shortlist makes a Plex collection visible to only one user, what the server owner can see, whether it conflicts with Kometa, and how to uninstall cleanly.
+---
+
 # FAQ
 
 ## How is this private? Plex doesn't have per-user collections.

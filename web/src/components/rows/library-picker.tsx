@@ -35,15 +35,24 @@ function currentTargets(libraryKeys: string[]): string {
 
 /**
  * Per-row delivery-target picker. A Plex collection lives in one library, so a row builds one
- * collection per library it's pointed at. `library_keys` empty means "every library" (the default,
- * so a server with one movie + one show library needs no thought); any subset targets just those.
- * `media` is derived from the selection so the row only curates the types it can actually deliver.
+ * collection per library it's pointed at. `library_keys` empty means "every library OF THIS ROW'S
+ * MEDIA TYPE" — which is what the engine does with it (`RowSpec.library_keys`) — and any subset
+ * targets just those. `media` is derived back from the selection, so a row only ever curates types
+ * it can actually deliver.
+ *
+ * `media` has to come IN as well as out, or an empty `library_keys` renders as every box ticked
+ * regardless of type: a movies-only row showed its TV libraries ticked while never building there,
+ * and the shelf-position list right below it disagreed by naming only the movie ones. Worse, toggling
+ * anything then re-derived `media` as "both" from those phantom ticks — and a `{top_seed}` row at one
+ * seed can only seed one type, so its other library silently built empty.
  */
 export function LibraryPicker({
   libraryKeys,
+  media,
   onChange,
 }: {
   libraryKeys: string[];
+  media: Media;
   onChange: (next: { library_keys: string[]; media: Media }) => void;
 }) {
   const query = useLibraries();
@@ -90,20 +99,31 @@ export function LibraryPicker({
         (() => {
           const libraries = query.data;
           const allKeys = libraries.map((l) => l.key);
-          // [] means "all" — reflect that as every box ticked.
-          const selected = libraryKeys.length === 0 ? allKeys : libraryKeys;
+          // Libraries this row can actually deliver into. [] means "all of them", which for a
+          // typed row means all of THAT type — never the ones it would skip.
+          const inScope = (key: string) =>
+            media === "both" ||
+            libraries.find((l) => l.key === key)?.type === media;
+          const scopedKeys = allKeys.filter(inScope);
+          const selected =
+            libraryKeys.length === 0 ? scopedKeys : libraryKeys;
           const toggle = (key: string) => {
             const has = selected.includes(key);
             if (has && selected.length === 1) return; // a row must target at least one library
             const next = has
               ? selected.filter((k) => k !== key)
               : [...selected, key];
-            // All ticked -> store [] so the row follows the server (new libraries auto-included).
-            const keys = next.length === allKeys.length ? [] : next;
-            onChange({
-              library_keys: keys,
-              media: deriveMedia(next, libraries),
-            });
+            const nextMedia = deriveMedia(next, libraries);
+            // Every library of the row's (new) type ticked -> store [] so the row follows the
+            // server and picks up libraries added later. Compared against that type's libraries,
+            // not against all of them, or a movies-only row could never store the "follow" form.
+            const nextScoped = allKeys.filter(
+              (key) =>
+                nextMedia === "both" ||
+                libraries.find((l) => l.key === key)?.type === nextMedia,
+            );
+            const keys = next.length === nextScoped.length ? [] : next;
+            onChange({ library_keys: keys, media: nextMedia });
           };
           return (
             <>
@@ -130,8 +150,10 @@ export function LibraryPicker({
                 })}
               </div>
               <p className="text-sm text-muted-foreground">
-                This row builds a collection in each ticked library. All ticked
-                = every library, including any you add later.
+                This row builds a collection in each ticked library.{" "}
+                {media === "both"
+                  ? "All ticked = every library, including any you add later."
+                  : `All ticked = every ${media === "movie" ? "movie" : "TV"} library, including any you add later. Tick one of the others and this row covers both types.`}
               </p>
             </>
           );

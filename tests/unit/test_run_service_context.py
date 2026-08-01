@@ -507,6 +507,55 @@ class TestSyncWatched:
 
         assert [i.title for i in history] == ["From the complete read"]
 
+    def test_an_unshared_library_is_skipped_and_keeps_the_cache(self, service, sessions, monkeypatch):
+        """A 403 is "not shared with them", NOT an unreadable section.
+
+        `ctx.plex.sections()` is the OWNER's library list walked for every person, so every library
+        someone isn't given 403s on every single sync. Counting that as a failure discarded their
+        whole cache and forced an uncached complete re-read of every library, hourly, for ever
+        (SFLIX: two users). The readable library's cached titles must come back WITHOUT the
+        complete-read fallback firing.
+        """
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+
+        from shortlist.engine.clients.plex_pms import SectionNotShared
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        shared_title = WatchedItem(title="Dune", media_type=MediaType.MOVIE, watched_at=datetime.now(UTC), tmdb_id=42)
+        fallback_calls: list[object] = []
+
+        def read_section(_profile, section, _media, since=None):
+            if str(section.key) == "12":
+                raise SectionNotShared("section 12 is not shared with this user")
+            return [shared_title]
+
+        def complete_read(p, **k):
+            fallback_calls.append(p)
+            return []
+
+        ctx = SimpleNamespace(
+            plex=SimpleNamespace(
+                sections=lambda: [
+                    SimpleNamespace(key="1", type="movie"),
+                    SimpleNamespace(key="12", type="show"),
+                ]
+            ),
+            history_source=SimpleNamespace(fetch=complete_read, fetch_section=read_section),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+
+        history = service.refresh_watched(ctx, profile)
+
+        assert [i.title for i in history] == ["Dune"]
+        assert fallback_calls == [], "a 403 must not trigger the complete-read fallback"
+
     def test_the_prefill_skips_people_this_run_will_not_build_for(self, service):
         """Every row carries its own cron, so a SCHEDULED run is always scoped to a subset of rows.
 

@@ -203,6 +203,63 @@ class TestSettingsValidation:
         assert r.status_code == 200
 
 
+class TestSettingsChangeAudit:
+    """Every owner-made settings change leaves an auditable before/after (rule 10) — with the
+    values of secrets never appearing in it, in either direction (rule 9)."""
+
+    @staticmethod
+    def _changes(client: TestClient) -> list[dict]:
+        """Newest first. `/api/events/log` — NOT `/api/events`, which is the endless SSE stream."""
+        return client.get("/api/events/log", params={"scope": "settings.change"}).json()
+
+    def test_a_changed_setting_records_its_before_and_after(self, client: TestClient):
+        client.put("/api/settings", json={"values": {"requests.auto_min_rating": 8.0}})
+        client.put("/api/settings", json={"values": {"requests.auto_min_rating": 7.1}})
+
+        latest = self._changes(client)[0]["message"]["changed"]
+        assert latest["requests.auto_min_rating"] == {"from": 8.0, "to": 7.1}
+
+    def test_an_unchanged_key_is_not_recorded(self, client: TestClient):
+        """The form PUTs the whole object, so recording every key would bury the one that moved."""
+        client.put("/api/settings", json={"values": {"row.size": 20, "requests.max_per_run": 5}})
+        before = len(self._changes(client))
+        client.put("/api/settings", json={"values": {"row.size": 20, "requests.max_per_run": 5}})
+
+        assert len(self._changes(client)) == before, "a no-op save must not add an event"
+
+    def test_a_secrets_value_never_reaches_the_audit_in_either_direction(self, client: TestClient):
+        """The change must be visible; the key must not. Asserted over the WHOLE serialised event,
+        so a value leaking through some other field still fails."""
+        client.put("/api/settings", json={"values": {"plex.token": "OLD-SECRET-VALUE"}})
+        client.put("/api/settings", json={"values": {"plex.token": "NEW-SECRET-VALUE"}})
+
+        events = self._changes(client)
+        blob = str(events)
+        assert "OLD-SECRET-VALUE" not in blob, "the previous secret leaked into the audit log"
+        assert "NEW-SECRET-VALUE" not in blob, "the new secret leaked into the audit log"
+        assert events[0]["message"]["changed"]["plex.token"] == {"from": "<redacted>", "to": "<redacted>"}
+
+    def test_the_redacted_placeholder_is_not_recorded_as_a_change(self, client: TestClient):
+        """The UI echoes '•••••' for a secret it never received — that is 'leave it alone', and the
+        write loop skips it. Recording it would report a rotation that never happened."""
+        client.put("/api/settings", json={"values": {"plex.token": "real-token"}})
+        before = len(self._changes(client))
+        client.put("/api/settings", json={"values": {"plex.token": "•••••"}})
+
+        assert len(self._changes(client)) == before
+
+    def test_a_long_value_is_summarised_rather_than_copied_whole(self, client: TestClient):
+        """Object-valued settings would otherwise put a second copy of the config in every event."""
+        client.put("/api/settings", json={"values": {"candidates.sources": ["tmdb_similar"]}})
+        client.put(
+            "/api/settings",
+            json={"values": {"candidates.sources": ["tmdb_similar", "tmdb_discover", "trakt", "llm_web"] * 12}},
+        )
+
+        recorded = self._changes(client)[0]["message"]["changed"]["candidates.sources"]["to"]
+        assert isinstance(recorded, str) and recorded.endswith("chars)")
+
+
 class TestSettingsApi:
     def test_get_put_round_trip_and_unknown_key_rejected(self, client: TestClient):
         settings = client.get("/api/settings").json()

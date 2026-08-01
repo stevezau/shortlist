@@ -72,6 +72,8 @@ def build_picks(candidates: list[Candidate], k: int) -> list[Pick]:
                 seed_title=seed.title if seed else None,
                 sources=sorted(c.sources),
                 affinity=c.affinity,
+                rating=c.rating,
+                year=c.year,
             )
         )
     return picks

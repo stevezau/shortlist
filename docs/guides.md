@@ -1,3 +1,8 @@
+---
+title: Guides — rows, schedules and troubleshooting
+description: A tour of the Shortlist web interface, how to configure rows and refresh schedules, per-user overrides, and how to troubleshoot a run that didn't deliver.
+---
+
 # Guides
 
 ## The web interface
@@ -192,9 +197,38 @@ watched titles every discovery source searches from. Fewer means a tighter, more
 a couple of things; more means broader coverage of someone's taste. It is separate from **Recent
 watches to search**, which only caps the AI web-search source.
 
-There is a server-wide default for it in **Settings → Recommendations**, and any row can override it.
+There is a server-wide default for it in **Settings → Finding titles**, and any row can override it.
 The global stops at 5 while a row goes down to 1 — a single seed is a deliberate choice for one row,
 not something to impose on every row at once.
+
+## The order titles appear in
+
+**Row editor → Order** decides how a row's titles are arranged in Plex:
+
+| Order             | What you get                                                            |
+| ----------------- | ----------------------------------------------------------------------- |
+| **Best match**    | Strongest suggestions first — how well each title matches their viewing |
+| **Highest rated** | Highest score first, from whichever service you configured             |
+| **Newest**        | Most recently released first                                            |
+| **Shuffled**      | A different order every day, from the same titles                       |
+
+Plex itself only sorts a collection by release date, alphabetically, or by a custom order, so every
+one of these is applied by Shortlist and delivered as that custom order — which is what the Home row
+displays.
+
+**Highest rated** uses TMDB by default, which needs no setup. To sort on IMDb, Trakt, Rotten Tomatoes
+or Metacritic instead, set **Settings → Finding titles → Rate titles using** — those come from MDBList
+and need its API key (the same one the Requests feature uses). Without a key, or once MDBList's daily
+quota is spent, the row falls back to TMDB for its *whole* ordering rather than sorting half the row
+on one scale and half on another.
+
+**Shuffled** is the only one with a cost worth knowing about. The other three are applied while the
+row is being written anyway, so they are free; shuffled rewrites the collection on Plex every day,
+including days when nothing about the row has changed. On a server with many people that is real
+write volume, so it is off by default.
+
+A shuffle is stable within a day — re-running a row the same night reproduces the same order, and two
+people's copies of one row shuffle differently.
 
 ## Where a row shows
 
@@ -343,7 +377,7 @@ Settings → Finding titles has three more dials (each per-row overridable):
   that's expected.
 - **Already-watched titles** — how much of a partly-watched title still counts as "watched" and gets
   filtered out. Default keeps anything finished out of the picks.
-- **Recent watches to search** — how many of each person's recent titles the AI web-search source
+- **Watches the AI searches from** — how many of each person's recent titles the AI web-search source
   looks up (one cached search each). It's the main **cost lever** on that source — lower it to spend
   fewer tokens/Exa searches.
 
@@ -374,7 +408,7 @@ Settings → Finding titles sets what a row uses **unless the row says otherwise
 | **Libraries**                  | Which Plex libraries it builds in — which also sets what it recommends |
 | **Freshness**, **Watched cap** | How often it refreshes, and how much already-watched it allows         |
 | **Row size**, **Audience**     | How many titles, and who gets it                                       |
-| **Recent watches to search**   | How many recent watches AI web search looks up for this row            |
+| **Watches the AI searches from** | How many recent watches AI web search looks up for this row (shown only on rows using it) |
 | **Request tag**                | The Sonarr/Radarr tag on titles requested for this row's audience      |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can be AI-web-search-only

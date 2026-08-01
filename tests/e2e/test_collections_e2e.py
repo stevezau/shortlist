@@ -30,6 +30,16 @@ def _add_a_row(page: Page) -> None:
     expect(page.get_by_role("heading", name="Add a row")).to_be_visible()
 
 
+def _open_section(page: Page, name: str) -> None:
+    """Expand one of the row editor's folded sections.
+
+    The dialog shows the five settings that define a row and folds the rest — each fold captioned
+    with its current values — so a test that reaches for a folded control has to open it, exactly as
+    someone would.
+    """
+    page.get_by_text(name, exact=True).click()
+
+
 def _open_rows(page: Page) -> None:
     page.goto("/rows")
     expect(page.get_by_role("heading", name="Rows", exact=True)).to_be_visible(timeout=LOAD)
@@ -77,6 +87,7 @@ def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp
     # Re-open it and choose a built-in text poster — this needs no AI provider, so it works on any setup.
     page.get_by_role("button", name="Edit").last.click()
     expect(page.get_by_label("Name", exact=True)).to_have_value("Poster Row")
+    _open_section(page, "Artwork")
     page.get_by_role("button", name="Text", exact=True).click()
     page.get_by_label("Title text").fill("Weekend Picks")
     page.get_by_role("button", name="Save changes").click()
@@ -153,6 +164,7 @@ def test_every_surface_can_be_turned_off_and_reaches_the_api(page: Page, app: Sh
     _open_rows(page)
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Quiet Row")
+    _open_section(page, "Where it appears")
 
     for name in PLACEMENT_SWITCHES:
         page.get_by_role("switch", name=name).click()
@@ -174,6 +186,7 @@ def test_the_two_placement_columns_are_saved_independently(page: Page, app: Shor
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Split Row")
 
+    _open_section(page, "Where it appears")
     page.get_by_role("switch", name="Friends Library Recommended").click()
     page.get_by_role("button", name="Add row").click()
     expect(page.get_by_text("Split Row").first).to_be_visible(timeout=LOAD)
@@ -181,3 +194,24 @@ def test_the_two_placement_columns_are_saved_independently(page: Page, app: Shor
     created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == "Split Row")
     assert created["placement"] == "both"
     assert created["placement_friends"] == "home"
+
+
+def test_the_pick_order_chosen_in_the_editor_reaches_the_api(page: Page, app: ShortlistApp):
+    """The Order control is the only way to change how a row's titles are arranged on Plex, so its
+    round trip is worth an end-to-end check: Plex offers no 'random' collection sort, and the value
+    saved here is what the engine turns into the custom order it writes."""
+    _open_rows(page)
+    _add_a_row(page)
+    page.get_by_label("Name", exact=True).fill("Shuffled Row")
+
+    # Default first, so a control that silently ignored the click couldn't pass this.
+    expect(page.get_by_role("button", name="Best match")).to_have_attribute("aria-pressed", "true")
+    page.get_by_role("button", name="Shuffled").click()
+    expect(page.get_by_text("different order every day")).to_be_visible()
+
+    page.get_by_role("button", name="Add row").click()
+
+    expect(page.get_by_text("Shuffled Row").first).to_be_visible(timeout=LOAD)
+    rows = {c["slug"]: c for c in app.api("GET", "/api/collections").json()}
+    assert rows["shuffled_row"]["pick_order"] == "shuffle"
+    assert rows["picked"]["pick_order"] == "best", "an untouched row keeps the default"
