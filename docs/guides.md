@@ -377,7 +377,7 @@ Settings → Finding titles has three more dials (each per-row overridable):
   that's expected.
 - **Already-watched titles** — how much of a partly-watched title still counts as "watched" and gets
   filtered out. Default keeps anything finished out of the picks.
-- **Recent watches to search** — how many of each person's recent titles the AI web-search source
+- **Watches the AI searches from** — how many of each person's recent titles the AI web-search source
   looks up (one cached search each). It's the main **cost lever** on that source — lower it to spend
   fewer tokens/Exa searches.
 
@@ -408,7 +408,7 @@ Settings → Finding titles sets what a row uses **unless the row says otherwise
 | **Libraries**                  | Which Plex libraries it builds in — which also sets what it recommends |
 | **Freshness**, **Watched cap** | How often it refreshes, and how much already-watched it allows         |
 | **Row size**, **Audience**     | How many titles, and who gets it                                       |
-| **Recent watches to search**   | How many recent watches AI web search looks up for this row            |
+| **Watches the AI searches from** | How many recent watches AI web search looks up for this row (shown only on rows using it) |
 | **Request tag**                | The Sonarr/Radarr tag on titles requested for this row's audience      |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can be AI-web-search-only

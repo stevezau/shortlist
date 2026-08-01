@@ -240,7 +240,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
               />
             </div>
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="recent-count">Recent watches to search</Label>
+              <Label htmlFor="recent-count">Watches the AI searches from</Label>
               <p className="text-sm text-muted-foreground">
                 How many of a person’s most recent watches the AI web-search
                 source looks up — one search each, “what to watch if you liked

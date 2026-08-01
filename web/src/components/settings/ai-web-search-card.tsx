@@ -144,7 +144,7 @@ export function AiWebSearchCard({
                 On a row&rsquo;s refresh night it runs one search per recent
                 watch, up to the{" "}
                 <a href="#recent-count" className="font-medium underline">
-                  Recent watches to search
+                  Watches the AI searches from
                 </a>{" "}
                 count (default 10). Results are cached for two weeks and shared
                 across everyone, so a popular title is searched once for the
