@@ -490,6 +490,7 @@ export function RowEditor({
 
           <LibraryPicker
             libraryKeys={input.library_keys}
+            media={input.media}
             onChange={(next) =>
               set({
                 ...next,
