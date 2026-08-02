@@ -97,7 +97,7 @@ def _skip_history(page: Page) -> None:
 
 def _choose_no_curator(page: Page) -> None:
     """Step 3: "None" is a first-class choice, not a degraded mode — the copy must say so."""
-    expect(page.get_by_role("heading", name="Choose your curator")).to_be_visible()
+    expect(page.get_by_role("heading", name="Add an AI provider (optional)")).to_be_visible()
     none_card = page.get_by_role("button", name=re.compile(r"^None\b"))
     expect(none_card).to_be_visible()
     expect(none_card).to_contain_text("Fully functional")
@@ -156,9 +156,14 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
     page.get_by_role("button", name="Next").click()
     expect(page.get_by_role("heading", name="Make it yours")).to_be_visible()
 
-    page.get_by_role("button", name=re.compile(r"^Because you watched \{top_seed\}")).click()
+    # The card shows the RENDERED name now, not the raw template — asserting the literal
+    # "{top_seed}" was pinning the bug where the button printed template syntax.
+    page.get_by_role("button", name=re.compile(r"Because you watched \S+")).click()
     # The live preview renders the template the way Plex will, not the raw template string.
-    expect(page.get_by_text("Because you watched Fargo", exact=True)).to_be_visible()
+    # Two matches now the card itself renders the name: the card, and the live preview
+    # below it. Both are correct — .first keeps the assertion about "it is shown", not "it
+    # is shown exactly once".
+    expect(page.get_by_text("Because you watched Fargo", exact=True).first).to_be_visible()
 
     # 10, not the 15 default: the seeded library can suggest exactly 10 unwatched titles per
     # user, so this is the largest row every user can actually fill (the engine never invents).
@@ -300,7 +305,7 @@ def test_wizard_resumes_on_the_same_step_after_a_reload(fresh_page: Page, fresh_
     page.reload()
 
     # Same step, same choices — and the link survives without re-authenticating with Plex.
-    expect(page.get_by_role("heading", name="Choose your curator")).to_be_visible(timeout=LOAD)
+    expect(page.get_by_role("heading", name="Add an AI provider (optional)")).to_be_visible(timeout=LOAD)
     expect(page.get_by_role("button", name=re.compile(r"^None\b"))).to_have_attribute("aria-pressed", "true")
     page.get_by_role("button", name="Back").click()
     page.get_by_role("button", name="Back").click()

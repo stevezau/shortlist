@@ -197,10 +197,10 @@ export function StepFirstRun({ complete }: StepProps) {
       {!started && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            This builds a real row for every enabled user — history → candidates
-            → curating → collection → privacy sync — and you get to watch every
-            stage live. Each row is delivered hidden and only shown to the
-            person it&rsquo;s for.
+            This looks at what everyone has watched, finds titles they should
+            enjoy, and adds a row to each person&rsquo;s Plex. You can watch it
+            happen, one person at a time. Every row is delivered hidden and only
+            ever shown to the person it&rsquo;s for.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -279,8 +279,9 @@ export function StepFirstRun({ complete }: StepProps) {
                       className="h-3.5 w-3.5 animate-spin"
                       aria-hidden="true"
                     />
-                    All rows built — finishing up: merging privacy filters
-                    across every account, then promoting the rows onto Home.
+                    All rows built — finishing up: hiding each person&rsquo;s
+                    row from everyone else, then putting them on the Home
+                    screen.
                   </p>
                 )}
                 {!finished && (

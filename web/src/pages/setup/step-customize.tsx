@@ -59,8 +59,10 @@ export function StepCustomize({ update, next }: StepProps) {
       },
       {
         id: "dynamic",
-        label: DYNAMIC_TPL,
-        hint: "Rewritten nightly from each user's top seed.",
+        // Rendered, not raw. Its sibling above calls renderRowName and this did not, so the card
+        // showed "Because you watched {top_seed}" — template syntax presented as finished copy.
+        label: renderRowName(DYNAMIC_TPL),
+        hint: "Renamed each night after whatever they watched most recently.",
       },
       { id: "custom", label: "Custom…", hint: "Your words, your emoji." },
     ];
