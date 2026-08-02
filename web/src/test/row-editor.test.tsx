@@ -212,12 +212,38 @@ describe("RowEditor — the default row's name", () => {
     updateCollection.mockClear();
   });
 
-  it("shows the current name read-only and points to the Rename button", () => {
+  it("lets you type a new name, and says it is not applied until you press Rename", async () => {
     renderEditor(defaultRow());
-    // The name is in a disabled input — renaming happens via the dedicated button.
     const input = screen.getByDisplayValue("✨ {library_name} Picked for You");
-    expect(input).toBeDisabled();
+    expect(input).toBeEnabled();
+
+    await userEvent.type(input, "!");
+
+    // The warning is the whole point of letting the box be editable: a name typed here has changed
+    // nothing on Plex yet, and Save on this page will not apply it either.
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      /Not applied yet/i,
+    );
     expect(screen.getByRole("button", { name: /Rename/ })).toBeInTheDocument();
+  });
+
+  it("does NOT send the typed name when the page is saved", async () => {
+    // The draft is held apart from the form on purpose. Saving a new name here without renaming on
+    // Plex would leave the database and the server disagreeing, with nothing on screen saying so.
+    renderEditor(defaultRow());
+    await userEvent.type(
+      screen.getByDisplayValue("✨ {library_name} Picked for You"),
+      " CHANGED",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Save/ }));
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const body = updateCollection.mock.calls[0]?.[1] as {
+      name?: string;
+      name_template?: string;
+    };
+    expect(body.name ?? "").not.toMatch(/CHANGED/);
+    expect(body.name_template ?? "").not.toMatch(/CHANGED/);
   });
 });
 
@@ -388,7 +414,9 @@ describe("RowEditor — placement", () => {
       screen.getByRole("switch", { name: /Friends Library Recommended/i }),
     );
     expect(
-      screen.queryByText(/no share of your own for it to hide anything behind/i),
+      screen.queryByText(
+        /no share of your own for it to hide anything behind/i,
+      ),
     ).toBeNull();
   });
 
@@ -516,7 +544,9 @@ describe("RowEditor — placement on a shared row", () => {
     ).toBeInTheDocument();
     // The owner-shelf warning is about OTHER people's rows — a shared row has none.
     expect(
-      screen.queryByText(/no share of your own for it to hide anything behind/i),
+      screen.queryByText(
+        /no share of your own for it to hide anything behind/i,
+      ),
     ).toBeNull();
   });
 });
@@ -564,7 +594,7 @@ describe("RowEditor — recent watches to search", () => {
     settingsData.current = { "candidates.sources": ["llm_web"] };
     renderEditor(row({ recent_count: 5 }));
     expect(
-      await screen.findByLabelText(/Watches the AI searches from/i),
+      await screen.findByLabelText(/Watches the AI web search looks up/i),
     ).toHaveValue(5);
     expect(
       screen.getByRole("switch", { name: /global recent-watches default/i }),
@@ -592,17 +622,19 @@ describe("RowEditor — recent watches to search", () => {
   });
 });
 
-describe("RowEditor — watches to build from", () => {
+describe("RowEditor — watches every source builds from", () => {
   beforeEach(() => {
     updateCollection.mockClear();
   });
 
   it("shows the number field only when the row overrides the default", () => {
     renderEditor(row({ max_seeds: 3 }));
-    expect(screen.getByLabelText(/^Watches to build from$/i)).toHaveValue(3);
+    expect(
+      screen.getByLabelText(/^Watches every source builds from$/i),
+    ).toHaveValue(3);
     expect(
       screen.getByRole("switch", {
-        name: /default number of watches to build from/i,
+        name: /default number of watches every source builds from/i,
       }),
     ).not.toBeChecked();
   });
@@ -612,7 +644,7 @@ describe("RowEditor — watches to build from", () => {
 
     await userEvent.click(
       screen.getByRole("switch", {
-        name: /default number of watches to build from/i,
+        name: /default number of watches every source builds from/i,
       }),
     );
     await userEvent.click(
@@ -634,7 +666,7 @@ describe("RowEditor — watches to build from", () => {
 
     await userEvent.click(
       screen.getByRole("switch", {
-        name: /default number of watches to build from/i,
+        name: /default number of watches every source builds from/i,
       }),
     );
     await userEvent.click(
@@ -781,7 +813,7 @@ describe("RowEditor — which watch it follows", () => {
     // so there was nothing to see it by and no way to undo it.
     renderEditor(row({ max_seeds: 1, seed_window: 4 }));
 
-    const budget = screen.getByLabelText(/^Watches to build from$/i);
+    const budget = screen.getByLabelText(/^Watches every source builds from$/i);
     await userEvent.clear(budget);
     await userEvent.type(budget, "30");
     await userEvent.tab();
@@ -1061,17 +1093,17 @@ describe("RowEditor — a typed row says so", () => {
 
 describe("RowEditor — settings that would do nothing are not offered", () => {
   it("hides the AI-search cap on a row that doesn't use AI web search", async () => {
-    // It caps ONE source's lookups. On a row without that source it changes nothing, and it sat
-    // directly beneath "Watches to build from" — the row-wide setting — so the two read as rival
-    // answers to the same question.
+    // It caps ONE source's lookups. On a row without that source it changes nothing, and it sits
+    // next to the row-wide seed budget, so leaving it on such a row read as a rival answer to the
+    // same question.
     settingsData.current = { "candidates.sources": ["tmdb_similar"] };
     renderEditor(row({ recent_count: 5 }));
 
     expect(
-      await screen.findByText("Watches to build from"),
+      await screen.findByText("Watches every source builds from"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByLabelText(/Watches the AI searches from/i),
+      screen.queryByLabelText(/Watches the AI web search looks up/i),
     ).not.toBeInTheDocument();
   });
 
@@ -1080,7 +1112,7 @@ describe("RowEditor — settings that would do nothing are not offered", () => {
     renderEditor(row({ recent_count: 5, candidate_sources: ["llm_web"] }));
 
     expect(
-      await screen.findByLabelText(/Watches the AI searches from/i),
+      await screen.findByLabelText(/Watches the AI web search looks up/i),
     ).toBeInTheDocument();
   });
 });

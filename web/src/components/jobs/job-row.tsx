@@ -62,6 +62,34 @@ function StatusChip({
 }
 
 /**
+ * What a job CHANGES, said on the line rather than three clicks in.
+ *
+ * "Run now" mixes a read-only history sweep with one job that writes corrections to Plex and can
+ * delete a collection — and until this, the only way to tell them apart was to expand each row and
+ * read a paragraph. A destructive button that looks exactly like a harmless one is the problem;
+ * `destructive` is what makes that one look different at a glance.
+ */
+function EffectTag({
+  tag,
+}: {
+  tag: { text: string; title: string; destructive?: boolean };
+}) {
+  return (
+    <span
+      title={tag.title}
+      className={cn(
+        "shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium",
+        tag.destructive
+          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          : "border-border bg-muted text-muted-foreground",
+      )}
+    >
+      {tag.text}
+    </span>
+  );
+}
+
+/**
  * One job as a single line, expanding to everything about it.
  *
  * The list is NAVIGATION, not content: name, health and next run on the line, and the description,
@@ -77,11 +105,14 @@ export function JobRow({
   panel,
   first,
   queuedTitle,
+  tag,
 }: {
   entry: JobCatalogEntry;
   icon: LucideIcon;
   /** The row's primary action. Absent for automatic jobs — nothing here may start those. */
   action?: { label: string; run: () => void; pending: boolean };
+  /** What pressing this changes, if it changes anything outside Shortlist — see {@link EffectTag}. */
+  tag?: { text: string; title: string; destructive?: boolean };
   /** Live progress, shown under the line WITHOUT expanding — a running job must be visible while
    *  the row is collapsed, or pressing Run looks like it did nothing. */
   live?: React.ReactNode;
@@ -129,6 +160,10 @@ export function JobRow({
           <span className="truncate text-sm font-medium">{entry.label}</span>
         </button>
 
+        {/* Outside the expander button on purpose: it is information about the job, not part of the
+            control's accessible name ("Sync check, Can delete" would be read as the button's name). */}
+        {tag && <EffectTag tag={tag} />}
+
         <StatusChip entry={entry} queuedTitle={queuedTitle} />
 
         {/* Next run earns a column only when there IS a schedule — an em-dash in eight rows is noise.
@@ -175,9 +210,23 @@ export function JobRow({
 
       {open && (
         <div className="space-y-4 border-l-2 border-primary/40 px-3 py-3">
-          <p className="text-sm text-muted-foreground">{entry.description}</p>
-          {/* A job with no button has to say what DOES start it, or the row reads as broken. */}
-          {!entry.manual && entry.trigger && (
+          {/* Paragraph breaks are meaningful in these — the server writes "\n\n" between "what it
+              does" and "when it runs", and rendering them as one block ran the two together. */}
+          <div className="space-y-2">
+            {entry.description
+              .split("\n\n")
+              .filter(Boolean)
+              .map((paragraph) => (
+                <p key={paragraph} className="text-sm text-muted-foreground">
+                  {paragraph}
+                </p>
+              ))}
+          </div>
+          {/* A job with no button has to say what DOES start it, or the row reads as broken — and a
+              job that has one still needs it whenever something ELSE also queues it. "Why did this
+              run at 3am when I never pressed it?" was unanswerable for the manual kinds, because
+              their trigger text was written and then never rendered. */}
+          {entry.trigger && (
             <p className="text-sm text-muted-foreground">{entry.trigger}</p>
           )}
 

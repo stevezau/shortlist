@@ -121,8 +121,12 @@ def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(pag
     expect(page.get_by_role("heading", name="Edit row")).to_be_visible()
 
     name = page.get_by_label("Name", exact=True)
-    expect(name).to_be_disabled()  # existing rows show name read-only; rename via button
+    expect(name).to_be_enabled()  # type here, but Save never carries it — only Rename applies it
     expect(name).to_have_value("✨ {library_name} Picked for You")  # its value IS the global template
+    # Typing must say, on screen, that nothing has happened yet. Without this the box looks like
+    # every other field on the page, which would imply Save applies it — Save deliberately does not.
+    name.fill("✨ {library_name} Not applied")
+    expect(page.get_by_text("Not applied yet")).to_be_visible()
     # Close the editor; rename happens via the row-card's Rename button + dialog.
     page.get_by_role("button", name="Cancel").click()
 

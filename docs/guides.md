@@ -1,9 +1,8 @@
 ---
 title: Guides — rows, schedules and troubleshooting
 description: A tour of the Shortlist web interface, how to configure rows and refresh schedules, per-user overrides, and how to troubleshoot a run that didn't deliver.
+heading: Guides
 ---
-
-# Guides
 
 ## The web interface
 
@@ -61,10 +60,13 @@ description: A tour of the Shortlist web interface, how to configure rows and re
 - **Jobs** — every piece of background maintenance Shortlist does, in two areas.
 
   **Jobs** lists them one per line: the name, how the last run went, when the next one fires, and the
-  button. **Run now** holds the five you start yourself — **Sync people from Plex** (pull the roster
-  from plex.tv + Tautulli), **Sync watch history** (re-read everyone's watched set), **Sync check**
-  (preview, then fix, rows left on the wrong shelf), **Privacy sync** (re-merge every share filter),
-  and **Back up the database**. **Automatic** holds the ones Shortlist queues for itself when
+  button. **Run now** holds the six you start yourself — **Sync people from Plex** (pull the roster
+  from plex.tv + Tautulli), **Sync watch history** (re-read everyone's watched set), **Check and fix
+  rows on Plex** (preview, then fix, rows left on the wrong shelf), **Privacy sync** (re-merge every
+  share filter), **Back up the database**, and **Clear out old records** (drop run history past the
+  limit you set). A tag on the line says what a job changes on your server: **Can delete** on the
+  one that can remove a collection, **Changes Plex** on the ones that write. Anything untagged only
+  reads, or only touches Shortlist's own records. **Automatic** holds the ones Shortlist queues for itself when
   something changes — removing a disabled person's rows, hiding a paused one's, tidying up after a
   row edit. Those have no button by design: each one is aimed at a specific person or row by the
   action that queued it.
@@ -109,7 +111,7 @@ Two jobs are worth knowing about there:
 - **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
   builds, delivers and promotes nothing — so it can only ever make your server _more_ private. It is
   the cheapest safety net against drift.
-- **Sync check** runs nightly at **05:45** — after the rows build and after the privacy pass, so it
+- **Check and fix rows on Plex** runs nightly at **05:45** — after the rows build and after the privacy pass, so it
   checks the state those actually left behind. Drift is the failure nobody notices: a row left on the
   wrong shelf stays there until somebody happens to look, so the thing that repairs it is on by
   default. It is also the **only** schedule you can switch off completely — it _writes corrections_
@@ -184,18 +186,19 @@ place in the shelf and its privacy are preserved.
 **A `{top_seed}` row needs one more setting to be honest.** By default every row is built from a
 person's 30 most recent watches blended together, so a row titled "Because you watched The Bear" is
 really "because you watched these thirty things, one of which was The Bear". Set **Row editor →
-Watches to build from** to `1` and the row genuinely is what that one title led to. The editor
-prompts you for this as soon as a row's name uses `{top_seed}`.
+Watches every source builds from** to `1` and the row genuinely is what that one title led to. The
+editor prompts you for this as soon as a row's name uses `{top_seed}`.
 
 One catch, which the editor also tells you: seeds are shared out across the media types a row
 covers, and a single watch is either a film or a show — never both. So a row set to **Movies and
 TV** with a budget of 1 seeds only one of them, and the other library's collection never builds.
 For a row covering both, use `2` (one of each), or set the row to Movies only or TV only.
 
-**Watches to build from** (1–100, default 30) is worth knowing about on its own: it decides how many
-watched titles every discovery source searches from. Fewer means a tighter, more coherent row about
-a couple of things; more means broader coverage of someone's taste. It is separate from **Recent
-watches to search**, which only caps the AI web-search source.
+**Watches every source builds from** (1–100, default 30) is worth knowing about on its own: it
+decides how many watched titles every discovery source searches from. Fewer means a tighter, more
+coherent row about a couple of things; more means broader coverage of someone's taste. **Watches the
+AI web search looks up** is a slice off the front of that same list, and caps the AI web-search
+source alone.
 
 There is a server-wide default for it in **Settings → Finding titles**, and any row can override it.
 The global stops at 5 while a row goes down to 1 — a single seed is a deliberate choice for one row,
@@ -265,10 +268,10 @@ people's copies of one row shuffle differently.
 The **Row editor** → **Where it shows** grid picks which Plex screens a row appears on. Two
 surfaces, two audiences, and every one of the four switches is independent:
 
-|                         | You | Everyone else |
-| ----------------------- | --- | ------------- |
-| **Recommended shelf**   | ☑   | ☑             |
-| **Home screen**         | ☑   | ☑             |
+|                       | You | Everyone else |
+| --------------------- | --- | ------------- |
+| **Recommended shelf** | ☑   | ☑             |
+| **Home screen**       | ☑   | ☑             |
 
 The columns are real, not cosmetic: every person gets their **own** Plex collection, so each switch
 is set on a different collection. **You** is your own row — Plex's Home shelf applies to the server
@@ -408,9 +411,9 @@ Settings → Finding titles has three more dials (each per-row overridable):
   that's expected.
 - **Already-watched titles** — how much of a partly-watched title still counts as "watched" and gets
   filtered out. Default keeps anything finished out of the picks.
-- **Watches the AI searches from** — how many of each person's recent titles the AI web-search source
-  looks up (one cached search each). It's the main **cost lever** on that source — lower it to spend
-  fewer tokens/Exa searches.
+- **Watches the AI web search looks up** — how many of each person's recent titles the AI web-search
+  source looks up (one cached search each), taken off the front of the list above. It's the main
+  **cost lever** on that source — lower it to spend fewer tokens/Exa searches.
 
 ### If a watched title still gets recommended
 
@@ -433,14 +436,14 @@ Users page). Any run after that leaves the title out.
 Settings → Finding titles sets what a row uses **unless the row says otherwise**. Open any row
 (Rows → Edit) and it defines its own recipe:
 
-| In the row editor                | What it overrides                                                                         |
-| -------------------------------- | ----------------------------------------------------------------------------------------- |
-| **Recommendation sources**       | Switch to "Choose for this row" and tick its own sources                                  |
-| **Libraries**                    | Which Plex libraries it builds in — which also sets what it recommends                    |
-| **How often it changes**, **Already-watched titles** | How often it refreshes, and how much already-watched it allows         |
-| **Row size**, **Audience**       | How many titles, and who gets it                                                          |
-| **Watches the AI searches from** | How many recent watches AI web search looks up for this row (shown only on rows using it) |
-| **Request tag**                  | The Sonarr/Radarr tag on titles requested for this row's audience                         |
+| In the row editor                                    | What it overrides                                                                         |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **Recommendation sources**                           | Switch to "Choose for this row" and tick its own sources                                  |
+| **Libraries**                                        | Which Plex libraries it builds in — which also sets what it recommends                    |
+| **How often it changes**, **Already-watched titles** | How often it refreshes, and how much already-watched it allows                            |
+| **Row size**, **Audience**                           | How many titles, and who gets it                                                          |
+| **Watches the AI web search looks up**               | How many recent watches AI web search looks up for this row (shown only on rows using it) |
+| **Request tag**                                      | The Sonarr/Radarr tag on titles requested for this row's audience                         |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can be AI-web-search-only
 pointed at just your 4K library, and your default "Picked for You" can stay on the global settings —

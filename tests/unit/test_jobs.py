@@ -1169,3 +1169,80 @@ class TestRetentionPruning:
         result = jobs._HANDLERS["maintenance.prune"](SimpleNamespace(sessions=sessions), {})
 
         assert result["runs"] == 0  # unreadable retention means keep everything, not crash
+
+
+class TestSyncCheckPreviewsWhatItWouldDelete:
+    """The sync check's preview has to NAME the collections a real pass would destroy.
+
+    Deleting a collection is the one irreversible thing Shortlist does to a Plex server, and the UI's
+    "this will delete N collections … this cannot be undone" callout renders off the `orphans` list
+    this handler returns. `may_delete=confirmed and not dry_run` withheld delete authority from the
+    preview, so converge filed every orphan under `converged` instead and `orphans` came back empty
+    on every preview ever run — the warning could not render, and Fix deleted unannounced.
+
+    A dry run holding that authority cannot delete anything: `ctx.config.dry_run` is True whenever
+    `dry_run` is, and converge checks that flag before every delete
+    (`test_pipeline.py::test_dry_run_reports_the_deletion_without_making_it`).
+    """
+
+    def _state(self, *, forced_dry_run: bool = False):
+        def build_context(dry_run: bool, plex_only: bool = False):
+            return SimpleNamespace(config=SimpleNamespace(dry_run=dry_run or forced_dry_run))
+
+        return SimpleNamespace(run_service=SimpleNamespace(build_context=build_context))
+
+    def _converge_spy(self, monkeypatch) -> list[bool]:
+        """Record the `may_delete` each call is given, and report one orphan when it is allowed."""
+        from shortlist.engine import pipeline
+
+        seen: list[bool] = []
+
+        def fake_converge(ctx, promoted, report, *, may_delete=None):
+            seen.append(may_delete)
+            if may_delete:
+                report.orphans_removed = ["shortlist_ghost"]
+            else:
+                report.converged = ["shortlist_ghost"]
+
+        monkeypatch.setattr(pipeline, "_converge_phase", fake_converge)
+        return seen
+
+    def test_a_preview_lists_the_orphans_it_would_remove(self, monkeypatch):
+        seen = self._converge_spy(monkeypatch)
+
+        result = jobs._HANDLERS["sync.check"](self._state(), {"dry_run": True})
+
+        assert seen == [True], "a preview must be allowed to REPORT what a real pass would delete"
+        assert result["orphans"] == ["shortlist_ghost"]
+        # Worded as a warning about the future, not a record of a deletion that happened.
+        assert "1 orphaned collection(s) to remove" in result["detail"]
+
+    def test_the_unattended_nightly_pass_still_has_no_delete_authority(self, monkeypatch):
+        """The scheduled pass sends neither flag. It must demote and report, never destroy — upgrading
+        must not turn on a job that silently deletes from somebody's Plex server."""
+        seen = self._converge_spy(monkeypatch)
+
+        result = jobs._HANDLERS["sync.check"](self._state(), {})
+
+        assert seen == [False]
+        assert result["orphans"] == []
+        assert result["fixed"] == ["shortlist_ghost"]  # taken off the shelves, left in place
+
+    def test_pressing_fix_authorises_the_deletion(self, monkeypatch):
+        seen = self._converge_spy(monkeypatch)
+
+        result = jobs._HANDLERS["sync.check"](self._state(), {"confirmed": True})
+
+        assert seen == [True]
+        assert "removed 1 orphaned collection(s)" in result["detail"]
+
+    def test_safe_mode_downgrades_a_confirmed_fix_back_to_a_preview(self, monkeypatch):
+        """SHORTLIST_DRY_RUN forces the context dry, and the handler's `dry_run` picks that up — so
+        Fix reports rather than removes, and the detail must not claim a deletion that never happened."""
+        seen = self._converge_spy(monkeypatch)
+
+        result = jobs._HANDLERS["sync.check"](self._state(forced_dry_run=True), {"confirmed": True})
+
+        assert seen == [True]
+        assert "1 orphaned collection(s) to remove" in result["detail"]
+        assert "removed" not in result["detail"]

@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Cog,
   Database,
+  Eraser,
   Lock,
   RefreshCw,
   ShieldCheck,
@@ -38,9 +39,40 @@ import type {
 const PENDING_LABELS: Record<string, string> = {
   "sync.history": "Sync watch history",
   "sync.users": "Sync people from Plex",
-  "sync.check": "Sync check",
+  "sync.check": "Check and fix rows on Plex",
   "privacy.sync": "Privacy sync",
   "backup.take": "Back up the database",
+  "maintenance.prune": "Clear out old records",
+};
+
+/**
+ * What each job you can press CHANGES, on the line rather than a paragraph deep.
+ *
+ * "Run now" mixes jobs with wildly different consequences: one only reads, two only touch
+ * Shortlist's own database, and one can delete a collection off your Plex server for good. They all
+ * looked identical until you expanded them. A job with no tag here changes nothing outside
+ * Shortlist's own records — which is a claim each of those three descriptions makes too.
+ */
+const EFFECT_TAGS: Record<
+  string,
+  { text: string; title: string; destructive?: boolean }
+> = {
+  "sync.users": {
+    text: "Changes Plex",
+    title:
+      "Adds and removes people, and takes the rows of anyone who has lost access off your Plex server.",
+  },
+  "sync.check": {
+    text: "Can delete",
+    title:
+      "Writes corrections to Plex, and after you have read the preview and pressed Fix it can delete a collection for good. Nothing is deleted before you press Fix.",
+    destructive: true,
+  },
+  "privacy.sync": {
+    text: "Changes Plex",
+    title:
+      "Rewrites every account's share filter. It only ever hides things, so it can only make your server more private.",
+  },
 };
 
 function pendingEntry(kind: string): JobCatalogEntry {
@@ -62,13 +94,27 @@ function pendingEntry(kind: string): JobCatalogEntry {
   };
 }
 
-function GroupHeading({ title, hint }: { title: string; hint?: string }) {
+function GroupHeading({
+  title,
+  hint,
+  note,
+}: {
+  title: string;
+  hint?: string;
+  /** A second line, for something too important to be a trailing aside on the heading. */
+  note?: string;
+}) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-2 px-1">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {title}
-      </h2>
-      {hint && <span className="text-xs text-muted-foreground">· {hint}</span>}
+    <div className="space-y-1 px-1">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {title}
+        </h2>
+        {hint && (
+          <span className="text-xs text-muted-foreground">· {hint}</span>
+        )}
+      </div>
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   );
 }
@@ -272,6 +318,16 @@ export function JobsPage() {
       invalidateJobs();
     },
   });
+  // Foreground, unlike the privacy pass: this one deletes rows from Shortlist's own SQLite and comes
+  // back in well under a second, so waiting for the real "pruned N runs" line beats a toast that
+  // only says it started. It takes no arguments — the retention limits come from settings.
+  const pruneNow = useMutation({
+    mutationFn: () => api.runJob("maintenance.prune", {}),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+      invalidateJobs();
+    },
+  });
 
   const entries = catalog.data ?? [];
   const byKind = Object.fromEntries(entries.map((e) => [e.kind, e]));
@@ -390,12 +446,14 @@ export function JobsPage() {
             <GroupHeading
               title="Run now"
               hint="each on its own timer — open one to see or change when"
+              note="A tag says what a job changes on your Plex server. Anything without one only reads, or only touches Shortlist's own records."
             />
             <div className="overflow-hidden rounded-md border">
               <JobRow
                 first
                 entry={entryFor("sync.users")}
                 queuedTitle={queuedTitleFor("sync.users")}
+                tag={EFFECT_TAGS["sync.users"]}
                 icon={UsersIcon}
                 action={{
                   label: "Run",
@@ -547,10 +605,13 @@ export function JobsPage() {
               <JobRow
                 entry={entryFor("sync.check")}
                 queuedTitle={queuedTitleFor("sync.check")}
+                tag={EFFECT_TAGS["sync.check"]}
                 icon={ShieldCheck}
                 panel={<SchedulePanel entry={entryFor("sync.check")} />}
                 action={{
-                  label: "Check for drift",
+                  // Not "Check for drift": "drift" is our word for it, not anyone else's, and the
+                  // button has to read as the safe half of a two-step — this one only looks.
+                  label: "Check now",
                   run: () => driftPreview.mutate(),
                   pending: driftPreview.isPending,
                 }}
@@ -633,6 +694,7 @@ export function JobsPage() {
               <JobRow
                 entry={entryFor("privacy.sync")}
                 queuedTitle={queuedTitleFor("privacy.sync")}
+                tag={EFFECT_TAGS["privacy.sync"]}
                 icon={Lock}
                 panel={<SchedulePanel entry={entryFor("privacy.sync")} />}
                 action={{
@@ -682,6 +744,56 @@ export function JobsPage() {
                   ) : null
                 }
                 panel={<BackupPanel />}
+              />
+
+              {/* The retention pass. It was `manual: true` — so the "Automatic" group filtered it
+                  out — and it was not one of the hardcoded rows here either, which left it in the
+                  page totals with no row anywhere. A prune that failed showed "1 failed" in the
+                  header and there was nothing to click, nothing to read, and no way to retry. */}
+              <JobRow
+                entry={entryFor("maintenance.prune")}
+                queuedTitle={queuedTitleFor("maintenance.prune")}
+                icon={Eraser}
+                action={{
+                  label: "Clear now",
+                  run: () => pruneNow.mutate(),
+                  pending: pruneNow.isPending,
+                }}
+                live={
+                  pruneNow.isError || pruneNow.data ? (
+                    <div className="flex flex-col gap-3">
+                      {pruneNow.isError && (
+                        <MutationAlert
+                          error={pruneNow.error}
+                          fallback="Couldn't clear out old records. Try again."
+                          onRetry={() => pruneNow.mutate()}
+                        />
+                      )}
+                      {/* `status` matters here for the same reason it does on the check above: the
+                          job can come back still queued, and reporting a tidy-up that never ran
+                          would be a lie. */}
+                      {pruneNow.data &&
+                        !pruneNow.data.error &&
+                        pruneNow.data.status !== "done" && (
+                          <p className="text-sm text-muted-foreground">
+                            Queued — it will run as soon as there's a free slot.
+                          </p>
+                        )}
+                      {pruneNow.data?.status === "done" && (
+                        <Succeeded>
+                          {pruneNow.data.detail ||
+                            "There was nothing old enough to clear out."}
+                        </Succeeded>
+                      )}
+                      {pruneNow.data?.error && (
+                        <p role="alert" className="text-sm text-destructive">
+                          {pruneNow.data.error}
+                        </p>
+                      )}
+                    </div>
+                  ) : null
+                }
+                panel={<SchedulePanel entry={entryFor("maintenance.prune")} />}
               />
             </div>
           </section>

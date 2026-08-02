@@ -44,7 +44,12 @@ def image_provider_status(store: SettingsStore) -> dict:
     """Whether the configured AI curator provider can generate poster images, and why not if it can't.
 
     Returns ``{"capable": bool, "provider": str, "reason": str}``. Only relevant to the *AI* engine —
-    the built-in text engine always works. ``reason`` is a plain-English, user-facing sentence.
+    the built-in text engine always works. ``reason`` is a plain-English, user-facing sentence saying
+    what is wrong and where to fix it. It deliberately does NOT suggest the text poster: the surface
+    that shows it (``poster-field.tsx``, from ``GET /api/system/image-provider``) appends that advice
+    itself, next to the Text control the reader would actually click, and saying it on both sides
+    rendered it twice in one paragraph. The poster-preview 422 (``api/collections.py``) returns this
+    same sentence bare, but the button that reaches it is disabled whenever ``capable`` is false.
     """
     provider = (store.get("curator.provider") or "").strip()
     if provider not in IMAGE_PROVIDERS:
@@ -53,15 +58,15 @@ def image_provider_status(store: SettingsStore) -> dict:
             "capable": False,
             "provider": provider,
             "reason": (
-                f"Your AI provider ({label}) can't create images. Switch your AI curator to OpenAI or "
-                "Google in Settings -> Curation to use AI artwork — or use a built-in text poster instead."
+                f"Your AI provider ({label}) can't create images. Switch your AI provider to OpenAI or "
+                "Google in Settings → Connections to use AI artwork."
             ),
         }
     if not store.get("curator.api_key"):
         return {
             "capable": False,
             "provider": provider,
-            "reason": f"Add your {provider} API key in Settings -> Curation to use AI artwork.",
+            "reason": f"Add your {provider} API key in Settings → Connections to use AI artwork.",
         }
     return {"capable": True, "provider": provider, "reason": ""}
 

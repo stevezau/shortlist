@@ -124,8 +124,8 @@ function ArrCard({
             <p className="font-medium">{title}</p>
             <p className="text-sm text-muted-foreground">
               {service === "radarr"
-                ? "Handles movie requests."
-                : "Handles TV show requests."}
+                ? "Fetches the films Shortlist asks for."
+                : "Fetches the TV shows Shortlist asks for."}
             </p>
           </div>
         </div>
@@ -134,11 +134,13 @@ function ArrCard({
         {!connected ? (
           <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3">
             <p className="text-sm text-muted-foreground">
-              {title} isn&rsquo;t connected yet. Add its address and API key in{" "}
+              {title} isn&rsquo;t connected yet. Add its address and API key on
+              the {title} card in{" "}
               <strong className="font-medium text-foreground">
                 Connections
               </strong>
-              , then pick its quality profile and folder here.
+              , then come back and choose how good a copy to grab and which
+              folder to save it in.
             </p>
             <Button variant="outline" size="sm" onClick={onGoToConnections}>
               Go to Connections
@@ -146,8 +148,9 @@ function ArrCard({
           </div>
         ) : options.isError ? (
           <p className="text-sm text-destructive">
-            Couldn&rsquo;t load {title}&rsquo;s profiles and folders — check its
-            connection in the Connections section and test it again.
+            Couldn&rsquo;t reach {title} to load its quality profiles and
+            folders. Check its address and API key on the {title} card in
+            Connections, and press Test there.
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -221,6 +224,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const autoRatingId = useId();
   const tagId = useId();
   const ratingLabel = RATING_LABELS[form.ratingSource];
+  // MDBList reports a vote count only for the audience-scored sources; the engine's rating gate
+  // skips the vote floor for the two critic scores (`VOTE_SOURCES` in clients/mdblist.py).
+  const countsVotes = !["tomatoes", "metacritic"].includes(form.ratingSource);
 
   // "Connected" for the dropdown fetch means the SAVED settings already have a URL and key on file
   // (the key comes back redacted). A just-typed-but-unsaved value doesn't count — the server reads
@@ -270,11 +276,12 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
           <div className="space-y-1">
             <p className="font-medium">Fill in the gaps automatically</p>
             <p className="text-sm text-muted-foreground">
-              When a great pick isn&rsquo;t in your library yet, Shortlist can
-              ask Radarr or Sonarr to grab it. The strongest picks are sent
-              automatically; the rest wait in your{" "}
+              When a title would have been a great pick for someone but
+              isn&rsquo;t in your library, Shortlist can ask Radarr or Sonarr
+              &mdash; the apps that fetch films and TV &mdash; to get it. You
+              decide which go out on their own and which wait in your{" "}
               <strong className="font-medium text-foreground">Requests</strong>{" "}
-              inbox for a yes or no. You control where that line sits below.
+              inbox for a yes or no.
             </p>
           </div>
           <Switch
@@ -286,8 +293,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
 
         {!form.enabled && (
           <p className="text-sm text-muted-foreground">
-            Off — turn this on to set up automatic requests and choose the
-            rules.
+            Off &mdash; runs won&rsquo;t ask Radarr or Sonarr for anything, and
+            nothing new reaches your Requests inbox. Turn it on to connect the
+            apps and set the rules.
           </p>
         )}
 
@@ -339,10 +347,11 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 className="max-w-xs"
               />
               <p className="text-sm text-muted-foreground">
-                Every movie/show Shortlist requests gets this tag in
-                Radarr/Sonarr (created there if it doesn&rsquo;t exist), so you
-                can spot, filter, or auto-manage what it added. Leave blank for
-                no tag.
+                Every film or show Shortlist asks for gets this label in
+                Radarr/Sonarr &mdash; a &ldquo;tag&rdquo;, in their words, which
+                Shortlist creates there if it doesn&rsquo;t already exist. It
+                lets you spot or filter what Shortlist added. Leave blank for no
+                tag.
               </p>
             </div>
 
@@ -370,7 +379,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 {form.ratingSource !== "tmdb" &&
                   (mdblistConnected ? (
                     <p className="text-sm text-muted-foreground">
-                      Using your MDBList connection. Manage or test the key in{" "}
+                      Using your MDBList connection. The key lives on the
+                      MDBList card in{" "}
                       <button
                         type="button"
                         onClick={goToConnections}
@@ -378,7 +388,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       >
                         Connections
                       </button>
-                      .
+                      , where you can change or test it.
                     </p>
                   ) : (
                     <div
@@ -386,13 +396,14 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4"
                     >
                       <p className="text-sm font-medium">
-                        MDBList isn’t connected
+                        MDBList isn&rsquo;t connected
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {RATING_LABELS[form.ratingSource]} scores come from
-                        MDBList. Add its free API key in Connections, or
-                        Shortlist falls back to TMDB scores and this choice
-                        won’t take effect.
+                        MDBList &mdash; one lookup that returns a title&rsquo;s
+                        score on every site. Paste its free API key on the
+                        MDBList card in Connections, or Shortlist falls back to
+                        TMDB scores and this choice won&rsquo;t take effect.
                       </p>
                       <Button
                         variant="outline"
@@ -423,7 +434,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor={votesId}>Minimum reviews</Label>
+                  <Label htmlFor={votesId}>Minimum votes</Label>
                   <Input
                     id={votesId}
                     type="number"
@@ -433,9 +444,13 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     onChange={(e) => set({ minVotes: Number(e.target.value) })}
                     className="w-28"
                   />
+                  {/* Rotten Tomatoes and Metacritic are critics' verdicts, and MDBList reports no
+                      vote count for them — `_gate_by_source` skips the floor entirely for those two
+                      (`VOTE_SOURCES`). Saying "keeps out obscure titles" there would be a lie. */}
                   <p className="text-sm text-muted-foreground">
-                    Keeps out obscure titles with a high {ratingLabel} score
-                    from very few votes.
+                    {countsVotes
+                      ? `Keeps out obscure titles with a high ${ratingLabel} score from very few votes.`
+                      : `${ratingLabel} is a critics' verdict rather than a public vote, so this number is ignored while it is your chosen source.`}
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -451,9 +466,12 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     }
                     className="w-28"
                   />
+                  {/* Deliberately not "whose picks it appears in": a missing title can never BE
+                      anyone's pick (`filter_candidates` drops everything the library lacks). The
+                      count is the people Shortlist considered it for — `_record_demand`. */}
                   <p className="text-sm text-muted-foreground">
-                    Number of people whose picks it appears in before it&rsquo;s
-                    requested. 1 = anyone.
+                    How many different people it has to be a good match for
+                    before Shortlist asks. 1 = anyone.
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -496,16 +514,18 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     form.maxYear > 0 &&
                     form.maxYear < form.minYear && (
                       <p className="text-sm text-destructive">
-                        The latest year is before the earliest — no titles can
-                        match this range.
+                        The latest year is before the earliest &mdash; no
+                        titles can match this range.
                       </p>
                     )}
                 </div>
               </div>
 
               <div className="space-y-2">
+                {/* "per run", not "per night": `max_per_run` is counted once per run, and rows
+                    carry their own schedules, so a server can run more than once a night. */}
                 <Segmented
-                  legend="Most to auto-request per night"
+                  legend="Most to send automatically in one run"
                   value={String(form.maxPerRun)}
                   options={MAX_PER_RUN.map((n) => ({
                     value: String(n),
@@ -514,34 +534,33 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   onChange={(v) => set({ maxPerRun: Number(v) })}
                 />
                 <p className="text-sm text-muted-foreground">
-                  A hard cap on titles sent automatically each night, across
-                  both apps — so a night can never flood your downloads. Titles
-                  you approve by hand from the Requests inbox aren&rsquo;t
-                  capped.
+                  A hard cap on the titles a single run sends on its own, across
+                  both apps, so one run can never flood your downloads. Titles
+                  you approve by hand in the Requests inbox aren&rsquo;t capped.
                 </p>
               </div>
             </fieldset>
 
             <fieldset className="space-y-4 rounded-lg border p-4">
               <legend className="px-1 text-sm font-medium">
-                Auto-send vs. ask me
+                Send on its own, or ask me first
               </legend>
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
                   <p className="text-sm font-medium">
-                    Auto-send the strongest picks
+                    Send the strongest titles without asking
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    Titles clearing the higher bar below are requested for you
-                    each night. Everything else that clears the bars above waits
-                    in your Requests inbox. Turn this off to review every title
-                    yourself.
+                    Titles clearing the higher bar below go out as soon as a run
+                    finds them. Everything else that gets past the rules above
+                    waits in your Requests inbox. Turn this off to look at every
+                    title yourself.
                   </p>
                 </div>
                 <Switch
                   checked={form.autoSend}
                   onCheckedChange={(autoSend) => set({ autoSend })}
-                  aria-label="Auto-send the strongest picks"
+                  aria-label="Send the strongest titles without asking"
                 />
               </div>
 
@@ -549,7 +568,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor={autoDemandId}>
-                      Auto-send when wanted by
+                      Send without asking when wanted by
                     </Label>
                     <Input
                       id={autoDemandId}
@@ -570,7 +589,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     </p>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor={autoRatingId}>Auto-send when rated</Label>
+                    <Label htmlFor={autoRatingId}>
+                      Send without asking when rated
+                    </Label>
                     <Input
                       id={autoRatingId}
                       type="number"
@@ -584,7 +605,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       className="w-28"
                     />
                     <p className="text-sm text-muted-foreground">
-                      At least this {ratingLabel} score. Lower-rated picks wait
+                      At least this {ratingLabel} score. Anything lower waits
                       for your OK.
                     </p>
                   </div>
@@ -594,9 +615,10 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       role="alert"
                       className="text-sm text-warning sm:col-span-2"
                     >
-                      The auto-send bar is below the minimums above, so
-                      effectively everything that qualifies auto-sends. Raise it
-                      above the Guardrails to keep a manual queue.
+                      These bars are lower than the minimums above, so
+                      everything that gets past those minimums will be sent
+                      without asking, up to the per-run cap. Raise these above
+                      the minimums to keep a queue to review.
                     </p>
                   )}
                 </div>

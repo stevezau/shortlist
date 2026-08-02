@@ -55,8 +55,13 @@ export function RowEditPage() {
               template={template}
               users={users.data ?? []}
               onClose={() => navigate("/rows")}
-              onRename={() =>
-                collection && navigate(`/rows/${collection.id}/rename`)
+              onRename={(proposedName) =>
+                collection &&
+                navigate(`/rows/${collection.id}/rename`, {
+                  // Only the proposed name — deliberately NOT `oldTemplate`, which is what makes
+                  // that screen auto-start. Arriving from here still asks before touching Plex.
+                  state: { proposedName },
+                })
               }
             />
           );

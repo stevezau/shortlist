@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router";
 
+import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
+import { RECENT_COUNT_LABEL } from "@/components/recent-count-field";
 import { SaveStatus } from "@/components/save-status";
 import { AiWebSearchCard } from "@/components/settings/ai-web-search-card";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
@@ -249,12 +251,11 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             </div>
             {/* The BROADER knob first. These two were the other way round, which gave no clue that
                 this one governs every source and the one below only slices the front of that same
-                list — `candidates.py` searches `seeds[:recent_count]`. The two LABELS are still
-                near-identical ("Watches to build from" / "Watches the AI searches from") and want
-                renaming, but they are shared with the row editor (`max-seeds-field.tsx`,
-                `recent-count-field.tsx`) so the rename has to happen in all three places at once. */}
+                list — `candidates.py` searches `seeds[:recent_count]`. Both labels are imported, not
+                retyped: they are shared with the row editor, and a setting that goes by two names
+                across two screens is the bug this pairing already shipped once. */}
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="max-seeds">Watches to build from</Label>
+              <Label htmlFor="max-seeds">{MAX_SEEDS_LABEL}</Label>
               <p className="text-sm text-muted-foreground">
                 Shortlist works backwards from what someone recently watched.
                 This is how far back it looks &mdash; and it applies to every
@@ -266,22 +267,25 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 default stops at 5 for that reason: a row covering movies and TV
                 needs at least one of each to work from.
               </p>
-              <Input
-                id="max-seeds"
-                type="number"
-                min={5}
-                max={100}
-                value={maxSeeds}
-                onChange={(e) =>
-                  setMaxSeeds(
-                    Math.max(5, Math.min(100, Number(e.target.value) || 5)),
-                  )
-                }
-                className="w-28"
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  id="max-seeds"
+                  type="number"
+                  min={5}
+                  max={100}
+                  value={maxSeeds}
+                  onChange={(e) =>
+                    setMaxSeeds(
+                      Math.max(5, Math.min(100, Number(e.target.value) || 5)),
+                    )
+                  }
+                  className="w-24"
+                />
+                <span className="text-sm text-muted-foreground">watches</span>
+              </div>
             </div>
             <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="recent-count">Watches the AI searches from</Label>
+              <Label htmlFor="recent-count">{RECENT_COUNT_LABEL}</Label>
               <p className="text-sm text-muted-foreground">
                 A narrower slice of the same list. The AI web-search source
                 takes the most recent few of the watches above and runs one
@@ -293,19 +297,22 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 tighter and cheaper. Nothing else uses this; any row &mdash; and
                 any person on a row &mdash; can set their own.
               </p>
-              <Input
-                id="recent-count"
-                type="number"
-                min={1}
-                max={25}
-                value={recentCount}
-                onChange={(e) =>
-                  setRecentCount(
-                    Math.max(1, Math.min(25, Number(e.target.value) || 1)),
-                  )
-                }
-                className="w-28"
-              />
+              <div className="flex items-center gap-2">
+                <Input
+                  id="recent-count"
+                  type="number"
+                  min={1}
+                  max={25}
+                  value={recentCount}
+                  onChange={(e) =>
+                    setRecentCount(
+                      Math.max(1, Math.min(25, Number(e.target.value) || 1)),
+                    )
+                  }
+                  className="w-24"
+                />
+                <span className="text-sm text-muted-foreground">watches</span>
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rating-source">Rate titles using</Label>

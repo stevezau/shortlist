@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
+import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,14 +31,21 @@ export function RowRenamePage() {
   const collections = useCollections();
   const collection = collections.data?.find((c) => c.id === collectionId);
   const location = useLocation();
-  const navOldTemplate = (location.state as { oldTemplate?: string } | null)
-    ?.oldTemplate;
+  const navState = location.state as {
+    oldTemplate?: string;
+    proposedName?: string;
+  } | null;
+  const navOldTemplate = navState?.oldTemplate;
 
   // If we arrived from the row-card dialog, oldTemplate is set and we auto-start.
   // If we arrived from the editor's Rename button, we need to ask first.
   const [confirmed, setConfirmed] = useState(!!navOldTemplate);
   const [newName, setNewName] = useState(
-    collection?.name_template || collection?.name || "",
+    // Carried from the editor when you typed a name there, so you don't retype it.
+    navState?.proposedName ||
+      collection?.name_template ||
+      collection?.name ||
+      "",
   );
   const [saving, setSaving] = useState(false);
   const [oldTemplate, setOldTemplate] = useState(navOldTemplate ?? "");
@@ -183,9 +191,8 @@ export function RowRenamePage() {
                 A {"{top_seed}"} name promises the row is about one title. By
                 default the row is built from their 30 most recent watches, so
                 the name says one thing and the contents come from thirty. Lower{" "}
-                <strong>Watches to build from</strong> in the row editor to make
-                the name true &mdash; it tells you the right number for this
-                row.
+                <strong>{MAX_SEEDS_LABEL}</strong> in the row editor to make the
+                name true &mdash; it tells you the right number for this row.
               </p>
             )}
           </div>

@@ -1,5 +1,7 @@
+import { Clock, Eye, Send, TrendingUp } from "lucide-react";
 import { Link } from "react-router";
 
+import { StatTile } from "@/components/stat-tile";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { RowEffectiveness } from "@/lib/types";
 
@@ -86,12 +88,20 @@ export function RowEffectivenessPanel({
         </p>
       ) : data.matured === null ? (
         <>
-          <p className="text-sm">
-            <span className="font-medium tabular-nums">{data.delivered}</span>{" "}
-            {data.delivered === 1 ? "title" : "titles"} delivered so far, and{" "}
-            <span className="font-medium tabular-nums">{data.watched}</span>{" "}
-            already watched.
-          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <StatTile
+              icon={Send}
+              label="Delivered"
+              value={data.delivered}
+              hint="titles put in a row"
+            />
+            <StatTile
+              icon={Eye}
+              label="Watched"
+              value={data.watched}
+              hint="so far"
+            />
+          </div>
           <p className="text-sm text-muted-foreground">
             Too early for a score. A pick counts as a hit if it’s watched within{" "}
             {data.matured_days} days, and none of these have had that long yet.
@@ -99,29 +109,34 @@ export function RowEffectivenessPanel({
         </>
       ) : (
         <>
-          <div>
-            <p className="text-3xl font-semibold tabular-nums">
-              {pct(data.matured.rate)}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              of its picks got watched
-            </p>
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            <StatTile
+              icon={TrendingUp}
+              label="Hit rate"
+              value={pct(data.matured.rate)}
+              hint="of judged picks watched"
+              title={`Picks watched within ${data.matured_days} days, as a share of the picks old enough to judge.`}
+            />
+            <StatTile
+              icon={Eye}
+              label="Watched"
+              value={data.matured.watched}
+              hint={`within ${data.matured_days} days`}
+            />
+            <StatTile
+              icon={Clock}
+              label="Judged on"
+              value={data.matured.delivered}
+              hint="picks old enough"
+              title="Only picks that have had their full window count towards the rate. Newer ones are excluded so recency can't look like failure."
+            />
+            <StatTile
+              icon={Send}
+              label="Delivered"
+              value={data.delivered}
+              hint="all time"
+            />
           </div>
-
-          <dl className="divide-y text-sm">
-            <div className="flex justify-between gap-3 py-2">
-              <dt className="text-muted-foreground">Judged on</dt>
-              <dd className="tabular-nums">{data.matured.delivered} picks</dd>
-            </div>
-            <div className="flex justify-between gap-3 py-2">
-              <dt className="text-muted-foreground">Watched</dt>
-              <dd className="tabular-nums">{data.matured.watched}</dd>
-            </div>
-            <div className="flex justify-between gap-3 py-2">
-              <dt className="text-muted-foreground">Delivered, all time</dt>
-              <dd className="tabular-nums">{data.delivered}</dd>
-            </div>
-          </dl>
 
           {/* Only when there is more than one — a single bar restates the headline. */}
           {data.per_library.length > 1 && (

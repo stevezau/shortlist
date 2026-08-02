@@ -114,7 +114,11 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     expect(await screen.findByText("Amazing Digital Circus")).toBeTruthy();
-    expect(screen.getByText(/Sonarr.s exclusion list/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Sonarr was told never to add this again/i),
+    ).toBeTruthy();
+    // The Arr's own word for it stays, so the owner can find the setting there.
+    expect(screen.getByText(/import exclusion/i)).toBeTruthy();
   });
 
   it("shows a distinct 'off' empty state when requests are disabled", async () => {
@@ -123,7 +127,7 @@ describe("RequestsPage", () => {
     renderPage();
     // Never implies auto-send is running; points the owner at Settings to turn it on.
     expect(await screen.findByText(/Requests are off/i)).toBeTruthy();
-    expect(screen.getByText(/Enable in Settings/i)).toBeTruthy();
+    expect(screen.getByText(/Go to Settings . Requests/i)).toBeTruthy();
   });
 
   it("files a sent title under the Sonarr/Radarr send log with its outcome and when", async () => {
@@ -431,6 +435,163 @@ describe("RequestsPage", () => {
     expect(screen.getByText("Middling")).toBeTruthy();
   });
 
+  it("filters the queue down to one person's requests (issue #61)", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+      candidate({
+        id: 3,
+        tmdb_id: 300,
+        title: "Shared Pick",
+        wanters: ["Sarah", "Mike"],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    // Each name carries how many of the titles on this tab they wanted.
+    await userEvent.click(screen.getByRole("button", { name: "Sarah (2)" }));
+    expect(screen.getByText("Sarah Pick")).toBeTruthy();
+    expect(screen.getByText("Shared Pick")).toBeTruthy(); // Sarah wanted this one too
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+  });
+
+  it("takes several people at once, showing anything any of them wanted", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+      candidate({ id: 3, tmdb_id: 300, title: "Ann Pick", wanters: ["Ann"] }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
+    await userEvent.click(screen.getByRole("button", { name: "Mike (1)" }));
+    // Union, not intersection — two people picked means "either of them", or the list would empty.
+    expect(screen.getByText("Sarah Pick")).toBeTruthy();
+    expect(screen.getByText("Mike Pick")).toBeTruthy();
+    expect(screen.queryByText("Ann Pick")).toBeNull();
+    // Un-ticking the last name goes back to everyone, rather than showing nothing.
+    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
+    await userEvent.click(screen.getByRole("button", { name: "Mike (1)" }));
+    expect(screen.getByText("Ann Pick")).toBeTruthy();
+  });
+
+  it("marks the picked names as pressed and clears them with 'Clear filters'", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    const sarah = screen.getByRole("button", { name: "Sarah (1)" });
+    expect(sarah).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(sarah);
+    expect(screen.getByRole("button", { name: "Sarah (1)" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // The same "Clear filters" control that resets the rating/vote floors also drops the names.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear filters" }),
+    );
+    expect(screen.getByText("Mike Pick")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sarah (1)" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("says the people filter emptied the tab rather than showing a blank list", async () => {
+    // Sarah has nothing waiting, only something sent — picking her on the Sent tab and switching
+    // is impossible (tab changes reset the filter), so drive it from a rating floor instead: the
+    // point is that an emptied list explains itself for every tab, not just Waiting.
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sent Low",
+        status: "sent",
+        rating: 5.2,
+      }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Sent Lower",
+        status: "sent",
+        rating: 5.0,
+      }),
+    ]);
+    renderPage("/requests?tab=sent");
+    await screen.findByText("Sent Low");
+    await userEvent.selectOptions(screen.getByLabelText("Rating"), "9+");
+    // NOT "Nothing sent yet" — two titles are on file and one control brings them back.
+    expect(screen.queryByText(/Nothing sent yet/i)).toBeNull();
+    expect(
+      screen.getByText(/No sent title clears these filters/i),
+    ).toBeTruthy();
+    expect(screen.getByText(/2 are on this tab in total/i)).toBeTruthy();
+  });
+
+  it("offers no 'Wanted by' filter when a single person wanted everything", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, tmdb_id: 100, title: "One", wanters: ["Sarah"] }),
+      candidate({ id: 2, tmdb_id: 200, title: "Two", wanters: ["Sarah"] }),
+    ]);
+    renderPage();
+    await screen.findByText("One");
+    // Filtering to the only person there is would hide nothing, so the control isn't drawn.
+    expect(screen.queryByRole("button", { name: /^Sarah/ })).toBeNull();
+  });
+
+  it("drops a name from the filter once nothing on the tab carries it", async () => {
+    // Sarah's only title is sent while her name is ticked. Her chip goes with it, so filtering on
+    // her would empty the queue with no visible control to undo — the list falls back to everyone.
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        status: "sent",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ]);
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: /Sarah Pick/i }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Delete/i }));
+    await waitFor(() => expect(screen.getByText("Mike Pick")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /^Sarah/ })).toBeNull();
+  });
+
   it("offers no library split when the queue is a single media type", async () => {
     listRequests.mockResolvedValue([
       candidate({ id: 1, title: "Dune", media_type: "movie" }),
@@ -583,7 +744,7 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     expect(await screen.findByText(/Wanted by Sarah, Mike/)).toBeTruthy();
-    expect(screen.getByText(/wanted by 3 people/)).toBeTruthy();
+    expect(screen.getByText(/Wanted by 3 people/)).toBeTruthy();
   });
 
   it("truncates a long wanters list to three names plus a +N more count", async () => {
@@ -681,7 +842,7 @@ describe("RequestsPage", () => {
     expect(await screen.findByText(/Requests are off/i)).toBeTruthy();
     expect(screen.getByText("Fallout")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /to Sonarr\/Radarr/i }),
+      screen.getByRole("button", { name: /to Radarr\/Sonarr/i }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: /Reject/i })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /Fallout/i })).toBeDisabled();

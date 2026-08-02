@@ -64,12 +64,13 @@ const CATALOG = [
   entry("sync.history", { label: "Sync watch history" }),
   entry("sync.users", { label: "Sync people from Plex" }),
   entry("sync.check", {
-    label: "Sync check",
+    label: "Check and fix rows on Plex",
     description:
-      "Checks every row on Plex against what Shortlist intends, and fixes anything that drifted. Rows fall out of step when a run doesn't finish, when the container restarts mid-write, or when someone was paused or disabled while their row was already live.",
+      "Looks at every collection Shortlist has put on your Plex server and puts back the ones that ended up in the wrong place.\n\nRows fall out of step when a run doesn't finish, when the container restarts mid-write, or when someone was paused or disabled while their row was already live.",
   }),
   entry("privacy.sync", { label: "Privacy sync" }),
   entry("backup.take", { label: "Back up the database" }),
+  entry("maintenance.prune", { label: "Clear out old records" }),
   entry("user.cleanup", {
     label: "Remove a disabled person's rows",
     manual: false,
@@ -282,7 +283,7 @@ describe("JobsPage — sync check", () => {
     expect(screen.queryByText(/container restarts mid-write/i)).toBeNull();
 
     await userEvent.click(
-      within(row).getByRole("button", { name: /^Sync check$/ }),
+      within(row).getByRole("button", { name: /^Check and fix rows on Plex$/ }),
     );
     expect(
       await screen.findByText(/container restarts mid-write/i),
@@ -304,7 +305,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
 
@@ -331,7 +332,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
 
@@ -357,7 +358,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
 
@@ -385,7 +386,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
 
@@ -417,7 +418,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
     await userEvent.click(
@@ -562,6 +563,105 @@ describe("JobsPage — sync check", () => {
       }),
     );
     expect(row).toHaveTextContent(/queued when you disable someone/i);
+  });
+
+  it("gives the retention prune a row of its own, with a button that runs it", async () => {
+    // It is `manual: true`, so the "Automatic" group filters it out — and it used to be missing from
+    // the hardcoded "Run now" list as well. Its counts still fed the page totals, so a failed prune
+    // showed "1 failed" in the header with no row anywhere to click.
+    runJob.mockResolvedValue({
+      id: 7,
+      kind: "maintenance.prune",
+      status: "done",
+      detail: "Pruned 4 run(s), 0 audit event(s) and 12 expired cache row(s)",
+      error: null,
+      fixed: [],
+      orphans: [],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /^Clear now: Clear out old records$/,
+      }),
+    );
+
+    // Foreground and argument-free: the retention limits come from settings, not the button.
+    expect(runJob).toHaveBeenCalledWith("maintenance.prune", {});
+    expect(
+      await screen.findByText(/pruned 4 run\(s\), 0 audit event\(s\)/i),
+    ).toBeInTheDocument();
+  });
+
+  it("gives a failed prune somewhere to click, not just a number in the header", async () => {
+    getJobCatalog.mockResolvedValue([
+      entry("maintenance.prune", {
+        label: "Clear out old records",
+        total: 2,
+        failed: 1,
+        last: {
+          id: 9,
+          kind: "maintenance.prune",
+          status: "failed",
+          attempts: 3,
+          max_attempts: 3,
+          detail: "",
+          error: "OperationalError: database is locked",
+          created_at: "2026-07-28T10:00:00Z",
+          started_at: null,
+          finished_at: null,
+        },
+      }),
+    ]);
+    renderPage();
+
+    expect(await screen.findByText(/1 failed/i)).toBeInTheDocument();
+    const row = await screen.findByTestId("job-maintenance.prune");
+    expect(row).toHaveTextContent(/Failed/);
+
+    await userEvent.click(
+      within(row).getByRole("button", { name: /^Clear out old records$/ }),
+    );
+    expect(row).toHaveTextContent(/database is locked/i);
+  });
+
+  it("says on the line which jobs touch Plex, and marks the one that can delete", async () => {
+    // "Run now" mixes a read-only sweep with a job that writes corrections to Plex and can delete a
+    // collection for good. That difference used to be invisible until you expanded the row.
+    renderPage();
+
+    const destructive = await screen.findByTestId("job-sync.check");
+    expect(within(destructive).getByText("Can delete")).toBeInTheDocument();
+
+    const writes = await screen.findByTestId("job-privacy.sync");
+    expect(within(writes).getByText("Changes Plex")).toBeInTheDocument();
+
+    // The three that never touch Plex carry no tag — which is what the group's note promises.
+    for (const kind of ["sync.history", "backup.take", "maintenance.prune"]) {
+      const row = await screen.findByTestId(`job-${kind}`);
+      expect(within(row).queryByText(/Changes Plex|Can delete/)).toBeNull();
+    }
+  });
+
+  it("shows a manual job's other trigger, so a run nobody pressed is explained", async () => {
+    // `trigger` was rendered only for jobs with no button, so the text written for the two manual
+    // kinds that ALSO fire by themselves was never on screen anywhere.
+    getJobCatalog.mockResolvedValue([
+      entry("privacy.sync", {
+        label: "Privacy sync",
+        trigger:
+          "Also runs on its own whenever something changes who sees what.",
+      }),
+    ]);
+    renderPage();
+
+    const row = await screen.findByTestId("job-privacy.sync");
+    expect(row).not.toHaveTextContent(/also runs on its own/i);
+
+    await userEvent.click(
+      within(row).getByRole("button", { name: /^Privacy sync$/ }),
+    );
+    expect(row).toHaveTextContent(/also runs on its own/i);
   });
 
   it("reserves no space under a row until that job has something to report", async () => {

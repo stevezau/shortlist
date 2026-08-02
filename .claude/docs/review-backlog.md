@@ -160,8 +160,10 @@ One item described an "AI-from-library" source that has never existed (`sources.
     screen's required action is a TMDB key and it never calls itself that. And `step-customize.tsx`
     references "after the first run" before "run" is introduced (the following step).
 
-Not audited: the Dashboard, Users, Runs, Jobs, Requests and Settings pages. (All but **Requests**
-were audited on 2026-08-02 — see the section below.)
+Not audited: nothing on the main SPA is now unaudited. The Dashboard, Users, Runs, Jobs, Logs and
+Settings pages were audited on 2026-08-02, and **Requests** (page + its Settings card) on
+2026-08-03 — see the two sections below. Still never audited: the job-catalogue copy in
+`shortlist/server/services/jobs.py`, which lives in the backend and no `web/` pass will ever reach.
 
 ---
 
@@ -227,6 +229,15 @@ concurrent edit). Everything in **Fixed** is on `dev` as of this date; everythin
   searches from" sat above "Watches to build from", giving no clue that the second governs every
   source and the first only slices the front of that same list (`candidates.py:183` searches
   `seeds[:recent_count]`). Swapped, and each now says how it relates to the other.
+- **Both seed knobs are renamed, in every place at once.** "Watches to build from" → **"Watches
+  every source builds from"**, "Watches the AI searches from" → **"Watches the AI web search looks
+  up"** (the name the row editor already used, so this also ends a setting that went by two names).
+  Each label is now a single exported constant (`MAX_SEEDS_LABEL`, `RECENT_COUNT_LABEL`) that
+  Settings, the row editor and the rename page import rather than retype. Both number boxes gained a
+  "watches" suffix — under a "use the global default" toggle they rendered as a bare unitless digit,
+  where `RowSizeField` shows "15 titles". Their `aria-label` is now applied only when the visible
+  caption is suppressed: it was unconditional, and an `aria-label` beats a `<label>`, so it was
+  overriding the per-person caption the user page passes ("Recent watches for this person").
 
 ### Open — not fixed, with the reason
 
@@ -235,23 +246,150 @@ concurrent edit). Everything in **Fixed** is on `dev` as of this date; everythin
    one of the five hardcoded `JobRow`s in "Run now". Its counts _are_ in the page totals, so a failed
    prune shows "1 failed" in the header chip with **no row anywhere to click**. Needs a `JobRow` +
    a run mutation, which is a functional change, not copy.
-2. **"Watches to build from" / "Watches the AI searches from" are still near-identical names.** They
-   want renaming to something like "Recent watches a row is built from" / "How many of those the AI
-   searches the web for" — but the labels live in `max-seeds-field.tsx` and `recent-count-field.tsx`,
-   shared with the row editor, and `row-editor.test.tsx` asserts them. Renaming in Settings alone
-   would regress `68f36c5` ("one name per setting"), so all three must move together.
-3. **`advanced-section.tsx:38` falls back to `runs.retention ?? 100`.** The server default is `3`
+2. **`advanced-section.tsx:38` falls back to `runs.retention ?? 100`.** The server default is `3`
    and the API bounds the field to 0–24 (`api/settings.py:160`), so 100 is both unreachable
    (`all_public()` always returns the default) and out of range if it ever were reached.
-4. **The Plex card's "Plex token" field has no "where do I get this" link**, unlike TMDB/MDBList/Exa.
+3. **The Plex card's "Plex token" field has no "where do I get this" link**, unlike TMDB/MDBList/Exa.
    Normally filled by the wizard's PIN flow, so it only bites someone re-entering it by hand. Left
    alone rather than assert a support URL I could not verify.
-5. **The read-only Plex audit sits at the top of the Danger zone** (`danger-zone-section.tsx:22`).
+4. **The read-only Plex audit sits at the top of the Danger zone** (`danger-zone-section.tsx:22`).
    It is the safest control on the page under the scariest heading; it reads better under Advanced.
-6. **`JobDetail` renders raw result keys** ("Asked to" + a JSON blob, then `fixed`/`orphans`/
+5. **`JobDetail` renders raw result keys** ("Asked to" + a JSON blob, then `fixed`/`orphans`/
    `demoted` verbatim). Diagnostic rather than everyday, so left as is.
-7. **The Jobs "Run now" group mixes reads and writes** with nothing distinguishing them: "Sync watch
+6. **The Jobs "Run now" group mixes reads and writes** with nothing distinguishing them: "Sync watch
    history" only reads, while "Sync check" writes corrections to Plex and can delete a collection.
    The consequence is only visible once a row is expanded.
-8. **Backend job-catalogue copy is in `services/jobs.py`**, not the SPA — it reads well, but it is
+7. **Backend job-catalogue copy is in `services/jobs.py`**, not the SPA — it reads well, but it is
    the one place a copy pass over `web/` will always miss. Worth noting for the next audit.
+
+---
+
+## Copy audit — Requests (2026-08-03)
+
+The one area the two passes above never reached: `web/src/pages/requests.tsx`,
+`web/src/components/requests-settings.tsx` and `web/src/components/settings/requests-section.tsx`
+(the last is four lines and needed nothing). Read as a non-technical Plex owner. Shipped alongside
+issue #61's "Wanted by" filter, in the same two files.
+
+### Fixed — factual errors (traced to the handler/engine)
+
+1. **"Number of people whose picks it appears in" was impossible.** `requests.min_demand`'s help
+   text described `demand` as a count of people whose *picks* held the title. A requestable title is
+   by definition absent from the library, and `filter_candidates` drops every non-library candidate
+   before picks exist — so it can never be in anyone's picks. `demand` counts the people whose
+   **candidate pool** surfaced it (`rows.py:_record_demand` → `requests.py:accumulate`). Now: "How
+   many different people it has to be a good match for before Shortlist asks."
+2. **The vote floor is silently ignored for Rotten Tomatoes and Metacritic.** `VOTE_SOURCES`
+   (`clients/mdblist.py:29`) is `{imdb, trakt, tmdb}`, and `_gate_by_source` only enforces
+   `min_votes` when the chosen source is in it — MDBList reports no vote count for the two critic
+   scores. The field claimed it "keeps out obscure titles with a high {source} score from very few
+   votes" regardless. Now says plainly that the number is ignored while a critics' score is chosen.
+   (The field stays editable: it still matters if the owner switches source.)
+3. **"per night" is not what `max_per_run` counts.** Two strings ("Most to auto-request per night",
+   "requested for you each night", "so a night can never flood your downloads") assumed one run a
+   night. The cap is applied once per run (`request_missing`, `cap = cfg.max_per_run`) and rows
+   carry their own schedules. Reworded to "in one run". The claim it *doesn't* cover — "titles you
+   approve by hand aren't capped" — is true: `request_titles` skips every floor and the cap.
+4. **"it'll drop off the list on the next run" is false on Sonarr v3.** The arr-presence prune keys
+   shows off `report.arr_present`, which is built from Sonarr's own `tmdbId` — a v4-only field, so
+   `show_present_tmdb` is empty on v3 (`_apply_arr_state`) and the pending row survives for ever.
+   The badge itself still appears, because `/requests/status` falls back to a TMDB→TVDB lookup.
+   Weakened to a claim that holds either way: "you don't need to send it again."
+5. **"remove it there first, or approving won't add it"** (the exclusion-list warning) asserts
+   something no code here proves. What IS proven: `request_missing` never auto-sends an excluded
+   title (`elif m.excluded`), and a manual send goes straight to `add_movie`/`add_series` with no
+   exclusion check at all. Reworded to the provable half, keeping the Arr's own term ("import
+   exclusion") so the owner can find the setting there.
+6. **"Never suggest or request these again" / "no run suggests or requests them"** over-claimed on
+   the "suggest" half. A rejection only feeds `_handled_requests` (`context_builder.py:278`), which
+   is the engine's *request* skip set; nothing stops a rejected title being picked into a row if it
+   later lands in the library. Now: "no run will ask Radarr or Sonarr for them again."
+7. **The Sent tab said "Nothing sent yet" while sent titles were merely filtered out**, and the
+   Rejected tab rendered a blank list with an "Allow all again (0)" button. Only Waiting had a
+   filtered-to-nothing message. All three now share one, and it names the control that undoes it.
+8. **"Strong picks are sent automatically" was unconditional** in the "Nothing waiting" empty state,
+   but `requests.auto_send` can be off — in which case `request_missing` queues everything with the
+   reason "auto-send is off". The empty state now reads the setting.
+9. **The off-state banner claimed only that nothing can be sent.** It can also say the stronger true
+   thing: `_request_phase` skips the whole pass when requests are off and
+   `persist_request_queue` returns early with no `report.requests`, so nothing new is added either.
+
+### Fixed — jargon, wayfinding, states
+
+- **Radarr/Sonarr were never explained on this page.** Both are glossed at first use on the page
+  header and in the Settings card ("the apps that fetch films and TV"), matching what the
+  Connections cards already say.
+- **Both "Enable in Settings" buttons went to `/settings`**, a nine-section page, without naming
+  what to look for. Now `/settings#requests` (`use-hash-scroll.ts` handles the cold load), labelled
+  "Go to Settings → Requests".
+- **MDBList, in both directions.** The connected note said "manage or test the key in Connections";
+  the warning said "add its free API key in Connections". Neither named the card. Both now say "the
+  MDBList card in Connections" — the third place this exact miss has been fixed.
+- **"tag" and "quality profile" are now spelled out** where they first appear ("this label … a
+  'tag', in their words"; "choose how good a copy to grab and which folder to save it in").
+  Verified against `_resolve_tag`, which does create the tag in the Arr if it is missing.
+- **"Minimum reviews"** was the only place the app called votes reviews; it shows "(5,000 votes)" on
+  every card and has a "Votes" filter. Now "Minimum votes".
+- **Controls renamed for what they do**: "Auto-send the strongest picks" → "Send the strongest
+  titles without asking"; "Auto-send when rated" → "Send without asking when rated"; "Auto-send vs.
+  ask me" → "Send on its own, or ask me first". "Radarr — Handles movie requests" → "Fetches the
+  films Shortlist asks for."
+- **The Arr error state was a dead end** ("check its connection in the Connections section"). It now
+  names the card and the Test button that actually exists on it (`connection-card.tsx:254`).
+- **Capitalisation**: `wantedByLabel` returned "Wanted by Sarah" but "wanted by 3 people"; the
+  Rejected row printed a bare "wanted by 3" with no noun. Both now use one label.
+- **`Sonarr/Radarr` vs `Radarr/Sonarr`** was mixed within one page; standardised on films-first,
+  matching the "Sent to Radarr & Sonarr" heading.
+
+### Open — not fixed, with the reason
+
+1. **The `MAX_INBOX = 500` cap is disclosed, not solved.** `list_requests` sorts by
+   (status, −demand, −rating) and truncates to 500, so filtering — the new people filter included —
+   narrows what was loaded, not the whole history. The page now says so, but only once `rows.length`
+   actually reaches 500. A real fix is server-side filtering, which #61 explicitly scoped out.
+2. **Ordering: the Waiting toolbar puts Delete and Reject before Send.** Send is the primary action
+   and the reason the page exists, yet the destructive pair is read first. They are correctly
+   ordered by weight (ghost, ghost, primary) but the eye lands on "Delete" first. Left alone: it
+   would want a visual separator or a menu, not a copy change.
+3. **Ordering: `Guardrails` sits above `Send on its own, or ask me first`,** so the owner sets the
+   floors before learning that a second, higher set of floors exists and that the first set only
+   decides what *waits*. Reading it top-down, "Minimum rating 7" looks like the request threshold
+   until you reach "Send without asking when rated 8" two fieldsets later. The two cross-reference
+   each other now, but the sequence still teaches the concept backwards.
+4. **Ordering: the page never says what "Waiting" is waiting FOR** until you read a row's tooltip.
+   The tab strip (Waiting / Sent / Rejected) is the first thing on screen and the subtitle explains
+   the page, not the tabs.
+5. **`ARR_STATUS_LABELS` uses "Not monitored"**, Sonarr/Radarr's own word for a state that means
+   "it isn't even looking" (`_status_for`). Kept deliberately — matching the Arr's vocabulary is how
+   the owner finds the toggle there — but it is jargon by the letter of the rule.
+6. **The "Wanted by" names are Plex usernames** (`user.username`, via `wanters`), not the display
+   names shown elsewhere in the app. On most servers these match; where they don't, the filter chips
+   and the "Wanted by …" line will read differently from the Users page. Fixing it means resolving
+   usernames to display names at the API boundary, which is a payload change, not copy.
+
+## Row editor: delete/rename/tiles (2026-08-03) — one item left open
+
+The editor gained the destructive actions, an editable name, and dashboard-style stat tiles.
+Architecture Review found five issues, all fixed in the same commit except the one below.
+
+**OPEN — renaming the DEFAULT row writes `name_template` to the row as well as the global.**
+`row-rename.tsx`'s submit sends both `name` and `name_template`. For the default row the backend
+routes `name` to the global `row.name_template` setting (`api/collections.py:565`), but
+`name_template` is also in `_PATCHABLE_COLUMNS`, so the row's own column is set too — and
+`services/report_service.py:179` prefers `c.name_template` over the global for `DEFAULT_SLUG`. They
+agree at write time and diverge only if Settings → Defaults later changes the global, after which
+reports show the stale name. Pre-existing, but making the editor's name box editable turns renaming
+the default row into the obvious path, so it is now much more reachable.
+
+Two things worth keeping from this round, both invisible to a passing test suite:
+
+1. **A delete-failure alert rendered OUTSIDE its dialog is invisible.** The dialog stays open on
+   failure and Radix marks everything behind it `aria-hidden`, so the message was buried under the
+   overlay and absent from the accessibility tree — a failed delete looked like a button that did
+   nothing. The alert now lives inside the dialog. This shipped that way for as long as the rows
+   list has existed; no test caught it because no test exercised a failing delete.
+2. **Asserting the FIRST call is a dry run does not pin down the second.** Flipping the real removal
+   to a second dry run — reporting success while removing nothing — left all nine tests green.
+   `expect(cleanupCollection.mock.calls).toEqual([[id, true], [id, false]])` is the assertion that
+   holds both ends. This is the `.claude/rules/testing.md` "call count right, arguments wrong" shape,
+   on a Plex write path.

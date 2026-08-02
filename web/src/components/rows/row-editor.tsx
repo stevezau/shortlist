@@ -7,6 +7,7 @@ import { LibraryPicker } from "@/components/rows/library-picker";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
+import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
 import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
 import { RowPreview } from "@/components/rows/row-preview";
 import { SettingsGroup } from "@/components/rows/settings-group";
@@ -23,8 +24,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { MaxSeedsField } from "@/components/max-seeds-field";
-import { RecentCountField } from "@/components/recent-count-field";
+import { MAX_SEEDS_LABEL, MaxSeedsField } from "@/components/max-seeds-field";
+import {
+  RECENT_COUNT_LABEL,
+  RecentCountField,
+} from "@/components/recent-count-field";
 import { SeedWindowField } from "@/components/seed-window-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
@@ -257,7 +261,8 @@ export function RowEditor({
   template?: RowTemplate | null;
   users: User[];
   onClose: () => void;
-  onRename?: () => void;
+  /** Hands the typed-but-unapplied name to the rename screen, which still owns the Plex work. */
+  onRename?: (proposedName: string) => void;
 }) {
   const save = useSaveCollection();
   const saveSettings = useSaveSettings();
@@ -276,13 +281,18 @@ export function RowEditor({
   );
   const isDefault = collection?.slug === "picked";
 
+  // Held apart from `input` on purpose — see the Name field. The saved value is the TEMPLATE, since
+  // that is what a rename rewrites; `name` is only its rendered form.
+  const savedName = collection?.name_template || collection?.name || "";
+  const [renameDraft, setRenameDraft] = useState(savedName);
+  const renamePending = renameDraft.trim() !== savedName.trim();
+
   const set = (patch: Partial<CollectionInput>) =>
     setInput((prev) => ({ ...prev, ...patch }));
 
-  // "Watches the AI searches from" caps ONE source's lookups. On a row that doesn't use AI web
-  // search it changes nothing, so showing it invites someone to tune a setting with no effect —
-  // and it sat directly beneath "Watches to build from", which is the row-wide one, making the two
-  // read as rival answers to the same question.
+  // The AI web-search cap governs ONE source's lookups. On a row that doesn't use AI web search it
+  // changes nothing, so showing it invites someone to tune a setting with no effect — and it sits
+  // next to the row-wide seed budget, which the two labels now have to tell apart on their own.
   const usesWebSearch = effectiveSources(
     input.candidate_sources,
     settings.data,
@@ -415,37 +425,45 @@ export function RowEditor({
             <div className="space-y-2">
               <Label htmlFor="row-name">Name</Label>
               {collection ? (
-                // A disabled box beside a button reads as a field that is broken, and gives no clue
-                // why this one setting behaves unlike every other one on the page. Renaming an
-                // existing row is not a form field: it rewrites the collection on Plex for every
-                // person who has it, one at a time, with progress — so it gets its own screen. Say
-                // that, rather than leaving a greyed-out input to imply it.
+                // Type here, but this is NOT part of the form: `renameDraft` is deliberately held
+                // apart from `input`, so Save can never carry a new name. Saving the name without
+                // renaming on Plex would leave the two disagreeing, with nothing on screen saying
+                // so. Applying it rewrites the collection for every person who has the row, one at
+                // a time with progress, which is why the work itself stays on its own screen.
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
                     <Input
                       id="row-name"
-                      value={input.name || "Picked for You"}
-                      disabled
-                      className="flex-1 opacity-70"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      className="flex-1"
                     />
                     <Button
                       type="button"
-                      variant="outline"
+                      variant={renamePending ? "default" : "outline"}
                       size="sm"
+                      disabled={!renameDraft.trim()}
                       onClick={() => {
                         onClose();
-                        onRename?.();
+                        onRename?.(renameDraft.trim());
                       }}
                     >
                       Rename…
                     </Button>
                   </div>
-                  <p className="text-sm text-muted-foreground">
-                    Renaming rewrites this row&rsquo;s collection on Plex for
-                    everyone who has it, so it happens on its own screen where
-                    you can watch it go through. Nothing else on this page is
-                    touched.
-                  </p>
+                  {renamePending ? (
+                    <p role="status" className="text-sm text-warning">
+                      Not applied yet &mdash; press <strong>Rename</strong> to
+                      change it on Plex. Saving this page won&rsquo;t.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Renaming rewrites this row&rsquo;s collection on Plex for
+                      everyone who has it, so it happens on its own screen where
+                      you can watch it go through. Nothing else on this page is
+                      touched.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <>
@@ -668,8 +686,8 @@ export function RowEditor({
 
             {usesWebSearch && (
               <InheritableField
-                label="Watches the AI web search looks up"
-                description="AI web search looks up one watch at a time — “what to watch if you liked X”. This is how many of their recent watches it asks about. More gives wider results and takes more searches. It changes nothing for the other sources."
+                label={RECENT_COUNT_LABEL}
+                description={`AI web search looks up one watch at a time — “what to watch if you liked X”. This is how many of their most recent watches it asks about: the front slice of the same list “${MAX_SEEDS_LABEL}” sets. More gives wider results and takes more searches. It changes nothing for the other sources.`}
                 ariaLabel="Use the global recent-watches default"
                 inheriting={input.recent_count === null}
                 globalValue={recentCountGlobal(settings.data)}
@@ -688,16 +706,17 @@ export function RowEditor({
             )}
 
             <InheritableField
-              label="Watches to build from"
+              label={MAX_SEEDS_LABEL}
               description={
                 <>
-                  How many recent watches this row is built from. A high number
-                  blends their whole recent viewing, which suits a general
-                  &ldquo;Picked for you&rdquo; row. A low number makes the row
-                  about one or two specific things they watched.
+                  How many recent watches this row is built from. Every source
+                  works from these. A high number blends their whole recent
+                  viewing, which suits a general &ldquo;Picked for you&rdquo;
+                  row. A low number makes the row about one or two specific
+                  things they watched.
                 </>
               }
-              ariaLabel="Use the default number of watches to build from"
+              ariaLabel="Use the default number of watches every source builds from"
               inheriting={input.max_seeds === null}
               globalValue={maxSeedsGlobal(settings.data)}
               // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
@@ -933,6 +952,27 @@ export function RowEditor({
                 "Couldn’t save this row. Try again.",
               )}
             </p>
+          )}
+
+          {/* Last, and fenced off: these two reach into Plex, and neither is undone by Cancel. A row
+              being created has nothing to remove yet. */}
+          {collection && (
+            <div className="space-y-3 rounded-lg border border-destructive/30 p-5">
+              <div className="space-y-1">
+                <h2 className="text-sm font-medium">Remove this row</h2>
+                <p className="text-sm text-muted-foreground">
+                  Taking it off Plex keeps its settings here, so the next run
+                  builds it again. Deleting it doesn&rsquo;t. Either way the
+                  titles stay in your library.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <RowDestructiveActions
+                  collection={collection}
+                  onDeleted={onClose}
+                />
+              </div>
+            </div>
           )}
         </div>
 

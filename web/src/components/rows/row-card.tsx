@@ -1,10 +1,8 @@
 import { useMutation } from "@tanstack/react-query";
 import {
-  Eraser,
   Image as ImageIcon,
   ListChecks,
   Pen,
-  Trash2,
   UserCheck,
   Users as UsersIcon,
 } from "lucide-react";
@@ -12,6 +10,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
+import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,16 +25,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { api, apiErrorMessage } from "@/lib/api";
+import { api } from "@/lib/api";
 import { audienceSummary, rowOverrides, toInput } from "@/lib/collections";
 import { DEFAULT_ROW_SLUG } from "@/lib/constants";
 import { settingString } from "@/lib/format";
-import {
-  useDeleteCollection,
-  useLibraries,
-  useSaveCollection,
-  useSettings,
-} from "@/lib/queries";
+import { useLibraries, useSaveCollection, useSettings } from "@/lib/queries";
 import type { Collection, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -55,12 +49,9 @@ export function RowCard({
 }) {
   const navigate = useNavigate();
   const save = useSaveCollection();
-  const remove = useDeleteCollection();
   const settings = useSettings();
   const libraries = useLibraries();
   const isDefault = collection.slug === DEFAULT_ROW_SLUG;
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [cleanupOpen, setCleanupOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTo, setRenameTo] = useState(
     collection.name_template || collection.name,
@@ -99,13 +90,6 @@ export function RowCard({
         state: { oldTemplate },
       });
     },
-  });
-  // A dry-run first (what WOULD be removed), then the real removal on confirm.
-  const preview = useMutation({
-    mutationFn: () => api.cleanupCollection(collection.id, true),
-  });
-  const cleanup = useMutation({
-    mutationFn: () => api.cleanupCollection(collection.id, false),
   });
   // null until the library list actually arrives — a half-loaded card must not label a row's
   // libraries with raw Plex section keys, which mean nothing to the owner.
@@ -224,35 +208,7 @@ export function RowCard({
             <Pen aria-hidden="true" />
             Rename
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              cleanup.reset();
-              preview.reset();
-              setCleanupOpen(true);
-              preview.mutate();
-            }}
-            aria-label={`Remove ${collection.name} from Plex`}
-            title="Take the row off Plex now, but keep it here to rebuild next run"
-          >
-            <Eraser aria-hidden="true" />
-            Remove from Plex
-          </Button>
-          {/* The default row is deletable too. Hiding this on one card left the first row in the
-              list without the button every other row had, and nothing on screen said why. */}
-          <Button
-            variant="ghost"
-            size="sm"
-            loading={remove.isPending}
-            onClick={() => setConfirmOpen(true)}
-            aria-label={`Delete ${collection.name}`}
-            title="Delete this row for good"
-            className="text-destructive hover:text-destructive"
-          >
-            {!remove.isPending && <Trash2 aria-hidden="true" />}
-            Delete
-          </Button>
+          <RowDestructiveActions collection={collection} />
         </div>
         {/* The Switch mirrors the saved row, so a rejected save just snaps it back — silently
             reverting is exactly what a click that never landed looks like. */}
@@ -272,111 +228,8 @@ export function RowCard({
             }}
           />
         )}
-
-        {remove.isError && (
-          <p role="alert" className="w-full text-sm text-destructive">
-            {apiErrorMessage(
-              remove.error,
-              "Couldn’t delete this row. Try again.",
-            )}
-          </p>
-        )}
       </CardContent>
 
-      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete “{collection.name}”?</DialogTitle>
-            <DialogDescription>
-              This removes the row and its Plex collections now, for everyone
-              who has it. The titles themselves stay in your library. This can’t
-              be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              loading={remove.isPending}
-              onClick={() =>
-                remove.mutate(collection.id, {
-                  onSuccess: () => setConfirmOpen(false),
-                })
-              }
-            >
-              Delete row
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={cleanupOpen}
-        onOpenChange={(open) => {
-          setCleanupOpen(open);
-          if (!open) {
-            preview.reset();
-            cleanup.reset();
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove “{collection.name}” from Plex?</DialogTitle>
-            <DialogDescription>
-              Deletes this row’s collections from Plex for everyone who has it.
-              The titles stay in your library and the row’s settings here are
-              kept — it’ll be rebuilt on the next run unless you also turn it
-              off or delete it.
-            </DialogDescription>
-          </DialogHeader>
-          {preview.isPending && (
-            <p className="text-sm text-muted-foreground">Checking Plex…</p>
-          )}
-          {preview.isSuccess && !cleanup.isSuccess && (
-            <p className="text-sm">
-              {preview.data.removed.length === 0
-                ? "Nothing to remove — this row has no collections on Plex right now."
-                : `This will remove ${preview.data.removed.length} collection${
-                    preview.data.removed.length === 1 ? "" : "s"
-                  } from Plex.`}
-            </p>
-          )}
-          {cleanup.isSuccess && (
-            <p role="status" className="text-sm text-success">
-              {cleanup.data.message}
-            </p>
-          )}
-          {(preview.isError || cleanup.isError) && (
-            <p role="alert" className="text-sm text-destructive">
-              {apiErrorMessage(
-                preview.error ?? cleanup.error,
-                "Couldn’t reach Plex. Try again.",
-              )}
-            </p>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCleanupOpen(false)}>
-              {cleanup.isSuccess ? "Close" : "Cancel"}
-            </Button>
-            {!cleanup.isSuccess && (
-              <Button
-                variant="destructive"
-                loading={cleanup.isPending}
-                disabled={
-                  preview.isPending ||
-                  (preview.isSuccess && preview.data.removed.length === 0)
-                }
-                onClick={() => cleanup.mutate()}
-              >
-                Remove from Plex
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent>
           <DialogHeader>
