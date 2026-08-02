@@ -2,7 +2,7 @@
 
 > **Per-user movie & TV recommendations for Plex.** A private, personalized **"Picked for You"** row
 > on every user's Plex home screen — built from their own watch history, visible only to them.
-> Self-hosted, one Docker container, works with or without AI.
+> Self-hosted, one Docker container, no AI key required.
 
 [![CI](https://github.com/stevezau/shortlist/actions/workflows/ci.yml/badge.svg)](https://github.com/stevezau/shortlist/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/codecov/c/github/stevezau/shortlist)](https://codecov.io/gh/stevezau/shortlist)
@@ -54,9 +54,9 @@ account is told to hide that label, so only its owner ever sees it.
   container serves your whole server. **Including you**: the server owner gets a row like anyone
   else, so Shortlist is just as useful on a one-person server.
 - 🧠 **Smart picks, no hallucinations** — every pick is a title verified to exist in your library,
-  never invented. **Works with zero AI** (heuristic mode, no keys required); an optional LLM (Claude /
-  GPT / Gemini, or any local server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI) adds one extra
-  source — a live web search for what to watch next.
+  never invented. **No AI key required**: the built-in picker runs entirely in code. An optional LLM
+  (Claude / GPT / Gemini, or any local server: Ollama, llama.cpp, LM Studio, vLLM, LocalAI) adds one
+  extra source — a live web search for what to watch next.
 - 🌐 **Finds what to watch next from everywhere** — pools candidates from TMDB, Trakt, and an optional
   **live web search** for current, well-reviewed titles.
 - 🔎 **Web search that works with _any_ model, even offline ones** — Shortlist runs the search
@@ -97,32 +97,34 @@ account is told to hide that label, so only its owner ever sees it.
 - ↩️ **Provable uninstall** — one flow restores your server exactly as Shortlist found it.
 - 🧪 **Safe mode** — set `SHORTLIST_DRY_RUN=1` to try it against your real server without writing a
   single change, until you're happy.
-- 📦 **Homelab-native** — one container, `/config` volume, dark UI, GHCR multi-arch, healthcheck,
+- 📦 **Homelab-native** — one container, `/config` volume, GHCR multi-arch, healthcheck,
   Unraid template.
 
 ## Screenshots
 
-|                                                              |                                                                     |
-| ------------------------------------------------------------ | ------------------------------------------------------------------- |
-| ![Setup wizard](docs/images/wizard.png)                      | ![A user's picks and why](docs/images/user-detail.png)              |
-| **A ~10-minute setup wizard** — connect Plex, pick users, go | **Each person's row, and _why_ each pick** — "Because you watched…" |
-| ![A run in progress](docs/images/run-detail.png)             | ![Settings & integrations](docs/images/settings.png)                |
-| **Watch every run** — history → candidates → rank → deliver  | **Connects to what you run** — Tautulli, Radarr/Sonarr, Trakt, LLMs |
+|                                                                    |                                                             |
+| ------------------------------------------------------------------ | ----------------------------------------------------------- |
+| ![A user's picks and why](docs/images/user-detail.png)             | ![A run in progress](docs/images/run-detail.png)            |
+| **Each person's row, and _why_ each pick** — "Because you watched…" | **Watch every run** — history → candidates → rank → deliver |
 
 <sub>App screenshots use placeholder titles (a test library); the Plex row above is a real server.</sub>
 
-## How it compares
+## Where it fits
 
-Shortlist does one thing the rest of the stack doesn't: build a **different** collection for each
-person and keep it private. It's designed to sit alongside what you already run, not replace it.
+Shortlist does one narrow thing the rest of the stack doesn't: build a **different** collection for
+each person and keep it private, inside Plex. It's designed to sit alongside what you already run:
 
-| Tool                                    | What it does                                              | How Shortlist relates                                                                                                                                                                                                  |
-| --------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Kometa** (formerly Plex Meta Manager) | Builds collections and applies metadata/artwork from YAML | Kometa's collections are the same for everyone. Shortlist builds a different one per person and hides it from everyone else. They coexist — Shortlist never touches a collection it didn't create.                     |
-| **Tautulli**                            | Monitors and reports on Plex watch activity               | Complementary. Shortlist reads watch history straight from Plex; Tautulli is optional and only improves the names people are shown by. Tautulli tells you what _was_ watched — Shortlist decides what to watch _next_. |
-| **Overseerr / Jellyseerr**              | Request management — users ask for titles, it grabs them  | Complementary. Overseerr is request-driven: someone has to already know what they want. Shortlist suggests it first, and can send the gaps to Radarr/Sonarr itself.                                                    |
-| **Plex's own "Recommended for You"**    | Plex's built-in discovery shelves                         | Server-wide, and weighted towards Plex's own streaming catalogue. Shortlist is per-account and built only from titles that are actually in _your_ library.                                                             |
-| **Jellyfin / Emby**                     | Alternative media servers                                 | Shortlist is Plex-only — it depends on Plex's label-based share filters (PMS 1.43.2+) to keep each row private. There's no equivalent mechanism to port to.                                                            |
+- **It never touches what it didn't make.** Only collections carrying Shortlist's own `shortlist_*`
+  label are ever modified — Kometa's collections, and anything you built by hand, are skipped.
+- **It merges share filters, never rebuilds them.** Existing conditions are left byte-for-byte
+  identical, and the originals are snapshotted before the first change.
+- **It connects rather than duplicates.** Tautulli for richer history, Radarr/Sonarr for gaps, Trakt
+  and MDBList for candidates — all optional. Only Plex and a free TMDB key are required.
+- **Plex-only.** The privacy model depends on Plex's label-based share filters (PMS 1.43.2+), so
+  there's no Jellyfin or Emby equivalent to port to.
+
+For what netplexflix, SuggestArr, Seerr, Kometa and Tautulli are each built for — and when Shortlist
+is the wrong choice — see [Other Plex tools](docs/comparison.md).
 
 Curious how the per-user privacy actually works?
 See [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md).
@@ -161,12 +163,15 @@ Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-starte
 
 ## Documentation
 
-|                                            |                                     |
-| ------------------------------------------ | ----------------------------------- |
-| [Getting started](docs/getting-started.md) | Install, wizard, first run          |
-| [Guides](docs/guides.md)                   | UI tour, schedules, troubleshooting |
-| [Reference](docs/reference.md)             | Settings, API, env vars             |
-| [FAQ](docs/faq.md)                         | Privacy model, Kometa, uninstall    |
+📖 **[stevezau.github.io/shortlist](https://stevezau.github.io/shortlist/)** — the docs as a website.
+
+|                                              |                                                                                     |
+| -------------------------------------------- | ----------------------------------------------------------------------------------- |
+| [Getting started](docs/getting-started.md)   | Install, wizard, first run                                                          |
+| [Guides](docs/guides.md)                     | UI tour, schedules, troubleshooting                                                 |
+| [Reference](docs/reference.md)               | Settings, API, env vars                                                             |
+| [FAQ](docs/faq.md)                           | Privacy model, Kometa, uninstall                                                    |
+| [Other Plex tools](docs/comparison.md)     | How Shortlist relates to netplexflix, SuggestArr, Seerr, Kometa — and when it's the wrong choice |
 
 **Background:** [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md)
 — the label + share-filter mechanism this is built on, and the ordering mistake that leaks.

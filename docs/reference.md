@@ -1,9 +1,8 @@
 ---
 title: Reference — settings, API and environment variables
 description: Every Shortlist configuration key, REST API endpoint, container environment variable and default value.
+heading: Reference
 ---
-
-# Reference
 
 ## Environment variables (container)
 

@@ -1,0 +1,66 @@
+# Landing-page FAQ. Questions are phrased the way people actually type them into a
+# search box, because this list also becomes the page's FAQPage structured data —
+# the answers here are what a search engine or an AI assistant will quote.
+# Keep every answer factually identical to /faq, which is the fuller version.
+
+- q: Can I give each Plex user recommendations based on what they watched?
+  a: >-
+    Yes. That is exactly what Shortlist does. It reads each person's own Plex watch history, finds
+    titles in your library they haven't seen but probably want to, and puts them in a personal
+    "Picked for You" row on that person's Plex home screen. Every user gets a different row, and each
+    row is visible only to its owner. It runs on a schedule you set, typically nightly.
+
+- q: Can you make a Plex collection visible to only one user?
+  a: >-
+    Indirectly, yes — Plex has no per-user collections, but it does have **label restrictions**. Give
+    the collection a label, then add `label!=<that label>` to every *other* account's share filter.
+    What remains is a collection only one person can see. This requires Plex Media Server
+    **1.43.2.10687 or newer**; older versions ignore the restriction on the Home and Recommended
+    shelves. The ordering is the dangerous part — create the collection hidden, merge the exclusions,
+    and only then make it visible, or it is briefly public to your whole server.
+
+- q: Do I need an AI or OpenAI key to use Shortlist?
+  a: >-
+    No. Shortlist runs fine with no AI and no key at all — the built-in picker is ordinary code with
+    no per-title cost, and most candidates come from the free TMDB sources. An LLM is optional. If you
+    add one (Claude, GPT, Gemini, or a local Ollama, llama.cpp, LM Studio, vLLM or LocalAI), it writes
+    each pick's short "why" and unlocks one extra source: a live web search for well-reviewed titles
+    TMDB doesn't return. That search is off by default.
+
+- q: Will the AI recommend films I don't actually have?
+  a: >-
+    No. The AI only ever chooses among titles already confirmed to exist in your library and unwatched
+    by that person. Anything else it suggests is discarded and logged, so a hallucinated title can
+    never reach someone's row.
+
+- q: Does Shortlist conflict with Kometa?
+  a: >-
+    No — they coexist by design. Shortlist only ever modifies collections it created itself, marked
+    with its own `shortlist_*` label. Anything else on your server, including every Kometa collection,
+    is detected and skipped. Share-filter writes are read-modify-write merges too: existing conditions
+    are left byte-for-byte identical.
+
+- q: What can the server owner see?
+  a: >-
+    Everything. Plex cannot hide collections from the server's own owner, so the admin account's Home
+    shows every user's row, not just its own. This is a Plex limitation, not a Shortlist choice. If
+    you share with other people and want a clean Home, watch on a Plex Home user and keep the admin
+    account for administration.
+
+- q: What happens to my Plex settings if I uninstall?
+  a: >-
+    They go back exactly as they were. Every account's share filters are snapshotted before the first
+    change Shortlist makes, and the uninstall flow restores them from that snapshot and removes the
+    collections it created. You can also rehearse the whole thing first — set `SHORTLIST_DRY_RUN=1`
+    and Shortlist logs the diff it *would* apply while writing nothing to Plex.
+
+- q: What do I need to run it?
+  a: >-
+    Plex Media Server **1.43.2.10687 or newer**, Plex Pass on the admin account, a free TMDB API key,
+    and somewhere to run one Docker container. Tautulli, Radarr, Sonarr, Trakt, MDBList and an LLM key
+    are all optional. Images are multi-arch (amd64 and arm64) on GHCR.
+
+- q: Does Shortlist work with Jellyfin or Emby?
+  a: >-
+    No — Shortlist is Plex-only. The per-user privacy depends specifically on Plex's label-based share
+    filters, and there is no equivalent mechanism in Jellyfin or Emby to port it to.

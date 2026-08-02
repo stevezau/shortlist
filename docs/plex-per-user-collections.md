@@ -1,9 +1,8 @@
 ---
 title: How to make a Plex collection visible to only one user
 description: Plex has no per-user collections, but label restrictions on share filters get you there. The mechanism, the manual steps, the ordering mistake that leaks, and the version requirements.
+heading: How to make a Plex collection visible to only one user
 ---
-
-# How to make a Plex collection visible to only one user
 
 **Short answer:** Plex has no per-user collections, but it does have **label restrictions**. Give the
 collection a label, then tell every _other_ account to exclude that label. What's left is a
@@ -140,5 +139,6 @@ Set `-e SHORTLIST_DRY_RUN=1` to see every change it _would_ make to your server 
 ## Related
 
 - [FAQ — How is this private?](faq.md#how-is-this-private-plex-doesnt-have-per-user-collections)
+- [Other Plex tools](comparison.md) — what each project in this space is built for
 - [Getting started](getting-started.md) — install and the setup wizard
 - [Reference](reference.md) — settings, API, environment variables

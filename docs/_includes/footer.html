@@ -1,0 +1,50 @@
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer__grid">
+      <div>
+        <a class="brand" href="{{ '/' | relative_url }}">
+          <img class="brand__mark" src="{{ '/assets/img/logo.svg' | relative_url }}" alt="" width="27" height="27">
+          Shortlist
+        </a>
+        <p class="footer__blurb">
+          A private, personalized “Picked for You” row for every user on your Plex server — built
+          from their own watch history, visible only to them.
+        </p>
+      </div>
+
+      <div>
+        <h4>Documentation</h4>
+        <ul>
+          {%- for item in site.nav -%}
+            <li><a href="{{ item.url | relative_url }}">{{ item.title }}</a></li>
+          {%- endfor -%}
+        </ul>
+      </div>
+
+      <div>
+        <h4>Project</h4>
+        <ul>
+          <li><a href="{{ site.repo }}">Source on GitHub</a></li>
+          <li><a href="{{ site.repo }}/releases">Releases</a></li>
+          <li><a href="{{ site.repo }}/issues/new/choose">Report a bug</a></li>
+          <li><a href="https://github.com/{{ site.ghcr | remove: 'ghcr.io/' }}/pkgs/container/shortlist">Container image</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h4>Related</h4>
+        <ul>
+          <li><a href="https://www.themoviedb.org/">TMDB</a></li>
+          <li><a href="https://tautulli.com/">Tautulli</a></li>
+          <li><a href="https://kometa.wiki/">Kometa</a></li>
+          <li><a href="https://www.plex.tv/">Plex</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer__base">
+      <span>MIT licensed · © {{ 'now' | date: "%Y" }} Steven Adams</span>
+      <span>Not affiliated with Plex Inc. Plex is a trademark of Plex, Inc.</span>
+    </div>
+  </div>
+</footer>

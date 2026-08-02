@@ -1,0 +1,59 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+{% seo %}
+
+<link rel="icon" href="{{ '/assets/img/favicon.svg' | relative_url }}" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ '/assets/img/favicon.svg' | relative_url }}">
+<link rel="stylesheet" href="{{ '/assets/css/main.css' | relative_url }}">
+<link rel="canonical" href="{{ page.url | absolute_url }}">
+<meta name="theme-color" content="#08080a" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#fcfcfb" media="(prefers-color-scheme: light)">
+
+{%- comment -%}
+Set the theme before first paint. A class-swap in the body would flash the wrong
+palette on every page load, which is exactly the thing people notice on a docs site.
+{%- endcomment -%}
+<script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("shortlist-theme");
+      var prefersLight = window.matchMedia("(prefers-color-scheme: light)").matches;
+      document.documentElement.dataset.theme = stored || (prefersLight ? "light" : "dark");
+    } catch (e) {
+      document.documentElement.dataset.theme = "dark";
+    }
+  })();
+</script>
+
+{%- comment -%}
+Structured data. Google reads it for rich results; AI crawlers read it to work out
+what this software is and who it's for — which is the whole reason it's here.
+{%- endcomment -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Shortlist",
+  "applicationCategory": "MultimediaApplication",
+  "applicationSubCategory": "Recommendation engine for Plex Media Server",
+  "operatingSystem": "Docker (Linux, amd64 and arm64)",
+  "description": {{ site.description | strip_newlines | jsonify }},
+  "url": {{ '/' | absolute_url | jsonify }},
+  "downloadUrl": "https://github.com/stevezau/shortlist",
+  "codeRepository": "https://github.com/stevezau/shortlist",
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "Steven Adams", "url": "https://github.com/stevezau" },
+  "softwareRequirements": "Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin account, a free TMDB API key",
+  "featureList": [
+    "Per-user movie and TV recommendations built from each Plex user's own watch history",
+    "A private \"Picked for You\" row on each user's Plex home screen, visible only to them",
+    "Works with no AI at all, or with Claude, GPT, Gemini or a local Ollama model",
+    "Explains every pick with \"Because you watched...\"",
+    "Optional Radarr and Sonarr requests for picks missing from the library",
+    "Snapshots Plex share filters before any change and restores them on uninstall"
+  ]
+}
+</script>

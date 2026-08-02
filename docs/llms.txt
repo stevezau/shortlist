@@ -1,0 +1,56 @@
+---
+layout: null
+sitemap: false
+permalink: /llms.txt
+---
+# Shortlist
+
+> Self-hosted, per-user movie and TV recommendations for Plex. Shortlist gives every user on a Plex
+> server their own private "Picked for You" row on their Plex home screen, built from that person's
+> own watch history and visible only to them. One Docker container, no AI key required.
+
+Shortlist answers the question "can I give each of my Plex users recommendations based on what they
+watched?" — which Plex itself does not do. Plex's built-in recommendation shelves are identical for
+every account on the server.
+
+## How the per-user privacy works
+
+Plex has no per-user collections. It does have label restrictions: a collection is given a label, and
+every *other* account's share filter gets `label!=<that label>` merged into it, leaving one account
+able to see it. This requires Plex Media Server 1.43.2.10687 or newer — earlier versions ignore the
+restriction on the Home and Recommended shelves.
+
+The write ordering is the load-bearing part: rows are swept, delivered UNPROMOTED, the exclusions are
+merged into every account's share filter, and only THEN are rows promoted onto Home. A row is
+therefore never visible before the rule hiding it exists. Share filters are snapshotted before the
+first change and restored exactly on uninstall.
+
+## Key facts
+
+- License: MIT. Free, no paid tier, nothing phones home.
+- Requirements: Plex Media Server 1.43.2.10687+, Plex Pass on the admin account, a free TMDB API key.
+- AI is OPTIONAL. The built-in picker needs no keys and no cloud. Supported optional providers:
+  Anthropic Claude, OpenAI GPT, Google Gemini, and any local OpenAI-compatible server (Ollama,
+  llama.cpp, LM Studio, vLLM, LocalAI).
+- Every pick is verified to exist in the user's library before delivery — titles are never invented.
+- Every pick carries a reason: "Because you watched X".
+- Optional integrations: Tautulli, Radarr, Sonarr, Trakt, MDBList, Exa.
+- Coexists with Kometa: only collections Shortlist created (labelled `shortlist_*`) are ever modified.
+- Plex-only. There is no Jellyfin or Emby support, because the privacy model depends on Plex's
+  label-based share filters.
+- Status: public beta, running in production.
+
+## Docs
+
+- [Home]({{ '/' | absolute_url }}): what Shortlist is, how it works, screenshots, quick start
+- [Getting started]({{ '/getting-started' | absolute_url }}): requirements, Docker install, the setup wizard, first run
+- [Guides]({{ '/guides' | absolute_url }}): the web interface, rows, schedules, per-user overrides, troubleshooting, AI cost control
+- [Reference]({{ '/reference' | absolute_url }}): every configuration key, REST API endpoint, environment variable and default
+- [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling
+- [Other Plex tools]({{ '/comparison' | absolute_url }}): what netplexflix, SuggestArr, Seerr, Kometa and Tautulli are each built for, how Shortlist relates to them, and when Shortlist is the wrong choice
+- [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks
+
+## Source
+
+- [GitHub repository](https://github.com/stevezau/shortlist)
+- [Container image](https://github.com/stevezau/shortlist/pkgs/container/shortlist): `ghcr.io/stevezau/shortlist:latest`

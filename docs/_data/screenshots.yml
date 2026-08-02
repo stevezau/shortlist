@@ -1,0 +1,26 @@
+# The landing-page showcase. Deliberately short: only screens that show something
+# no other tool does. A users list, a settings page and a dark theme are table
+# stakes — showing them says nothing and costs the reader scroll.
+#
+# Captured by tests/e2e/test_screenshots.py against the fake-Plex harness, so the
+# titles are placeholders and no real account appears.
+
+- title: Every pick, and why it was picked
+  body: >-
+    Each person's row, the titles in it, and the reason behind every one — “Because you watched …”.
+    Nothing is a black box, and a bad seed that's skewing someone's picks can be blocked in a click.
+  image: user-detail.png
+  alt: A user detail page listing that person's ranked picks, each with the title that inspired it
+  path: /users/sarah
+  width: 2880
+  height: 2342
+
+- title: Watch every run happen
+  body: >-
+    History, candidates, ranking and delivery — per person, with timings and a live log. When a row
+    doesn't turn up, this page tells you which step is responsible instead of leaving you guessing.
+  image: run-detail.png
+  alt: A run detail page showing per-user timings, the picks delivered, and a live activity log
+  path: /runs/42
+  width: 2880
+  height: 1742

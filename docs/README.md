@@ -1,22 +1,26 @@
----
-title: Shortlist — per-user recommendations for Plex
-description: Documentation for Shortlist, a self-hosted container that gives every user on your Plex server a private, personalized "Picked for You" row built from their own watch history.
-permalink: /
----
+<!--
+Browsing this folder on github.com? You're in the right place — these .md files
+are the docs. They're also published as a website, which is easier to read:
+
+    https://stevezau.github.io/shortlist/
+
+This file exists only for the github.com folder view. The website's home page is
+index.md, and _config.yml excludes this file from the build so the two don't
+fight over the `/` URL.
+-->
 
 # Shortlist documentation
 
-| Guide                                 | What's in it                                                       |
-| ------------------------------------- | ------------------------------------------------------------------ |
-| [Getting started](getting-started.md) | Docker install, first login, the setup wizard, your first run      |
-| [Guides](guides.md)                   | The web interface, schedules, per-user overrides, troubleshooting  |
-| [Reference](reference.md)             | Configuration keys, API endpoints, environment variables, defaults |
-| [FAQ](faq.md)                         | Privacy model, Plex requirements, Kometa coexistence, uninstalling |
+**[Read these as a website →](https://stevezau.github.io/shortlist/)**
 
-**Background reading:**
-[How to make a Plex collection visible to only one user](plex-per-user-collections.md) — the label +
-share-filter mechanism Shortlist is built on, the version requirements, and the ordering mistake
-that leaks a "private" collection to your whole server. Useful whether or not you run Shortlist.
+| Guide                                                     | What's in it                                                       |
+| --------------------------------------------------------- | ------------------------------------------------------------------ |
+| [Getting started](getting-started.md)                     | Docker install, first login, the setup wizard, your first run      |
+| [Guides](guides.md)                                       | The web interface, schedules, per-user overrides, troubleshooting  |
+| [Reference](reference.md)                                 | Configuration keys, API endpoints, environment variables, defaults |
+| [FAQ](faq.md)                                             | Privacy model, Plex requirements, Kometa coexistence, uninstalling |
+| [Other Plex tools](comparison.md)                         | How Shortlist relates to netplexflix, SuggestArr, Seerr, Kometa     |
+| [Per-user Plex collections](plex-per-user-collections.md) | The label + share-filter mechanism everything above is built on    |
 
 **The short version:** run the container, log in with Plex, pick your users, and every night each
 user gets a personal "✨ Picked for You" row built from their own watch history — visible only to

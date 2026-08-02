@@ -1,9 +1,8 @@
 ---
 title: FAQ — per-user Plex collections, privacy and Kometa
 description: How Shortlist makes a Plex collection visible to only one user, what the server owner can see, whether it conflicts with Kometa, and how to uninstall cleanly.
+heading: FAQ
 ---
-
-# FAQ
 
 ## How is this private? Plex doesn't have per-user collections.
 
@@ -103,6 +102,10 @@ provider's own search, or to no web search at all.
 
 No. Shortlist only ever touches collections carrying its own `shortlist_*` label. Kometa overlays
 and your own collections are detected and left alone.
+
+They also solve different problems — Kometa's collections are the same for everyone, Shortlist's are
+different for each person. See [how Shortlist relates to other Plex tools](comparison.md) for the full
+picture, including netplexflix, SuggestArr and Seerr.
 
 ## What information is sent to the AI?
 

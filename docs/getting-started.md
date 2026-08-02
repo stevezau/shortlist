@@ -1,9 +1,8 @@
 ---
 title: Getting started — install Shortlist for Plex with Docker
 description: Requirements, Docker install, first login and the setup wizard that connects your Plex server and builds each user's first personalized row.
+heading: Getting started
 ---
-
-# Getting started
 
 ## Requirements
 
