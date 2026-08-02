@@ -17,6 +17,15 @@ const MAX_SEEDS_DEFAULT = 30;
  * claiming a default that may not be this server's.
  */
 
+/** The raw global freshness, for callers that need to phrase it themselves rather than take the
+ *  toggle caption. The row preview says what a row will actually DO, so "whatever the global is"
+ *  would be the one line on that panel which answers nothing. */
+export function freshnessGlobalValue(
+  settings: Settings | undefined,
+): number | null {
+  return num(settings, "recommendations.freshness");
+}
+
 function num(settings: Settings | undefined, key: string): number | null {
   if (!settings) return null;
   const raw = settings[key];

@@ -21,7 +21,7 @@ function clampSeedWindow(n: number): number {
 function seedWindowHint(value: number): string {
   return value <= 1
     ? "Always the last thing they finished. The row renames itself when they finish something new."
-    : `Cycles through their last ${value} watches — a different one each day, then round again.`;
+    : `Cycles through their last ${value} watches — a different one each day, then back to the first.`;
 }
 
 /**

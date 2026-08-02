@@ -14,6 +14,7 @@ import { queryKeys, useSession, useSetupState } from "@/lib/queries";
 import { DashboardPage } from "@/pages/dashboard";
 import { LoginPage } from "@/pages/login";
 import { RequestsPage } from "@/pages/requests";
+import { RowEditPage } from "@/pages/row-edit";
 import { RowRenamePage } from "@/pages/row-rename";
 import { RowsPage } from "@/pages/rows";
 import { RunDetailPage } from "@/pages/run-detail";
@@ -114,7 +115,10 @@ export default function App() {
           <Route element={<RequireApp />}>
             <Route index element={<DashboardPage />} />
             <Route path="rows" element={<RowsPage />} />
+            {/* Before "rows/:id", or "new" would be parsed as a row id. */}
+            <Route path="rows/new" element={<RowEditPage />} />
             <Route path="rows/:id/rename" element={<RowRenamePage />} />
+            <Route path="rows/:id" element={<RowEditPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="users/:id" element={<UserDetailPage />} />
             <Route path="runs" element={<RunsPage />} />

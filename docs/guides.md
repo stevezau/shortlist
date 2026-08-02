@@ -222,8 +222,8 @@ and moves which one.
 **Rows that follow a watch always refresh nightly** — whether they follow it by name (`{top_seed}`)
 or by cycling. A row whose title claims a recent watch can't be allowed to lag behind it: at the
 usual cadence it would go on naming last week's film for a week after the person moved on. So
-**Freshness** is not offered on those rows; the editor says what the row does instead. Every other
-row keeps the setting.
+**How often it changes** is not offered on those rows at all; the row simply refreshes nightly.
+Every other row keeps the setting.
 
 There is a modest cost to that. Refreshing nightly does not only mean "a write when the watch
 changes" — on the nights it hasn't changed the row still swaps its weakest third for new titles, so
@@ -314,7 +314,7 @@ _how_ it works; the anchor can be any collection, Kometa's or one of Plex's own.
 
 ## Row posters
 
-Each row can have its own artwork on Plex. In the **Row editor** → **Poster**, pick one of:
+Each row can have its own artwork on Plex. In the **Row editor** → **Artwork**, pick one of:
 
 - **Plex default** — leave Plex's own collection artwork alone (the default). Switching a row _back_
   to this after it had a custom poster reverts the artwork on Plex on save.
@@ -398,7 +398,8 @@ libraries you pick.
 
 Settings → Finding titles has three more dials (each per-row overridable):
 
-- **Freshness** — how often a row's picks change. This is a **cadence, not a nightly shuffle**:
+- **How often it changes** (called **Freshness** in Settings, where the global lives) — how
+  often a row's picks change. This is a **cadence, not a nightly shuffle**:
   `1.0` refreshes every night, lower means every few days, and `0.0` means "build once, then never
   reshuffle". On most nights an unchanged row is left exactly as-is — no rebuild, no Plex write
   — which is why a person's row stays familiar instead of being reshuffled daily. On a refresh night
@@ -436,7 +437,7 @@ Settings → Finding titles sets what a row uses **unless the row says otherwise
 | -------------------------------- | ----------------------------------------------------------------------------------------- |
 | **Recommendation sources**       | Switch to "Choose for this row" and tick its own sources                                  |
 | **Libraries**                    | Which Plex libraries it builds in — which also sets what it recommends                    |
-| **Freshness**, **Watched cap**   | How often it refreshes, and how much already-watched it allows                            |
+| **How often it changes**, **Already-watched titles** | How often it refreshes, and how much already-watched it allows         |
 | **Row size**, **Audience**       | How many titles, and who gets it                                                          |
 | **Watches the AI searches from** | How many recent watches AI web search looks up for this row (shown only on rows using it) |
 | **Request tag**                  | The Sonarr/Radarr tag on titles requested for this row's audience                         |

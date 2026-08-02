@@ -31,13 +31,24 @@ def _add_a_row(page: Page) -> None:
 
 
 def _open_section(page: Page, name: str) -> None:
-    """Expand one of the row editor's folded sections.
+    """Expand one of the row editor's collapsible groups.
 
-    The dialog shows the five settings that define a row and folds the rest — each fold captioned
-    with its current values — so a test that reaches for a folded control has to open it, exactly as
-    someone would.
+    Most groups are open on the editor PAGE — only the genuinely optional ones (artwork, request
+    tags) start closed, so this is for reaching into those. Clicking an already-open group would
+    close it, so callers must only pass a group that starts folded.
     """
     page.get_by_text(name, exact=True).click()
+
+
+def _saved_row(page: Page, name: str):
+    """The card for a saved row on the /rows list.
+
+    Scoped to the list, not the whole document: the editor's preview panel renders the name being
+    typed, so a bare `get_by_text(name)` matches the form someone is still filling in and would pass
+    before anything was saved.
+    """
+    expect(page).to_have_url(re.compile(r"/rows$"), timeout=LOAD)
+    return page.get_by_text(name, exact=False).first
 
 
 def _open_rows(page: Page) -> None:
@@ -82,7 +93,7 @@ def test_a_row_can_be_given_a_built_in_text_poster(page: Page, app: ShortlistApp
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Poster Row")
     page.get_by_role("button", name="Add row").click()
-    expect(page.get_by_text("Poster Row").first).to_be_visible(timeout=LOAD)
+    expect(_saved_row(page, "Poster Row")).to_be_visible(timeout=LOAD)
 
     # Re-open it and choose a built-in text poster — this needs no AI provider, so it works on any setup.
     page.get_by_role("button", name="Edit").last.click()
@@ -164,7 +175,6 @@ def test_every_surface_can_be_turned_off_and_reaches_the_api(page: Page, app: Sh
     _open_rows(page)
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Quiet Row")
-    _open_section(page, "Where it appears")
 
     for name in PLACEMENT_SWITCHES:
         page.get_by_role("switch", name=name).click()
@@ -186,10 +196,9 @@ def test_the_two_placement_columns_are_saved_independently(page: Page, app: Shor
     _add_a_row(page)
     page.get_by_label("Name", exact=True).fill("Split Row")
 
-    _open_section(page, "Where it appears")
     page.get_by_role("switch", name="Friends Library Recommended").click()
     page.get_by_role("button", name="Add row").click()
-    expect(page.get_by_text("Split Row").first).to_be_visible(timeout=LOAD)
+    expect(_saved_row(page, "Split Row")).to_be_visible(timeout=LOAD)
 
     created = next(c for c in app.api("GET", "/api/collections").json() if c["name"] == "Split Row")
     assert created["placement"] == "both"

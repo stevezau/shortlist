@@ -652,20 +652,44 @@ describe("RowEditor — watches to build from", () => {
       row({ name_template: "Because you watched {top_seed}", media: "movie" }),
     );
     expect(
-      screen.getByText(/names one watch and fills itself from the other 29/i),
+      screen.getByText(/blending their whole recent viewing/i),
     ).toBeInTheDocument();
     // A movies-only row has no other half to strand, so it must not get the both-media caveat.
     expect(
-      screen.queryByText(/would leave the other half empty/i),
+      screen.queryByText(/one of your two libraries would get nothing/i),
     ).not.toBeInTheDocument();
   });
 
   it("tells a movies-and-TV {top_seed} row why 1 would strand half of it", () => {
     renderEditor(
-      row({ name_template: "Because you watched {top_seed}", media: "both" }),
+      row({
+        name_template: "Because you watched {top_seed}",
+        media: "both",
+        max_seeds: 1,
+      }),
     );
     expect(
-      screen.getByText(/would leave the other half empty/i),
+      screen.getByText(/one of your two libraries would get nothing/i),
+    ).toBeInTheDocument();
+  });
+
+  it("does not cry 'empty library' at a movies-and-TV row on the global default", () => {
+    // At 30 seeds both media types get seeded, so the row builds in both libraries — its problem is
+    // that the NAME won't match the contents, which is a different sentence. Saying a library would
+    // get nothing there would be plain wrong.
+    renderEditor(
+      row({
+        name_template: "Because you watched {top_seed}",
+        media: "both",
+        max_seeds: null,
+      }),
+    );
+
+    expect(
+      screen.queryByText(/one of your two libraries would get nothing/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/blending their whole recent viewing/i),
     ).toBeInTheDocument();
   });
 
@@ -677,48 +701,42 @@ describe("RowEditor — watches to build from", () => {
   });
 });
 
-describe("RowEditor — freshness on a row named after a watch", () => {
-  it("replaces the slider with what the row actually does", () => {
-    // The engine forces these rows to nightly, so a slider here would set a cadence the row never
-    // runs on. It read as a working control while the row went on naming a watch from last week
-    // (issue #57, reported twice) — so it is a statement now, not a setting.
+describe("RowEditor — how often it changes", () => {
+  const freshnessBlock = () => screen.queryByText(/How often it changes/i);
+  const freshnessToggle = () =>
+    screen.queryByRole("switch", { name: /global freshness default/i });
+
+  it("drops the setting entirely on a row named after a watch", () => {
+    // The engine runs these rows nightly whatever is stored, so there is no cadence to choose. It
+    // was left as a slider, and the global default quietly made the row keep naming last week's film
+    // (issue #57, reported twice). Replacing it with a heading and a paragraph explaining a control
+    // that isn't there was just something else to read past — the section summary already says
+    // "refreshes nightly".
     renderEditor(row({ name_template: "Because you watched {top_seed}" }));
 
-    expect(
-      screen.getByText(/follows their latest one and checks every run/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("switch", { name: /global freshness default/i }),
-    ).not.toBeInTheDocument();
+    expect(freshnessBlock()).not.toBeInTheDocument();
+    expect(freshnessToggle()).not.toBeInTheDocument();
   });
 
-  it("hides the slider for a cycling row too, named or not", () => {
+  it("drops it for a cycling row too, named or not", () => {
     // The engine forces nightly for `_names_a_seed(spec) OR seed_window > 1`. Gating the UI on only
     // the first left an unnamed cycling row showing a freshness slider — and reporting "frozen" in
     // the section summary — while the engine ran it every night.
     renderEditor(
-      row({ name_template: "Tonight’s pick", max_seeds: 2, seed_window: 3 }),
+      row({ name_template: "Tonight's pick", max_seeds: 2, seed_window: 3 }),
     );
 
-    expect(
-      screen.queryByRole("switch", { name: /global freshness default/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/cycles between their recent watches/i),
-    ).toBeInTheDocument();
+    expect(freshnessBlock()).not.toBeInTheDocument();
+    expect(freshnessToggle()).not.toBeInTheDocument();
   });
 
-  it("keeps the slider for a row that names no watch", () => {
-    // The override is scoped to named rows. Everywhere else freshness is still a real choice, and
-    // removing it there would take away the only control over how often a row re-curates.
+  it("keeps it for a row that follows no watch", () => {
+    // Scoped to rows that follow a watch. Everywhere else this is still a real choice, and removing
+    // it would take away the only control over how often a row re-curates.
     renderEditor(row({ name_template: "{library_name} Picked for You" }));
 
-    expect(
-      screen.getByRole("switch", { name: /global freshness default/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText(/follows their latest one and checks every run/i),
-    ).not.toBeInTheDocument();
+    expect(freshnessBlock()).toBeInTheDocument();
+    expect(freshnessToggle()).toBeInTheDocument();
   });
 });
 
@@ -746,7 +764,7 @@ describe("RowEditor — which watch it follows", () => {
       screen.getByText(/Always the last thing they finished/i),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/writes to Plex every time the watch changes/i),
+      screen.queryByText(/writes to Plex most nights/i),
     ).not.toBeInTheDocument();
 
     cleanup();
@@ -754,9 +772,7 @@ describe("RowEditor — which watch it follows", () => {
     expect(
       screen.getByText(/Cycles through their last 3 watches/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/writes to Plex every time the watch changes/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/writes to Plex most nights/i)).toBeInTheDocument();
   });
 
   it("stops cycling when the budget grows past the control's range", async () => {
@@ -963,34 +979,53 @@ describe("RowEditor — rating source is answerable where the order is chosen", 
   });
 });
 
-describe("RowEditor — the essentials are visible, the rest folds away", () => {
-  it("shows the settings that define a row, and folds the ones with good defaults", () => {
+describe("RowEditor — every group is on screen, only the optional ones fold", () => {
+  const groupNamed = (title: string) =>
+    screen.getByText(title).closest("details");
+
+  it("leaves the groups that decide what a row does open", () => {
     renderEditor(row());
 
-    // Visible without opening anything.
     expect(screen.getByLabelText("Name", { exact: true })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Best match" })).toBeVisible();
     expect(screen.getByText("Row size")).toBeVisible();
 
-    // Folded, but each says what is inside so you can skip it.
-    for (const section of [
-      "Artwork",
-      "What it draws on",
-      "Where it appears",
-      "Requests",
-    ]) {
-      expect(screen.getByText(section)).toBeInTheDocument();
+    // Open, because a page has room for them. As a modal these were collapsed to fit inside the
+    // viewport cap — which is how the movies-and-TV seed warning ended up somewhere nobody looks.
+    for (const group of ["The basics", "What goes in it", "Where it appears"]) {
+      expect(groupNamed(group)).toHaveAttribute("open");
     }
-    expect(screen.getByText(/every library/)).toBeInTheDocument();
   });
 
-  it("summarises a folded section from its CURRENT values, not a fixed caption", () => {
-    // The whole point of the summary: a section that hides both its controls and what they are set
-    // to is worse than the flat list it replaced.
-    renderEditor(row({ request_tag: "family-picks", library_keys: ["1"] }));
+  it("folds only the two groups most people never touch", () => {
+    renderEditor(row());
+
+    for (const group of ["Artwork", "Requests"]) {
+      expect(groupNamed(group)).not.toHaveAttribute("open");
+    }
+  });
+
+  it("a folded group still says what is inside it", () => {
+    // A disclosure that hides its contents AND what they are set to is worse than no disclosure.
+    renderEditor(row({ request_tag: "family-picks" }));
 
     expect(screen.getByText(/family-picks/)).toBeInTheDocument();
-    expect(screen.getByText(/1 library/)).toBeInTheDocument();
+  });
+
+  it("shows a warning that used to be buried in a collapsed group", () => {
+    // The reason the accordions had to go. This advice decides whether a movies-and-TV row builds
+    // at all, and it lived inside a section that started closed.
+    renderEditor(
+      row({
+        name_template: "Because you watched {top_seed}",
+        media: "both",
+        max_seeds: 1,
+      }),
+    );
+
+    expect(
+      screen.getByText(/one of your two libraries would get nothing/i),
+    ).toBeVisible();
   });
 });
 
@@ -1043,5 +1078,75 @@ describe("RowEditor — settings that would do nothing are not offered", () => {
     expect(
       await screen.findByLabelText(/Watches the AI searches from/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — the outcome preview", () => {
+  beforeEach(() => {
+    settingsData.current = {};
+  });
+
+  it("resolves an inheriting row's cadence against the real global", async () => {
+    // "Whatever the global default is" names the setting instead of its effect, which is the one
+    // answer this panel must never give — it exists to say what the row will DO.
+    settingsData.current = { "recommendations.freshness": 0.5 };
+    renderEditor(row({ freshness: null, name_template: "Popular here" }));
+
+    expect(await screen.findByText("About every 8 days")).toBeInTheDocument();
+  });
+
+  it("says every night for a row that follows a watch, whatever is stored", () => {
+    settingsData.current = { "recommendations.freshness": 0.5 };
+    renderEditor(
+      row({ freshness: 0, name_template: "Because you watched {top_seed}" }),
+    );
+
+    expect(screen.getByText("Every night")).toBeInTheDocument();
+  });
+
+  it("shows what a templated name becomes, not the raw placeholder", () => {
+    renderEditor(row({ name_template: "Because you watched {top_seed}" }));
+
+    expect(
+      screen.getByText(/“Because you watched Fargo”/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — the preview tells the truth about who varies", () => {
+  it("does not claim a SHARED row is named per person", () => {
+    // A shared row is one Plex collection everybody sees. Only {library_name} moves.
+    renderEditor(
+      row({ build: "shared", name_template: "Popular {library_name} here" }),
+    );
+
+    expect(
+      screen.queryByText(/each person gets their own name/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/each library gets its own/i)).toBeInTheDocument();
+  });
+
+  it("says a per-person row is named per person", () => {
+    renderEditor(
+      row({
+        build: "per_person",
+        name_template: "Because you watched {top_seed}",
+      }),
+    );
+
+    expect(
+      screen.getByText(/each person gets their own name/i),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — the preview's sample library", () => {
+  it("previews a TV-only row with a TV library, not a movie one", () => {
+    // "More Movies to watch" on a shows-only row is a name it can never produce.
+    renderEditor(
+      row({ media: "show", name_template: "More {library_name} to watch" }),
+    );
+
+    expect(screen.getByText(/“More TV Shows to watch”/)).toBeInTheDocument();
   });
 });

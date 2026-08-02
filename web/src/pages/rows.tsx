@@ -1,16 +1,14 @@
 import { Rows3 } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "react-router";
 
 import { PageHeader } from "@/components/page-header";
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { RowCard } from "@/components/rows/row-card";
-import { RowEditor } from "@/components/rows/row-editor";
 import { RowTemplateGallery } from "@/components/rows/row-template-gallery";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCollections, useUsers } from "@/lib/queries";
-import type { RowTemplate } from "@/lib/row-templates";
-import type { Collection } from "@/lib/types";
 
 function RowsSkeleton() {
   return (
@@ -25,12 +23,7 @@ function RowsSkeleton() {
 export function RowsPage() {
   const collectionsQuery = useCollections();
   const usersQuery = useUsers();
-  // null = closed; { collection } = editing (collection null = adding). `template` seeds a NEW
-  // row's fields; it is never set when editing an existing one.
-  const [editing, setEditing] = useState<{
-    collection: Collection | null;
-    template?: RowTemplate | null;
-  } | null>(null);
+  const navigate = useNavigate();
   // Adding goes through the gallery first — a blank 17-field form only ever helped someone who
   // already knew what they wanted to build.
   const [pickingTemplate, setPickingTemplate] = useState(false);
@@ -85,7 +78,7 @@ export function RowsPage() {
                       key={collection.id}
                       collection={collection}
                       users={users}
-                      onEdit={() => setEditing({ collection })}
+                      onEdit={() => navigate(`/rows/${collection.id}`)}
                       openRename={renameTarget === collection.id}
                       onRenameOpened={() => setRenameTarget(null)}
                     />
@@ -99,23 +92,13 @@ export function RowsPage() {
               onClose={() => setPickingTemplate(false)}
               onPick={(template) => {
                 setPickingTemplate(false);
-                setEditing({ collection: null, template });
+                // null = "start from scratch" — the gallery's last tile.
+                navigate(
+                  template ? `/rows/new?template=${template.id}` : "/rows/new",
+                );
               }}
             />
 
-            {editing && (
-              <RowEditor
-                collection={editing.collection}
-                template={editing.template ?? null}
-                users={users}
-                onClose={() => setEditing(null)}
-                onRename={() => {
-                  const id = editing.collection?.id;
-                  setEditing(null);
-                  if (id) setRenameTarget(id);
-                }}
-              />
-            )}
           </>
         )}
       </QueryBoundary>
