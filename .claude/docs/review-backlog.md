@@ -101,3 +101,46 @@ split surfaced `test_row_templates_are_real.py` importing a fixture out of the m
 the SPA (health alone is answered by Python and would pass with no `web/dist` in the image).
 Publishing depends on it, and it runs on PRs, where publishing never does. Before this, nothing ran
 the container at all — five docs claimed e2e did, and e2e runs uvicorn in-process.
+
+## First-run copy audit (2026-08-02) — open items
+
+A full audit of user-facing strings in the row editor, sources/placement/artwork pickers and the
+setup wizard, read as a non-technical person setting Shortlist up for the first time. The two
+FACTUAL findings and the three worst jargon strings are fixed in `87b01c9`; these are the rest,
+worst-first. Each has proposed replacement text — the wording matters less than the reason.
+
+1. **"TMDB" is never spelled out**, and it gates the wizard: `Next` on step 2 is disabled until a key
+   is on file (`wizard.ts` `tmdb_set`). First use should read "The Movie Database (TMDB)"
+   (`step-history.tsx:86-90`).
+2. **"Plex Home user" is undefined** in the owner-privacy tip (`step-users.tsx:94-97`), and is easy to
+   confuse with "Home screen", which the copy does assume. It is advice about a real limitation, so
+   vagueness costs more than usual. Say "create a separate Plex account for your own watching".
+3. **"share filter" is unexplained shorthand** (`placement-toggles.tsx:252-257`) — the single most
+   load-bearing piece of the privacy mechanism, and it never appears defined anywhere.
+4. **A sources example names an option that does not exist**: "an AI-from-library 'Hidden gems'"
+   (`row-sources-field.tsx:85-87`). The four real sources are tmdb_similar, tmdb_discover, trakt,
+   llm_web — and llm_web searches the WEB, not the library. Someone could hunt for a toggle that
+   isn't there. Also "discovery engines" → "where this row looks for titles".
+5. **Settings paths that don't say what is there** (repeated): `row-editor.tsx:553,647,858-861`,
+   `row-shelf-placement.tsx:66` ("Use the default (Settings)"), `row-sources-field.tsx:143-145`.
+6. **"MDBList" dropped in with no gloss** (`row-editor.tsx:816-817`) — IMDb/RT/Metacritic are
+   recognisable, the service supplying them is not.
+7. **Trakt and Exa named with no context** (`sources.ts:39-40,46-48`); "Search backend below" is a
+   forward reference with nothing to land on.
+8. **"runs" used as if defined** in the poster field (`poster-field.tsx:228-229`).
+9. **Sonarr/Radarr + "global tag"/"each person's own tag"** assume prior context
+   (`row-editor.tsx:890-891,906-910`).
+10. **Inconsistent wayfinding** in `audience-picker.tsx`: line 58 names the Users page, lines 92-93
+    say "import your Plex users first" without saying where.
+11. **"All ticked = every library"** reads as a formula, not a sentence (`library-picker.tsx:154-156`).
+12. **"works just as well"** (`step-welcome.tsx:44-46`) is an unverifiable comparative claim about
+    output quality, and leans on the same wrong mental model of the curator that `87b01c9` fixed.
+13. **"cadence"** where "how often it refreshes" would do (`step-customize.tsx:156`).
+14. **"Library Recommended"** as a grid row label has no verb and parses badly
+    (`placement-toggles.tsx:189`); the columns already establish audience, so the row only needs to
+    say WHAT — "Recommended shelf".
+15. **Ordering**: `step-connect.tsx:135` says "Hit Next to choose a history source", but the next
+    screen's required action is a TMDB key and it never calls itself that. And `step-customize.tsx`
+    references "after the first run" before "run" is introduced (the following step).
+
+Not audited: the Dashboard, Users, Runs, Jobs, Requests and Settings pages.
