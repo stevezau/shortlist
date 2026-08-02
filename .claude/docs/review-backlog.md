@@ -18,7 +18,7 @@ drifted: the UI was sending `prefs.row_size` and `prefs.max_rating`, **fields th
 deleted**, silently swallowed by Pydantic's `extra="ignore"`, with a test asserting the broken body.
 
 I initially deferred this as too risky for a release gate, on the grounds that a Pydantic response
-model *filters* the payload — any key not declared is dropped, silently, in production. That reason
+model _filters_ the payload — any key not declared is dropped, silently, in production. That reason
 was sound but the conclusion was not: `model_config = ConfigDict(extra="allow")` documents the shape
 **without** filtering it, so undeclared keys pass through untouched and the failure mode cannot occur.
 
@@ -28,7 +28,7 @@ Now **65 routes / 115 schemas**, every model inheriting `PassthroughModel`
 Two things worth remembering from doing it:
 
 1. **The obvious test does not catch a violation.** Asserting an endpoint's full key set passes
-   whether or not the model declares every field — precisely *because* `extra="allow"` lets the rest
+   whether or not the model declares every field — precisely _because_ `extra="allow"` lets the rest
    through. Those assertions protect the passthrough; nothing protected the passthrough itself.
    `tests/unit/test_response_models.py` walks the live route table and checks the config directly.
 2. **It caught a real regression immediately.** Consolidating three different passthrough mechanisms
@@ -102,12 +102,29 @@ the SPA (health alone is answered by Python and would pass with no `web/dist` in
 Publishing depends on it, and it runs on PRs, where publishing never does. Before this, nothing ran
 the container at all — five docs claimed e2e did, and e2e runs uvicorn in-process.
 
-## First-run copy audit (2026-08-02) — open items
+## First-run copy audit (2026-08-02) — ALL RESOLVED
 
 A full audit of user-facing strings in the row editor, sources/placement/artwork pickers and the
 setup wizard, read as a non-technical person setting Shortlist up for the first time. The two
-FACTUAL findings and the three worst jargon strings are fixed in `87b01c9`; these are the rest,
-worst-first. Each has proposed replacement text — the wording matters less than the reason.
+FACTUAL findings and the three worst jargon strings were fixed in `87b01c9`; **all 15 items below
+were fixed in `41542f0`.** Kept as a record of the reasoning, not as a worklist.
+
+Applying them turned up three further claims that were not merely unclear but WRONG. Each was
+verified against the code before rewriting, and each is worth remembering as a shape:
+
+- **The wizard told owners the opposite of the truth** — "your Home shows every row on the server",
+  with a tip to make a Plex Home user to escape it. `_promote_one` (`engine/pipeline.py:962-966`)
+  routes the owner through `promotedToOwnHome` and everyone else through `promotedToSharedHome`, so
+  a friend's row never reaches the owner's Home. `owner-note.tsx` already had this right and
+  `users-page.test.tsx` records the same claim being fixed there once before — the wizard was the
+  copy that got missed. **Two places stating the same fact drift; the fixed one doesn't fix the other.**
+- **MDBList's key is in Settings → Connections, not Settings → Requests.** A settings path that
+  names the wrong screen reads as authoritative and costs the user a hunt.
+- **"choose which under Search backend below" pointed at a control that isn't there.** `SOURCES`
+  descriptions render in the row editor, but that sentence was written for the settings page.
+
+One item described an "AI-from-library" source that has never existed (`sources.ts` has only
+`tmdb_similar`, `tmdb_discover`, `trakt`, `llm_web`) — replaced with a real example.
 
 1. **"TMDB" is never spelled out**, and it gates the wizard: `Next` on step 2 is disabled until a key
    is on file (`wizard.ts` `tmdb_set`). First use should read "The Movie Database (TMDB)"
