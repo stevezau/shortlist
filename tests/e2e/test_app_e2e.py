@@ -22,7 +22,7 @@ class TestAppLoads:
         # With nothing delivered yet it says so — which still proves the /api/report round-trip
         # rendered, because a failed fetch would show the error state instead of this copy.
         page.goto("/")
-        expect(page.get_by_text(re.compile("No picks delivered yet", re.IGNORECASE))).to_be_visible(timeout=20_000)
+        expect(page.get_by_text(re.compile("Nothing has reached", re.IGNORECASE))).to_be_visible(timeout=20_000)
 
     def test_no_console_errors(self, page: Page, app: ShortlistApp):
         errors: list[str] = []
