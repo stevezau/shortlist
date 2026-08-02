@@ -1802,3 +1802,113 @@ class TestClearDeletedRows:
         client.cookies.delete(SESSION_COOKIE)
         assert client.get("/api/report/deleted-rows").status_code == 401
         assert client.delete("/api/report/deleted-rows").status_code == 401
+
+
+class TestRowEffectiveness:
+    """`GET /api/collections/{id}/effectiveness` — is one row working?
+
+    The value under test is the MATURITY rule. A pick only counts as a hit if it is watched within
+    `HIT_WINDOW_DAYS`, so a rate computed over picks younger than that reads as failure for no
+    reason but time — and this panel sits beside the settings someone would then go and change.
+    """
+
+    def _picks(self, client: TestClient, slug: str, specs: list[tuple[int, int, bool, str]]) -> None:
+        """specs = (tmdb_id, days_ago, watched, library)."""
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import PickRow, Run
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            for tmdb_id, days_ago, watched, library in specs:
+                created = now - timedelta(days=days_ago)
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        rating_key=tmdb_id,
+                        rank=1,
+                        collection_slug=slug,
+                        library=library,
+                        title=f"T{tmdb_id}",
+                        created_at=created,
+                        watched_at=created if watched else None,
+                    )
+                )
+            session.commit()
+
+    def _row_id(self, client: TestClient, slug: str = "picked") -> int:
+        return next(c["id"] for c in client.get("/api/collections").json() if c["slug"] == slug)
+
+    def test_a_row_that_never_delivered_says_so_rather_than_scoring_zero(self, client: TestClient):
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["first_delivered_at"] is None
+        assert body["matured"] is None
+        assert body["delivered"] == 0
+
+    def test_picks_too_young_to_judge_are_counted_but_not_scored(self, client: TestClient):
+        """The whole point. Five picks delivered yesterday, none watched — that is 0%, and reporting
+        it would send someone to change settings that were never the problem."""
+        self._picks(client, "picked", [(i, 1, False, "Movies") for i in range(1, 6)])
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["delivered"] == 5, "young picks still count towards the size"
+        assert body["matured"] is None, "but they must not produce a rate"
+        assert body["first_delivered_at"] is not None
+
+    def test_a_matured_cohort_is_scored_and_excludes_the_young(self, client: TestClient):
+        # Four matured (2 watched), plus two delivered yesterday that must not dilute the rate.
+        self._picks(
+            client,
+            "picked",
+            [
+                (1, 60, True, "Movies"),
+                (2, 60, True, "Movies"),
+                (3, 60, False, "Movies"),
+                (4, 60, False, "Movies"),
+                (5, 1, False, "Movies"),
+                (6, 1, False, "Movies"),
+            ],
+        )
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["delivered"] == 6, "all time counts everything"
+        assert body["matured"]["delivered"] == 4, "the score ignores picks that have not had their window"
+        assert body["matured"]["watched"] == 2
+        assert body["matured"]["rate"] == 0.5
+
+    def test_each_library_is_scored_separately(self, client: TestClient):
+        """A row across two libraries is two Plex collections, and the Movies half landing while the
+        TV half does not is the most actionable thing this panel can say."""
+        self._picks(
+            client,
+            "picked",
+            [(1, 60, True, "Movies"), (2, 60, True, "Movies"), (3, 60, False, "TV Shows"), (4, 60, False, "TV Shows")],
+        )
+
+        by_library = {
+            lib["library"]: lib
+            for lib in client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()["per_library"]
+        }
+
+        assert by_library["Movies"]["rate"] == 1.0
+        assert by_library["TV Shows"]["rate"] == 0.0
+
+    def test_another_row_s_history_is_not_counted(self, client: TestClient):
+        self._picks(client, "someone_else", [(1, 60, True, "Movies")])
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["delivered"] == 0
+
+    def test_an_unknown_row_is_a_404(self, client: TestClient):
+        assert client.get("/api/collections/9999/effectiveness").status_code == 404

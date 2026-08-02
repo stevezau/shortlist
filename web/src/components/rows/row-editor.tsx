@@ -7,6 +7,7 @@ import { LibraryPicker } from "@/components/rows/library-picker";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
+import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
 import { RowPreview } from "@/components/rows/row-preview";
 import { SettingsGroup } from "@/components/rows/settings-group";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
@@ -28,7 +29,13 @@ import { SeedWindowField } from "@/components/seed-window-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
-import { useSaveCollection, useSaveSettings, useSettings } from "@/lib/queries";
+import {
+  useCollectionEffectiveness,
+  useLibraries,
+  useSaveCollection,
+  useSaveSettings,
+  useSettings,
+} from "@/lib/queries";
 import type { RowTemplate } from "@/lib/row-templates";
 import {
   freshnessGlobal,
@@ -38,6 +45,7 @@ import {
   recentCountGlobal,
   recentCountSeed,
   watchedPctGlobal,
+  watchedPctGlobalValue,
   watchedPctSeed,
 } from "@/lib/row-globals";
 import {
@@ -255,6 +263,8 @@ export function RowEditor({
   const saveSettings = useSaveSettings();
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
   const settings = useSettings();
+  const libraries = useLibraries();
+  const effectiveness = useCollectionEffectiveness(collection?.id ?? null);
   const ratingSource = asRatingSource(
     settings.data?.["recommendations.rating_source"],
   );
@@ -399,24 +409,37 @@ export function RowEditor({
             <div className="space-y-2">
               <Label htmlFor="row-name">Name</Label>
               {collection ? (
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="row-name"
-                    value={input.name || "Picked for You"}
-                    disabled
-                    className="flex-1 opacity-70"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      onClose();
-                      onRename?.();
-                    }}
-                  >
-                    Rename
-                  </Button>
+                // A disabled box beside a button reads as a field that is broken, and gives no clue
+                // why this one setting behaves unlike every other one on the page. Renaming an
+                // existing row is not a form field: it rewrites the collection on Plex for every
+                // person who has it, one at a time, with progress — so it gets its own screen. Say
+                // that, rather than leaving a greyed-out input to imply it.
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="row-name"
+                      value={input.name || "Picked for You"}
+                      disabled
+                      className="flex-1 opacity-70"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        onClose();
+                        onRename?.();
+                      }}
+                    >
+                      Rename…
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Renaming rewrites this row&rsquo;s collection on Plex for
+                    everyone who has it, so it happens on its own screen where
+                    you can watch it go through. Nothing else on this page is
+                    touched.
+                  </p>
                 </div>
               ) : (
                 <>
@@ -901,13 +924,27 @@ export function RowEditor({
 
         {/* Sticky so it stays beside whichever setting is being changed — the point is watching the
             outcome move as you touch things, which it cannot do if it scrolls off. */}
-        <aside className="lg:sticky lg:top-6">
-          <RowPreview
-            input={input}
-            users={users}
-            followsAWatch={followsAWatch}
-            globalFreshness={freshnessGlobalValue(settings.data)}
-          />
+        <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
+          <div className="space-y-4">
+            <RowPreview
+              input={input}
+              users={users}
+              libraries={libraries.data ?? []}
+              settings={settings.data}
+              followsAWatch={followsAWatch}
+              globalFreshness={freshnessGlobalValue(settings.data)}
+              globalWatchedPct={watchedPctGlobalValue(settings.data)}
+            />
+            {/* Only for a SAVED row. A row being created has no history, and a panel of dashes would
+                be a worse answer than no panel. */}
+            {collection && (
+              <RowEffectivenessPanel
+                data={effectiveness.data}
+                isLoading={effectiveness.isLoading}
+                rowId={collection.id}
+              />
+            )}
+          </div>
         </aside>
       </div>
 

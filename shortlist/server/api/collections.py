@@ -33,7 +33,7 @@ from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Event, PickRow, User
 from shortlist.server.scheduler import rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
-from shortlist.server.services import jobs, poster_service
+from shortlist.server.services import jobs, poster_service, report_service
 from shortlist.server.services.poster_service import load_upload
 from shortlist.server.settings_store import SettingsStore
 
@@ -1014,3 +1014,52 @@ async def delete_poster_image(collection_id: int, request: Request) -> None:
         # Cosmetic and privacy-neutral (the hiding label and promotion are untouched), so gate-exempt.
         # Best-effort + audited, exactly like the same revert from the row editor.
         await reconcile.run_poster_reset(state, slug=slug, build=build, scope="collection.poster")
+
+
+class RowLibraryEffectiveness(PassthroughModel):
+    """One library's share of a row's matured cohort. A row that builds in two libraries is two Plex
+    collections and genuinely performs differently in each, so they are never merged into one line."""
+
+    library: str
+    delivered: int
+    watched: int
+    rate: float | None  # None when nothing was delivered there
+
+
+class RowMaturedCohort(PassthroughModel):
+    """The picks old enough to be judged: delivered at least `matured_days` ago, so every one of them
+    has had its full window to be watched."""
+
+    delivered: int
+    watched: int
+    rate: float | None
+    cohort_to: str
+
+
+class RowEffectivenessOut(PassthroughModel):
+    """Whether one row is working, for the panel beside its settings."""
+
+    delivered: int  # all time, distinct person+title
+    watched: int
+    first_delivered_at: str | None  # None = this row has never delivered anything
+    matured_days: int
+    matured: RowMaturedCohort | None  # None = nothing is old enough to judge yet
+    per_library: list[RowLibraryEffectiveness]
+
+
+@router.get("/{collection_id}/effectiveness", response_model=RowEffectivenessOut)
+async def collection_effectiveness(collection_id: int, request: Request) -> dict:
+    """How this row has actually performed — delivered, watched, and the landing rate.
+
+    Its own endpoint rather than a slice of `/api/report/effectiveness`, which is ~30 queries and
+    runs in a worker thread for that reason; this is four, so opening the row editor costs nothing
+    like opening the dashboard. Both read the same columns through `report_service`, so they cannot
+    drift apart on what counts as a hit.
+    """
+    with request.app.state.sessions() as session:
+        collection = session.get(Collection, collection_id)
+        if collection is None:
+            raise HTTPException(status_code=404, detail="collection not found")
+        # Keyed on the SLUG, which is what picks are stamped with — a row renamed or re-created keeps
+        # its slug, and that is the identity its history hangs off.
+        return report_service.row_effectiveness(session, collection.slug)

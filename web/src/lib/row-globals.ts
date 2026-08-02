@@ -20,6 +20,12 @@ const MAX_SEEDS_DEFAULT = 30;
 /** The raw global freshness, for callers that need to phrase it themselves rather than take the
  *  toggle caption. The row preview says what a row will actually DO, so "whatever the global is"
  *  would be the one line on that panel which answers nothing. */
+export function watchedPctGlobalValue(
+  settings: Settings | undefined,
+): number | null {
+  return num(settings, "recommendations.watched_pct");
+}
+
 export function freshnessGlobalValue(
   settings: Settings | undefined,
 ): number | null {

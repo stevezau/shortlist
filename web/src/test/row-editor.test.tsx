@@ -1007,9 +1007,13 @@ describe("RowEditor — every group is on screen, only the optional ones fold", 
 
   it("a folded group still says what is inside it", () => {
     // A disclosure that hides its contents AND what they are set to is worse than no disclosure.
+    // Scoped to the group's own summary: the preview panel also reports the tag, so an unscoped
+    // match would pass on the panel alone even if the summary said nothing.
     renderEditor(row({ request_tag: "family-picks" }));
 
-    expect(screen.getByText(/family-picks/)).toBeInTheDocument();
+    const requests = screen.getByText("Requests").closest("details");
+    expect(requests).not.toHaveAttribute("open");
+    expect(requests).toHaveTextContent(/family-picks/);
   });
 
   it("shows a warning that used to be buried in a collapsed group", () => {
@@ -1107,9 +1111,7 @@ describe("RowEditor — the outcome preview", () => {
   it("shows what a templated name becomes, not the raw placeholder", () => {
     renderEditor(row({ name_template: "Because you watched {top_seed}" }));
 
-    expect(
-      screen.getByText(/“Because you watched Fargo”/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/“Because you watched Fargo”/)).toBeInTheDocument();
   });
 });
 

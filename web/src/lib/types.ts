@@ -120,6 +120,7 @@ export type CollectionBody = Partial<CollectionInput> & { name: string };
  *  `hub_anchor` needs no override: its dynamic keys are Plex section keys, which the schema already
  *  expresses as an index signature, and its VALUES are modelled (`HubAnchorOut`). */
 export type Collection = Schemas["CollectionOut"];
+export type RowEffectiveness = Schemas["RowEffectivenessOut"];
 
 /** A Plex library on the server (GET /api/system/libraries). */
 export type PlexLibrary = Schemas["LibraryOut"];

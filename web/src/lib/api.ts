@@ -1,5 +1,6 @@
 import type {
   Job,
+  RowEffectiveness,
   JobCatalogEntry,
   JobResult,
   ApiTokenCreated,
@@ -455,6 +456,12 @@ export const api = {
 
   // --- Collections (rows) ---
   listCollections: (): Promise<Collection[]> => request("/api/collections"),
+
+  /** How one row has actually performed. Its own endpoint, not a slice of the dashboard report —
+   *  that one is ~30 queries and opening a row's settings must not cost what opening the dashboard
+   *  costs. */
+  getCollectionEffectiveness: (id: number): Promise<RowEffectiveness> =>
+    request(`/api/collections/${id}/effectiveness`),
 
   createCollection: (body: CollectionBody): Promise<Collection> =>
     request("/api/collections", { method: "POST", body: JSON.stringify(body) }),

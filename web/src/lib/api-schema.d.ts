@@ -144,6 +144,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/collections/{collection_id}/effectiveness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Collection Effectiveness
+         * @description How this row has actually performed — delivered, watched, and the landing rate.
+         *
+         *     Its own endpoint rather than a slice of `/api/report/effectiveness`, which is ~30 queries and
+         *     runs in a worker thread for that reason; this is four, so opening the row editor costs nothing
+         *     like opening the dashboard. Both read the same columns through `report_service`, so they cannot
+         *     drift apart on what counts as a hit.
+         */
+        get: operations["collection_effectiveness_api_collections__collection_id__effectiveness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/collections/{collection_id}/poster/image": {
         parameters: {
             query?: never;
@@ -2938,6 +2963,59 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * RowEffectivenessOut
+         * @description Whether one row is working, for the panel beside its settings.
+         */
+        RowEffectivenessOut: {
+            /** Delivered */
+            delivered: number;
+            /** First Delivered At */
+            first_delivered_at: string | null;
+            matured: components["schemas"]["RowMaturedCohort"] | null;
+            /** Matured Days */
+            matured_days: number;
+            /** Per Library */
+            per_library: components["schemas"]["RowLibraryEffectiveness"][];
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowLibraryEffectiveness
+         * @description One library's share of a row's matured cohort. A row that builds in two libraries is two Plex
+         *     collections and genuinely performs differently in each, so they are never merged into one line.
+         */
+        RowLibraryEffectiveness: {
+            /** Delivered */
+            delivered: number;
+            /** Library */
+            library: string;
+            /** Rate */
+            rate: number | null;
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowMaturedCohort
+         * @description The picks old enough to be judged: delivered at least `matured_days` ago, so every one of them
+         *     has had its full window to be watched.
+         */
+        RowMaturedCohort: {
+            /** Cohort To */
+            cohort_to: string;
+            /** Delivered */
+            delivered: number;
+            /** Rate */
+            rate: number | null;
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * RowOverrideOut
          * @description This person's stored tweaks for one row. `None` on either field means "use the row's own".
          */
@@ -4126,6 +4204,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CleanupOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    collection_effectiveness_api_collections__collection_id__effectiveness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RowEffectivenessOut"];
                 };
             };
             /** @description Validation Error */

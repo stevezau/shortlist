@@ -2987,6 +2987,136 @@
         "title": "RootFolderOut",
         "type": "object"
       },
+      "RowEffectivenessOut": {
+        "additionalProperties": true,
+        "description": "Whether one row is working, for the panel beside its settings.",
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "first_delivered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Delivered At"
+          },
+          "matured": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RowMaturedCohort"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "matured_days": {
+            "title": "Matured Days",
+            "type": "integer"
+          },
+          "per_library": {
+            "items": {
+              "$ref": "#/components/schemas/RowLibraryEffectiveness"
+            },
+            "title": "Per Library",
+            "type": "array"
+          },
+          "watched": {
+            "title": "Watched",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "delivered",
+          "watched",
+          "first_delivered_at",
+          "matured_days",
+          "matured",
+          "per_library"
+        ],
+        "title": "RowEffectivenessOut",
+        "type": "object"
+      },
+      "RowLibraryEffectiveness": {
+        "additionalProperties": true,
+        "description": "One library's share of a row's matured cohort. A row that builds in two libraries is two Plex\ncollections and genuinely performs differently in each, so they are never merged into one line.",
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "library": {
+            "title": "Library",
+            "type": "string"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate"
+          },
+          "watched": {
+            "title": "Watched",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "library",
+          "delivered",
+          "watched",
+          "rate"
+        ],
+        "title": "RowLibraryEffectiveness",
+        "type": "object"
+      },
+      "RowMaturedCohort": {
+        "additionalProperties": true,
+        "description": "The picks old enough to be judged: delivered at least `matured_days` ago, so every one of them\nhas had its full window to be watched.",
+        "properties": {
+          "cohort_to": {
+            "title": "Cohort To",
+            "type": "string"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rate"
+          },
+          "watched": {
+            "title": "Watched",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "delivered",
+          "watched",
+          "rate",
+          "cohort_to"
+        ],
+        "title": "RowMaturedCohort",
+        "type": "object"
+      },
       "RowOverrideOut": {
         "additionalProperties": true,
         "description": "This person's stored tweaks for one row. `None` on either field means \"use the row's own\".",
@@ -5581,6 +5711,49 @@
           }
         },
         "summary": "Cleanup Collection",
+        "tags": [
+          "collections"
+        ]
+      }
+    },
+    "/api/collections/{collection_id}/effectiveness": {
+      "get": {
+        "description": "How this row has actually performed \u2014 delivered, watched, and the landing rate.\n\nIts own endpoint rather than a slice of `/api/report/effectiveness`, which is ~30 queries and\nruns in a worker thread for that reason; this is four, so opening the row editor costs nothing\nlike opening the dashboard. Both read the same columns through `report_service`, so they cannot\ndrift apart on what counts as a hit.",
+        "operationId": "collection_effectiveness_api_collections__collection_id__effectiveness_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RowEffectivenessOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Collection Effectiveness",
         "tags": [
           "collections"
         ]

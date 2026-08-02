@@ -613,3 +613,13 @@ export function useLogs(
     placeholderData: (previous) => previous,
   });
 }
+
+/** How one row has actually performed. Only fetched for a SAVED row — a row being created has no
+ *  history, and asking for one would 404. */
+export function useCollectionEffectiveness(id: number | null) {
+  return useQuery({
+    queryKey: ["collection-effectiveness", id],
+    queryFn: () => api.getCollectionEffectiveness(id as number),
+    enabled: id !== null,
+  });
+}
