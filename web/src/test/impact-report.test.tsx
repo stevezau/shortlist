@@ -198,7 +198,7 @@ describe("ImpactReport", () => {
   it("states the landing rate over its matured cohort, not over every pick ever", async () => {
     renderReport();
 
-    expect(await screen.findByText("Landing rate")).toBeTruthy();
+    expect(await screen.findByText("Picks that get watched")).toBeTruthy();
     expect(screen.getByText("40%")).toBeTruthy();
     expect(screen.getByText(/4 of 10 picks delivered/i)).toBeTruthy();
     // The caveat is the point — without it "40%" is just another number with no meaning.
@@ -405,7 +405,9 @@ describe("ImpactReport", () => {
     });
     renderReport();
 
-    expect(await screen.findByText(/No picks delivered yet/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/Nothing has reached anyone's rows yet/i),
+    ).toBeTruthy();
   });
 
   it("distinguishes an empty window from an empty install", async () => {
@@ -426,7 +428,7 @@ describe("ImpactReport", () => {
     // 3 runs exist, so "nothing yet" would be a lie — the window is just too short.
     expect(
       await screen.findByText(
-        /Nothing delivered or watched in the last 30 days/i,
+        /Nothing reached a row, and nothing was watched, in the last 30 days/i,
       ),
     ).toBeTruthy();
   });

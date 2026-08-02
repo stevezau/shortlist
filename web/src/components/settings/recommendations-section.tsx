@@ -97,7 +97,15 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   // Persist the owner's INTENT (the enabled set as chosen). A source whose dependency isn't met yet
   // no-ops safely in the engine and shows an inline "here's what's needed" prompt — never a silent lie.
   const save = useAutosavedSettings(
-    { enabled, watchedPct, freshness, recentCount, maxSeeds, searchBackend, ratingSource },
+    {
+      enabled,
+      watchedPct,
+      freshness,
+      recentCount,
+      maxSeeds,
+      searchBackend,
+      ratingSource,
+    },
     () => ({
       "candidates.sources": enabled,
       "recommendations.watched_pct": watchedPct / 100,
@@ -225,13 +233,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="freshness">Freshness</Label>
               <p className="text-sm text-muted-foreground">
-                How often a row swaps in new titles. Most nights a row keeps
-                the same set (nothing rewritten to Plex); on its refresh night
-                the strongest picks stay and the weakest are swapped for new
-                ones. Lower = stickier and cheaper; higher = fresher. This
-                decides <strong>which</strong> titles a row holds — the order
-                they appear in is that row’s own <strong>Order</strong> setting.
-                The default every row inherits; any row can choose its own.
+                How often a row swaps in new titles. Most nights a row keeps the
+                same set (nothing rewritten to Plex); on its refresh night the
+                strongest picks stay and the weakest are swapped for new ones.
+                Lower = stickier and cheaper; higher = fresher. This decides{" "}
+                <strong>which</strong> titles a row holds — the order they
+                appear in is that row’s own <strong>Order</strong> setting. The
+                default every row inherits; any row can choose its own.
               </p>
               <FreshnessSlider
                 id="freshness"
@@ -239,42 +247,24 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 onChange={setFreshness}
               />
             </div>
-            <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="recent-count">Watches the AI searches from</Label>
-              <p className="text-sm text-muted-foreground">
-                How many of a person’s most recent watches the AI web-search
-                source looks up — one search each, “what to watch if you liked
-                X.” Results are cached for two weeks and shared across people,
-                so a popular title is searched once for the whole server. Fewer
-                = tighter and cheaper. Only affects the AI web-search source;
-                any row — and any person on a row — can set their own.
-              </p>
-              <Input
-                id="recent-count"
-                type="number"
-                min={1}
-                max={25}
-                value={recentCount}
-                onChange={(e) =>
-                  setRecentCount(
-                    Math.max(1, Math.min(25, Number(e.target.value) || 1)),
-                  )
-                }
-                className="w-28"
-              />
-            </div>
+            {/* The BROADER knob first. These two were the other way round, which gave no clue that
+                this one governs every source and the one below only slices the front of that same
+                list — `candidates.py` searches `seeds[:recent_count]`. The two LABELS are still
+                near-identical ("Watches to build from" / "Watches the AI searches from") and want
+                renaming, but they are shared with the row editor (`max-seeds-field.tsx`,
+                `recent-count-field.tsx`) so the rename has to happen in all three places at once. */}
             <div className="space-y-2 border-t pt-4">
               <Label htmlFor="max-seeds">Watches to build from</Label>
               <p className="text-sm text-muted-foreground">
-                How many of a person&rsquo;s recent watches a row is built from
-                &mdash; the titles every source searches from, not just the AI
-                one. Fewer makes a row tighter and more about a couple of
-                things; more covers more of their taste. Any row can set its own,
-                and a row named after one title (
+                Shortlist works backwards from what someone recently watched.
+                This is how far back it looks &mdash; and it applies to every
+                source, not just the AI one. Fewer makes a row tighter and more
+                about a couple of things; more covers more of their taste. Any
+                row can set its own, and a row named after one title (
                 <span className="font-mono">{"{top_seed}"}</span>) should
                 &mdash; the row editor prompts you there. This server-wide
                 default stops at 5 for that reason: a row covering movies and TV
-                needs at least one seed of each.
+                needs at least one of each to work from.
               </p>
               <Input
                 id="max-seeds"
@@ -290,13 +280,48 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 className="w-28"
               />
             </div>
+            <div className="space-y-2 border-t pt-4">
+              <Label htmlFor="recent-count">Watches the AI searches from</Label>
+              <p className="text-sm text-muted-foreground">
+                A narrower slice of the same list. The AI web-search source
+                takes the most recent few of the watches above and runs one
+                search each &mdash; &ldquo;what to watch if you liked X&rdquo;.
+                This is how many. Setting it higher than the number above
+                changes nothing, since there is nothing further to search.
+                Results are cached for two weeks and shared across people, so a
+                popular title is searched once for the whole server. Fewer =
+                tighter and cheaper. Nothing else uses this; any row &mdash; and
+                any person on a row &mdash; can set their own.
+              </p>
+              <Input
+                id="recent-count"
+                type="number"
+                min={1}
+                max={25}
+                value={recentCount}
+                onChange={(e) =>
+                  setRecentCount(
+                    Math.max(1, Math.min(25, Number(e.target.value) || 1)),
+                  )
+                }
+                className="w-28"
+              />
+            </div>
             <div className="space-y-1.5">
               <Label htmlFor="rating-source">Rate titles using</Label>
               <p className="text-sm text-muted-foreground">
                 Which score a row set to <strong>Highest rated</strong> sorts
-                on. TMDB needs no setup. The others come from MDBList and need
-                its API key in <strong>Requests</strong> &mdash; without one,
-                those rows quietly fall back to TMDB.
+                on. TMDB needs no setup. The others come from MDBList &mdash; a
+                free service that returns every site&rsquo;s score in one lookup
+                &mdash; so they need its API key, which you paste into the
+                MDBList card in{" "}
+                <Link
+                  to="/settings#connections"
+                  className="font-medium underline"
+                >
+                  Connections
+                </Link>
+                . Without one, those rows quietly fall back to TMDB.
               </p>
               <select
                 id="rating-source"

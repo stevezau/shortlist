@@ -240,9 +240,11 @@ export function BlockedSeedsList({ user }: { user: User }) {
 
       {blocked.length === 0 ? (
         <p className="text-sm text-muted-foreground/70">
-          Nothing blocked. Search above, or use{" "}
-          <strong>Don&rsquo;t seed</strong> on the &ldquo;How we picked&rdquo;
-          page of any run — that&rsquo;s where a bad seed usually shows itself.
+          Nothing blocked. Pick one of their recent watches above, search for an
+          older title, or use <strong>Don&rsquo;t seed</strong> on the
+          &ldquo;How we picked&rdquo; page of any run &mdash; that page shows
+          which of their watches drove each suggestion, so it is usually where
+          an odd one gives itself away.
         </p>
       ) : (
         <ul className="space-y-1">

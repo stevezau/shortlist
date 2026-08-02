@@ -59,21 +59,30 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
       <Card>
         <CardContent className="space-y-3 pt-6">
           <div>
-            <p className="font-medium">Log level</p>
+            <p className="font-medium">Console log detail</p>
+            {/* This sets ONLY the console sink. `configure_logging` opens the log FILE at DEBUG
+                unconditionally (logging_config.py), and the Logs page + the .zip download both read
+                that file — so this control cannot quieten them, and TRACE never reaches them. Saying
+                "how much detail Shortlist writes to its logs" sent people to TRACE for a bug report
+                and gave them a download with no prompts in it. */}
             <p className="text-sm text-muted-foreground">
-              How much detail Shortlist writes to its logs — turn this up when
-              you&rsquo;re chasing a problem or filing a bug report.
+              How much detail Shortlist prints to the container&rsquo;s console
+              &mdash; what you see in <code>docker logs</code>.
+              <br />
+              The <strong>Logs</strong> page and its download are not affected:
+              the log file always records DEBUG detail, whatever this is set to.
               <br />
               <strong>DEBUG</strong> adds per-source pick counts and AI timing
-              and token use. <strong>TRACE</strong> also logs the full AI
-              prompts.
+              and token use. <strong>TRACE</strong> also prints the full AI
+              prompts &mdash; to the console only, since the log file stops at
+              DEBUG.
               <br />
-              Changes apply straight away — no restart.
+              Changes apply straight away &mdash; no restart.
             </p>
           </div>
           <Segmented<Level>
             value={level}
-            ariaLabel="Log level"
+            ariaLabel="Console log detail"
             options={LEVELS.map((l) => ({ value: l, label: l }))}
             onChange={(value) => save({ "log.level": value })}
           />

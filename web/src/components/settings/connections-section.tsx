@@ -77,7 +77,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="tautulli"
           title="Tautulli"
-          purpose="Optional. Supplies the friendlier display names it knows people by."
+          purpose="Optional. Tautulli is the monitoring dashboard many people run alongside Plex. Shortlist only reads the friendlier names it knows your users by, so rows say “Sarah” rather than an email address."
           settings={settings}
           summary={settingString(settings, "tautulli.url")}
           glyph={<TautulliGlyph />}
@@ -94,7 +94,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="tmdb"
           title="TMDB"
-          purpose="Finds similar titles to suggest. Needs a free key."
+          purpose="Required. TMDB (The Movie Database) is the free film and TV catalogue Shortlist looks titles up in — it is where “people who watched this also watched…” comes from. Signing up for a key is free."
           settings={settings}
           summary={
             settingString(settings, "tmdb.apikey") ? "API key saved" : ""
@@ -187,7 +187,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="radarr"
           title="Radarr"
-          purpose="Optional. Lets Shortlist request missing movies so they get downloaded."
+          purpose="Optional. Radarr is the app that fetches films for your library. Connect it and Shortlist can ask it for a film it wanted to recommend but couldn’t find on your server."
           settings={settings}
           summary={settingString(settings, "requests.radarr.url")}
           glyph={<Film aria-hidden className="text-primary" />}
@@ -208,7 +208,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="sonarr"
           title="Sonarr"
-          purpose="Optional. Lets Shortlist request missing TV shows so they get downloaded."
+          purpose="Optional. Sonarr is Radarr’s equivalent for TV. Connect it and Shortlist can ask it for a show it wanted to recommend but couldn’t find on your server."
           settings={settings}
           summary={settingString(settings, "requests.sonarr.url")}
           glyph={<Tv aria-hidden className="text-primary" />}
@@ -229,7 +229,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="trakt"
           title="Trakt"
-          purpose="Optional. A recommendation source — Trakt's 'related titles' can surface picks TMDB misses."
+          purpose="Optional. Trakt is a site where people log what they watch. Its “related titles” are a second place to look for suggestions, and often catch things TMDB misses. Switch the Trakt source on under Finding titles once the key is saved."
           settings={settings}
           summary={
             settingString(settings, "trakt.client_id") ? "API key saved" : ""
@@ -246,7 +246,10 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="mdblist"
           title="MDBList"
-          purpose="Optional. Rates request candidates by IMDb, Rotten Tomatoes, Metacritic, or Trakt — one lookup returns every score. Requests uses this when you judge titles by anything other than TMDB."
+          // Two consumers, not one: `requests.rating_source` gates what gets requested, and
+          // `recommendations.rating_source` orders any row set to "Highest rated". Naming only
+          // Requests left the row-ordering setting looking like it needed nothing.
+          purpose="Optional. MDBList fetches a title’s IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. Needed if you sort a row by “Highest rated” on anything but TMDB, or judge request candidates by those scores. Free key."
           settings={settings}
           summary={
             settingString(settings, "requests.mdblist.apikey")
@@ -267,7 +270,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="exa"
           title="Exa (web search)"
-          purpose="Optional. A standalone web search — Shortlist searches Exa for each seed, then feeds the results to your AI provider to pick titles from. Works with any provider, including local Ollama."
+          purpose="Optional. Exa is a web search built for AI to read. Shortlist searches it for each of a person’s recent watches, then hands the results to your AI provider to pick from. Works with any provider — and it is the only way a local model like Ollama can search the web at all."
           settings={settings}
           summary={settingString(settings, "exa.apikey") ? "API key saved" : ""}
           glyph={<Globe aria-hidden className="text-primary" />}

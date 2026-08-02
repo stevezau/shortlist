@@ -96,12 +96,13 @@ function UserDetailBody({ user }: { user: User }) {
           </section>
 
           <section className="space-y-3">
-            <SectionHeading>Blocked seeds</SectionHeading>
+            <SectionHeading>Blocked titles</SectionHeading>
             <p className="text-sm text-muted-foreground">
-              A blocked title stays in their watch history — it just stops
-              shaping what Shortlist recommends them. Use it for a one-off that
-              isn&rsquo;t really them: a film watched for someone else, a genre
-              they don&rsquo;t want more of.
+              Shortlist builds someone&rsquo;s picks by looking for things
+              similar to what they recently watched. Block a title and it stays
+              in their watch history but stops being used that way. Use it for a
+              one-off that isn&rsquo;t really them: a film watched for someone
+              else, a genre they don&rsquo;t want more of.
             </p>
             <BlockedSeedsList user={user} />
           </section>

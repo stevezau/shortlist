@@ -525,7 +525,9 @@ function ReportBody({
   const selector = (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-sm font-medium text-muted-foreground">Impact</h1>
+        {/* h2, not h1 — PageHeader above already owns the page's h1 ("Dashboard"), and two of them
+            leaves a screen reader with no page title at all. */}
+        <h2 className="text-sm font-medium text-muted-foreground">Impact</h2>
         <Segmented
           value={reportWindow}
           onChange={onWindowChange}
@@ -551,8 +553,8 @@ function ReportBody({
         <Card>
           <CardContent className="pt-6 text-sm text-muted-foreground">
             {runs.total === 0
-              ? "No picks delivered yet — run Shortlist, and once people start watching what it picked, the tracking shows up here."
-              : `Nothing delivered or watched in ${WINDOW_PHRASE[reportWindow]}. Try a longer window.`}
+              ? "Nothing has reached anyone's rows yet. Build them once from Runs — “Run all rows now” — and this page fills in as people start watching what Shortlist picked."
+              : `Nothing reached a row, and nothing was watched, in ${WINDOW_PHRASE[reportWindow]}. Try a longer window.`}
           </CardContent>
         </Card>
       </div>
@@ -588,7 +590,7 @@ function ReportBody({
         />
         <StatTile
           icon={Clock}
-          label="Avg to watch"
+          label="Time to watch"
           value={
             overall.avg_days_to_watch === null
               ? "—"
@@ -625,8 +627,8 @@ function ReportBody({
         </Section>
 
         <Section
-          title="Landing rate"
-          hint={`Share of picks watched within ${landing.matured_days} days of being delivered.`}
+          title="Picks that get watched"
+          hint={`Of the picks delivered, the share watched within ${landing.matured_days} days.`}
         >
           {landing.rate === null ? (
             <p className="text-sm text-muted-foreground">
@@ -666,8 +668,8 @@ function ReportBody({
       <div className="grid gap-4 lg:grid-cols-2">
         {report.top_titles.length > 0 && (
           <Section
-            title="Landing best"
-            hint={`Most-watched picks in ${WINDOW_PHRASE[reportWindow]}.`}
+            title="Most watched"
+            hint={`The picks the most people watched in ${WINDOW_PHRASE[reportWindow]}.`}
           >
             <ul className="space-y-1 text-sm">
               {report.top_titles.map((t) => (

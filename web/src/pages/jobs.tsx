@@ -321,7 +321,9 @@ export function JobsPage() {
       <PageHeader
         icon={Wrench}
         title="Jobs"
-        subtitle="Background maintenance Shortlist does for you. Run any of it now when something has drifted, rather than waiting for the nightly run."
+        // Not "the nightly run": these are five separate jobs on five separate timers, and rows
+        // build on their own schedules again — there is no one nightly thing to wait for.
+        subtitle="The upkeep Shortlist does in the background — refreshing who has access, re-reading what people watched, and keeping Plex in step with what you've set. Each one runs on its own timer; press Run to do it now instead."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -385,7 +387,10 @@ export function JobsPage() {
       ) : (
         <div className="space-y-5">
           <section className="space-y-2">
-            <GroupHeading title="Run now" hint="you start these" />
+            <GroupHeading
+              title="Run now"
+              hint="each on its own timer — open one to see or change when"
+            />
             <div className="overflow-hidden rounded-md border">
               <JobRow
                 first

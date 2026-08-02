@@ -13,7 +13,7 @@ export function DashboardPage() {
       <PageHeader
         icon={Gauge}
         title="Dashboard"
-        subtitle="How Shortlist is landing — what it delivered, and what people actually watched."
+        subtitle="Is any of this working? A title is “delivered” once Shortlist puts it in someone's row — this page counts those, and how many were actually watched."
       />
       <ImpactReport />
     </div>

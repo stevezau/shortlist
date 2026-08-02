@@ -52,7 +52,7 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   },
   {
     title: "Recommendations & history",
-    why: "A TMDB key (required) powers recommendations. Watch history is read from Plex per user; Tautulli is optional, only for friendlier display names.",
+    why: "A free key from The Movie Database (TMDB) is required — it is the catalogue Shortlist searches for titles to suggest. Watch history is read from Plex for each person; Tautulli is optional, only for friendlier display names.",
   },
   {
     title: "Add an AI provider (optional)",

@@ -27,11 +27,16 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
               <p className="font-medium">
                 {pausedAll ? "Everything is paused" : "Pause all users"}
               </p>
+              {/* Precise: a run still STARTS (`enabled_profiles` returns [] while paused, and the
+                engine still does its privacy sweep on an empty user list). What stops is any row
+                being built or re-picked. */}
               <p className="text-sm text-muted-foreground">
-                Stops all runs — both scheduled and manual — until you resume.
+                Nobody is processed on any run, scheduled or manual, until you
+                resume &mdash; so no row is rebuilt and nobody&rsquo;s picks
+                change.
                 <br />
-                Nobody is enabled or disabled, and every row stays on Plex
-                exactly as it is.
+                Nobody is enabled or disabled, and the rows already on Plex stay
+                where they are.
               </p>
             </div>
             <Button

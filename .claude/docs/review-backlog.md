@@ -160,4 +160,98 @@ One item described an "AI-from-library" source that has never existed (`sources.
     screen's required action is a TMDB key and it never calls itself that. And `step-customize.tsx`
     references "after the first run" before "run" is introduced (the following step).
 
-Not audited: the Dashboard, Users, Runs, Jobs, Requests and Settings pages.
+Not audited: the Dashboard, Users, Runs, Jobs, Requests and Settings pages. (All but **Requests**
+were audited on 2026-08-02 — see the section below.)
+
+---
+
+## Copy audit — Dashboard, Users, Runs, Jobs, Logs, Settings (2026-08-02)
+
+The pass the wizard/row-editor audit above never reached, read as a non-technical Plex owner on
+their first day. Setup, `components/rows/**` and `lib/wizard.ts` were deliberately left alone (a
+concurrent edit). Everything in **Fixed** is on `dev` as of this date; everything in **Open** is not.
+
+### Fixed — factual errors (the valuable ones)
+
+1. **MDBList's key was pointed at the wrong Settings section** — again, and in a second place.
+   `recommendations-section.tsx` ("Rate titles using") said the non-TMDB scores "need its API key in
+   **Requests**". The key is `requests.mdblist.apikey` but its only input is the MDBList card in
+   **Connections** (`connections-section.tsx:246-266`), which `requests-settings.tsx:211` states
+   outright. Now links to `#connections` and says the card is where you paste it. This is the same
+   error the wizard pass found; it lived in two files, and only one was fixed.
+2. **"Run for <person>" told you to watch the run on the Dashboard.** The Dashboard renders nothing
+   but `ImpactReport` (`pages/dashboard.tsx`) — no live view of anything. Runs are watched on
+   `/runs`. `user-detail-header.tsx` now links there.
+3. **"Disable all" claimed share filters are left untouched.** They are written: disabling queues a
+   privacy pass (`api/users.py:238` → `services/user_sync.py:66` `queue_privacy_sync`), which is
+   precisely what stops a disabled account still seeing the shared rows. The dialog now says sharing
+   settings are updated, and that the pre-install snapshot survives for uninstall.
+4. **Settings → Advanced "Log level" described the wrong sink.** `configure_logging` adds the file
+   sink at a hardcoded `level="DEBUG"` (`logging_config.py:85`) and only the stderr sink takes the
+   setting. The Logs page and the `.zip` download both read that file (`api/system.py:244-274`), so
+   the control cannot quieten them and **TRACE — the setting people are told to use for a bug report
+   — never reaches either**. Renamed "Console log detail", and it now says where each level lands.
+   A matching line was added to the Logs page saying its buttons filter what is _shown_.
+5. **Two pages implied a single global nightly run.** Runs' empty state said "wait for the nightly
+   schedule" and Jobs' subtitle said "rather than waiting for the nightly run". There is no global
+   cron: rows carry their own (`Collection.schedule`; the old `schedule.cron` is gone —
+   `settings_store.py:52`) and a row with a blank one never runs on a timer at all. Each background
+   job has its own separate cron too.
+6. **"Enable all" promised a row to accounts that cannot have one.** An account with a Plex
+   restriction profile is skipped by `enabled_profiles` (`context_builder.py:492-495`) and its
+   toggle is already disabled on the same page. The dialog now says so.
+7. **"Pause all" said it "stops all runs".** A run still starts; `enabled_profiles` returns `[]`
+   (`context_builder.py:481`) and the engine still does its privacy sweep on an empty user list
+   (plex-safety rule 1). Reworded to the true consequence: nobody is processed, no row is rebuilt.
+
+### Fixed — jargon, dead ends, empty states
+
+- **Connections cards now say what each service _is_** on first mention: Tautulli ("the monitoring
+  dashboard many people run alongside Plex"), TMDB ("The Movie Database … the free film and TV
+  catalogue", marked Required — `wizard.ts:87` blocks setup without it), Radarr/Sonarr, Trakt ("a
+  site where people log what they watch"), Exa ("a web search built for AI to read"), MDBList.
+- **MDBList's card under-claimed.** It named only Requests; it also backs any row ordered by
+  "Highest rated" (`recommendations.rating_source`). Both consumers are now named.
+- **Dashboard defines "delivered" once**, in the page subtitle, rather than using it throughout
+  undefined. "Landing rate" → "Picks that get watched"; "Landing best" → "Most watched"; "Avg to
+  watch" → "Time to watch". The all-empty state now says _where_ to press the button.
+- **`ImpactReport` rendered a second `<h1>`** under PageHeader's — now `<h2>`.
+- **"Blocked seeds"** (user page) → "Blocked titles", with one sentence explaining why a watch
+  shapes picks at all. The screen-reader-only "Block X as a seed" lost the jargon too.
+- **"No rows reach this person"** was wrong-ish: the endpoint lists per-person rows only
+  (`api/user_rows.py:67` filters `build="per_person"`), so a shared-row-only server hit an empty
+  state that read as a bug. Now says so explicitly.
+- **Runs' "Clear runs" dialog** named "hit rate", a metric that appears nowhere on the Dashboard.
+- **Users' empty state** said "check the Plex connection under Settings" — now names the card.
+- **Settings → Finding titles: the two seed knobs were in the wrong order.** "Watches the AI
+  searches from" sat above "Watches to build from", giving no clue that the second governs every
+  source and the first only slices the front of that same list (`candidates.py:183` searches
+  `seeds[:recent_count]`). Swapped, and each now says how it relates to the other.
+
+### Open — not fixed, with the reason
+
+1. **`maintenance.prune` is invisible on the Jobs page.** It is `manual=True` (`services/jobs.py`),
+   so it is filtered out of the "Automatic" group (`pages/jobs.tsx:281` `!e.manual`) — and it is not
+   one of the five hardcoded `JobRow`s in "Run now". Its counts _are_ in the page totals, so a failed
+   prune shows "1 failed" in the header chip with **no row anywhere to click**. Needs a `JobRow` +
+   a run mutation, which is a functional change, not copy.
+2. **"Watches to build from" / "Watches the AI searches from" are still near-identical names.** They
+   want renaming to something like "Recent watches a row is built from" / "How many of those the AI
+   searches the web for" — but the labels live in `max-seeds-field.tsx` and `recent-count-field.tsx`,
+   shared with the row editor, and `row-editor.test.tsx` asserts them. Renaming in Settings alone
+   would regress `68f36c5` ("one name per setting"), so all three must move together.
+3. **`advanced-section.tsx:38` falls back to `runs.retention ?? 100`.** The server default is `3`
+   and the API bounds the field to 0–24 (`api/settings.py:160`), so 100 is both unreachable
+   (`all_public()` always returns the default) and out of range if it ever were reached.
+4. **The Plex card's "Plex token" field has no "where do I get this" link**, unlike TMDB/MDBList/Exa.
+   Normally filled by the wizard's PIN flow, so it only bites someone re-entering it by hand. Left
+   alone rather than assert a support URL I could not verify.
+5. **The read-only Plex audit sits at the top of the Danger zone** (`danger-zone-section.tsx:22`).
+   It is the safest control on the page under the scariest heading; it reads better under Advanced.
+6. **`JobDetail` renders raw result keys** ("Asked to" + a JSON blob, then `fixed`/`orphans`/
+   `demoted` verbatim). Diagnostic rather than everyday, so left as is.
+7. **The Jobs "Run now" group mixes reads and writes** with nothing distinguishing them: "Sync watch
+   history" only reads, while "Sync check" writes corrections to Plex and can delete a collection.
+   The consequence is only visible once a row is expanded.
+8. **Backend job-catalogue copy is in `services/jobs.py`**, not the SPA — it reads well, but it is
+   the one place a copy pass over `web/` will always miss. Worth noting for the next audit.
