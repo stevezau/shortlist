@@ -201,6 +201,36 @@ There is a server-wide default for it in **Settings → Finding titles**, and an
 The global stops at 5 while a row goes down to 1 — a single seed is a deliberate choice for one row,
 not something to impose on every row at once.
 
+### Which watch a one-title row follows
+
+A row built from one watch normally follows the most recent one, and stays on it until that person
+finishes something else. If they watch little for a fortnight, the row says the same thing for a
+fortnight.
+
+**Row editor → Which watch it follows** changes that. Raise **Recent watches to choose from** above
+`1` and the row cycles instead: still one watch per row, but a different one each day, working
+through their last few and then coming round again. It cycles rather than picking at random —
+a random pick repeats, and a repeat is indistinguishable from a row that has stopped working. Two
+people's rows cycle out of step, so a whole server doesn't rebuild on the same night.
+
+The setting only appears on rows built from one or two watches. Above that a row is blending a whole
+history and has no single watch to follow. It is also not the same as raising **Watches to build
+from**, which is the setting people reach for first and the wrong one: that blends more watches into
+one row, diluting the very claim a `{top_seed}` title makes. Cycling keeps the row about one watch
+and moves which one.
+
+**Rows that follow a watch always refresh nightly** — whether they follow it by name (`{top_seed}`)
+or by cycling. A row whose title claims a recent watch can't be allowed to lag behind it: at the
+usual cadence it would go on naming last week's film for a week after the person moved on. So
+**Freshness** is not offered on those rows; the editor says what the row does instead. Every other
+row keeps the setting.
+
+There is a modest cost to that. Refreshing nightly does not only mean "a write when the watch
+changes" — on the nights it hasn't changed the row still swaps its weakest third for new titles, so
+it writes to Plex most nights, per person, per library, where an ordinary row on the default cadence
+writes about weekly. It does not cost any extra AI usage: candidates are gathered once per run
+whatever a row's cadence is, so how often a row refreshes has no bearing on it.
+
 ## The order titles appear in
 
 **Row editor → Order** decides how a row's titles are arranged in Plex:
@@ -208,7 +238,7 @@ not something to impose on every row at once.
 | Order             | What you get                                                            |
 | ----------------- | ----------------------------------------------------------------------- |
 | **Best match**    | Strongest suggestions first — how well each title matches their viewing |
-| **Highest rated** | Highest score first, from whichever service you configured             |
+| **Highest rated** | Highest score first, from whichever service you configured              |
 | **Newest**        | Most recently released first                                            |
 | **Shuffled**      | A different order every day, from the same titles                       |
 
@@ -219,7 +249,7 @@ displays.
 **Highest rated** uses TMDB by default, which needs no setup. To sort on IMDb, Trakt, Rotten Tomatoes
 or Metacritic instead, set **Settings → Finding titles → Rate titles using** — those come from MDBList
 and need its API key (the same one the Requests feature uses). Without a key, or once MDBList's daily
-quota is spent, the row falls back to TMDB for its *whole* ordering rather than sorting half the row
+quota is spent, the row falls back to TMDB for its _whole_ ordering rather than sorting half the row
 on one scale and half on another.
 
 **Shuffled** is the only one with a cost worth knowing about. The other three are applied while the
@@ -402,14 +432,14 @@ Users page). Any run after that leaves the title out.
 Settings → Finding titles sets what a row uses **unless the row says otherwise**. Open any row
 (Rows → Edit) and it defines its own recipe:
 
-| In the row editor              | What it overrides                                                      |
-| ------------------------------ | ---------------------------------------------------------------------- |
-| **Recommendation sources**     | Switch to "Choose for this row" and tick its own sources               |
-| **Libraries**                  | Which Plex libraries it builds in — which also sets what it recommends |
-| **Freshness**, **Watched cap** | How often it refreshes, and how much already-watched it allows         |
-| **Row size**, **Audience**     | How many titles, and who gets it                                       |
+| In the row editor                | What it overrides                                                                         |
+| -------------------------------- | ----------------------------------------------------------------------------------------- |
+| **Recommendation sources**       | Switch to "Choose for this row" and tick its own sources                                  |
+| **Libraries**                    | Which Plex libraries it builds in — which also sets what it recommends                    |
+| **Freshness**, **Watched cap**   | How often it refreshes, and how much already-watched it allows                            |
+| **Row size**, **Audience**       | How many titles, and who gets it                                                          |
 | **Watches the AI searches from** | How many recent watches AI web search looks up for this row (shown only on rows using it) |
-| **Request tag**                | The Sonarr/Radarr tag on titles requested for this row's audience      |
+| **Request tag**                  | The Sonarr/Radarr tag on titles requested for this row's audience                         |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can be AI-web-search-only
 pointed at just your 4K library, and your default "Picked for You" can stay on the global settings —

@@ -42,6 +42,7 @@ COLLECTION_KEYS = {
     "freshness",
     "recent_count",
     "max_seeds",
+    "seed_window",
     "pick_order",
     "placement",
     "placement_friends",
@@ -237,6 +238,29 @@ class TestCollectionsSeed:
         assert next(s for s in specs if s.slug == "because_row").max_seeds == 1
         # A row that never set one keeps None, so the engine falls back to its own budget.
         assert next(s for s in specs if s.slug == "picked").max_seeds is None
+
+    def test_per_row_seed_window_round_trips_and_reaches_the_spec(self, client: TestClient):
+        """How many recent watches a row cycles between. Unlike max_seeds it is NOT nullable — there
+        is no global to inherit, because whether a row rotates belongs to what that row is."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Cycling Row", "seed_window": 3})
+        assert created.status_code == 201 and created.json()["seed_window"] == 3
+        assert client.post("/api/collections", json={"name": "X", "seed_window": 0}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "seed_window": 21}).status_code == 422
+
+        cid = created.json()["id"]
+        patch = {"name": "Cycling Row"}
+        assert client.patch(f"/api/collections/{cid}", json={**patch, "seed_window": 5}).json()["seed_window"] == 5
+        client.patch(f"/api/collections/{cid}", json={**patch, "seed_window": 3})
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        assert next(s for s in specs if s.slug == "cycling_row").seed_window == 3
+        # A row that never set one takes their most recent watch — the behaviour before cycling existed.
+        assert next(s for s in specs if s.slug == "picked").seed_window == 1
 
     def test_global_max_seeds_is_bounded_and_defaults_to_the_engines_own(self, client: TestClient):
         """The server-wide seed budget: bounds, round-trip, and a default that matches the engine's.

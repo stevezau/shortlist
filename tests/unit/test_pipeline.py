@@ -1536,10 +1536,36 @@ class TestPerRowOverrides:
         picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
         assert {12, 13, 14} <= {p["tmdb_id"] for p in picks}, "seed drift alone does not rebuild an unnamed row"
 
-    def test_a_named_row_does_not_rebuild_outside_its_refresh_night(self, ctx: EngineContext, mock_plextv, monkeypatch):
-        """The seed check lives on the refresh branch only: a frozen row stays frozen, seed or no seed.
-        Otherwise `freshness` would stop meaning anything for the rows most likely to use it."""
-        self._named_row_ctx(ctx, freshness=0.0)  # 0.0 = never refresh once built
+    def test_a_named_row_follows_its_seed_even_when_stored_frozen(self, ctx: EngineContext, mock_plextv):
+        """A `{top_seed}` row ignores a stored freshness — even 0.0, which freezes any other row.
+
+        A row whose title names a watch is ABOUT recency, so a slow cadence makes it claim a watch the
+        person moved on from days ago (issue #57: "it still says Because you watched Little Brother",
+        reported twice). Forced rather than merely defaulted because the row editor HIDES the freshness
+        control for these rows — honouring a slow value saved before that would strand the row with
+        nothing in the UI to explain it or undo it.
+        """
+        self._named_row_ctx(ctx, freshness=0.0)  # 0.0 freezes any row that does NOT name its seed
+        ctx.previous_picks = {
+            ("sarah", "picked", "1"): self._prior_seeded_by(
+                [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
+            )
+        }
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        titles = [strip_marker(t) for t in report.users[0].placement_titles]
+        assert titles != ["Because you watched Chernobyl"], "a frozen cadence must not strand the title"
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        lead = min(picks, key=lambda p: p["rank"])
+        assert titles == [f"Because you watched {lead['seed_title']}"], f"got {titles}, lead {lead}"
+
+    def test_an_unnamed_row_still_freezes_at_zero_freshness(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """The freshness override is scoped to rows that name a seed. Everywhere else 0.0 still means
+        "never refresh once built" — the control is still offered for those rows, so it must still work."""
+        self._movie_row_ctx(ctx, freshness=0.0, run_day=5)  # name_template="" — names no seed
         ctx.previous_picks = {
             ("sarah", "picked", "1"): self._prior_seeded_by(
                 [12, 13, 14, 15, 16], seed_tmdb_id=555, seed_title="Chernobyl"
@@ -3465,3 +3491,68 @@ class TestRatingSource:
 
         assert ctx.mdblist_rate_limited, "the run latched the spent quota"
         assert mdblist.calls == 1, f"one failed call for the whole run, not one per row per user, got {mdblist.calls}"
+
+
+class TestSeedCycling:
+    """`RowPolicy`'s side of seed cycling: what forces a nightly cadence, and what may share a
+    derivation. The rotation itself is covered in test_history.py."""
+
+    def _policy(self, ctx: EngineContext, user) -> object:
+        from shortlist.engine.rows import RowPolicy, _rating_key_resolver
+
+        return RowPolicy(
+            ctx=ctx,
+            user=user,
+            cfg=ctx.config,
+            specs=[],
+            library_index={},
+            report=MagicMock(),
+            resolve=_rating_key_resolver({}),
+        )
+
+    @pytest.mark.parametrize(
+        ("name_template", "seed_window", "stored", "expected", "why"),
+        [
+            ("Because you watched {top_seed}", 1, 0.0, 1.0, "a named row overrides even a frozen value"),
+            ("Because you watched {top_seed}", 1, None, 1.0, "and the inherited global"),
+            # The arm the row editor originally failed to mirror: an UNNAMED row that cycles is run
+            # nightly too, so a freshness control on it would state a cadence the row never uses.
+            ("Tonight's pick", 3, 0.0, 1.0, "a cycling row is nightly whether or not it names a seed"),
+            ("Tonight's pick", 1, 0.0, 0.0, "a row that follows no watch still freezes at 0"),
+            ("Tonight's pick", 1, None, 0.5, "and still inherits the global otherwise"),
+        ],
+    )
+    def test_only_a_row_following_a_watch_is_forced_nightly(
+        self, ctx: EngineContext, name_template, seed_window, stored, expected, why
+    ):
+        ctx.config = replace(ctx.config, freshness=0.5)
+        policy = self._policy(ctx, make_profile("sarah", account_id=100))
+        spec = RowSpec(slug="r", name_template=name_template, size=5, seed_window=seed_window, freshness=stored)
+
+        assert policy.effective_freshness(spec) == expected, why
+
+    def test_two_cycling_rows_do_not_share_one_derivation(self, ctx: EngineContext):
+        """The seed cache keys on (media, libraries, max_seeds) — which two cycling rows can match on
+        exactly. Without the row's own offset in the key they share one entry and land on the SAME
+        watch, which is the opposite of what turning cycling on asks for."""
+        user = make_profile("sarah", account_id=100)
+        user.history = [make_watched(f"Movie {i}", days_ago=i, tmdb_id=900 + i * 7) for i in range(5)]
+        ctx.run_day = 5
+        policy = self._policy(ctx, user)
+        # Identical in every keyed dimension except the slug the offset is derived from.
+        common = {"name_template": "", "size": 5, "media": "movie", "max_seeds": 1, "seed_window": 3}
+        leads = {slug: policy.seeds_for(RowSpec(slug=slug, **common))[0].title for slug in ("alpha", "beta", "gamma")}
+
+        assert len(set(leads.values())) > 1, f"every cycling row picked the same watch: {leads}"
+
+    def test_the_cycle_offset_survives_a_restart(self):
+        """A per-process-salted `hash` would re-phase every restart, so a row would re-pick its seed
+        and rebuild on every run — the same reason `_is_refresh_night` uses crc32."""
+        import zlib
+
+        from shortlist.engine.rows import seed_cycle_offset
+
+        assert seed_cycle_offset("picked", "sarah", 5) == 5 + zlib.crc32(b"picked|sarah")
+        # And two people's rows sit at different points in the cycle, so a server does not re-derive
+        # every cycling row on the same night.
+        assert seed_cycle_offset("picked", "sarah", 5) != seed_cycle_offset("picked", "mike", 5)

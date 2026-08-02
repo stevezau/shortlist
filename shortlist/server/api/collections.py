@@ -129,6 +129,10 @@ class CollectionIn(BaseModel):
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
+    # How many recent watches the row cycles between, one per run. 1 = always the most recent.
+    # Capped at 20: past that the "recent" the row's title claims stops being true, and the cycle takes
+    # three weeks to come round — indistinguishable from the stuck row this exists to fix.
+    seed_window: int = Field(default=1, ge=1, le=20)
     pick_order: str = _closed_set(ORDERS, "best", "How the delivered collection is ordered.")
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
     placement: str = _closed_set(PLACEMENTS, "both", "Where the OWNER's own collection appears.")
@@ -186,6 +190,7 @@ class CollectionOut(PassthroughModel):
     freshness: float | None
     recent_count: int | None
     max_seeds: int | None
+    seed_window: int
     pick_order: str = _closed_set_out(ORDERS, "How the delivered collection is ordered.")
     placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set_out(PLACEMENTS, "Where each FRIEND's own collection appears.")
@@ -338,6 +343,7 @@ def _serialize(session, collection: Collection) -> dict:
         "freshness": collection.freshness,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
+        "seed_window": int(collection.seed_window or 1),
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
         "placement_friends": collection.placement_friends or "both",
@@ -422,6 +428,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             freshness=body.freshness,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
+            seed_window=body.seed_window,
             pick_order=body.pick_order,
             placement=body.placement,
             placement_friends=body.placement_friends,
@@ -459,6 +466,7 @@ _PATCHABLE_COLUMNS = (
     "freshness",
     "recent_count",
     "max_seeds",
+    "seed_window",
     "pick_order",
     "placement",
     "placement_friends",

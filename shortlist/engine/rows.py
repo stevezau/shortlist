@@ -71,6 +71,25 @@ def effective_max_seeds(spec: RowSpec, cfg: EngineConfig) -> int:
     return spec.max_seeds if spec.max_seeds is not None else cfg.max_seeds
 
 
+def effective_seed_window(spec: RowSpec) -> int:
+    """How many recent watches this row may cycle between. 1 = always the most recent.
+
+    No global to inherit, unlike `max_seeds`: whether a row rotates is part of what that row is.
+    """
+    return max(1, spec.seed_window or 1)
+
+
+def seed_cycle_offset(row_slug: str, owner_slug: str, run_day: int) -> int:
+    """Which step of the cycle a row is on tonight.
+
+    A STABLE crc32 phase, never Python's per-process-salted ``hash`` — the same reasoning as
+    ``_is_refresh_night``: a phase that moved every restart would re-pick the seed on every run and
+    rebuild the row each time. Adding the phase to the day staggers people, so a server does not
+    re-derive every cycling row on the same night.
+    """
+    return run_day + zlib.crc32(f"{row_slug}|{owner_slug}".encode())
+
+
 def effective_recent_count(spec: RowSpec, cfg: EngineConfig) -> int:
     """How many recent watched titles the web-search source searches for this row: its own budget,
     else the run's. Module-level for the same reason as ``effective_max_seeds`` — a per-person row
@@ -965,6 +984,20 @@ class RowPolicy:
         return excluded if rule else None
 
     def effective_freshness(self, spec: RowSpec) -> float:
+        """How often this row re-selects its titles — forced to nightly for a row that follows a watch.
+
+        Freshness is a CADENCE, and a row whose title names a watch (or that cycles between several)
+        is ABOUT recency: at the global default of 0.5 it re-checks its seed every ~8 days, so it goes
+        on claiming "Because you watched X" for a week after the person moved on, and a cycling row
+        advances a step a fortnight instead of a day. Reported as broken twice on issue #57, because
+        from the outside it is indistinguishable from broken.
+
+        Forced rather than merely defaulted, and forced over an explicit stored value too, because the
+        row editor HIDES the freshness control for these rows — honouring a slow value someone saved
+        before that would leave a row stuck with nothing in the UI to explain it or undo it.
+        """
+        if _names_a_seed(spec) or effective_seed_window(spec) > 1:
+            return 1.0
         return spec.freshness if spec.freshness is not None else self.cfg.freshness
 
     def effective_recent_count(self, spec: RowSpec) -> int:
@@ -988,8 +1021,22 @@ class RowPolicy:
 
         max_seeds is part of the key rather than a slice of a shared list because `derive_seeds`
         balances across media types (each present type keeps >= a third of the budget), so a
-        5-seed list is not the first 5 of a 30-seed one."""
-        key = (spec.media, tuple(sorted(str(k) for k in spec.library_keys)), effective_max_seeds(spec, self.cfg))
+        5-seed list is not the first 5 of a 30-seed one.
+
+        A CYCLING row keys on its window and its own cycle offset too. The offset folds in the row
+        slug, so two cycling rows that match on everything else still derive separately — without it
+        they would share one entry and land on the same watch, which is the opposite of what someone
+        turning this on asked for. A non-cycling row keys exactly as it always did (window 1, offset
+        0), so the common case still shares one derivation across rows."""
+        window = effective_seed_window(spec)
+        offset = seed_cycle_offset(spec.slug, self.user.slug, self.ctx.run_day) if window > 1 else 0
+        key = (
+            spec.media,
+            tuple(sorted(str(k) for k in spec.library_keys)),
+            effective_max_seeds(spec, self.cfg),
+            window,
+            offset,
+        )
         if key not in self.seed_cache:
             relevant = _history_for_row(self.ctx, self.user.history, spec)
             self.seed_cache[key] = derive_seeds(
@@ -997,6 +1044,8 @@ class RowPolicy:
                 self.resolve,
                 max_seeds=effective_max_seeds(spec, self.cfg),
                 blocked=self.user.blocked_seeds,
+                window=window,
+                cycle_offset=offset,
             )
         return self.seed_cache[key]
 
@@ -1273,9 +1322,15 @@ def _build_section_picks(
         refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, fresh)
 
         if prior_valid and not refresh:
-            # Not this row's refresh night: redeliver last run's picks unchanged — no curator call
-            # (saves the tokens), and delivery's unchanged-skip then avoids the Plex write too. Pad
-            # only if a title has since left the library, so the row stays full.
+            # Not this row's refresh night: redeliver last run's picks unchanged, so delivery's
+            # unchanged-skip avoids the Plex write. Pad only if a title has since left the library,
+            # so the row stays full.
+            #
+            # What freshness does NOT save is LLM tokens, though this said it did for a long time and
+            # the claim survived into a cost warning to the owner. The candidate gather — the only
+            # thing that calls a curator — runs in `pools_for` ABOVE this function, before the
+            # refresh check, so it happens on every run at every cadence. `build_picks` is pure
+            # ranking. A slower cadence buys Plex writes, nothing else.
             sec_picks = prior_valid[:k]
             if len(sec_picks) < k and sub:
                 sec_picks = _pad_picks(sec_picks, sub, k)
@@ -1730,7 +1785,17 @@ def _shared_row(
         logger.info("shared row '{}': no title watched by >= {} people yet", spec.slug, threshold)
         return None
 
-    seeds = derive_seeds(agg_history, resolve, max_seeds=effective_max_seeds(spec, cfg), blocked=agg.blocked_seeds)
+    # A shared row cycles off the row alone — its "owner" is the audience, not a person, so there is no
+    # user slug to stagger by. Everyone sees the same shared row, so there is nothing to stagger.
+    shared_window = effective_seed_window(spec)
+    seeds = derive_seeds(
+        agg_history,
+        resolve,
+        max_seeds=effective_max_seeds(spec, cfg),
+        blocked=agg.blocked_seeds,
+        window=shared_window,
+        cycle_offset=seed_cycle_offset(spec.slug, "", ctx.run_day) if shared_window > 1 else 0,
+    )
     # Same three narrowings a per-person row gets: its sources, its media, its libraries. Routed
     # through the same module-level helpers as the per-person path (not re-inlined) so the two never
     # drift apart — `effective_row_sources` also sorts, so a shared row and a per-person row with the

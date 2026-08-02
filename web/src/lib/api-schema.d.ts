@@ -1881,6 +1881,11 @@ export interface components {
              */
             schedule: string;
             /**
+             * Seed Window
+             * @default 1
+             */
+            seed_window: number;
+            /**
              * Size
              * @default 15
              */
@@ -1976,6 +1981,8 @@ export interface components {
             rewatch: boolean;
             /** Schedule */
             schedule: string;
+            /** Seed Window */
+            seed_window: number;
             /** Size */
             size: number;
             /** Slug */

@@ -171,6 +171,11 @@ class Collection(Base):
     # How many watched titles SEED this row — what every source searches from, not just the web one.
     # NULL -> inherit the engine default (30).
     max_seeds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # How many of a person's most recent watches this row may be built from, of which ONE is chosen per
+    # run so the row advances instead of sitting on their newest watch for ever. 1 = always the most
+    # recent (the original behaviour). Not nullable and not inheritable, like pick_order: whether a row
+    # rotates belongs to what that row IS, not to a server-wide default.
+    seed_window: Mapped[int] = mapped_column(Integer, default=1, nullable=False, server_default="1")
     # How the delivered collection is ORDERED: best | rating | newest | shuffle. Not nullable and not
     # inheritable — unlike freshness/max_seeds there is no global default to fall back to, because the
     # right order belongs to what a row IS rather than to the server.

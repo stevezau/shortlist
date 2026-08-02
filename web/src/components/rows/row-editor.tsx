@@ -31,14 +31,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { MaxSeedsField } from "@/components/max-seeds-field";
 import { RecentCountField } from "@/components/recent-count-field";
+import { SeedWindowField } from "@/components/seed-window-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
-import {
-  useSaveCollection,
-  useSaveSettings,
-  useSettings,
-} from "@/lib/queries";
+import { useSaveCollection, useSaveSettings, useSettings } from "@/lib/queries";
 import type { RowTemplate } from "@/lib/row-templates";
 import {
   freshnessGlobal,
@@ -213,7 +210,8 @@ export function RowEditor({
   const ratingSource = asRatingSource(
     settings.data?.["recommendations.rating_source"],
   );
-  const ratingLabel = RATING_LABELS[ratingSource];  const [input, setInput] = useState<CollectionInput>(
+  const ratingLabel = RATING_LABELS[ratingSource];
+  const [input, setInput] = useState<CollectionInput>(
     collection
       ? toInput(collection)
       : { ...blankInput(), ...(template?.values ?? {}) },
@@ -245,26 +243,42 @@ export function RowEditor({
         generate: "AI image",
       } as Record<string, string>
     )[input.poster.mode] ?? "Plex’s own artwork";
+  // Whether this row's TITLE claims a particular watch. Mirrors the engine's `_names_a_seed`, and
+  // decides whether the cycle window is worth offering.
+  const namesASeed = (input.name_template || input.name).includes("{top_seed}");
+  // Whether the engine forces this row to a nightly cadence — which it does for a row that FOLLOWS a
+  // watch, by name or by cycling. Both arms, not just `namesASeed`: an unnamed cycling row is run
+  // nightly too, so showing it a freshness slider would state a cadence the row does not obey.
+  const followsAWatch = namesASeed || input.seed_window > 1;
   const drawsOnSummary = [
     // "[]" means every library OF THIS ROW'S TYPE — saying "every library" on a movies row
     // contradicted the picker right below it, which ticks only the movie ones.
     input.library_keys.length === 0
-      ? ({ movie: "every movie library", show: "every TV library" } as Record<
-          string,
-          string
-        >)[input.media] ?? "every library"
+      ? ((
+          { movie: "every movie library", show: "every TV library" } as Record<
+            string,
+            string
+          >
+        )[input.media] ?? "every library")
       : `${input.library_keys.length} librar${input.library_keys.length === 1 ? "y" : "ies"}`,
     input.candidate_sources.length === 0
       ? "default sources"
       : `${input.candidate_sources.length} source${input.candidate_sources.length === 1 ? "" : "s"}`,
-    input.freshness === null
-      ? "default freshness"
-      : input.freshness >= 1
-        ? "refreshes nightly"
-        : input.freshness <= 0
-          ? "frozen"
-          : `${Math.round(input.freshness * 100)}% fresh`,
-    input.max_seeds === null ? null : `${input.max_seeds} watch${input.max_seeds === 1 ? "" : "es"}`,
+    // A followed-watch row's stored freshness is ignored by the engine, so reporting it here would
+    // describe a cadence the row does not run on.
+    followsAWatch
+      ? "refreshes nightly"
+      : input.freshness === null
+        ? "default freshness"
+        : input.freshness >= 1
+          ? "refreshes nightly"
+          : input.freshness <= 0
+            ? "frozen"
+            : `${Math.round(input.freshness * 100)}% fresh`,
+    input.max_seeds === null
+      ? null
+      : `${input.max_seeds} watch${input.max_seeds === 1 ? "" : "es"}`,
+    input.seed_window > 1 ? `cycling ${input.seed_window}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -357,9 +371,6 @@ export function RowEditor({
             )}
           </div>
 
-
-
-
           <div className="space-y-2">
             <Label>Built how?</Label>
             <Segmented
@@ -390,10 +401,6 @@ export function RowEditor({
             users={users}
             onChange={set}
           />
-
-
-
-
 
           {input.build === "shared" && (
             <div className="space-y-2">
@@ -490,277 +497,336 @@ export function RowEditor({
             />
           )}
 
-          <RowSection
-            title="Artwork"
-            summary={posterSummary}
-          >
-          <PosterField
-            value={input.poster}
-            onChange={(poster) => set({ poster })}
-            collectionId={collection?.id ?? null}
-            hasImage={collection?.poster?.has_image ?? false}
-          />
+          <RowSection title="Artwork" summary={posterSummary}>
+            <PosterField
+              value={input.poster}
+              onChange={(poster) => set({ poster })}
+              collectionId={collection?.id ?? null}
+              hasImage={collection?.poster?.has_image ?? false}
+            />
           </RowSection>
 
           <RowSection title="What it draws on" summary={drawsOnSummary}>
+            <LibraryPicker
+              libraryKeys={input.library_keys}
+              media={input.media}
+              onChange={(next) =>
+                set({
+                  ...next,
+                  // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
+                  // without anyone touching the flag. Its control is hidden then, and the API refuses
+                  // the combination — which would be a save failing with no visible cause.
+                  ...(next.media !== "show" ? { unstarted_only: false } : {}),
+                })
+              }
+            />
 
-          <LibraryPicker
-            libraryKeys={input.library_keys}
-            media={input.media}
-            onChange={(next) =>
-              set({
-                ...next,
-                // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
-                // without anyone touching the flag. Its control is hidden then, and the API refuses
-                // the combination — which would be a save failing with no visible cause.
-                ...(next.media !== "show" ? { unstarted_only: false } : {}),
-              })
-            }
-          />
+            <RowSourcesField
+              value={input.candidate_sources}
+              onChange={(candidate_sources) => set({ candidate_sources })}
+            />
 
-          <RowSourcesField
-            value={input.candidate_sources}
-            onChange={(candidate_sources) => set({ candidate_sources })}
-          />
-
-          <InheritableField
-            label="Already-watched titles"
-            labelFor="row-watched-pct"
-            description="How much of this row may be things a person has already finished. Leave on the global default to follow Settings → Finding titles."
-            ariaLabel="Use the global already-watched default"
-            inheriting={input.watched_pct === null}
-            globalValue={watchedPctGlobal(settings.data)}
-            onToggle={(on) =>
-              set({ watched_pct: on ? null : watchedPctSeed(settings.data) })
-            }
-            after={
-              <>
-                {/* The percentage above is a CEILING — it permits finished titles, it never prefers
+            <InheritableField
+              label="Already-watched titles"
+              labelFor="row-watched-pct"
+              description="How much of this row may be things a person has already finished. Leave on the global default to follow Settings → Finding titles."
+              ariaLabel="Use the global already-watched default"
+              inheriting={input.watched_pct === null}
+              globalValue={watchedPctGlobal(settings.data)}
+              onToggle={(on) =>
+                set({ watched_pct: on ? null : watchedPctSeed(settings.data) })
+              }
+              after={
+                <>
+                  {/* The percentage above is a CEILING — it permits finished titles, it never prefers
                     them, so on a library with plenty of unwatched candidates even 100% yields an
                     unwatched row. This switch is what actually makes a rewatch shelf, which is why
                     it is named after the row someone wants rather than after its effect on the
                     setting above: "lead with things they've seen" could only be understood by
                     someone who had already understood the ceiling. */}
-                <div className="flex items-start justify-between gap-4 rounded-md border p-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="row-rewatch">
-                      Make this a &ldquo;watch it again&rdquo; row
-                    </Label>
-                    <p className="text-sm text-muted-foreground">
-                      Films and shows they&rsquo;ve already finished lead the
-                      row, and new suggestions fill whatever is left. Turning
-                      this on also lets already-watched titles into the row, so
-                      there is nothing else to set.
-                    </p>
-                  </div>
-                  <Switch
-                    id="row-rewatch"
-                    aria-label="Make this a watch it again row"
-                    checked={input.rewatch}
-                    onCheckedChange={(rewatch) =>
-                      set({
-                        rewatch,
-                        // A rewatch row needs finished titles in its pool at all, so lift a 0% cap
-                        // off the global default in the same click — otherwise the switch silently
-                        // does nothing.
-                        ...(rewatch && input.watched_pct === 0
-                          ? { watched_pct: 1 }
-                          : {}),
-                        // Mutually exclusive: the two ask for opposite things, and the API refuses
-                        // the pair. Clearing it here means the owner never meets that error.
-                        ...(rewatch ? { unstarted_only: false } : {}),
-                      })
-                    }
-                  />
-                </div>
-
-                {/* Shown for shows only, and cleared when the row stops being a shows row: an
-                    invisible setting the API then refuses is a save that fails for no visible
-                    reason. */}
-                {input.media === "show" && (
                   <div className="flex items-start justify-between gap-4 rounded-md border p-3">
                     <div className="space-y-1">
-                      <Label htmlFor="row-unstarted">
-                        Only series they haven&rsquo;t started
+                      <Label htmlFor="row-rewatch">
+                        Make this a &ldquo;watch it again&rdquo; row
                       </Label>
                       <p className="text-sm text-muted-foreground">
-                        Drops any show they&rsquo;ve watched even one episode
-                        of. Normally only <em>finished</em> shows are skipped,
-                        so one they&rsquo;re three episodes into still turns up.
+                        Films and shows they&rsquo;ve already finished lead the
+                        row, and new suggestions fill whatever is left. Turning
+                        this on also lets already-watched titles into the row,
+                        so there is nothing else to set.
                       </p>
                     </div>
                     <Switch
-                      id="row-unstarted"
-                      aria-label="Only series they have not started"
-                      checked={input.unstarted_only}
-                      onCheckedChange={(unstarted_only) =>
+                      id="row-rewatch"
+                      aria-label="Make this a watch it again row"
+                      checked={input.rewatch}
+                      onCheckedChange={(rewatch) =>
                         set({
-                          unstarted_only,
-                          ...(unstarted_only ? { rewatch: false } : {}),
+                          rewatch,
+                          // A rewatch row needs finished titles in its pool at all, so lift a 0% cap
+                          // off the global default in the same click — otherwise the switch silently
+                          // does nothing.
+                          ...(rewatch && input.watched_pct === 0
+                            ? { watched_pct: 1 }
+                            : {}),
+                          // Mutually exclusive: the two ask for opposite things, and the API refuses
+                          // the pair. Clearing it here means the owner never meets that error.
+                          ...(rewatch ? { unstarted_only: false } : {}),
                         })
                       }
                     />
                   </div>
-                )}
-              </>
-            }
-          >
-            <WatchedSlider
-              id="row-watched-pct"
-              value={Math.round((input.watched_pct ?? 0) * 100)}
-              onChange={(pct) => set({ watched_pct: pct / 100 })}
-            />
-          </InheritableField>
 
-          <InheritableField
-            label="Freshness"
-            labelFor="row-freshness"
-            description="How often this row swaps in new titles — which titles it holds, not the sequence they appear in (that’s Order, below). Leave on the global default to follow Settings → Finding titles."
-            ariaLabel="Use the global freshness default"
-            inheriting={input.freshness === null}
-            globalValue={freshnessGlobal(settings.data)}
-            onToggle={(on) =>
-              set({ freshness: on ? null : freshnessSeed(settings.data) })
-            }
-          >
-            <FreshnessSlider
-              id="row-freshness"
-              value={Math.round((input.freshness ?? 0) * 100)}
-              onChange={(pct) => set({ freshness: pct / 100 })}
-            />
-          </InheritableField>
-
-          {usesWebSearch && (
-          <InheritableField
-            label="Watches the AI searches from"
-            description="How many of a person’s most recent watches the AI web-search source looks up for this row (one cached search each). Only affects rows using AI web search. Leave on the global default to follow Settings → Finding titles."
-            ariaLabel="Use the global recent-watches default"
-            inheriting={input.recent_count === null}
-            globalValue={recentCountGlobal(settings.data)}
-            onToggle={(on) =>
-              set({
-                recent_count: on ? null : recentCountSeed(settings.data),
-              })
-            }
-          >
-            <RecentCountField
-              label=""
-              value={input.recent_count ?? 0}
-              onChange={(next) => set({ recent_count: next })}
-            />
-          </InheritableField>
-          )}
-
-          <InheritableField
-            label="Watches to build from"
-            description={
-              <>
-                How many of a person&rsquo;s recent watches this row is built
-                from. The global default blends their whole recent history,
-                which is right for a general &ldquo;Picked for you&rdquo; row. A
-                small number makes the row about one or two specific things they
-                watched.
-              </>
-            }
-            ariaLabel="Use the default number of watches to build from"
-            inheriting={input.max_seeds === null}
-            globalValue={maxSeedsGlobal(settings.data)}
-            // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
-            // reaching for this control almost always wants a row about one specific watch, and
-            // the global is one switch-flip away again.
-            onToggle={(on) =>
-              set({ max_seeds: on ? null : namedRowSeeds(input.media) })
-            }
-            before={
-              (input.name_template || input.name).includes("{top_seed}") && (
-                <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
-                  This row is named{" "}
-                  <span className="font-mono">
-                    &ldquo;{input.name_template || input.name}&rdquo;
-                  </span>
-                  , so it names one title. Set this to{" "}
-                  <strong>{namedRowSeeds(input.media)}</strong> and the row
-                  really is what those watches led to &mdash; otherwise it names
-                  one watch and fills itself from the other 29.
-                  {input.media === "both" && (
-                    <>
-                      {" "}
-                      This row covers <strong>movies and TV</strong>, and a
-                      single watch is one or the other &mdash; so 1 would leave
-                      the other half empty. Use 2 to seed both, or set this row
-                      to Movies only or TV only above.
-                    </>
+                  {/* Shown for shows only, and cleared when the row stops being a shows row: an
+                    invisible setting the API then refuses is a save that fails for no visible
+                    reason. */}
+                  {input.media === "show" && (
+                    <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="row-unstarted">
+                          Only series they haven&rsquo;t started
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Drops any show they&rsquo;ve watched even one episode
+                          of. Normally only <em>finished</em> shows are skipped,
+                          so one they&rsquo;re three episodes into still turns
+                          up.
+                        </p>
+                      </div>
+                      <Switch
+                        id="row-unstarted"
+                        aria-label="Only series they have not started"
+                        checked={input.unstarted_only}
+                        onCheckedChange={(unstarted_only) =>
+                          set({
+                            unstarted_only,
+                            ...(unstarted_only ? { rewatch: false } : {}),
+                          })
+                        }
+                      />
+                    </div>
                   )}
+                </>
+              }
+            >
+              <WatchedSlider
+                id="row-watched-pct"
+                value={Math.round((input.watched_pct ?? 0) * 100)}
+                onChange={(pct) => set({ watched_pct: pct / 100 })}
+              />
+            </InheritableField>
+
+            {followsAWatch ? (
+              // Not a slider for these rows, and not a warning either — a cadence is a decision with
+              // exactly one right answer once a row FOLLOWS a watch, so it stops being a decision.
+              // Left as a control, the global default (~8 days) quietly made the row claim a watch the
+              // person moved on from a week ago; reported twice on issue #57, and from the outside
+              // indistinguishable from broken. Saying so beats a slider nobody should move.
+              <div className="space-y-3 border-t pt-4">
+                <p className="text-sm font-medium">Freshness</p>
+                <p className="text-sm text-muted-foreground">
+                  {namesASeed
+                    ? "This row is named after one watch, so it follows their latest one and checks every run."
+                    : "This row cycles between their recent watches, so it checks every run."}{" "}
+                  Rows that don’t follow a watch can be set to refresh less
+                  often.
                 </p>
-              )
-            }
-          >
-            <MaxSeedsField
-              label=""
-              value={input.max_seeds ?? 0}
-              onChange={(next) => set({ max_seeds: next })}
-            />
-          </InheritableField>
+              </div>
+            ) : (
+              <InheritableField
+                label="Freshness"
+                labelFor="row-freshness"
+                description="How often this row swaps in new titles — which titles it holds, not the sequence they appear in (that’s Order, below). Leave on the global default to follow Settings → Finding titles."
+                ariaLabel="Use the global freshness default"
+                inheriting={input.freshness === null}
+                globalValue={freshnessGlobal(settings.data)}
+                onToggle={(on) =>
+                  set({ freshness: on ? null : freshnessSeed(settings.data) })
+                }
+              >
+                <FreshnessSlider
+                  id="row-freshness"
+                  value={Math.round((input.freshness ?? 0) * 100)}
+                  onChange={(pct) => set({ freshness: pct / 100 })}
+                />
+              </InheritableField>
+            )}
+
+            {usesWebSearch && (
+              <InheritableField
+                label="Watches the AI searches from"
+                description="How many of a person’s most recent watches the AI web-search source looks up for this row (one cached search each). Only affects rows using AI web search. Leave on the global default to follow Settings → Finding titles."
+                ariaLabel="Use the global recent-watches default"
+                inheriting={input.recent_count === null}
+                globalValue={recentCountGlobal(settings.data)}
+                onToggle={(on) =>
+                  set({
+                    recent_count: on ? null : recentCountSeed(settings.data),
+                  })
+                }
+              >
+                <RecentCountField
+                  label=""
+                  value={input.recent_count ?? 0}
+                  onChange={(next) => set({ recent_count: next })}
+                />
+              </InheritableField>
+            )}
+
+            <InheritableField
+              label="Watches to build from"
+              description={
+                <>
+                  How many of a person&rsquo;s recent watches this row is built
+                  from. The global default blends their whole recent history,
+                  which is right for a general &ldquo;Picked for you&rdquo; row.
+                  A small number makes the row about one or two specific things
+                  they watched.
+                </>
+              }
+              ariaLabel="Use the default number of watches to build from"
+              inheriting={input.max_seeds === null}
+              globalValue={maxSeedsGlobal(settings.data)}
+              // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
+              // reaching for this control almost always wants a row about one specific watch, and
+              // the global is one switch-flip away again.
+              //
+              // Turning it ON also drops the cycle back to 1. The cycle control only renders for a
+              // 1..2-seed row, so leaving the window set here would hide it while the engine went on
+              // cycling the row AND forcing it to nightly rebuilds, with nothing in the editor to
+              // explain it or undo it.
+              onToggle={(on) =>
+                set(
+                  on
+                    ? { max_seeds: null, seed_window: 1 }
+                    : { max_seeds: namedRowSeeds(input.media) },
+                )
+              }
+              before={
+                (input.name_template || input.name).includes("{top_seed}") && (
+                  <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+                    This row is named{" "}
+                    <span className="font-mono">
+                      &ldquo;{input.name_template || input.name}&rdquo;
+                    </span>
+                    , so it names one title. Set this to{" "}
+                    <strong>{namedRowSeeds(input.media)}</strong> and the row
+                    really is what those watches led to &mdash; otherwise it
+                    names one watch and fills itself from the other 29.
+                    {input.media === "both" && (
+                      <>
+                        {" "}
+                        This row covers <strong>movies and TV</strong>, and a
+                        single watch is one or the other &mdash; so 1 would
+                        leave the other half empty. Use 2 to seed both, or set
+                        this row to Movies only or TV only above.
+                      </>
+                    )}
+                  </p>
+                )
+              }
+            >
+              <MaxSeedsField
+                label=""
+                value={input.max_seeds ?? 0}
+                // Typing a wider budget hides the cycle control too, so it has to reset the window
+                // for the same reason the inherit toggle above does — otherwise the row keeps
+                // cycling with no way to see or stop it.
+                onChange={(next) =>
+                  set(
+                    next > 2
+                      ? { max_seeds: next, seed_window: 1 }
+                      : { max_seeds: next },
+                  )
+                }
+              />
+            </InheritableField>
+
+            {/* Only for a row that builds from one or two watches. Above that it is blending a whole
+                history and "which watch does it follow" has no answer, so asking would be noise. */}
+            {(input.max_seeds ?? 0) > 0 && (input.max_seeds ?? 0) <= 2 && (
+              <div className="space-y-3 border-t pt-4">
+                <p className="text-sm font-medium">Which watch it follows</p>
+                <p className="text-sm text-muted-foreground">
+                  A row built from one watch normally follows their most recent
+                  one, and stays on it until they finish something else. Raise
+                  this and it cycles instead &mdash; still one watch per row,
+                  but a different one each day.
+                </p>
+                <SeedWindowField
+                  label=""
+                  value={input.seed_window}
+                  onChange={(next) => set({ seed_window: next })}
+                />
+                {input.seed_window > 1 && (
+                  <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+                    Cycling rebuilds this row and writes to Plex every time the
+                    watch changes, so it costs a write most nights. Leave it at
+                    1 if you&rsquo;d rather the row only moved when they watched
+                    something new.
+                  </p>
+                )}
+              </div>
+            )}
           </RowSection>
 
           <RowSection title="Where it appears" summary={placementSummary}>
-
-          <div className="space-y-3">
-            <Label>Where it shows</Label>
-            <p className="text-sm text-muted-foreground">
-              Which Plex screens this row appears on — matches Plex&rsquo;s
-              collection visibility toggles.
-            </p>
-            <PlacementToggles
-              placement={input.placement}
-              placementFriends={input.placement_friends}
-              isShared={input.build === "shared"}
-              users={users}
-              onChange={(placement, placementFriends) =>
-                set({ placement, placement_friends: placementFriends })
-              }
-            />
-            <div className="space-y-2 pt-2">
-              <span className="text-sm font-medium">
-                Position in the Recommended shelf
-              </span>
+            <div className="space-y-3">
+              <Label>Where it shows</Label>
               <p className="text-sm text-muted-foreground">
-                Where this row lands. Each library can inherit the global
-                default (Settings → Row placement), sit at the{" "}
-                <strong>Top</strong>, or anchor right after/before one of your
-                collections.
+                Which Plex screens this row appears on — matches Plex&rsquo;s
+                collection visibility toggles.
               </p>
-              <RowShelfPlacement
-                value={input.hub_anchor}
-                libraryKeys={input.library_keys}
-                media={input.media}
-                pinnedTop={input.pin_top}
-                onConsumePin={() => set({ pin_top: false })}
-                onChange={(hub_anchor) => set({ hub_anchor })}
+              <PlacementToggles
+                placement={input.placement}
+                placementFriends={input.placement_friends}
+                isShared={input.build === "shared"}
+                users={users}
+                onChange={(placement, placementFriends) =>
+                  set({ placement, placement_friends: placementFriends })
+                }
               />
+              <div className="space-y-2 pt-2">
+                <span className="text-sm font-medium">
+                  Position in the Recommended shelf
+                </span>
+                <p className="text-sm text-muted-foreground">
+                  Where this row lands. Each library can inherit the global
+                  default (Settings → Row placement), sit at the{" "}
+                  <strong>Top</strong>, or anchor right after/before one of your
+                  collections.
+                </p>
+                <RowShelfPlacement
+                  value={input.hub_anchor}
+                  libraryKeys={input.library_keys}
+                  media={input.media}
+                  pinnedTop={input.pin_top}
+                  onConsumePin={() => set({ pin_top: false })}
+                  onChange={(hub_anchor) => set({ hub_anchor })}
+                />
+              </div>
             </div>
-          </div>
           </RowSection>
 
           <RowSection title="Requests" summary={requestSummary}>
-          {input.build !== "shared" && (
-            <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="row-request-tag">Request tag (optional)</Label>
-              <Input
-                id="row-request-tag"
-                value={input.request_tag}
-                onChange={(event) => set({ request_tag: event.target.value })}
-                placeholder="e.g. picked-for-family"
-                maxLength={64}
-                className="max-w-xs"
-              />
-              <p className="text-sm text-muted-foreground">
-                When Requests are on, titles asked for anyone in this row’s
-                audience get this tag in Sonarr/Radarr — on top of your global
-                tag and each person’s own tag. Leave blank for none.
-              </p>
-            </div>
-          )}
+            {input.build !== "shared" && (
+              <div className="space-y-2 border-t pt-4">
+                <Label htmlFor="row-request-tag">Request tag (optional)</Label>
+                <Input
+                  id="row-request-tag"
+                  value={input.request_tag}
+                  onChange={(event) => set({ request_tag: event.target.value })}
+                  placeholder="e.g. picked-for-family"
+                  maxLength={64}
+                  className="max-w-xs"
+                />
+                <p className="text-sm text-muted-foreground">
+                  When Requests are on, titles asked for anyone in this row’s
+                  audience get this tag in Sonarr/Radarr — on top of your global
+                  tag and each person’s own tag. Leave blank for none.
+                </p>
+              </div>
+            )}
           </RowSection>
         </div>
 

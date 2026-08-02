@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -259,6 +260,106 @@ class TestDeriveSeeds:
 
         assert {s.media_type for s in one} == {MediaType.SHOW}
         assert {s.media_type for s in two} == {MediaType.SHOW, MediaType.MOVIE}
+
+    def test_a_window_of_one_is_always_the_most_recent_watch(self):
+        """The default, and every caller's behaviour before cycling existed."""
+        history = [make_watched(f"Movie {i}", days_ago=i) for i in range(5)]
+        ids = {f"Movie {i}": i + 1 for i in range(5)}
+
+        for offset in range(4):  # the offset is inert at window 1 — no accidental rotation
+            seeds = derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=1, cycle_offset=offset)
+            assert [s.title for s in seeds] == ["Movie 0"]
+
+    def test_a_window_cycles_one_step_per_offset_and_covers_every_watch(self):
+        """The point of the feature: consecutive runs never repeat, and each watch in the window gets
+        its turn. A random pick would satisfy neither, and a repeat looks exactly like the stuck row
+        this exists to fix (issue #57).
+
+        Deliberately gives the seeds a TMDB-ID order that contradicts their recency order. The step is
+        taken over the ID order, so a fixture where the two agree (ids ascending with recency, the
+        obvious way to write this) passes whichever ordering the code actually uses and cannot tell a
+        correct implementation from the one that shipped this bug.
+        """
+        history = [make_watched(f"Movie {i}", days_ago=i) for i in range(5)]
+        ids = {"Movie 0": 903, "Movie 1": 105, "Movie 2": 511, "Movie 3": 42, "Movie 4": 777}
+
+        led_by = [
+            derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=3, cycle_offset=day)[0].title
+            for day in range(6)
+        ]
+
+        assert set(led_by) == {"Movie 0", "Movie 1", "Movie 2"}, "the window is covered, not sampled"
+        assert all(a != b for a, b in pairwise(led_by)), "consecutive runs must differ"
+        assert led_by[:3] == led_by[3:], "the cycle repeats with the window's period, so nothing is skipped"
+
+    def test_cycling_keeps_moving_for_someone_who_watches_every_night(self):
+        """The regression that made cycling WORSE than leaving it off, for the people most likely to
+        turn it on.
+
+        Stepping over the RECENCY order cancels against their history: that list's head shifts by one
+        each time they finish something, and the offset advances by one a night, so the same seed led
+        for `window` nights running while their newer watches never led at all — C, C, C, F, F, F for
+        a person whose newest watch went D, E, F, G, H. Indistinguishable from the stuck row of issue
+        #57, which is what this feature was built to relieve.
+        """
+        titles = [f"Movie {i}" for i in range(8)]
+        ids = {t: i + 1 for i, t in enumerate(titles)}
+
+        led_by = []
+        for night in range(6):
+            watched = titles[: night + 3]  # one more finished film every night
+            history = [make_watched(t, days_ago=len(watched) - 1 - i) for i, t in enumerate(watched)]
+            led_by.append(
+                derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=3, cycle_offset=night)[0].title
+            )
+
+        assert all(a != b for a, b in pairwise(led_by)), f"a nightly watcher's row must keep moving, got {led_by}"
+        assert len(set(led_by)) >= 4, f"and must not orbit two titles while they watch six, got {led_by}"
+
+    def test_cycling_a_movies_and_tv_row_follows_the_more_recent_type(self):
+        """A one-seed `media=both` row keeps only the strongest lead, so the two media types' leads
+        have to compete on recency. Listing movies first unconditionally made a TV watcher's row
+        announce a film from a month ago the moment they turned cycling on."""
+        history = [make_watched(f"Show {i}", days_ago=i, media_type=MediaType.SHOW) for i in range(3)]
+        history += [make_watched(f"Film {i}", days_ago=30 + i, media_type=MediaType.MOVIE) for i in range(3)]
+        ids = {f"Show {i}": 10 + i for i in range(3)} | {f"Film {i}": 50 + i for i in range(3)}
+
+        led_by = [
+            derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=3, cycle_offset=day)[0]
+            for day in range(3)
+        ]
+
+        assert all(s.media_type is MediaType.SHOW for s in led_by), f"got {[(s.title) for s in led_by]}"
+
+    def test_a_window_wider_than_the_history_degrades_to_what_they_watched(self):
+        """Someone with two watches and a window of five cycles between the two, rather than
+        returning nothing on the days the window points past the end of their history."""
+        history = [make_watched(f"Movie {i}", days_ago=i) for i in range(2)]
+        ids = {f"Movie {i}": i + 1 for i in range(2)}
+
+        led_by = [
+            derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=5, cycle_offset=day)[0].title
+            for day in range(4)
+        ]
+
+        assert led_by == ["Movie 0", "Movie 1", "Movie 0", "Movie 1"]
+
+    def test_cycling_advances_both_media_types_of_a_movies_and_tv_row(self):
+        """Cycling is per media type, not across the flat list. A `media=both` row seeds one movie and
+        one show, so rotating the flat list would spend the whole window on whichever type this person
+        watches more of and pin the other half to its newest title for ever."""
+        history = [make_watched(f"Show {i}", days_ago=i, media_type=MediaType.SHOW) for i in range(3)]
+        history += [make_watched(f"Movie {i}", days_ago=i, media_type=MediaType.MOVIE) for i in range(3)]
+        ids = {f"Show {i}": i + 1 for i in range(3)} | {f"Movie {i}": 100 + i for i in range(3)}
+
+        def led_by(day: int) -> dict:
+            seeds = derive_seeds(history, lambda w: ids[w.title], max_seeds=2, window=3, cycle_offset=day)
+            return {s.media_type: s.title for s in seeds}
+
+        day0, day1 = led_by(0), led_by(1)
+
+        assert day0 == {MediaType.MOVIE: "Movie 0", MediaType.SHOW: "Show 0"}
+        assert day1 == {MediaType.MOVIE: "Movie 1", MediaType.SHOW: "Show 1"}, "both halves advance, not just one"
 
     def test_reserves_seed_budget_for_the_minority_media_type(self):
         # A TV-heavy watcher: 20 recent shows + 3 older movies. The movies must still seed, or a

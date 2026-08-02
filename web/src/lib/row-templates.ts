@@ -45,7 +45,11 @@ export const ROW_TEMPLATES: RowTemplate[] = [
     // a single seed can only cover ONE media type (seeds balance across the types present), so a
     // one-seed row has to pick one. Leaving it unsaid meant the card promised a row about "a recent
     // watch" and quietly delivered a movies-only one.
-    highlights: ["Films only", "Built from 1 watch", "Follows their latest watch"],
+    highlights: [
+      "Films only",
+      "Built from 1 watch",
+      "Follows their latest watch",
+    ],
     values: {
       name: "🎯 Because you watched {top_seed}",
       build: "per_person",
@@ -57,9 +61,21 @@ export const ROW_TEMPLATES: RowTemplate[] = [
       size: 20,
       // Nightly, not the global default. This row is ABOUT recency: at the default cadence (~8 days)
       // it keeps naming last week's film for a week after they've moved on, which reads as broken
-      // rather than as a setting. The row only rebuilds when its seed actually changes, so a nightly
-      // cadence costs a Plex write on the days their viewing moved on — which is the point.
+      // rather than as a setting.
+      //
+      // Nightly costs more than "a write when the seed moves": on the nights the seed has NOT moved
+      // the row still takes the refresh branch, which swaps its weakest third and writes. So this row
+      // writes to Plex most nights, per user per library, where the global default wrote weekly. It
+      // costs no extra AI usage — candidates are gathered once a run whatever a row's cadence is.
+      //
+      // (The engine now forces this for any `{top_seed}` row, so it also holds for rows made before
+      // this default existed — but it stays here so the value the card shows is the value it saves.)
       freshness: 1,
+      // Their most recent watch, which is the behaviour this template was asked for (issue #57: "a
+      // Netflix-style row about ONE thing they watched"). Cycling between several is one number away
+      // in the editor, but it is not the default: it rebuilds the row and writes to Plex most nights,
+      // which is a cost every user of this template should opt into rather than inherit.
+      seed_window: 1,
     },
   },
   {

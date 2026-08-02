@@ -56,6 +56,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     recent_count: null,
     max_seeds: null,
+    seed_window: 1,
     pick_order: "best",
     placement: "both",
     placement_friends: "both",
@@ -573,7 +574,9 @@ describe("RowEditor — recent watches to search", () => {
   it("round-trips a per-row recent_count into the PATCH body", async () => {
     settingsData.current = { "candidates.sources": ["llm_web"] };
     renderEditor(row({ recent_count: null }));
-    await screen.findByRole("switch", { name: /global recent-watches default/i });
+    await screen.findByRole("switch", {
+      name: /global recent-watches default/i,
+    });
 
     await userEvent.click(
       screen.getByRole("switch", { name: /global recent-watches default/i }),
@@ -671,6 +674,129 @@ describe("RowEditor — watches to build from", () => {
     expect(
       screen.queryByText(/names one watch and fills itself/i),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — freshness on a row named after a watch", () => {
+  it("replaces the slider with what the row actually does", () => {
+    // The engine forces these rows to nightly, so a slider here would set a cadence the row never
+    // runs on. It read as a working control while the row went on naming a watch from last week
+    // (issue #57, reported twice) — so it is a statement now, not a setting.
+    renderEditor(row({ name_template: "Because you watched {top_seed}" }));
+
+    expect(
+      screen.getByText(/follows their latest one and checks every run/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("switch", { name: /global freshness default/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides the slider for a cycling row too, named or not", () => {
+    // The engine forces nightly for `_names_a_seed(spec) OR seed_window > 1`. Gating the UI on only
+    // the first left an unnamed cycling row showing a freshness slider — and reporting "frozen" in
+    // the section summary — while the engine ran it every night.
+    renderEditor(
+      row({ name_template: "Tonight’s pick", max_seeds: 2, seed_window: 3 }),
+    );
+
+    expect(
+      screen.queryByRole("switch", { name: /global freshness default/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/cycles between their recent watches/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the slider for a row that names no watch", () => {
+    // The override is scoped to named rows. Everywhere else freshness is still a real choice, and
+    // removing it there would take away the only control over how often a row re-curates.
+    renderEditor(row({ name_template: "{library_name} Picked for You" }));
+
+    expect(
+      screen.getByRole("switch", { name: /global freshness default/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/follows their latest one and checks every run/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — which watch it follows", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+  });
+
+  it("offers the cycle only to a row built from one or two watches", () => {
+    // Above two the row is blending a history and has no single watch to follow, so the question
+    // has no answer and asking it would be noise.
+    renderEditor(row({ max_seeds: 1 }));
+    expect(screen.getByText(/Which watch it follows/i)).toBeInTheDocument();
+
+    cleanup();
+    renderEditor(row({ max_seeds: 30 }));
+    expect(
+      screen.queryByText(/Which watch it follows/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says what the number means, and warns only once it actually cycles", () => {
+    renderEditor(row({ max_seeds: 1, seed_window: 1 }));
+    expect(
+      screen.getByText(/Always the last thing they finished/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/writes to Plex every time the watch changes/i),
+    ).not.toBeInTheDocument();
+
+    cleanup();
+    renderEditor(row({ max_seeds: 1, seed_window: 3 }));
+    expect(
+      screen.getByText(/Cycles through their last 3 watches/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/writes to Plex every time the watch changes/i),
+    ).toBeInTheDocument();
+  });
+
+  it("stops cycling when the budget grows past the control's range", async () => {
+    // The control only renders for a 1..2-seed row. Widening the budget without clearing the window
+    // left the row cycling — and forced to nightly rebuilds — with the control gone from the editor,
+    // so there was nothing to see it by and no way to undo it.
+    renderEditor(row({ max_seeds: 1, seed_window: 4 }));
+
+    const budget = screen.getByLabelText(/^Watches to build from$/i);
+    await userEvent.clear(budget);
+    await userEvent.type(budget, "30");
+    await userEvent.tab();
+
+    expect(
+      screen.queryByText(/Which watch it follows/i),
+    ).not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).seed_window,
+    ).toBe(1);
+  });
+
+  it("round-trips the window into the PATCH body", async () => {
+    renderEditor(row({ max_seeds: 1, seed_window: 1 }));
+
+    const field = screen.getByLabelText(/Recent watches to choose from/i);
+    await userEvent.clear(field);
+    await userEvent.type(field, "3");
+    await userEvent.tab();
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).seed_window,
+    ).toBe(3);
   });
 });
 
@@ -794,7 +920,9 @@ describe("RowEditor — order", () => {
 
   it("explains what the chosen order does, and names shuffle's cost", async () => {
     renderEditor(row({ pick_order: "best" }));
-    expect(screen.getByText(/Strongest suggestions first/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Strongest suggestions first/i),
+    ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Shuffled" }));
 
@@ -827,11 +955,12 @@ describe("RowEditor — rating source is answerable where the order is chosen", 
     renderEditor(row({ pick_order: "best" }));
     expect(screen.queryByLabelText("Rated by")).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Highest rated" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Highest rated" }),
+    );
 
     expect(await screen.findByLabelText("Rated by")).toHaveValue("imdb");
   });
-
 });
 
 describe("RowEditor — the essentials are visible, the rest folds away", () => {
@@ -899,7 +1028,9 @@ describe("RowEditor — settings that would do nothing are not offered", () => {
     settingsData.current = { "candidates.sources": ["tmdb_similar"] };
     renderEditor(row({ recent_count: 5 }));
 
-    expect(await screen.findByText("Watches to build from")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Watches to build from"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByLabelText(/Watches the AI searches from/i),
     ).not.toBeInTheDocument();

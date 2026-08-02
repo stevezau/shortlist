@@ -615,6 +615,7 @@ class ContextBuilder:
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
+                    seed_window=int(collection.seed_window or 1),  # 1 -> always their most recent watch
                     pick_order=collection.pick_order or "best",
                     placement=collection.placement or "both",
                     placement_friends=collection.placement_friends or "both",

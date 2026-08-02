@@ -606,6 +606,13 @@
             "title": "Schedule",
             "type": "string"
           },
+          "seed_window": {
+            "default": 1,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Seed Window",
+            "type": "integer"
+          },
           "size": {
             "default": 15,
             "maximum": 40.0,
@@ -819,6 +826,10 @@
             "title": "Schedule",
             "type": "string"
           },
+          "seed_window": {
+            "title": "Seed Window",
+            "type": "integer"
+          },
           "size": {
             "title": "Size",
             "type": "integer"
@@ -870,6 +881,7 @@
           "freshness",
           "recent_count",
           "max_seeds",
+          "seed_window",
           "pick_order",
           "placement",
           "placement_friends",
