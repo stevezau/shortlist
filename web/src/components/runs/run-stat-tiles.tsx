@@ -27,8 +27,20 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
   // "web search 467,463 · final picks 52,625 tokens" — the trailing unit makes clear these are token
   // counts, not the (separate) Exa search count shown in its own tile below.
   const stepInline = tokenStepBreakdown(s.llm_tokens_by_step);
+  // The two AI tiles are conditional, so the track count has to be too. Hard-coding six left a
+  // no-AI run's four tiles filling two-thirds of the row with a third of it blank, which reads as
+  // something that failed to load. Full class strings — Tailwind cannot see an interpolated one.
+  const showTokens = tokens > 0;
+  const showExa = exa > 0 || exaCacheHits > 0;
+  const tiles = 4 + (showTokens ? 1 : 0) + (showExa ? 1 : 0);
+  const columns =
+    tiles === 6
+      ? "sm:grid-cols-3 lg:grid-cols-6"
+      : tiles === 5
+        ? "sm:grid-cols-3 lg:grid-cols-5"
+        : "sm:grid-cols-2 lg:grid-cols-4";
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+    <div className={`grid grid-cols-2 gap-3 ${columns}`}>
       <StatTile
         icon={Clock}
         label="Duration"
@@ -75,7 +87,7 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
         }
         tone={s.requests_warnings?.length ? "warning" : undefined}
       />
-      {tokens > 0 && (
+      {showTokens && (
         <StatTile
           icon={Sparkles}
           label="AI tokens"
@@ -84,7 +96,7 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
           title="Total AI tokens this run cost, split by what the AI did. Turn AI sources off in Settings → Finding titles to lower it."
         />
       )}
-      {(exa > 0 || exaCacheHits > 0) && (
+      {showExa && (
         <StatTile
           icon={Search}
           label="Exa searches"

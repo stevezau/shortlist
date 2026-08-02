@@ -147,7 +147,10 @@ export function JobRow({
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          // `min-w-[11rem]`, not `min-w-0`: with the row set to wrap, a floor on the name is what
+          // makes the tag/status/time wrap to a second line. Without it the name absorbed every
+          // pixel the others wanted and "Check and fix rows on Plex" rendered as "Check…".
+          className="flex min-w-[11rem] flex-1 items-center gap-2.5 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <ChevronRight
             aria-hidden="true"

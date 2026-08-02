@@ -50,7 +50,8 @@ export function SettingsSubNav() {
             {startsGroup && (
               <p
                 className={cn(
-                  "px-2.5 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide text-muted-foreground/70",
+                  // Full muted-foreground: at /70 these 11px caps measured 4.32:1 on the rail, under AA.
+                  "px-2.5 pb-1 text-[0.7rem] font-semibold uppercase tracking-wide text-muted-foreground",
                   i > 0 && "pt-3",
                 )}
               >

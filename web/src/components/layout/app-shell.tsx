@@ -327,7 +327,10 @@ export function AppShell() {
         <NavBody />
       </aside>
 
-      <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
+      {/* `min-w-0` is load-bearing: a flex child defaults to `min-width:auto`, so without it `main`
+          can never shrink below its widest unbreakable child and the WHOLE PAGE gains a horizontal
+          scrollbar. One `whitespace-nowrap` button ("Run all rows now") did exactly that. */}
+      <main className="min-w-0 flex-1 px-4 py-6 md:px-8 md:py-8">
         {/* Fill the width next to the left nav — dense pages (Runs, Requests, Users) were wasting half
             the screen at max-w-6xl. A high cap keeps line lengths sane on an ultrawide without floating
             a narrow block in the middle. Individual pages that want to stay narrow cap their own content. */}

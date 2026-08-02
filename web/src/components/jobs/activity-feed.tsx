@@ -50,19 +50,27 @@ function ActivityRow({
         )}
         {/* Which JOB this was, in the same words as the Jobs tab — the old flat table showed the raw
             kind (`sync.check`), which means nothing to someone reading their own server's history. */}
-        <span className="w-48 shrink-0 truncate font-medium">{label}</span>
-        <span className={`w-32 shrink-0 truncate ${jobStatusTone(job.status)}`}>
+        <span className="w-36 shrink-0 truncate font-medium lg:w-48">
+          {label}
+        </span>
+        {/* w-44, not w-32: the longest status ("Failed after 3 attempts", 146px) was clipped to
+            "Failed after 3 atte…" at EVERY width — the one column here whose text must survive. */}
+        <span className={`w-44 shrink-0 truncate ${jobStatusTone(job.status)}`}>
           {jobStatusLabel(job)}
         </span>
-        <span className="hidden min-w-0 flex-1 truncate text-muted-foreground sm:block">
+        {/* Detail and duration only from `lg`: below it, five columns plus a 240px nav rail leave the
+            detail ~30px, which truncates to nothing while pushing the row past the viewport. */}
+        <span className="hidden min-w-0 flex-1 truncate text-muted-foreground lg:block">
           {job.detail || job.error || "—"}
         </span>
         {jobDuration(job) && (
-          <span className="hidden shrink-0 tabular-nums text-muted-foreground md:block">
+          <span className="ml-auto hidden shrink-0 tabular-nums text-muted-foreground lg:ml-0 lg:block">
             {jobDuration(job)}
           </span>
         )}
-        <span className="shrink-0 whitespace-nowrap text-muted-foreground">
+        {/* `ml-auto` keeps the time hard right on the narrow layout, where the flex-1 detail that
+            normally does the pushing is hidden. */}
+        <span className="ml-auto shrink-0 whitespace-nowrap text-muted-foreground lg:ml-0">
           {job.created_at ? timeAgo(job.created_at) : "—"}
         </span>
       </button>
