@@ -304,6 +304,12 @@ export function RowEditor({
   // Whether this row's TITLE claims a particular watch. Mirrors the engine's `_names_a_seed`, and
   // decides whether the cycle window is worth offering.
   const namesASeed = (input.name_template || input.name).includes("{top_seed}");
+  // Whether that name CONTRADICTS the seed budget — the case `seedAdvice` asks the owner to change,
+  // as opposed to the one it simply confirms. Only the former is dressed as a warning: a
+  // movies-and-TV row on one seed leaves a whole library with no row at all, which is the same order
+  // of problem as `SharedRowReachWarning` and was reading as a neutral hint.
+  const seedBudgetMismatch =
+    namesASeed && input.max_seeds !== namedRowSeeds(input.media);
   // Whether the engine forces this row to a nightly cadence — which it does for a row that FOLLOWS a
   // watch, by name or by cycling. Both arms, not just `namesASeed`: an unnamed cycling row is run
   // nightly too, so showing it a freshness slider would state a cadence the row does not obey.
@@ -715,7 +721,14 @@ export function RowEditor({
               // this setting clear was describing a row they didn't have.
               before={
                 namesASeed && (
-                  <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+                  <p
+                    role={seedBudgetMismatch ? "status" : undefined}
+                    className={
+                      seedBudgetMismatch
+                        ? "rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
+                        : "rounded-md bg-muted/60 p-3 text-sm text-muted-foreground"
+                    }
+                  >
                     {seedAdvice(input.max_seeds, input.media)}
                   </p>
                 )

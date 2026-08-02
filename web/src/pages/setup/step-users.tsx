@@ -90,7 +90,12 @@ export function StepUsers() {
               You&rsquo;re in this list too — switch yourself on below to get a
               row of your own.
             </>
-          )}{" "}
+          )}
+        </p>
+        {/* The caveat is its own paragraph, not a sixth line of the one above: the sentence that
+            asks the owner to DO something (switch themselves on) is the one that has to survive a
+            skim, and it stopped standing out once the caveat behind it grew to five lines. */}
+        <p className="mt-2 text-muted-foreground">
           Your own Home screen only ever shows your row. What Plex can&rsquo;t
           do is keep <em>other</em> people&rsquo;s rows out of the
           library&rsquo;s Collections tab for you &mdash; you own the server, so

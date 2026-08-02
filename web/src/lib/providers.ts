@@ -44,7 +44,7 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     needsKey: true,
     needsUrl: false,
     keyUrl: "https://platform.openai.com/api-keys",
-    cost: "Usually the cheapest hosted option. Bring your own API key.",
+    cost: "Among the cheaper hosted options. Bring your own API key.",
   },
   {
     id: "google",
@@ -54,7 +54,7 @@ export const CURATOR_PROVIDERS: readonly CuratorProviderInfo[] = [
     needsKey: true,
     needsUrl: false,
     keyUrl: "https://aistudio.google.com/apikey",
-    cost: "Usually the cheapest hosted option. Bring your own API key.",
+    cost: "Among the cheaper hosted options. Bring your own API key.",
   },
   {
     // ONE entry for every self-hosted runtime: Ollama, llama.cpp, LM Studio, vLLM, LocalAI — and
