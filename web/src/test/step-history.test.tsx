@@ -61,9 +61,9 @@ describe("StepHistory settings persistence", () => {
       "http://taut:8181",
     );
     expect(screen.getByLabelText("Tautulli API key")).toHaveValue("•••••");
-    expect(screen.getByLabelText("TMDB API key (required)")).toHaveValue(
-      "•••••",
-    );
+    expect(
+      screen.getByLabelText("The Movie Database (TMDB) API key (required)"),
+    ).toHaveValue("•••••");
   });
 
   it("does not clobber typing when nothing is saved yet", async () => {
@@ -84,7 +84,9 @@ describe("StepHistory settings persistence", () => {
     const update = vi.fn();
     renderStep({}, update);
     await userEvent.type(
-      await screen.findByLabelText("TMDB API key (required)"),
+      await screen.findByLabelText(
+        "The Movie Database (TMDB) API key (required)",
+      ),
       "wrong-key",
     );
     await userEvent.click(
@@ -100,7 +102,9 @@ describe("StepHistory settings persistence", () => {
     const update = vi.fn();
     renderStep({ tmdb_set: true }, update); // already validated on a prior visit
     await userEvent.type(
-      await screen.findByLabelText("TMDB API key (required)"),
+      await screen.findByLabelText(
+        "The Movie Database (TMDB) API key (required)",
+      ),
       "x",
     );
     expect(update).toHaveBeenCalledWith({ tmdb_set: false });

@@ -381,14 +381,14 @@ describe("RowEditor — placement", () => {
   it("warns only while friends' rows sit on the Recommended shelf", async () => {
     renderEditor(row({ placement: "both", placement_friends: "both" }));
     expect(
-      screen.getByText(/no share filter to hide them behind/i),
+      screen.getByText(/no share of your own for it to hide anything behind/i),
     ).toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("switch", { name: /Friends Library Recommended/i }),
     );
     expect(
-      screen.queryByText(/no share filter to hide them behind/i),
+      screen.queryByText(/no share of your own for it to hide anything behind/i),
     ).toBeNull();
   });
 
@@ -456,7 +456,7 @@ describe("RowEditor — placement", () => {
       screen.getByText(/Your row is off this shelf, but everyone else.s rows/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Everyone else . Library Recommended/i),
+      screen.getByText(/Everyone else . Recommended shelf/i),
     ).toBeInTheDocument();
   });
 });
@@ -516,7 +516,7 @@ describe("RowEditor — placement on a shared row", () => {
     ).toBeInTheDocument();
     // The owner-shelf warning is about OTHER people's rows — a shared row has none.
     expect(
-      screen.queryByText(/no share filter to hide them behind/i),
+      screen.queryByText(/no share of your own for it to hide anything behind/i),
     ).toBeNull();
   });
 });

@@ -105,8 +105,7 @@ export function LibraryPicker({
             media === "both" ||
             libraries.find((l) => l.key === key)?.type === media;
           const scopedKeys = allKeys.filter(inScope);
-          const selected =
-            libraryKeys.length === 0 ? scopedKeys : libraryKeys;
+          const selected = libraryKeys.length === 0 ? scopedKeys : libraryKeys;
           const toggle = (key: string) => {
             const has = selected.includes(key);
             if (has && selected.length === 1) return; // a row must target at least one library
@@ -152,8 +151,8 @@ export function LibraryPicker({
               <p className="text-sm text-muted-foreground">
                 This row builds a collection in each ticked library.{" "}
                 {media === "both"
-                  ? "All ticked = every library, including any you add later."
-                  : `All ticked = every ${media === "movie" ? "movie" : "TV"} library, including any you add later. Tick one of the others and this row covers both types.`}
+                  ? "Tick them all and the row also covers any library you add to Plex later."
+                  : `Tick every ${media === "movie" ? "movie" : "TV"} library and the row also covers ${media === "movie" ? "movie" : "TV"} libraries you add to Plex later. Tick one of the others and it covers both types.`}
               </p>
             </>
           );

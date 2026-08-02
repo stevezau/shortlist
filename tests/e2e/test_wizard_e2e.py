@@ -88,7 +88,7 @@ def _skip_history(page: Page) -> None:
     # The gate: you cannot leave, or even skip Tautulli, without TMDB.
     expect(page.get_by_role("button", name="Skip — use Plex usernames")).to_be_disabled()
 
-    page.get_by_label("TMDB API key (required)").fill("fake-tmdb-key")
+    page.get_by_label("The Movie Database (TMDB) API key (required)").fill("fake-tmdb-key")
     page.get_by_role("button", name="Save TMDB key").click()
     expect(page.get_by_text("TMDB key works")).to_be_visible(timeout=LOAD)
 
@@ -119,7 +119,9 @@ def _pick_users(page: Page, *usernames: str) -> None:
     # The owner caveat is a design requirement, not decoration: the owner CANNOT be hidden
     # from, and they must learn that here rather than from their own Home screen tonight.
     expect(page.get_by_text("Heads up, server owner")).to_be_visible()
-    expect(page.get_by_text(re.compile("hide .*other.* people.s rows from you"))).to_be_visible()
+    expect(
+        page.get_by_text(re.compile("keep .*other.* people.s rows out of the library.s Collections tab"))
+    ).to_be_visible()
 
     for username in WIZARD_USERS:
         expect(page.get_by_role("cell", name=username, exact=True)).to_be_visible(timeout=LOAD)

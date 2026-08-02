@@ -33,7 +33,7 @@ export function OwnerNote({ className }: { className?: string }) {
           Where you <em>do</em> see everyone&rsquo;s rows is the{" "}
           <strong>Collections tab</strong>, and the{" "}
           <strong>Recommended shelf</strong> if you leave{" "}
-          <em>Everyone else &rarr; Library Recommended</em> on for a row. You own
+          <em>Everyone else &rarr; Recommended shelf</em> on for a row. You own
           the server, so there is no share filter to hide them behind &mdash;
           turn that toggle off to clear the shelf.
         </p>

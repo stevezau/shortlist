@@ -130,8 +130,9 @@ export function StepConnect({ data, update }: StepProps) {
           Linked to {data.server_name ?? "your Plex server"}
         </p>
         <p className="text-sm text-muted-foreground">
-          The server URL stays editable later under Settings → Connections. Hit
-          Next to choose a history source.
+          You can change the server URL later under Settings → Connections,
+          where every service you link lives. Next up: a free key from The Movie
+          Database, which is how Shortlist finds titles to suggest.
         </p>
       </div>
     );

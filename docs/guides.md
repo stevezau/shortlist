@@ -267,7 +267,7 @@ surfaces, two audiences, and every one of the four switches is independent:
 
 |                         | You | Everyone else |
 | ----------------------- | --- | ------------- |
-| **Library Recommended** | ☑   | ☑             |
+| **Recommended shelf**   | ☑   | ☑             |
 | **Home screen**         | ☑   | ☑             |
 
 The columns are real, not cosmetic: every person gets their **own** Plex collection, so each switch
@@ -284,7 +284,7 @@ visible to the person it belongs to.
 
 **The one thing this can't do:** hide friends' rows from _your_ Recommended shelf while leaving them
 on theirs. Share filters are what hide a row from someone, and you own the server — there is no
-share with yourself to attach one to. So with **Everyone else → Library Recommended** on, every friend's
+share with yourself to attach one to. So with **Everyone else → Recommended shelf** on, every friend's
 row is on your shelf too. Turn it off (leaving **Everyone else → Home screen** on) and each friend still
 gets their row on their own Home, while your shelf stays yours. Shortlist shows this warning at the
 switch itself.

@@ -115,7 +115,7 @@ describe("RowSourcesField", () => {
 
     // It used to snap silently back to the global view, switches and all.
     expect(await screen.findByRole("status")).toHaveTextContent(
-      /falls back to the global default/i,
+      /falls back to the sources you switched on in Settings/i,
     );
     expect(
       screen.getByLabelText(/Enable TMDB — similar titles for this row/i),

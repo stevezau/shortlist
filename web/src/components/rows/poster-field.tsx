@@ -225,8 +225,9 @@ export function PosterField({
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            The image is generated once and reused across runs — it refreshes
-            when you change the text or style.
+            The image is made once and then kept &mdash; every rebuild of the
+            row reuses it. It&rsquo;s only redrawn when you change the text or
+            the style.
           </p>
           {previewError && (
             <p role="alert" className="text-sm text-destructive">

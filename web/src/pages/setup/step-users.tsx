@@ -91,9 +91,12 @@ export function StepUsers() {
               row of your own.
             </>
           )}{" "}
-          What Plex can&rsquo;t do is hide <em>other</em> people&rsquo;s rows
-          from you: your Home shows every row on the server. Tip: watch on a
-          Plex Home user and keep this account for administration.
+          Your own Home screen only ever shows your row. What Plex can&rsquo;t
+          do is keep <em>other</em> people&rsquo;s rows out of the
+          library&rsquo;s Collections tab for you &mdash; you own the server, so
+          nothing hides them. If you&rsquo;d rather not see them, do your
+          watching on a second Plex account you&rsquo;ve shared the server with,
+          and keep this one for admin.
         </p>
       </div>
 

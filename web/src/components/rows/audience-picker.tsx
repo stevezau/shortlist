@@ -89,8 +89,9 @@ export function AudiencePicker({
             <div className="space-y-1 border-t p-2">
               {users.length === 0 && (
                 <p className="p-2 text-sm text-muted-foreground">
-                  No users yet — import your Plex users first, or this row will
-                  reach nobody.
+                  No users yet &mdash; bring your Plex users in with &ldquo;Sync
+                  users&rdquo; on the Users page first, or this row reaches
+                  nobody.
                 </p>
               )}
               {users.map((user) => {

@@ -82,9 +82,10 @@ export function RowSourcesField({
     <div className="space-y-3 border-t pt-4">
       <Label>Recommendation sources</Label>
       <p className="text-sm text-muted-foreground">
-        Which discovery engines this row pools titles from. Pick different ones
-        per row to give each a distinct character — a Trakt-only “What to watch
-        next”, or an AI-from-library “Hidden gems”.
+        Where this row looks for titles. Pick different ones for different rows
+        to give each its own character &mdash; a Trakt-only &ldquo;What to watch
+        next&rdquo;, or an AI web search &ldquo;Everyone&rsquo;s talking about
+        it&rdquo;.
       </p>
       <Segmented
         value={custom ? "custom" : "global"}
@@ -140,9 +141,9 @@ export function RowSourcesField({
             // inferred from switches the owner just turned all the way off. Advisory, not an error,
             // so it's role="status".
             <p role="status" className="text-sm text-warning">
-              Nothing ticked, so this row falls back to the global default from
-              Settings → Finding titles. Tick at least one source to give it
-              its own.
+              Nothing ticked, so this row falls back to the sources you switched
+              on in Settings → Finding titles, the set every row starts from.
+              Tick at least one above to give this row its own.
             </p>
           ) : (
             <p className="text-xs text-muted-foreground">

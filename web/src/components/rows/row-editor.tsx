@@ -550,7 +550,7 @@ export function RowEditor({
             <InheritableField
               label="Already-watched titles"
               labelFor="row-watched-pct"
-              description="How much of this row can be things they have already finished watching. At 0 the row is all new suggestions. Leave it on the global default to follow Settings → Finding titles."
+              description="How much of this row can be things they have already finished watching. At 0 the row is all new suggestions. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
               ariaLabel="Use the global already-watched default"
               inheriting={input.watched_pct === null}
               globalValue={watchedPctGlobal(settings.data)}
@@ -644,7 +644,7 @@ export function RowEditor({
               <InheritableField
                 label="How often it changes"
                 labelFor="row-freshness"
-                description="How often this row swaps some of its titles for new ones. Leave it on the global default to follow Settings → Finding titles."
+                description="How often this row swaps some of its titles for new ones. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
                 ariaLabel="Use the global freshness default"
                 inheriting={input.freshness === null}
                 globalValue={freshnessGlobal(settings.data)}
@@ -813,8 +813,8 @@ export function RowEditor({
                   </select>
                   <p className="text-xs text-muted-foreground">
                     {ratingSource === "tmdb"
-                      ? "TMDB needs no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic come from MDBList and need its API key in Settings → Requests."
-                      : `Scores come from MDBList — without its API key in Settings → Requests, ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
+                      ? "TMDB scores need no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic all come from MDBList, a free service that fetches every site’s score in one lookup — add its key under Settings → Connections."
+                      : `Scores come from MDBList, a free service that fetches every site’s score in one lookup. Add its key under Settings → Connections, or ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
                     Shared by every row ordered by rating.
                   </p>
                 </div>
@@ -855,10 +855,10 @@ export function RowEditor({
                   Position in the Recommended shelf
                 </span>
                 <p className="text-sm text-muted-foreground">
-                  Where this row lands. Each library can inherit the global
-                  default (Settings → Row placement), sit at the{" "}
-                  <strong>Top</strong>, or anchor right after/before one of your
-                  collections.
+                  Where this row sits on the shelf. In each library it can
+                  follow the default &mdash; Settings → Row placement sets where
+                  all your rows go &mdash; or sit at the <strong>Top</strong>,
+                  or right after or right before one of your own collections.
                 </p>
                 <RowShelfPlacement
                   value={input.hub_anchor}
@@ -888,7 +888,7 @@ export function RowEditor({
 
           <SettingsGroup
             title="Requests"
-            description="Tag titles requested from this row, so Sonarr/Radarr can tell them apart. Optional."
+            description="Mark the titles people ask for from this row, so you can spot them in Radarr and Sonarr — the apps that go and fetch them. Optional."
             summary={requestSummary}
             defaultOpen={false}
           >
@@ -904,9 +904,10 @@ export function RowEditor({
                   className="max-w-xs"
                 />
                 <p className="text-sm text-muted-foreground">
-                  When Requests are on, titles asked for anyone in this row’s
-                  audience get this tag in Sonarr/Radarr — on top of your global
-                  tag and each person’s own tag. Leave blank for none.
+                  With Requests switched on, anything someone asks for from this
+                  row arrives in Radarr or Sonarr carrying this tag &mdash;
+                  alongside the tag every Shortlist request gets and the one for
+                  the person who asked. Leave it blank to add nothing extra.
                 </p>
               </div>
             )}

@@ -145,18 +145,19 @@ export function StepCustomize({ update, next }: StepProps) {
         />
         <p className="mt-3 text-xs text-muted-foreground">
           This previews the row&rsquo;s <em>title</em> as it&rsquo;ll appear on
-          Plex — the &ldquo;Because you watched&hellip;&rdquo; option even fills
-          in a real example. The tiles are placeholders: the actual posters come
-          from each person&rsquo;s own library after the first run.
+          Plex &mdash; the &ldquo;Because you watched&hellip;&rdquo; option even
+          fills in a real example. The tiles are placeholders: the real posters
+          come from each person&rsquo;s own library once Shortlist builds the
+          rows, on the last screen of this setup.
         </p>
       </div>
 
       <RowSizeField value={rowSize} onChange={setRowSize} />
 
       <p className="text-sm text-muted-foreground">
-        This row refreshes nightly to start. Every row runs on its own schedule
-        — change the cadence, or turn it off, in the row&rsquo;s editor once
-        you&rsquo;re set up.
+        This row refreshes nightly to start with. Each row keeps its own
+        schedule &mdash; change how often it refreshes, or switch it off
+        altogether, in the row&rsquo;s editor once you&rsquo;re set up.
       </p>
 
       <div className="flex flex-wrap items-center gap-3">

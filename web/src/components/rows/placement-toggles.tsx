@@ -60,8 +60,8 @@ export function PlacementHelp({ isShared }: { isShared: boolean }) {
         </div>
         <div className="space-y-2">
           <p>
-            <strong className="text-foreground">Library Recommended</strong>{" "}
-            puts a row on that library&rsquo;s Recommended shelf.
+            <strong className="text-foreground">Recommended shelf</strong> puts
+            a row on the shelf Plex shows at the top of that library.
           </p>
           <p>
             <strong className="text-foreground">Home screen</strong> puts it on
@@ -186,7 +186,7 @@ export function PlacementToggles({
           )}
         </div>
 
-        <p className="text-sm">Library Recommended</p>
+        <p className="text-sm">Recommended shelf</p>
         {isShared ? (
           // The grid keeps its shape for every row type. A shared row is ONE Plex collection with a
           // single `promotedToRecommended` flag, so "on for me, off for them" cannot be expressed —
@@ -249,10 +249,11 @@ export function PlacementToggles({
           {ownerLibrary
             ? "Everyone else’s rows show on your Recommended shelf too."
             : "Your row is off this shelf, but everyone else’s rows still show on your Recommended shelf."}{" "}
-          You own the server, so there&rsquo;s no share filter to hide them
-          behind. Turn off{" "}
+          Plex keeps each row private through the share you gave that person
+          &mdash; and you own the server, so you have no share of your own for
+          it to hide anything behind. Turn off{" "}
           <strong className="text-foreground">
-            Everyone else &rarr; Library Recommended
+            Everyone else &rarr; Recommended shelf
           </strong>{" "}
           to clear them from it.
         </p>
