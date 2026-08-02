@@ -162,7 +162,7 @@ def test_full_wizard_builds_real_rows(fresh_page: Page, fresh_app: ShortlistApp,
 
     # 10, not the 15 default: the seeded library can suggest exactly 10 unwatched titles per
     # user, so this is the largest row every user can actually fill (the engine never invents).
-    size_field = page.get_by_label("Row size")
+    size_field = page.get_by_label("How many titles")
     size_field.fill("10")
     size_field.blur()  # the free number field commits on blur
     expect(size_field).to_have_value("10")

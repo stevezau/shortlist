@@ -988,7 +988,7 @@ describe("RowEditor — every group is on screen, only the optional ones fold", 
 
     expect(screen.getByLabelText("Name", { exact: true })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Best match" })).toBeVisible();
-    expect(screen.getByText("Row size")).toBeVisible();
+    expect(screen.getByText("How many titles")).toBeVisible();
 
     // Open, because a page has room for them. As a modal these were collapsed to fit inside the
     // viewport cap — which is how the movies-and-TV seed warning ended up somewhere nobody looks.

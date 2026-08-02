@@ -458,7 +458,7 @@ export function RowEditor({
             </div>
 
             <div className="space-y-2">
-              <Label>Built how?</Label>
+              <Label>One row each, or one for everyone?</Label>
               <Segmented
                 value={input.build}
                 onChange={(build) =>
@@ -476,8 +476,8 @@ export function RowEditor({
               />
               <p className="text-sm text-muted-foreground">
                 {input.build === "per_person"
-                  ? "Each chosen person gets their own version, from their own viewing."
-                  : "One version built from everyone’s viewing, the same for whoever can see it."}
+                  ? "Everyone gets their own row, built from what they have watched. Nobody sees anyone else’s."
+                  : "One row, the same for everyone who can see it, built from what your users have watched between them."}
               </p>
             </div>
 
@@ -520,75 +520,6 @@ export function RowEditor({
                   minWatchers={input.min_watchers}
                 />
               </div>
-            )}
-          </SettingsGroup>
-
-          <SettingsGroup
-            title="How it's shown, and when it runs"
-            description="The order titles appear in, how many there are, and when Shortlist rebuilds the row."
-          >
-            <div className="space-y-2">
-              <Label>Order</Label>
-              <Segmented
-                value={input.pick_order}
-                onChange={(pick_order) => set({ pick_order })}
-                ariaLabel="How the titles in this row are ordered"
-                options={[
-                  { value: "best", label: "Best match" },
-                  { value: "rating", label: "Highest rated" },
-                  { value: "newest", label: "Newest" },
-                  { value: "shuffle", label: "Shuffled" },
-                ]}
-              />
-              <p className="text-sm text-muted-foreground">
-                {pickOrderHelp(input.pick_order, ratingLabel)}
-              </p>
-              {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
-                question "rated by whom?" at exactly this moment, and answering it by sending someone
-                to another screen is how the setting stayed undiscovered. It is still one server-wide
-                value, so the note says so rather than implying it is per-row. */}
-              {input.pick_order === "rating" && (
-                <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
-                  <Label htmlFor="row-rating-source">Rated by</Label>
-                  <select
-                    id="row-rating-source"
-                    value={ratingSource}
-                    onChange={(e) =>
-                      saveSettings.mutate({
-                        "recommendations.rating_source": asRatingSource(
-                          e.target.value,
-                        ),
-                      })
-                    }
-                    disabled={saveSettings.isPending}
-                    className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
-                  >
-                    {RATING_SOURCES.map((source) => (
-                      <option key={source} value={source}>
-                        {RATING_LABELS[source]}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-muted-foreground">
-                    {ratingSource === "tmdb"
-                      ? "TMDB needs no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic come from MDBList and need its API key in Settings → Requests."
-                      : `Scores come from MDBList — without its API key in Settings → Requests, ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
-                    Shared by every row ordered by rating.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <RowScheduleField
-              value={input.schedule}
-              onChange={(schedule) => set({ schedule })}
-            />
-
-            {!isDefault && (
-              <RowSizeField
-                value={input.size}
-                onChange={(size) => set({ size })}
-              />
             )}
           </SettingsGroup>
 
@@ -831,6 +762,75 @@ export function RowEditor({
                   </p>
                 )}
               </div>
+            )}
+          </SettingsGroup>
+
+          <SettingsGroup
+            title="How it's shown, and when it runs"
+            description="The order titles appear in, how many there are, and when Shortlist rebuilds the row."
+          >
+            <div className="space-y-2">
+              <Label>What order the titles appear in</Label>
+              <Segmented
+                value={input.pick_order}
+                onChange={(pick_order) => set({ pick_order })}
+                ariaLabel="How the titles in this row are ordered"
+                options={[
+                  { value: "best", label: "Best match" },
+                  { value: "rating", label: "Highest rated" },
+                  { value: "newest", label: "Newest" },
+                  { value: "shuffle", label: "Shuffled" },
+                ]}
+              />
+              <p className="text-sm text-muted-foreground">
+                {pickOrderHelp(input.pick_order, ratingLabel)}
+              </p>
+              {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
+                question "rated by whom?" at exactly this moment, and answering it by sending someone
+                to another screen is how the setting stayed undiscovered. It is still one server-wide
+                value, so the note says so rather than implying it is per-row. */}
+              {input.pick_order === "rating" && (
+                <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
+                  <Label htmlFor="row-rating-source">Rated by</Label>
+                  <select
+                    id="row-rating-source"
+                    value={ratingSource}
+                    onChange={(e) =>
+                      saveSettings.mutate({
+                        "recommendations.rating_source": asRatingSource(
+                          e.target.value,
+                        ),
+                      })
+                    }
+                    disabled={saveSettings.isPending}
+                    className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
+                  >
+                    {RATING_SOURCES.map((source) => (
+                      <option key={source} value={source}>
+                        {RATING_LABELS[source]}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    {ratingSource === "tmdb"
+                      ? "TMDB needs no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic come from MDBList and need its API key in Settings → Requests."
+                      : `Scores come from MDBList — without its API key in Settings → Requests, ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
+                    Shared by every row ordered by rating.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <RowScheduleField
+              value={input.schedule}
+              onChange={(schedule) => set({ schedule })}
+            />
+
+            {!isDefault && (
+              <RowSizeField
+                value={input.size}
+                onChange={(size) => set({ size })}
+              />
             )}
           </SettingsGroup>
 
