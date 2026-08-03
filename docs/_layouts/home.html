@@ -125,6 +125,41 @@ privacy section and nowhere else, because they used to be on the page twice.
     </div>
   </section>
 
+  <!-- -------------------------------------------------------- templates -- -->
+  <section class="section" id="templates">
+    <div class="wrap">
+      <div class="section__head section__head--center">
+        <span class="eyebrow">Rows</span>
+        <h2>It isn't only “Picked for You”</h2>
+        <p class="section__lede">
+          That's the default, but a row is really a recipe: what goes in it, how big it is, who sees
+          it and how often it changes. Pick one of these to start from and change anything you like.
+          You can run as many as you want at once.
+        </p>
+      </div>
+
+      <div class="templates">
+        {%- for t in site.data.templates -%}
+        <div class="template">
+          <span class="template__emoji" aria-hidden="true">{{ t.emoji }}</span>
+          <div>
+            <h3>
+              {{ t.title }}
+              {%- if t.shared %} <span class="tag">shared</span>{% endif -%}
+            </h3>
+            <p>{{ t.blurb }}</p>
+          </div>
+        </div>
+        {%- endfor -%}
+      </div>
+
+      <p class="center mt-lg" style="color:var(--muted);font-size:0.92rem">
+        Every one of these is built per person, except “Popular on this server”, which is the same
+        row for everybody.
+      </p>
+    </div>
+  </section>
+
   <!-- ---------------------------------------------------------- privacy -- -->
   <section class="section section--tint" id="privacy">
     <div class="wrap">
@@ -246,11 +281,34 @@ privacy section and nowhere else, because they used to be on the page twice.
     <div class="wrap">
       <div class="section__head section__head--center">
         <span class="eyebrow">Works with</span>
-        <h2>What you need, and what's optional</h2>
+        <h2>Where the suggestions come from, and where they go</h2>
         <p class="section__lede">
-          Only Plex and a free TMDB key are required. The rest is there if you already run it.
+          Shortlist pulls candidates from TMDB and Trakt, and from a web search if you want one. An
+          AI model can do the choosing and write the reasons, or Shortlist does it itself. What comes
+          out goes onto Plex home screens, and anything you're missing can go to Radarr or Sonarr.
         </p>
       </div>
+
+      <div class="pipeline" aria-hidden="true">
+        <div class="pipeline__stage">
+          <h4>Suggestions in</h4>
+          <p>TMDB · Trakt · MDBList · web search</p>
+        </div>
+        <span class="pipeline__arrow">→</span>
+        <div class="pipeline__stage pipeline__stage--core">
+          <h4>Shortlist decides</h4>
+          <p>on its own, or with an AI model</p>
+        </div>
+        <span class="pipeline__arrow">→</span>
+        <div class="pipeline__stage">
+          <h4>Results out</h4>
+          <p>a private Plex row each · Radarr &amp; Sonarr requests</p>
+        </div>
+      </div>
+
+      <p class="center" style="color:var(--muted);font-size:0.92rem;margin:1.75rem 0 0">
+        Only Plex and a free TMDB key are required. Everything else is there if you already run it.
+      </p>
 
       <div class="grid grid--3 grid--trio">
         {%- for g in site.data.works_with -%}

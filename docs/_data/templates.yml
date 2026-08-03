@@ -1,0 +1,43 @@
+# The row templates offered when someone adds a row. Names and emoji are copied
+# EXACTLY from web/src/lib/row-templates.ts so the site and the app agree: someone
+# who reads this page then opens the app should see the same words.
+#
+# The blurbs are the app's own, with two em dashes turned into ordinary punctuation
+# to match this site's house style. If a template is added, renamed or removed in
+# row-templates.ts, change it here too.
+#
+# `shared: true` marks the one row everybody sees. The other seven are built per
+# person, which is the whole point of the app and worth showing rather than telling.
+
+- emoji: "✨"
+  title: Picked for You
+  blurb: The everyday row. Blends someone's whole recent history into a general set of suggestions.
+
+- emoji: "🎯"
+  title: Because you watched…
+  blurb: Names one recent film and fills the row with things like it. The title tells them why it's there.
+
+- emoji: "☕"
+  title: Happy to see again
+  blurb: Films and shows they've already finished, put back in front of them. A shelf of old favourites rather than new suggestions.
+
+- emoji: "🌱"
+  title: Fresh finds
+  blurb: Rebuilds every night, nothing they've seen. For people who want something new each evening.
+
+- emoji: "🕰️"
+  title: From the vault
+  blurb: Built once and left alone. A shelf that stays put, for a curated set you don't want reshuffled.
+
+- emoji: "🍿"
+  title: Movie night
+  blurb: Films only, a short shelf, refreshed weekly. Something to pick from on a Friday.
+
+- emoji: "📺"
+  title: More TV to watch
+  blurb: Series they have never opened, not one they're part-way through. A shelf of things to start.
+
+- emoji: "👥"
+  title: Popular on this server
+  blurb: One row everybody sees, built only from titles several people have watched. Nothing personal in it.
+  shared: true

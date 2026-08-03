@@ -683,6 +683,111 @@ figcaption {
   color: var(--accent-text);
 }
 
+/* ------------------------------------------------------ row templates -- */
+
+.templates {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr));
+  max-width: 68rem;
+  margin-inline: auto;
+}
+
+.template {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.9rem;
+  align-items: start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.2rem;
+}
+
+.template__emoji {
+  font-size: 1.35rem;
+  line-height: 1.2;
+}
+
+.template h3 {
+  font-size: 0.98rem;
+  margin-bottom: 0.3rem;
+}
+
+.template p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.tag {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.45rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------- pipeline -- */
+
+/* Sources in, Shortlist, results out. The page named TMDB in one place, Radarr in
+   another and the AI providers in two more, so nobody could see the shape of it. */
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: 0.85rem;
+  max-width: 60rem;
+  margin: 0 auto clamp(2rem, 1rem + 3vw, 3rem);
+}
+
+.pipeline__stage {
+  flex: 1 1 14rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  text-align: center;
+}
+
+.pipeline__stage--core {
+  border-color: var(--accent-line);
+  background: var(--accent-quiet);
+}
+
+.pipeline__stage h4 {
+  font-size: 0.94rem;
+  margin-bottom: 0.3rem;
+}
+
+.pipeline__stage p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.pipeline__arrow {
+  align-self: center;
+  color: var(--accent);
+  font-size: 1.2rem;
+  flex: none;
+}
+
+@media (max-width: 720px) {
+  .pipeline__arrow {
+    rotate: 90deg;
+  }
+}
+
 /* --------------------------------------------------------- works with -- */
 
 /* Capped at three columns so the six groups land as two even rows. The plain
