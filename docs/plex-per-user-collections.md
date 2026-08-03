@@ -28,7 +28,7 @@ else**.
 ## Why this only started working in 2026
 
 Label restrictions have existed for years, but they weren't applied everywhere. A collection hidden
-by label would still surface on the Home shelf, the Recommended tab, or in "Related" rows — so a
+by label would still surface on the Home shelf, the Recommended tab, or in "Related" rows, so a
 "private" collection wasn't private at all. This is why the technique didn't reliably work before,
 and why older forum threads say it can't be done.
 
@@ -59,14 +59,14 @@ That's it. Alice sees the collection; nobody else does.
 
 ### Two things to watch out for
 
-**The server owner can't be restricted.** Plex doesn't apply share filters to the admin account —
+**The server owner can't be restricted.** Plex doesn't apply share filters to the admin account, because
 there's no share to filter. If you're the owner, you will see every labelled collection on the
 server no matter what you do. That's a Plex limitation, not something to debug.
 
 **Movies and TV need separate rows.** A collection lives in one library, and Plex applies label
 restrictions per library (`filterMovies` and `filterTelevision` are distinct). If you want someone to
 have a private row of films _and_ one of shows, that's two collections with the same label. A
-collection holding the wrong type for its library matches neither restriction — which makes it
+collection holding the wrong type for its library matches neither restriction, which makes it
 impossible to hide from anyone.
 
 ## Do it in the wrong order and it leaks
@@ -76,7 +76,7 @@ This is the part people get wrong, and it's worth being blunt about it.
 The obvious order is: **create the collection, then add the exclusions.** Don't. Between those two
 steps the collection exists, is unlabelled or unexcluded, and is visible on the Home shelf of every
 single person you share with. On a server with 40 users that's a window where 39 people can see a row
-built from someone else's viewing habits — and Plex clients cache shelves aggressively, so "I fixed
+built from someone else's viewing habits. Plex clients also cache shelves aggressively, so "I fixed
 it a minute later" doesn't necessarily un-show it.
 
 The safe order is:
@@ -110,7 +110,7 @@ the way you found it.
 The mechanism is sound. The arithmetic isn't.
 
 Every private collection needs an exclusion on every _other_ account. For **n** users each with their
-own row, that's **n × (n−1)** share-filter entries — 20 users is 380 of them, and each one is a
+own row, that's **n × (n−1)** share-filter entries. Twenty users is 380 of them, and each one is a
 read-modify-write against a filter string you must not corrupt. Add a user and you touch every
 existing share. Add a row and you touch them all again. Rebuild the rows nightly and it's a
 non-starter.

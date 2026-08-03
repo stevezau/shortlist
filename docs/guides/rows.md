@@ -10,7 +10,7 @@ nav_order: 2
 **Rows → Add a row** opens a gallery rather than a blank form: _Picked for You_, _Because you
 watched…_, _Happy to see again_, _Fresh finds_, _From the vault_, _Popular on this server_, _Movie
 night_, _More TV to watch_, and _Start from scratch_. Each tile names the two or three settings it
-changes, so picking one also shows you which knobs matter. Nothing is locked in — every field is
+changes, so picking one also shows you which knobs matter. Nothing is locked in. Every field is
 editable afterwards, and the template is not stored on the row.
 
 ## Naming a row
@@ -32,7 +32,7 @@ the row is built:
 
 If a `{top_seed}` row is built for someone with too little history to have a favourite, it falls
 back to a clean default ("✨ Picked for You") rather than a half-finished sentence. You can rename
-any row at any time in the **Row editor** — the collection on Plex is renamed in place, so its
+any row at any time in the **Row editor**, and the collection on Plex is renamed in place, so its
 place in the shelf and its privacy are preserved.
 
 **A `{top_seed}` row needs one more setting to be honest.** By default every row is built from a
@@ -53,8 +53,8 @@ AI web search looks up** is a slice off the front of that same list, and caps th
 source alone.
 
 There is a server-wide default for it in **Settings → Finding titles**, and any row can override it.
-The global stops at 5 while a row goes down to 1 — a single seed is a deliberate choice for one row,
-not something to impose on every row at once.
+The global stops at 5 while a row goes down to 1, because a single seed is a choice worth making for one row
+rather than imposing on every row at once.
 
 ### Which watch a one-title row follows
 
@@ -64,7 +64,7 @@ fortnight.
 
 **Row editor → Which watch it follows** changes that. Raise **Recent watches to choose from** above
 `1` and the row cycles instead: still one watch per row, but a different one each day, working
-through their last few and then coming round again. It cycles rather than picking at random —
+through their last few and then coming round again. It cycles rather than picking at random, because
 a random pick repeats, and a repeat is indistinguishable from a row that has stopped working. Two
 people's rows cycle out of step, so a whole server doesn't rebuild on the same night.
 
@@ -74,14 +74,14 @@ from**, which is the setting people reach for first and the wrong one: that blen
 one row, diluting the very claim a `{top_seed}` title makes. Cycling keeps the row about one watch
 and moves which one.
 
-**Rows that follow a watch always refresh nightly** — whether they follow it by name (`{top_seed}`)
+**Rows that follow a watch always refresh nightly**, whether they follow it by name (`{top_seed}`)
 or by cycling. A row whose title claims a recent watch can't be allowed to lag behind it: at the
 usual pace it would go on naming last week's film for a week after the person moved on. So
 **How often it changes** is not offered on those rows at all; the row simply refreshes nightly.
 Every other row keeps the setting.
 
 There is a modest cost to that. Refreshing nightly does not only mean "a write when the watch
-changes" — on the nights it hasn't changed the row still swaps its weakest third for new titles, so
+changes". On the nights it hasn't changed the row still swaps its weakest third for new titles, so
 it writes to Plex most nights, per person, per library, where an ordinary row on the default pace
 writes about weekly. It does not cost any extra AI usage: candidates are gathered once per run
 however often a row refreshes, so how often a row refreshes has no bearing on it.
@@ -92,17 +92,17 @@ however often a row refreshes, so how often a row refreshes has no bearing on it
 
 | Order             | What you get                                                            |
 | ----------------- | ----------------------------------------------------------------------- |
-| **Best match**    | Strongest suggestions first — how well each title matches their viewing |
+| **Best match**    | Strongest suggestions first, by how well each title matches their viewing |
 | **Highest rated** | Highest score first, from whichever service you configured              |
 | **Newest**        | Most recently released first                                            |
 | **Shuffled**      | A different order every day, from the same titles                       |
 
 Plex itself only sorts a collection by release date, alphabetically, or by a custom order, so every
-one of these is applied by Shortlist and delivered as that custom order — which is what the Home row
+one of these is applied by Shortlist and delivered as that custom order, which is what the Home row
 displays.
 
 **Highest rated** uses TMDB by default, which needs no setup. To sort on IMDb, Trakt, Rotten Tomatoes
-or Metacritic instead, set **Settings → Finding titles → Rate titles using** — those come from MDBList
+or Metacritic instead, set **Settings → Finding titles → Rate titles using**. Those come from MDBList
 and need its API key (the same one the Requests feature uses). Without a key, or once MDBList's daily
 quota is spent, the row falls back to TMDB for its _whole_ ordering rather than sorting half the row
 on one scale and half on another.
@@ -112,7 +112,7 @@ row is being written anyway, so they are free; shuffled rewrites the collection 
 including days when nothing about the row has changed. On a server with many people that is real
 write volume, so it is off by default.
 
-A shuffle is stable within a day — re-running a row the same night reproduces the same order, and two
+A shuffle is stable within a day. Re-running a row the same night reproduces the same order, and two
 people's copies of one row shuffle differently.
 
 ## Where a row shows
@@ -126,25 +126,25 @@ surfaces, two audiences, and every one of the four switches is independent:
 | **Home screen**       | ☑   | ☑             |
 
 The columns are real, not cosmetic: every person gets their **own** Plex collection, so each switch
-is set on a different collection. **You** is your own row — Plex's Home shelf applies to the server
+is set on a different collection. **You** is your own row, and Plex's Home shelf applies to the server
 owner alone. **Everyone else** covers the people you've shared with plus Plex Home members, whom
 Plex groups together under Shared Users' Home. Each of them only ever sees their own row; everyone
 else's is excluded from their share filter.
 
 Turn all four off and the row still gets built and kept private; it claims no Recommended slot, and
 you'll find it under the library's **Collections** tab. One caveat: on a run where Shortlist can't
-match an existing collection back to its row — a `{top_seed}` row that produced no picks, say — that
+match an existing collection back to its row (a `{top_seed}` row that produced no picks, say) that
 row keeps its own Home flag for that run. It stays off the Recommended shelf, and it is only ever
 visible to the person it belongs to.
 
 **What this can't do:** hide friends' rows from _your_ Recommended shelf while leaving them
-on theirs. Share filters are what hide a row from someone, and you own the server — there is no
+on theirs. Share filters are what hide a row from someone, and you own the server, so there is no
 share with yourself to attach one to. So with **Everyone else → Recommended shelf** on, every friend's
 row is on your shelf too. Turn it off (leaving **Everyone else → Home screen** on) and each friend still
 gets their row on their own Home, while your shelf stays yours. Shortlist shows this warning at the
 switch itself.
 
-A common setup: **You** both on, **Everyone else** Home only — you get your row on your Home and your
+A common setup: **You** both on, **Everyone else** Home only. You get your row on your Home and your
 shelf, everyone else gets theirs on their Home, and nobody's row clutters anybody else's view.
 
 ## Row placement (Recommended shelf)
@@ -159,12 +159,12 @@ the bottom. Settings → **Row placement** sets a server-wide default; you get t
 - **Right before / after a collection**. Pick an existing collection and sit the rows next to it.
 
 Any individual row can override the default in the **Row editor** ("Position in the Recommended
-shelf"), per library — so "Picked for You" can sit at the top while another row sits right after New
+shelf"), per library, so "Picked for You" can sit at the top while another row sits right after New
 Series. Since each person only sees their own row, moving rows up lifts everyone's at once.
 
 Behind the scenes Shortlist re-applies your choice at the end of every run (so a co-managing tool
 can't re-bury the rows), only ever moves its own rows, and never touches the collection you anchored
-to. It works with or without Kometa — Kometa is only _why_ this matters (it fills the shelf), not
+to. It works with or without Kometa. Kometa is only _why_ this matters, because it fills the shelf, not
 _how_ it works; the anchor can be any collection, Kometa's or one of Plex's own.
 
 ## Row posters

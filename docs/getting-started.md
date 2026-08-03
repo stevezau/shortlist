@@ -47,12 +47,12 @@ docker run -d --name shortlist \
   ghcr.io/stevezau/shortlist:latest
 ```
 
-Open `http://your-host:5959`. A fresh install goes straight into the wizard — there is
+Open `http://your-host:5959`. A fresh install goes straight into the wizard. There is
 nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's
 what claims the instance for you); from then on Shortlist only opens for that account.
 
 > Set Shortlist up on your own network first. Until you sign in with Plex and link a server,
-> anyone who can open the page could claim it as theirs — so don't put it on the public internet
+> anyone who can open the page could claim it as theirs, so don't put it on the public internet
 > until you've finished the wizard. Once you've claimed it, it's yours.
 
 The wizard has **7 steps**, and the progress bar counts them the same way this list does:
@@ -93,12 +93,12 @@ share filter. Later runs are much faster. Most rows are unchanged and skipped.
 Every row is kept private automatically: it's a labeled collection excluded on every other
 account's share, delivered hidden and only promoted once those exclusions are in place. Your share
 filters are snapshotted before the first change, so **Uninstall** (Settings → Danger Zone) puts them
-back exactly as they were. This hiding relies on Plex Media Server ≥ 1.43.2.10687 — older builds
+back exactly as they were. This hiding relies on Plex Media Server ≥ 1.43.2.10687. Older builds
 ignore the label exclusion, which is why the wizard surfaces your version before you begin.
 
 ## One thing you should know
 
-You're in the user list too, so you can give yourself a row like anyone else — on a one-person
+You're in the user list too, so you can give yourself a row like anyone else. On a one-person
 server that's the whole point.
 
 What Plex cannot do is hide collections from the **server owner**: your own Home shows every user's
