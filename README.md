@@ -33,9 +33,9 @@ per-user recommendations, self-hosted on your own server. It's **private**: each
 their own row, nobody else's. It refreshes automatically. It turns your library into something
 everyone can actually discover from.
 
-![A "TV Shows Picked for You" row on Plex Home](docs/images/plex-picked-for-you.jpg)
+![A "Movies Picked for You" row on Plex](docs/images/plex-picked-for-you.jpg)
 
-<sub>A live "Picked for You" row on Plex Home — private to that user, built from their watch history.</sub>
+<sub>A "Picked for You" row on Plex — private to that user, built from their watch history.</sub>
 
 ## Why this couldn't exist before 2026
 
