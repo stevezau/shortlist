@@ -602,15 +602,29 @@ function FilterSelect<T extends string>({
 /** One person offered by the "Wanted by" filter, and how many titles on this tab they wanted.
  *  `name` is the Plex username stored in `wanters` — the key everything filters on, so two people
  *  who happen to answer to the same display name stay separate; `label` is what the chip shows. */
+/** `count` is how many titles ON THIS TAB they wanted, and 0 means "none here", NOT "none ever" —
+ *  which is why the picker shows a count only when there is one. */
 type PersonOption = { name: string; label: string; count: number };
 
-/** The names on a tab, most titles first, so the busiest people are the easiest to reach. Ties break
- *  alphabetically on the shown name rather than by whatever order the payload arrived in. */
+/**
+ * Everyone you could filter by: your whole Plex roster, plus anyone named on a title who is no
+ * longer on it (someone since removed still explains why a title is in the inbox).
+ *
+ * Built from the users list rather than inferred from the titles on screen. Inferring it meant a
+ * person whose requests were all older than the newest `MAX_LOADED` never appeared as an option —
+ * and the server-side filter would have found their titles perfectly well if only you could pick
+ * their name. The list you choose from must not be limited by the page you happen to be looking at.
+ *
+ * Sorted by titles on this tab so the people you are most likely to want are at the top, then
+ * alphabetically — which is also the order the whole roster falls into once counts run out.
+ */
 function peopleOn(
   list: RequestCandidate[],
   nameOf: DisplayNameLookup,
+  usernames: string[],
 ): PersonOption[] {
   const counts = new Map<string, number>();
+  for (const name of usernames) counts.set(name, 0);
   for (const item of list) {
     for (const name of item.wanters ?? []) {
       counts.set(name, (counts.get(name) ?? 0) + 1);
@@ -682,7 +696,7 @@ function PeopleFilter({
           key={person.name}
           className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground"
         >
-          {person.label} ({person.count})
+          {person.count ? `${person.label} (${person.count})` : person.label}
           <button
             type="button"
             onClick={() => onToggle(person.name)}
@@ -768,7 +782,13 @@ function PeopleFilter({
                   // Spelled out rather than left to the contents: the name and the count are
                   // adjacent spans, so the computed name came out as "Sarah2" — which is what a
                   // screen reader would have said, too.
-                  aria-label={`${person.label}, ${person.count} ${person.count === 1 ? "title" : "titles"}`}
+                  // No count for somebody with nothing on this tab: "0" would read as "has never
+                  // asked for anything", when it only means "nothing of theirs is on this tab".
+                  aria-label={
+                    person.count
+                      ? `${person.label}, ${person.count} ${person.count === 1 ? "title" : "titles"}`
+                      : person.label
+                  }
                   aria-selected={selected.has(person.name)}
                   onMouseEnter={() => setActive(i)}
                   onMouseDown={(e) => e.preventDefault()} // keep focus in the box
@@ -782,9 +802,11 @@ function PeopleFilter({
                     {selected.has(person.name) && "✓ "}
                     {person.label}
                   </span>
-                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                    {person.count}
-                  </span>
+                  {person.count > 0 && (
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {person.count}
+                    </span>
+                  )}
                 </li>
               ))
             )}
@@ -917,11 +939,16 @@ export function RequestsPage() {
   const activeFull =
     active === "waiting" ? pending : active === "sent" ? sent : rejected;
 
-  // The people offered by the "Wanted by" filter come from the tab you're on, so the counts beside
-  // each name describe the list in front of you.
+  // Everyone on the server is offered; the counts beside them describe the tab you're on. Offering
+  // only the names found on the page meant somebody whose requests were all older than the 500 this
+  // page loads could never be picked — see `peopleOn`.
+  const usernames = useMemo(
+    () => (usersQuery.data ?? []).map((u) => u.username).filter(Boolean),
+    [usersQuery.data],
+  );
   const peopleOptions = useMemo(
-    () => peopleOn(activeFull, nameOf),
-    [activeFull, nameOf],
+    () => peopleOn(activeFull, nameOf, usernames),
+    [activeFull, nameOf, usernames],
   );
   // A name whose titles have all been sent since you ticked it is no longer offered — filtering on
   // it would empty the list with no visible chip to un-tick. Dropping it is the same self-healing
@@ -987,7 +1014,7 @@ export function RequestsPage() {
         ? sentRows
         : rejectedRows;
   const exactCounts = new Map(
-    peopleOn(activeShown, nameOf).map((p) => [p.name, p.count]),
+    peopleOn(activeShown, nameOf, usernames).map((p) => [p.name, p.count]),
   );
   const peopleChips = peopleOptions.map((p) =>
     activePeople.has(p.name)

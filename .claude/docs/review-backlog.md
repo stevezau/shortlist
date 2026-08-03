@@ -507,3 +507,18 @@ test reads the trigger string rather than `next_run is not None`.
 **Still open here, small:** for the five jobs where blank means default, the chip is labelled
 "Daily" rather than the time it actually runs at ("Built-in (03:00)"). Accurate but vague; now
 cheap to fix, since `default_cron` is on every entry of `GET /api/schedule`.
+
+## Requests: the people picker offers everyone (2026-08-03) — CLOSED
+
+The "Wanted by" names were inferred from the titles on the page, and the page loads at most 500.
+Anyone whose requests were all older than that never appeared as an option — and the server-side
+filter would have found their titles perfectly well, if only they could be picked.
+
+Fixed by building the list from `/api/users`, which the page already fetches for display names, so
+no new endpoint was needed. Counts still describe the ACTIVE TAB, and a person with none on it shows
+no count at all: "0" would read as "has never asked for anything" when it only means "nothing of
+theirs is here".
+
+The shape worth remembering: **a chooser must not be limited by the page you happen to be looking
+at.** The filter was always able to reach the whole history; the list of things to choose from was
+the part that could not.

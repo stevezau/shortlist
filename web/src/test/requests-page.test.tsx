@@ -962,6 +962,49 @@ describe("RequestsPage", () => {
     expect(screen.queryByText("Mike Pick")).toBeNull();
   });
 
+  it("offers people who have nothing on the page at all", async () => {
+    // The names used to be inferred from the titles on screen, and the page loads at most 500. So
+    // anyone whose requests were all older than that was missing from the picker — and the filter
+    // itself would have found them perfectly well, if only they could be picked. The list of people
+    // must not be limited by the page you happen to be looking at.
+    getUsers.mockResolvedValue([
+      person("sarah_p89", "Sarah"),
+      person("quiet_one", "Quiet Pete"),
+    ]);
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["sarah_p89"],
+      }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Sarah Pick Two",
+        wanters: ["sarah_p89"],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+
+    await userEvent.click(screen.getByRole("combobox", { name: /Wanted by/i }));
+    const list = await screen.findByRole("listbox");
+
+    // Pete wanted none of the loaded titles, but he is still there to pick...
+    expect(
+      within(list).getByRole("option", { name: "Quiet Pete" }),
+    ).toBeTruthy();
+    // ...and carries NO count, because "0" would read as "has never asked for anything" when it
+    // only means "nothing of theirs is on this tab".
+    expect(
+      within(list).queryByRole("option", { name: /Quiet Pete, 0/ }),
+    ).toBeNull();
+    expect(
+      within(list).getByRole("option", { name: /^Sarah, 2 titles/ }),
+    ).toBeTruthy();
+  });
+
   it("finds someone by their Plex login as well as their display name", async () => {
     // Whoever invited these people knows them by the login they typed into Plex, so searching for
     // it has to work even though the list shows the friendlier name.
