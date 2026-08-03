@@ -195,7 +195,11 @@ function CountBar({
             ambiguity this rewrite is meant to remove. */}
         {delivered > 0 && ` · ${delivered} delivered`}
       </span>
-      <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted">
+      {/* Hidden on phones. The label and the bar are both `shrink-0`, so together they demand 264px
+          before the row name gets a pixel — which does not fit beside a name at 390px. The numbers
+          carry the information on their own; the bar's job is letting you compare rows down the
+          list by their right edges, and that only pays off where the list is wide enough to scan. */}
+      <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted sm:block">
         <div
           className="h-full rounded-full bg-primary"
           style={{ width: `${max > 0 ? (watched / max) * 100 : 0}%` }}
@@ -215,7 +219,11 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <Card>
+    // `min-w-0` because this Card is a GRID ITEM, and a grid item's default `min-width: auto`
+    // resolves to its min-content width. Without it the card sized itself to its widest line (508px
+    // on a 358px column), overflowed the page, and — because it then had room to spare — nothing
+    // inside ever truncated. The dashboard scrolled 134px sideways on a phone.
+    <Card className="min-w-0">
       <CardContent className="space-y-3 pt-6">
         <div>
           <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
@@ -304,7 +312,11 @@ function ByPerson({
       key={p.slug}
       className="flex items-center justify-between gap-3 text-sm"
     >
-      <span className="truncate">{p.display_name || p.username}</span>
+      {/* `min-w-0` is what makes `truncate` actually truncate here. `truncate` sets
+          `white-space: nowrap`, so this flex child's min-content width is the WHOLE name — without
+          `min-w-0` it refuses to shrink, and a long name pushes the line past a phone's screen
+          instead of ellipsing (the dashboard scrolled 134px sideways at 390px). */}
+      <span className="min-w-0 truncate">{p.display_name || p.username}</span>
       <CountBar watched={p.watched} delivered={p.delivered} max={max} />
     </div>
   );
@@ -361,8 +373,10 @@ function ByRow({
       className="flex items-center justify-between gap-3 text-sm"
     >
       <span className="flex min-w-0 items-center gap-1.5">
+        {/* `min-w-0` for the same reason as ByPerson above: `truncate` alone cannot shrink a flex
+            child, so the row name held the line open past the screen. */}
         <span
-          className={`truncate ${r.deleted ? "text-muted-foreground" : ""}`}
+          className={`min-w-0 truncate ${r.deleted ? "text-muted-foreground" : ""}`}
         >
           {r.name}
         </span>

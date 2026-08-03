@@ -168,7 +168,10 @@ export function RowCard({
             </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        {/* Wraps: six controls (toggle, Runs, Edit, Rename, Remove from Plex, Delete) need 533px in
+            one line, so on a phone they ran 184px off the screen and Delete was unreachable. Wrapping
+            costs a row of height on narrow screens and changes nothing above it. */}
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <Switch
             checked={collection.enabled}
             onCheckedChange={(enabled) =>
