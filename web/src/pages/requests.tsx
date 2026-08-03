@@ -42,6 +42,7 @@ import {
 import { sourceShortLabel } from "@/lib/sources";
 import type { RequestCandidate } from "@/lib/types";
 import { type DisplayNameLookup, displayNameLookup } from "@/lib/user-names";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 /** Everything this page sends the owner to Settings for lives in one card — "Fill in the gaps
@@ -620,17 +621,21 @@ function peopleOn(
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
+/** How many matches the list shows at once. Past this you type another letter rather than scroll —
+ *  a list long enough to scroll is the wall this control replaced. */
+const PEOPLE_RESULTS = 8;
+
 /**
  * "Wanted by": pick one person, or several, to see only what they asked for — the answer to "what do
  * I need to grab to get this new person up and running" (issue #61).
  *
- * Chips rather than a dropdown because the page's other pick-from-a-set control (Movies/Shows) is
- * already chips, and several can be on at once — which no `<select>` on this page does. Nobody
- * picked means everybody, so the filter starts out of the way.
+ * Type to find someone; picked people become chips you can take off again. It was a row of chips for
+ * everybody, which is fine for four sharers and unusable for forty: a real server showed eight names
+ * and "+35 more people", so finding one person meant expanding the wall and reading all forty-three.
  *
- * Long rosters collapse to the first few, exactly like the why-list above: a server with forty
- * sharers would otherwise open on forty buttons. A picked name is never collapsed away, or it could
- * be filtering with no way to see or undo it.
+ * One control for both sizes rather than two: with the box empty and focused it lists everyone (up to
+ * PEOPLE_RESULTS), so a small server sees its whole roster the moment it clicks, and a large one
+ * narrows by typing. Nobody picked still means everybody, so the filter starts out of the way.
  */
 function PeopleFilter({
   people,
@@ -641,43 +646,156 @@ function PeopleFilter({
   selected: Set<string>;
   onToggle: (name: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
   const labelId = useId();
-  const LIMIT = 8;
-  const shown = expanded
-    ? people
-    : people.filter((p, i) => i < LIMIT || selected.has(p.name));
-  const hidden = people.length - shown.length;
+  const listId = useId();
+
+  const chosen = people.filter((p) => selected.has(p.name));
+  const q = query.trim().toLowerCase();
+  // Matches on the username as well as the shown name: someone searching for the Plex login they
+  // invited the person under should still find them.
+  const matches = people.filter(
+    (p) =>
+      !q ||
+      p.label.toLowerCase().includes(q) ||
+      p.name.toLowerCase().includes(q),
+  );
+  const visible = matches.slice(0, PEOPLE_RESULTS);
+  const hidden = matches.length - visible.length;
+
+  const pick = (name: string) => {
+    onToggle(name);
+    setQuery("");
+    setActive(0);
+  };
+
   return (
-    <div
-      role="group"
-      aria-labelledby={labelId}
-      className="flex flex-wrap items-center gap-x-3 gap-y-2"
-    >
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <span id={labelId} className="text-xs text-muted-foreground">
         Wanted by
       </span>
-      {shown.map((person) => (
-        <Button
+
+      {chosen.map((person) => (
+        <span
           key={person.name}
-          type="button"
-          size="sm"
-          variant={selected.has(person.name) ? "default" : "outline"}
-          aria-pressed={selected.has(person.name)}
-          onClick={() => onToggle(person.name)}
+          className="inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs font-medium text-primary-foreground"
         >
           {person.label} ({person.count})
-        </Button>
+          <button
+            type="button"
+            onClick={() => onToggle(person.name)}
+            aria-label={`Stop filtering by ${person.label}`}
+            className="rounded-sm opacity-70 hover:opacity-100 focus-visible:opacity-100"
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+          </button>
+        </span>
       ))}
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="text-xs text-primary underline-offset-4 hover:underline focus-visible:underline"
-        >
-          +{hidden} more {hidden === 1 ? "person" : "people"}
-        </button>
-      )}
+
+      <div className="relative">
+        <Input
+          type="search"
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={listId}
+          aria-labelledby={labelId}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            open && visible[active] ? `${listId}-${active}` : undefined
+          }
+          autoComplete="off"
+          className="h-8 w-48 text-sm"
+          placeholder={
+            chosen.length ? "Add another person…" : "Search for a person…"
+          }
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setActive(0);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          // A blur that lands on an option must not close the list before the click registers.
+          onBlur={(e) => {
+            if (!e.currentTarget.parentElement?.contains(e.relatedTarget)) {
+              setOpen(false);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              setOpen(true);
+              setActive((i) => {
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                const next = i + step;
+                return next < 0 ? visible.length - 1 : next % visible.length;
+              });
+            } else if (e.key === "Enter" && open && visible[active]) {
+              e.preventDefault();
+              pick(visible[active].name);
+            } else if (e.key === "Escape") {
+              setOpen(false);
+              setQuery("");
+            } else if (e.key === "Backspace" && !query) {
+              // The usual token-field behaviour: backspace on an empty box takes the last one off.
+              const last = chosen[chosen.length - 1];
+              if (last) onToggle(last.name);
+            }
+          }}
+        />
+
+        {open && (
+          <ul
+            id={listId}
+            role="listbox"
+            className="absolute z-20 mt-1 max-h-72 w-64 overflow-y-auto rounded-md border bg-popover p-1 shadow-lg"
+          >
+            {visible.length === 0 ? (
+              <li className="px-2 py-1.5 text-sm text-muted-foreground">
+                Nobody here matches &ldquo;{query.trim()}&rdquo;.
+              </li>
+            ) : (
+              visible.map((person, i) => (
+                // The option IS the list item. A `<button role="option">` nested inside a plain
+                // `<li>` breaks the listbox's ownership of its options, so assistive tech — and
+                // `getByRole("option")` — stop seeing them.
+                <li
+                  key={person.name}
+                  id={`${listId}-${i}`}
+                  role="option"
+                  // Spelled out rather than left to the contents: the name and the count are
+                  // adjacent spans, so the computed name came out as "Sarah2" — which is what a
+                  // screen reader would have said, too.
+                  aria-label={`${person.label}, ${person.count} ${person.count === 1 ? "title" : "titles"}`}
+                  aria-selected={selected.has(person.name)}
+                  onMouseEnter={() => setActive(i)}
+                  onMouseDown={(e) => e.preventDefault()} // keep focus in the box
+                  onClick={() => pick(person.name)}
+                  className={cn(
+                    "flex cursor-pointer items-center justify-between gap-3 rounded-sm px-2 py-1.5 text-sm",
+                    i === active && "bg-accent text-accent-foreground",
+                  )}
+                >
+                  <span className="min-w-0 truncate">
+                    {selected.has(person.name) && "✓ "}
+                    {person.label}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {person.count}
+                  </span>
+                </li>
+              ))
+            )}
+            {hidden > 0 && (
+              <li className="px-2 py-1.5 text-xs text-muted-foreground">
+                {hidden} more &mdash; keep typing to narrow it down.
+              </li>
+            )}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }

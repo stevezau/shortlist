@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -113,6 +119,18 @@ function renderPage(initialEntry = "/requests") {
         <RequestsPage />
       </MemoryRouter>
     </QueryClientProvider>,
+  );
+}
+
+/** Pick someone in the "Wanted by" box.
+ *
+ * It was a row of buttons, one per person; with forty sharers that was a wall, so it is now a search
+ * box with a list. Tests go through the same two steps a person does: open the box, click the name.
+ */
+async function pickPerson(name: string) {
+  await userEvent.click(screen.getByRole("combobox", { name: /Wanted by/i }));
+  await userEvent.click(
+    await screen.findByRole("option", { name: new RegExp(`^${name},`) }),
   );
 }
 
@@ -485,7 +503,7 @@ describe("RequestsPage", () => {
     renderPage();
     await screen.findByText("Sarah Pick");
     // Each name carries how many of the titles on this tab they wanted.
-    await userEvent.click(screen.getByRole("button", { name: "Sarah (2)" }));
+    await pickPerson("Sarah");
     expect(screen.getByText("Sarah Pick")).toBeTruthy();
     expect(screen.getByText("Shared Pick")).toBeTruthy(); // Sarah wanted this one too
     expect(screen.queryByText("Mike Pick")).toBeNull();
@@ -520,14 +538,13 @@ describe("RequestsPage", () => {
     );
     renderPage();
     await screen.findByText("Sarah Pick");
-    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
+    await pickPerson("Sarah");
 
     expect(await screen.findByText("Buried Sarah Pick")).toBeTruthy();
     expect(listRequests).toHaveBeenCalledWith(["Sarah"]);
     expect(screen.queryByText("Mike Pick")).toBeNull();
     // Her chip is re-counted from that answer — "(1)" beside two of her titles would be a lie.
-    expect(screen.getByRole("button", { name: "Sarah (2)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Mike (1)" })).toBeTruthy();
+    expect(screen.getByText("Sarah (2)")).toBeTruthy();
   });
 
   it("says the page limit applies until a name is picked, then that it doesn't", async () => {
@@ -566,7 +583,7 @@ describe("RequestsPage", () => {
       screen.getByText(/This page loads the first 500 titles/),
     ).toBeTruthy();
 
-    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
+    await pickPerson("Sarah");
     await screen.findByText("Buried Sarah Pick");
     // The limit described the unfiltered read. It does not describe this one, so it must stop
     // being shown — that disclosure is what this change exists to retire.
@@ -591,15 +608,15 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     await screen.findByText("Sarah Pick");
-    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
-    await userEvent.click(screen.getByRole("button", { name: "Mike (1)" }));
+    await pickPerson("Sarah");
+    await pickPerson("Mike");
     // Union, not intersection — two people picked means "either of them", or the list would empty.
     expect(screen.getByText("Sarah Pick")).toBeTruthy();
     expect(screen.getByText("Mike Pick")).toBeTruthy();
     expect(screen.queryByText("Ann Pick")).toBeNull();
     // Un-ticking the last name goes back to everyone, rather than showing nothing.
-    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
-    await userEvent.click(screen.getByRole("button", { name: "Mike (1)" }));
+    await pickPerson("Sarah");
+    await pickPerson("Mike");
     expect(screen.getByText("Ann Pick")).toBeTruthy();
   });
 
@@ -615,22 +632,41 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     await screen.findByText("Sarah Pick");
-    const sarah = screen.getByRole("button", { name: "Sarah (1)" });
-    expect(sarah).toHaveAttribute("aria-pressed", "false");
-    await userEvent.click(sarah);
-    expect(screen.getByRole("button", { name: "Sarah (1)" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    // Nobody picked yet, so there is no chip and everything is on screen.
+    expect(screen.queryByText("Sarah (1)")).toBeNull();
+
+    await pickPerson("Sarah");
+    expect(screen.getByText("Sarah (1)")).toBeTruthy(); // she is now a chip
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+
     // The same "Clear filters" control that resets the rating/vote floors also drops the names.
     await userEvent.click(
       screen.getByRole("button", { name: "Clear filters" }),
     );
     expect(screen.getByText("Mike Pick")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Sarah (1)" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
+    expect(screen.queryByText("Sarah (1)")).toBeNull();
+  });
+
+  it("takes a person back off with the x on their chip", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    await pickPerson("Sarah");
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Stop filtering by Sarah" }),
     );
+
+    expect(await screen.findByText("Mike Pick")).toBeTruthy();
   });
 
   it("says the people filter emptied the tab rather than showing a blank list", async () => {
@@ -689,7 +725,7 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     await screen.findByText("Sarah Pick");
-    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
+    await pickPerson("Sarah");
     expect(screen.queryByText("Mike Pick")).toBeNull();
 
     listRequests.mockResolvedValue([
@@ -915,12 +951,51 @@ describe("RequestsPage", () => {
     renderPage();
     await screen.findByText("Sarah Pick");
     // The chip reads as the person, not as their login...
-    const sarah = await screen.findByRole("button", { name: "Sarah (1)" });
-    expect(screen.queryByRole("button", { name: /sarah_p89/ })).toBeNull();
-    // ...and clicking it still narrows the list, because the filter is keyed on the username.
-    await userEvent.click(sarah);
+    // The option reads as the person, not as their login...
+    await userEvent.click(screen.getByRole("combobox", { name: /Wanted by/i }));
+    expect(await screen.findByRole("option", { name: /^Sarah,/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /sarah_p89/ })).toBeNull();
+
+    // ...and picking it still narrows the list, because the filter is keyed on the username.
+    await userEvent.click(screen.getByRole("option", { name: /^Sarah,/ }));
     expect(screen.getByText("Sarah Pick")).toBeTruthy();
     expect(screen.queryByText("Mike Pick")).toBeNull();
+  });
+
+  it("finds someone by their Plex login as well as their display name", async () => {
+    // Whoever invited these people knows them by the login they typed into Plex, so searching for
+    // it has to work even though the list shows the friendlier name.
+    getUsers.mockResolvedValue([
+      person("sarah_p89", "Sarah"),
+      person("m_jones", "Mike"),
+    ]);
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["sarah_p89"],
+      }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Mike Pick",
+        wanters: ["m_jones"],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+
+    await userEvent.click(screen.getByRole("combobox", { name: /Wanted by/i }));
+    await userEvent.type(
+      screen.getByRole("combobox", { name: /Wanted by/i }),
+      "p89",
+    );
+
+    const list = await screen.findByRole("listbox");
+    const options = within(list).getAllByRole("option");
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveAccessibleName(/^Sarah,/);
   });
 
   it("truncates a long wanters list to three names plus a +N more count", async () => {
