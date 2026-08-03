@@ -683,6 +683,41 @@ figcaption {
   color: var(--accent-text);
 }
 
+/* --------------------------------------------------------- works with -- */
+
+/* Capped at three columns so the six groups land as two even rows. The plain
+   .grid--3 stretches to four on a wide screen and leaves two orphans. */
+.grid--trio {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  max-width: 68rem;
+  margin-inline: auto;
+}
+
+.supports {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.supports li {
+  display: grid;
+  gap: 0.1rem;
+  font-size: 0.9rem;
+}
+
+.supports strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.supports span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
 /* ---------------------------------------------------------------- steps -- */
 
 .steps {

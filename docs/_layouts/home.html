@@ -1,6 +1,13 @@
 ---
 layout: default
 ---
+{%- comment -%}
+House style for this page: plain words, and almost no em dashes. An earlier version
+had 29 of them and read like machine-written marketing. Anything every self-hosted
+app already has (a dark UI, a healthcheck, multi-arch images) is not a selling point
+and doesn't appear. Each idea is stated once: the privacy guarantees live in the
+privacy section and nowhere else, because they used to be on the page twice.
+{%- endcomment -%}
 <main id="main">
 
   <!-- ------------------------------------------------------------- hero -- -->
@@ -9,9 +16,9 @@ layout: default
       <div class="hero__inner">
         <h1>Every Plex user gets <em>their own</em> recommendations</h1>
         <p class="hero__sub">
-          Shortlist reads what each person on your server actually watched and builds them a private
-          “Picked for You” row on their Plex home screen — visible only to them, refreshed while
-          they sleep.
+          Shortlist looks at what each person on your server has watched, then builds them a
+          &ldquo;Picked for You&rdquo; row on their Plex home screen that only they can see. It
+          refreshes overnight.
         </p>
         <div class="hero__cta">
           <a class="btn btn--primary btn--lg" href="{{ '/getting-started/' | relative_url }}">
@@ -30,15 +37,15 @@ layout: default
         <p class="hero__meta">
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            Free and MIT licensed
+            One Docker container
           </span>
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            One container, <code>/config</code> volume
+            No AI key needed
           </span>
           <span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-            No AI key required
+            Puts your Plex back if you remove it
           </span>
         </p>
       </div>
@@ -46,10 +53,10 @@ layout: default
       <figure class="hero__shot">
         <div class="frame">
           <img src="{{ '/images/plex-picked-for-you.jpg' | relative_url }}" width="1600" height="524"
-               alt="A “✨ TV Shows Picked for You” row on a Plex home screen, filled with show posters">
+               alt="A TV Shows Picked for You row on a Plex home screen, filled with show posters">
         </div>
         <figcaption>
-          A live “Picked for You” row on Plex Home — private to that user, built from their watch history.
+          A real &ldquo;Picked for You&rdquo; row on Plex Home, private to that user and built from what they watched.
         </figcaption>
       </figure>
     </div>
@@ -58,54 +65,17 @@ layout: default
   <!-- ---------------------------------------------------------- problem -- -->
   <section class="section section--tint">
     <div class="wrap">
-      <div class="section__head section__head--center">
+      <div class="section__head section__head--center" style="margin-bottom:0">
         <span class="eyebrow">The problem</span>
         <h2>Plex shows everyone the same rows</h2>
         <p class="section__lede">
-          Everyone on your server faces the same blank-screen problem: a huge library and no idea what
-          to put on. Plex's built-in recommendation shelves are identical for every account and lean on
-          its own streaming catalogue — they don't know that your sister has watched every heist film
-          you own and your dad hasn't touched one.
+          Everyone on your server opens Plex to a big library and no idea what to put on. The rows
+          Plex builds are the same for every account and lean on its own streaming catalogue, so they
+          don't know your sister has watched every heist film you own and your dad hasn't touched one.
         </p>
-      </div>
-
-      <div class="grid grid--3">
-        <div class="card">
-          <div class="card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <circle cx="12" cy="8" r="3.5"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/>
-            </svg>
-          </div>
-          <h3>One row per person</h3>
-          <p>
-            Each account gets a different set of titles, chosen from <em>their</em> history — and Plex's
-            label restrictions keep every other account from seeing it.
-          </p>
-        </div>
-        <div class="card">
-          <div class="card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M4 19V5m0 14h16M8 15V9m4 6V6m4 9v-4"/>
-            </svg>
-          </div>
-          <h3>Only titles you actually own</h3>
-          <p>
-            Every pick is verified to exist in your library before it's shown. Nothing invented, no
-            dead ends, no “available on a service you don't have”.
-          </p>
-        </div>
-        <div class="card">
-          <div class="card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path d="M8 10h8M8 14h5"/><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8Z"/>
-            </svg>
-          </div>
-          <h3>It tells you why</h3>
-          <p>
-            Every pick carries its reason — “Because you watched <em>Heat</em>”. No black box, and you
-            can block a bad seed that's skewing someone's picks.
-          </p>
-        </div>
+        <p class="section__lede" style="margin-top:1rem">
+          Shortlist gives each person a row of their own instead.
+        </p>
       </div>
     </div>
   </section>
@@ -117,38 +87,38 @@ layout: default
         <span class="eyebrow">How it works</span>
         <h2>Four steps, every night</h2>
         <p class="section__lede">
-          Shortlist runs on a schedule you set. Each run walks every enabled user independently, so one
-          person's failure never blocks anyone else's row.
+          Shortlist runs on a schedule you choose. It works through your users one at a time, so a
+          problem with one person's row never stops anyone else getting theirs.
         </p>
       </div>
 
       <div class="steps">
         <div class="step">
-          <h3>Read their history</h3>
+          <h3>Read what they watched</h3>
           <p>
-            Per-user watch history straight from your Plex server, using each share's own token. A
-            20-episode binge counts as one show, not twenty episodes.
+            Each person's own Plex history. A 20-episode binge counts as one show rather than twenty
+            episodes, so a single series doesn't drown out everything else.
           </p>
         </div>
         <div class="step">
-          <h3>Gather candidates</h3>
+          <h3>Find things like it</h3>
           <p>
-            Similar titles from TMDB and Trakt, plus an optional live web search for current,
-            well-reviewed picks — then filtered down to what's actually in your library.
+            Similar titles from TMDB and Trakt, plus an optional web search for recent ones. Anything
+            you don't already have in your library gets dropped.
           </p>
         </div>
         <div class="step">
-          <h3>Rank and explain</h3>
+          <h3>Choose and explain</h3>
           <p>
-            The built-in picker needs no keys and no cloud. Add an LLM — Claude, GPT, Gemini or a local
-            Ollama — and it writes each pick's short “why” instead.
+            Shortlist picks the best ones and writes the reason for each. This works with no AI at
+            all. Add an AI model and it writes the reasons instead.
           </p>
         </div>
         <div class="step">
-          <h3>Deliver privately</h3>
+          <h3>Put it on their home screen</h3>
           <p>
-            The row is written to Plex hidden, the exclusions that keep it private are merged into
-            everyone else's share, and only then is it promoted onto Home.
+            The row goes to Plex hidden, everyone else is told not to show it, and only then does it
+            appear. That order is what keeps it private.
           </p>
         </div>
       </div>
@@ -163,27 +133,27 @@ layout: default
           <span class="eyebrow">Privacy</span>
           <h2>A row nobody else can see</h2>
           <p class="section__lede">
-            Plex has no per-user collections. What it does have is <strong>label restrictions</strong>:
-            give a collection a label, then tell every <em>other</em> account to exclude that label.
-            What's left is a collection only one person can see.
+            Plex can't share a collection with one person. What it can do is hide things by
+            <strong>label</strong>. So Shortlist labels each row, then tells every other account to
+            hide that label. What's left is a row only its owner sees.
           </p>
           <p class="section__lede" style="margin-top:1rem">
-            The order matters more than the mechanism. Get it wrong and a “private” row is briefly
-            visible to your whole server. Every Shortlist run does this, in this order:
+            The order those steps happen in matters more than the trick itself. Do it the obvious way
+            round and the row is briefly visible to your whole server. Every run goes:
           </p>
           <p style="margin-top:1.5rem">
             <a class="btn btn--ghost" href="{{ '/plex-per-user-collections/' | relative_url }}">
-              How the mechanism works
+              How the hiding works
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
             </a>
           </p>
         </div>
 
         <ol class="order">
-          <li><div><strong>Sweep first</strong><span>Remove rows Plex can't hide for that library type, before anything else runs.</span></div></li>
-          <li><div><strong>Deliver hidden</strong><span>Write every row to Plex unpromoted — present, but on nobody's home screen.</span></div></li>
-          <li><div><strong>Merge the exclusions</strong><span>Add <code>label!=shortlist_&lt;user&gt;</code> into every other account's share filter, leaving their existing filters byte-identical.</span></div></li>
-          <li><div><strong>Then promote</strong><span>Only now do rows appear on shared Home — so a row is never visible before it's private.</span></div></li>
+          <li><div><strong>Clear up first</strong><span>Remove any row Plex can't hide for that kind of library, before anything else happens.</span></div></li>
+          <li><div><strong>Send the row hidden</strong><span>It exists in Plex, but it isn't on anyone's home screen yet.</span></div></li>
+          <li><div><strong>Hide it from everyone else</strong><span>Every other account is told to hide that row's label. Their existing settings are left exactly as they were.</span></div></li>
+          <li><div><strong>Now show it</strong><span>Only now does the row appear, so it is never visible before it is private.</span></div></li>
         </ol>
       </div>
 
@@ -194,8 +164,8 @@ layout: default
               <path d="M12 3 4 6v6c0 5 3.4 8.2 8 9 4.6-.8 8-4 8-9V6Z"/><path d="m9 12 2 2 4-4"/>
             </svg>
           </div>
-          <h3>Snapshotted before any change</h3>
-          <p>Your share filters are recorded before the first write. Uninstall restores them exactly.</p>
+          <h3>Your settings are saved first</h3>
+          <p>Shortlist copies your sharing settings before it changes anything. Removing it puts them back the way they were.</p>
         </div>
         <div class="card">
           <div class="card__icon">
@@ -203,8 +173,8 @@ layout: default
               <path d="M4 7h16M4 12h16M4 17h10"/>
             </svg>
           </div>
-          <h3>Merges, never rebuilds</h3>
-          <p>Existing share filters are parsed and unioned, not reconstructed. Other tools' settings survive untouched.</p>
+          <h3>It adds, it doesn't replace</h3>
+          <p>Shortlist reads what is already in your sharing settings and adds only its own entries. Anything you or another tool set is left alone.</p>
         </div>
         <div class="card">
           <div class="card__icon">
@@ -212,8 +182,8 @@ layout: default
               <path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 3v4M16 3v4M9 13h6"/>
             </svg>
           </div>
-          <h3>Kometa-friendly</h3>
-          <p>Only collections Shortlist created are ever modified. Anything else on your server is detected and skipped.</p>
+          <h3>It leaves Kometa alone</h3>
+          <p>Only the collections Shortlist made are ever touched. Anything else on your server is spotted and skipped.</p>
         </div>
       </div>
     </div>
@@ -223,13 +193,12 @@ layout: default
   <section class="section" id="features">
     <div class="wrap">
       <div class="section__head section__head--center">
-        <span class="eyebrow">Features</span>
+        <span class="eyebrow">What you get</span>
         <h2>Built for a server with real people on it</h2>
       </div>
 
-      <div class="grid grid--3">
-        {%- assign features = site.data.features -%}
-        {%- for f in features -%}
+      <div class="grid grid--3 grid--trio">
+        {%- for f in site.data.features -%}
         <div class="card">
           <div class="card__icon">{{ f.icon }}</div>
           <h3>{{ f.title }}</h3>
@@ -245,16 +214,15 @@ layout: default
     <div class="wrap">
       <div class="section__head section__head--center">
         <span class="eyebrow">Behind the row</span>
-        <h2>You can see exactly why each person got what they got</h2>
+        <h2>You can see why each person got what they got</h2>
         <p class="section__lede">
-          Screenshots use a test library with placeholder titles — no real people. The Plex row at the
-          top of this page is from a real server.
+          These screenshots use a test library with made-up titles, so no real accounts appear. The
+          Plex row at the top of this page is from a real server.
         </p>
       </div>
 
       <div class="shots">
-        {%- assign shots = site.data.screenshots -%}
-        {%- for s in shots -%}
+        {%- for s in site.data.screenshots -%}
         <div class="shot">
           <div class="shot__text">
             <h3>{{ s.title }}</h3>
@@ -273,41 +241,28 @@ layout: default
     </div>
   </section>
 
-  <!-- ------------------------------------------------------- where it fits -- -->
-  <section class="section" id="compare">
+  <!-- ------------------------------------------------------- works with -- -->
+  <section class="section" id="works-with">
     <div class="wrap">
       <div class="section__head section__head--center">
-        <span class="eyebrow">Where it fits</span>
-        <h2>Built to sit alongside the rest of your stack</h2>
+        <span class="eyebrow">Works with</span>
+        <h2>What you need, and what's optional</h2>
         <p class="section__lede">
-          Shortlist does one narrow thing: a different row for each person, private to them, inside
-          Plex. It is not trying to replace your collection manager, your request app or your
-          monitoring — and it is careful not to stand on any of them.
+          Only Plex and a free TMDB key are required. The rest is there if you already run it.
         </p>
       </div>
 
-      <div class="grid grid--3">
+      <div class="grid grid--3 grid--trio">
+        {%- for g in site.data.works_with -%}
         <div class="card">
-          <h3>It never touches what it didn't make</h3>
-          <p>
-            Only collections carrying Shortlist's own <code>shortlist_*</code> label are ever
-            modified. Kometa's collections, and anything you built by hand, are detected and skipped.
-          </p>
+          <h3>{{ g.group }}</h3>
+          <ul class="supports">
+            {%- for i in g.items -%}
+            <li><strong>{{ i.name }}</strong><span>{{ i.note }}</span></li>
+            {%- endfor -%}
+          </ul>
         </div>
-        <div class="card">
-          <h3>It merges share filters, never rebuilds them</h3>
-          <p>
-            Existing conditions on an account's filters are parsed and left byte-for-byte identical.
-            Shortlist adds only its own entries — and snapshots the original first.
-          </p>
-        </div>
-        <div class="card">
-          <h3>It connects rather than duplicates</h3>
-          <p>
-            Tautulli for richer history, Radarr and Sonarr for gaps, Trakt and MDBList for
-            candidates. All optional; the only requirements are Plex and a free TMDB key.
-          </p>
-        </div>
+        {%- endfor -%}
       </div>
 
       <p class="center mt-lg">
@@ -326,8 +281,8 @@ layout: default
         <span class="eyebrow">Quick start</span>
         <h2>Running in about ten minutes</h2>
         <p class="section__lede">
-          Start the container, open the web UI, and the setup wizard walks you through connecting Plex,
-          choosing users, and building your first rows.
+          Start the container and open it in a browser. A setup wizard connects your Plex account,
+          asks who should get rows, and builds the first ones.
         </p>
       </div>
 
@@ -375,15 +330,15 @@ docker compose up -d</code></pre>
         <div>
           <p>
             <strong>Want to try it without touching your server?</strong> Add
-            <code>-e SHORTLIST_DRY_RUN=1</code> and Shortlist shows you exactly what it <em>would</em>
-            do, writing nothing to Plex until you're happy.
+            <code>-e SHORTLIST_DRY_RUN=1</code>. Shortlist will show you everything it would do and
+            write nothing to Plex until you are happy.
           </p>
         </div>
       </div>
 
       <p class="center mt-lg" style="color:var(--muted);font-size:0.92rem">
-        Requires Plex Media Server 1.43.2.10687+, Plex Pass on the admin account, and a free TMDB key.
-        <a href="{{ '/getting-started/' | relative_url }}">Full requirements →</a>
+        Needs Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin account, and a free
+        TMDB key. <a href="{{ '/getting-started/' | relative_url }}">Full requirements &rarr;</a>
       </p>
     </div>
   </section>
@@ -418,10 +373,10 @@ docker compose up -d</code></pre>
   <section class="section section--tint">
     <div class="wrap">
       <div class="section__head section__head--center" style="margin-bottom:0">
-        <h2>Turn your library into something people can discover from</h2>
+        <h2>Give your library a way to be found</h2>
         <p class="section__lede">
-          Shortlist is in public beta and running in production. If you hit a rough edge, please open
-          an issue — it genuinely helps.
+          Shortlist is new and still in beta, though it runs in production every night. If something
+          breaks, please open an issue.
         </p>
         <div class="hero__cta" style="margin-top:1.75rem">
           <a class="btn btn--primary btn--lg" href="{{ '/getting-started/' | relative_url }}">Install Shortlist</a>
@@ -435,7 +390,7 @@ docker compose up -d</code></pre>
 
 {%- comment -%}
 FAQPage structured data, generated from the same _data/faq.yml the section above
-renders — so the markup and the rich result can never drift apart.
+renders, so the markup and the rich result can never drift apart.
 {%- endcomment -%}
 <script type="application/ld+json">
 {
