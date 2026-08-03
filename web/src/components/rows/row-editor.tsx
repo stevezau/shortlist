@@ -994,11 +994,16 @@ export function RowEditor({
           {collection && (
             <div className="space-y-3 rounded-lg border border-destructive/30 p-5">
               <div className="space-y-1">
-                <h2 className="text-sm font-medium">Remove this row</h2>
+                <h2 className="text-base font-semibold text-destructive-text">
+                  Remove this row
+                </h2>
                 <p className="text-sm text-muted-foreground">
                   Taking it off Plex keeps its settings here, so the next run
                   builds it again. Deleting it doesn&rsquo;t. Either way the
                   titles stay in your library.
+                  <br />
+                  To turn it off without removing anything today, use the toggle
+                  on the Rows page — the next run takes it off Plex for you.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">

@@ -127,13 +127,12 @@ def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(pag
     # every other field on the page, which would imply Save applies it — Save deliberately does not.
     name.fill("✨ {library_name} Not applied")
     expect(page.get_by_text("Not applied yet")).to_be_visible()
-    # Close the editor; rename happens via the row-card's Rename button + dialog.
-    page.get_by_role("button", name="Cancel").click()
 
-    page.get_by_role("button", name="Rename").click()
-    rename_input = page.get_by_label("New name")
-    expect(rename_input).to_be_visible()
-    rename_input.fill("✨ {library_name} Handpicked")
+    # Rename is the editor's, beside the name it changes — the Rows card no longer offers one.
+    # "Rename…" hands the proposed name to the rename screen, which still asks before touching Plex.
+    name.fill("✨ {library_name} Handpicked")
+    page.get_by_role("button", name="Rename…").click()
+    expect(page.get_by_role("button", name="Rename on Plex")).to_be_visible(timeout=LOAD)
     page.get_by_role("button", name="Rename on Plex").click()
 
     # The rename triggers an SSE stream page — wait for it to finish, then check the DB.

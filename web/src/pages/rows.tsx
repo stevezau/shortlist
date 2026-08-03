@@ -28,7 +28,6 @@ export function RowsPage() {
   // already knew what they wanted to build.
   const [pickingTemplate, setPickingTemplate] = useState(false);
   // When set, the matching RowCard opens its rename dialog on mount.
-  const [renameTarget, setRenameTarget] = useState<number | null>(null);
 
   return (
     <div>
@@ -79,8 +78,6 @@ export function RowsPage() {
                       collection={collection}
                       users={users}
                       onEdit={() => navigate(`/rows/${collection.id}`)}
-                      openRename={renameTarget === collection.id}
-                      onRenameOpened={() => setRenameTarget(null)}
                     />
                   ))}
                 </div>

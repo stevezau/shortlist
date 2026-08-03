@@ -1,13 +1,11 @@
-import { useMutation } from "@tanstack/react-query";
 import {
   Image as ImageIcon,
   ListChecks,
-  Pen,
   UserCheck,
   Users as UsersIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { useState } from "react";
+import { Link } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
 import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
@@ -22,8 +20,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { audienceSummary, rowOverrides, toInput } from "@/lib/collections";
@@ -33,64 +29,32 @@ import { useLibraries, useSaveCollection, useSettings } from "@/lib/queries";
 import type { Collection, User } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-/** One row in the Rows list: its audience/size summary, an enable toggle, edit, and delete. */
+/** One row in the Rows list: its audience/size summary, an enable toggle, edit, and delete.
+ *
+ * Renaming is NOT here. It lives in the editor beside the name it changes, which is where someone
+ * looking to rename a row goes anyway — and on a card it was a third destructive-ish Plex write
+ * competing for space with the two that had to stay.
+ */
 export function RowCard({
   collection,
   users,
   onEdit,
-  openRename,
-  onRenameOpened,
 }: {
   collection: Collection;
   users: User[];
   onEdit: () => void;
-  openRename?: boolean;
-  onRenameOpened?: () => void;
 }) {
-  const navigate = useNavigate();
   const save = useSaveCollection();
   const settings = useSettings();
   const libraries = useLibraries();
   const isDefault = collection.slug === DEFAULT_ROW_SLUG;
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameTo, setRenameTo] = useState(
-    collection.name_template || collection.name,
-  );
+  // Turning a row OFF takes its collections off everyone's Plex on the next run
+  // (`rows._remove_muted_and_retired`), which a toggle gives no hint of. Turning it back ON is
+  // harmless and stays a single click.
+  const [confirmDisable, setConfirmDisable] = useState(false);
+  const setEnabled = (enabled: boolean) =>
+    save.mutate({ id: collection.id, body: { ...toInput(collection), enabled } });
 
-  // Adjusted during render rather than in an effect: `openRename` is a one-shot request from the
-  // parent, so this reacts to the prop *changing* to true. Tracking the previous value keeps that
-  // edge-triggered behaviour without the effect's extra commit. onRenameOpened is the parent's
-  // acknowledgement and must not fire during render, so it stays in an effect keyed on the open
-  // state it acknowledges.
-  const [prevOpenRename, setPrevOpenRename] = useState(openRename);
-  if (prevOpenRename !== openRename) {
-    setPrevOpenRename(openRename);
-    if (openRename) {
-      setRenameTo(collection.name_template || collection.name);
-      setRenameOpen(true);
-    }
-  }
-  useEffect(() => {
-    if (openRename) onRenameOpened?.();
-  }, [openRename, onRenameOpened]);
-  const rename = useMutation({
-    mutationFn: () => {
-      const oldTemplate = collection.name_template || collection.name;
-      return api
-        .updateCollection(collection.id, {
-          ...toInput(collection),
-          name: renameTo,
-          name_template: renameTo,
-        })
-        .then(() => oldTemplate);
-    },
-    onSuccess: (oldTemplate) => {
-      setRenameOpen(false);
-      navigate(`/rows/${collection.id}/rename`, {
-        state: { oldTemplate },
-      });
-    },
-  });
   // null until the library list actually arrives — a half-loaded card must not label a row's
   // libraries with raw Plex section keys, which mean nothing to the owner.
   const overrides = rowOverrides(
@@ -175,10 +139,7 @@ export function RowCard({
           <Switch
             checked={collection.enabled}
             onCheckedChange={(enabled) =>
-              save.mutate({
-                id: collection.id,
-                body: { ...toInput(collection), enabled },
-              })
+              enabled ? setEnabled(true) : setConfirmDisable(true)
             }
             aria-label={`Enable ${collection.name}`}
           />
@@ -196,20 +157,6 @@ export function RowCard({
           </Button>
           <Button variant="outline" size="sm" onClick={onEdit}>
             Edit
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-muted-foreground"
-            onClick={() => {
-              setRenameTo(collection.name_template || collection.name);
-              rename.reset();
-              setRenameOpen(true);
-            }}
-            title="Rename this row on Plex"
-          >
-            <Pen aria-hidden="true" />
-            Rename
           </Button>
           <RowDestructiveActions collection={collection} />
         </div>
@@ -233,47 +180,29 @@ export function RowCard({
         )}
       </CardContent>
 
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+      {/* A confirmation, because the toggle's consequence is invisible and deferred: the row stays
+          on Plex until the next run, then disappears from everyone who had it. */}
+      <Dialog open={confirmDisable} onOpenChange={setConfirmDisable}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename this row</DialogTitle>
+            <DialogTitle>Turn off &ldquo;{collection.name}&rdquo;?</DialogTitle>
             <DialogDescription>
-              This renames every collection on Plex for every user who has this
-              row — one rename per person, per library. It happens immediately.
+              The next run takes this row off Plex for everyone who has it. Its
+              settings stay here, so turning it back on rebuilds it. The titles
+              themselves stay in your library.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="rename-template">New name</Label>
-              <Input
-                id="rename-template"
-                value={renameTo}
-                onChange={(e) => setRenameTo(e.target.value)}
-                placeholder="e.g. ✨ {library_name} Picked for You"
-              />
-              <p className="text-xs text-muted-foreground">
-                Use {"{library_name}"} for the library, {"{user}"} for each
-                person's name.
-              </p>
-            </div>
-          </div>
-          {rename.isError && (
-            <MutationAlert
-              error={rename.error}
-              fallback="Couldn't save the new name. Check the connection."
-            />
-          )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRenameOpen(false)}>
-              Cancel
+            <Button variant="outline" onClick={() => setConfirmDisable(false)}>
+              Keep it on
             </Button>
             <Button
-              loading={rename.isPending}
-              onClick={() => rename.mutate()}
-              disabled={!renameTo.trim()}
+              onClick={() => {
+                setEnabled(false);
+                setConfirmDisable(false);
+              }}
             >
-              {!rename.isPending && <Pen aria-hidden="true" />}
-              Rename on Plex
+              Turn it off
             </Button>
           </DialogFooter>
         </DialogContent>
