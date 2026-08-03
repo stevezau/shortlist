@@ -191,15 +191,11 @@ export function RowPreview({
   const sources = effectiveSources(input.candidate_sources, settings);
   const builtFrom = builtFromLine(input);
 
+  // The heading lives in the PAGE, above this card, not inside it — so it lines up with "Row
+  // settings" over the left column and both columns start at the same y. A heading inside the card
+  // sat a card's padding lower than the one beside it, which read as two unrelated things.
   return (
     <div className="space-y-4 rounded-lg border bg-card p-5">
-      <div>
-        <h2 className="text-base font-semibold">What this row will do</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Updates as you change things. Nothing is saved until you press save.
-        </p>
-      </div>
-
       <div className="rounded-md border bg-muted/30 p-4">
         <p className="text-xs uppercase tracking-wide text-muted-foreground">
           On Plex it reads

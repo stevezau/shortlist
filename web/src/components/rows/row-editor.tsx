@@ -1016,7 +1016,15 @@ export function RowEditor({
             The max-height + scroll is a safety valve for a very tall preview on a short window, not
             a place to put content: anything parked below the fold here is effectively invisible,
             which is exactly why the effectiveness panel moved to the top of the page. */}
-        <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
+        <aside className="space-y-5 lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
+          {/* Outside the card, matching "Row settings" opposite, so the two columns start level. */}
+          <div>
+            <h2 className="text-base font-semibold">What this row will do</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Updates as you change things. Nothing is saved until you press
+              save.
+            </p>
+          </div>
           <RowPreview
             input={input}
             users={users}
