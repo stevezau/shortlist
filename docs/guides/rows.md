@@ -1,5 +1,5 @@
 ---
-title: Rows and templates — naming, ordering and where they appear
+title: Rows and templates
 description: Start a row from a template, name it, choose how its titles are ordered, and pick which Plex screens it shows on.
 heading: Rows and templates
 nav_order: 2
@@ -24,7 +24,7 @@ the row is built:
   instead of two identical "Picked for You" rows.
 - `{user}` — the person's name. `{user}'s picks` becomes "Sarah's picks". That name is their
   **nickname** if you've set one (Users → open someone → "What to call them"), otherwise whatever
-  Tautulli calls them, otherwise their Plex username — which is often a handle nobody uses. Changing
+  Tautulli calls them, otherwise their Plex username. Which is often a handle nobody uses. Changing
   a nickname renames their existing rows on Plex; it never changes their label, so their privacy is
   unaffected.
 - `{top_seed}` — the title that most drove their recommendations. `Because you watched {top_seed}`
@@ -42,7 +42,7 @@ Watches every source builds from** to `1` and the row genuinely is what that one
 editor prompts you for this as soon as a row's name uses `{top_seed}`.
 
 One catch, which the editor also tells you: seeds are shared out across the media types a row
-covers, and a single watch is either a film or a show — never both. So a row set to **Movies and
+covers, and a single watch is either a film or a show. Never both. So a row set to **Movies and
 TV** with a budget of 1 seeds only one of them, and the other library's collection never builds.
 For a row covering both, use `2` (one of each), or set the row to Movies only or TV only.
 
@@ -76,15 +76,15 @@ and moves which one.
 
 **Rows that follow a watch always refresh nightly** — whether they follow it by name (`{top_seed}`)
 or by cycling. A row whose title claims a recent watch can't be allowed to lag behind it: at the
-usual cadence it would go on naming last week's film for a week after the person moved on. So
+usual pace it would go on naming last week's film for a week after the person moved on. So
 **How often it changes** is not offered on those rows at all; the row simply refreshes nightly.
 Every other row keeps the setting.
 
 There is a modest cost to that. Refreshing nightly does not only mean "a write when the watch
 changes" — on the nights it hasn't changed the row still swaps its weakest third for new titles, so
-it writes to Plex most nights, per person, per library, where an ordinary row on the default cadence
+it writes to Plex most nights, per person, per library, where an ordinary row on the default pace
 writes about weekly. It does not cost any extra AI usage: candidates are gathered once per run
-whatever a row's cadence is, so how often a row refreshes has no bearing on it.
+however often a row refreshes, so how often a row refreshes has no bearing on it.
 
 ## The order titles appear in
 
@@ -153,10 +153,10 @@ By default Plex adds new collections at the **end** of a library's _Recommended_
 tool (like **Kometa**) manages collections on the same server, Shortlist's rows can end up buried at
 the bottom. Settings → **Row placement** sets a server-wide default; you get three choices per library:
 
-- **Wherever Plex puts them** — leave the order alone (the default).
+- **Wherever Plex puts them**. Leave the order alone (the default).
 - **Top of the shelf** — put Shortlist's rows at the very top. No anchor needed. (This replaces the
   old "pin to top" switch.)
-- **Right before / after a collection** — pick an existing collection and sit the rows next to it.
+- **Right before / after a collection**. Pick an existing collection and sit the rows next to it.
 
 Any individual row can override the default in the **Row editor** ("Position in the Recommended
 shelf"), per library — so "Picked for You" can sit at the top while another row sits right after New
@@ -179,8 +179,8 @@ Each row can have its own artwork on Plex. In the **Row editor** → **Artwork**
   works on any setup. Use `{user}`, `{library_name}`, and `{top_seed}` to personalise the text.
 - **AI image** — an image generated from your text and **Art style**, using your AI provider's image
   model. This reuses your AI provider's key, so it's available when that provider is **OpenAI** or
-  **Google** (Anthropic and local servers can't generate images — use a Text poster or Upload instead).
+  **Google** (Anthropic and local servers can't generate images. Use a Text poster or Upload instead).
 
 Hit **Preview** to see a sample before saving. Generated images are made once and reused across
 runs (they refresh when you change the text or style), so posters don't slow a run down or cost per
-user. Posters are cosmetic — a poster that can't be made never blocks a row from building.
+user. Posters are cosmetic. A poster that can't be made never blocks a row from building.

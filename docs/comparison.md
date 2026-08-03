@@ -1,5 +1,5 @@
 ---
-title: How Shortlist relates to netplexflix, SuggestArr, Seerr, Kometa and Tautulli
+title: Shortlist vs netplexflix, SuggestArr and Seerr
 description: Where Shortlist sits among the self-hosted Plex recommendation and request tools, what problem each one is built for, and when Shortlist is the wrong choice.
 heading: How Shortlist relates to other Plex tools
 ---
@@ -43,7 +43,7 @@ netplexflix is a reasonable fit.
 Describes itself as reading recently-watched content and automatically requesting similar titles via
 Radarr/Sonarr/Jellyseerr.
 
-Its output is **downloads** — it's aimed at growing the library. Shortlist's output is **a row people
+Its output is **downloads**. It's aimed at growing the library. Shortlist's output is **a row people
 see**, aimed at surfacing what's already on your shelves. Shortlist can also request missing titles,
 but that's off by default and secondary. If your problem is "my library doesn't have enough of what
 my users like," that's SuggestArr's problem, not Shortlist's. They work fine together.
@@ -65,7 +65,7 @@ Kometa's collections are **the same for everyone**, which is exactly right for a
 or "Oscar Winners" shelf. Shortlist builds a different collection per person and hides it from
 everyone else. **They coexist by design** — Shortlist only modifies collections carrying its own
 `shortlist_*` label, and its share-filter writes are merges that leave existing conditions
-byte-for-byte identical.
+exactly as they were.
 
 ### [Tautulli](https://tautulli.com/)
 

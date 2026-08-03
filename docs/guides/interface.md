@@ -1,5 +1,5 @@
 ---
-title: A tour of Shortlist — what each page is for
+title: A tour of the Shortlist web interface
 description: What every page in the Shortlist web interface does, and what each number on the dashboard actually means.
 heading: The web interface
 nav_order: 1
@@ -80,7 +80,7 @@ library:
 2. Every candidate source's query and what it returned, each title tagged with whether it made the
    shortlist or the plain reason it fell out (already watched, not in your libraries, lost the
    ranking cut).
-3. **How the shortlist was ordered** — the plain-code score plus the two fair-share passes. No AI
+3. **How the shortlist was ordered**. The plain-code score plus the two fair-share passes. No AI
    ranks.
 4. What was finally delivered, and why.
 
@@ -173,7 +173,7 @@ where you are:
 Each section is walled off by a rule, and its own sub-headings sit a clear rank below the section
 title. Every connection is re-testable in place.
 
-Each row's run schedule lives in that row's editor, not here — see [Schedules](schedules.md).
+Each row's run schedule lives in that row's editor, not here. See [Schedules](schedules.md).
 
 ## Reading the dashboard
 
@@ -193,10 +193,10 @@ counts here: this figure is about watching, not delivery.
 titles first watched in the window. Lower is better, and the change arrow is coloured accordingly.
 
 **Landing rate** — the one percentage, and the only one computed carefully enough to trust. It is the
-share of picks watched within 30 days of delivery, measured over a **matured cohort**: picks
+share of picks watched within 30 days of delivery, measured over a **settled group**: picks
 delivered in the window _and_ at least 30 days ago. A pick delivered yesterday cannot have been
 "watched within 30 days" yet, so counting it would drag the rate toward zero for no reason. On a
-7-day window there is usually no matured cohort at all, and the card says so instead of showing a
+7-day window there is usually no settled group at all, and the card says so instead of showing a
 misleading number.
 
 **By person / By row** — counts, not percentages, sorted by what was actually watched. At these
@@ -206,7 +206,7 @@ the list with empty bars, and rows you have since deleted are hidden the same wa
 count in the totals above.
 
 Hiding a deleted row is the default because its picks are real history. If you want it actually gone —
-a throwaway test row, say — expand the disclosure and choose **Delete their history**. That permanently
+a throwaway test row, say. Expand the disclosure and choose **Delete their history**. That permanently
 removes those picks from every total that counts them, here and on each person's page, and cannot be
 undone. Rows that still exist are never affected, whichever slug is named: Shortlist recomputes what is
 eligible on the server rather than trusting the request.

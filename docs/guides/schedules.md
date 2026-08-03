@@ -1,5 +1,5 @@
 ---
-title: Schedules — when rows rebuild and jobs run
+title: "Schedules: when rows rebuild"
 description: Every row runs on its own schedule. How to set it, how to write a custom one, and which background jobs matter.
 heading: Schedules and runs
 nav_order: 4
@@ -24,7 +24,7 @@ Two jobs are worth knowing about there:
   cannot be read incrementally, that library falls back to a complete read on its own rather than
   serving a stale watched set.
 - **Privacy sync** runs nightly (05:15 by default). It re-merges every account's share filter and
-  builds, delivers and promotes nothing — so it can only ever make your server _more_ private. It is
+  builds, delivers and promotes nothing. So it can only ever make your server _more_ private. It is
   the cheapest safety net against drift.
 - **Check and fix rows on Plex** runs nightly at **05:45** — after the rows build and after the privacy pass, so it
   checks the state those actually left behind. Drift is the failure nobody notices: a row left on the
@@ -34,7 +34,7 @@ Two jobs are worth knowing about there:
   means off rather than "fall back to the default" the way every other blank cron does. **Check now**
   still works by hand with the schedule off.
 
-**Every row runs on its own schedule** — there is no single server-wide one. Open a row (Rows → edit)
+**Every row runs on its own schedule**. There is no single server-wide one. Open a row (Rows → edit)
 and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for
 anything else, or **Off** to only run that row by hand. New rows default to nightly at 03:30 server-local;
 on upgrade, existing rows keep whatever your old global schedule was. Rows that share a cron run
@@ -51,5 +51,5 @@ backup pickers on Jobs — takes either form:
   month, day-of-week. `0 */6 * * *` is every six hours; `0 4 * * 1` is Mondays at 4am.
 
 Whichever you type, the line underneath tells you what it will actually do and what gets saved, and
-nothing saves until it parses — so a typo can't quietly leave you on the built-in default. Times are
+nothing saves until it parses. So a typo can't quietly leave you on the built-in default. Times are
 the server's, not your browser's.

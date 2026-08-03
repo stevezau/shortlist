@@ -1,5 +1,5 @@
 ---
-title: Shortlist guides — rows, schedules, requests and troubleshooting
+title: Shortlist guides
 description: How to do the things people actually want to do with Shortlist, from changing how often a row refreshes to sending missing films to Radarr.
 heading: Guides
 ---

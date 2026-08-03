@@ -1,5 +1,5 @@
 ---
-title: AI and cost — what AI does, and how to keep it cheap
+title: AI and cost
 description: Shortlist works with no AI at all. What AI adds when you turn it on, which search backend to pick, and how to control what it costs.
 heading: AI and cost
 nav_order: 5
@@ -24,7 +24,7 @@ in code, with no AI and no per-token cost.
    is why a pick can never be a title you don't own** — every source only ever contributes real, owned,
    unwatched titles.
 3. **Balance and rank.** Shortlist takes a fair share from each source (so one chatty source can't
-   crowd out the rest) and scores them. **No AI here** — it's a simple ranking.
+   crowd out the rest) and scores them. **No AI here**. It's a simple ranking.
 4. **Deliver + explain.** The top-ranked titles fill the row, each with a one-line "why" written from
    the seed behind it ("Because you liked sci-fi like Dune", "Because you watched Fargo"). **No AI
    here either** — the reasons are generated in code, so they cost nothing and read the same whether or
@@ -52,7 +52,7 @@ You choose the search backend on the "AI web search" card:
 | ------------------------------ | ---------------------------------- | ------------------------------------------------------- |
 | Your provider's own web search | Claude, GPT, Gemini only           | no extra signup; unavailable on local models            |
 | [Exa](https://exa.ai) key      | **every provider, local included** | one extra free-tier signup                              |
-| **Auto** (default)             | both, unioned when both are set up | widest coverage — they find noticeably different titles |
+| **Auto** (default)             | both, combined when both are set up | widest coverage — they find noticeably different titles |
 
 **Why we suggest adding an Exa key**, even when your provider can already search:
 
@@ -64,11 +64,11 @@ judging films instead of wading through web pages. In practice that buys you fou
    hardware has no way to reach the internet. With Exa, Shortlist does the searching and hands over
    the findings, so a fully offline model still recommends current titles.
 2. **Your results stop depending on which AI you picked.** Switch from Claude to a cheap local model
-   and the search half stays identical — only the choosing changes.
+   and the search half stays identical. Only the choosing changes.
 3. **The cost is predictable.** Exa bills per search rather than per word, and those searches are
    reported separately from AI tokens. Results are reused for 14 days and shared across everyone on
    the server, so a popular film is looked up once, not once per person.
-4. **Auto gives you both.** Left on the default with both configured, Shortlist unions the two —
+4. **Auto gives you both.** Left on the default with both configured, Shortlist combines the two —
    they reliably surface different films, so coverage is wider than either alone.
 
 Entirely optional: leave it empty and everything still works, you're just limited to your provider's

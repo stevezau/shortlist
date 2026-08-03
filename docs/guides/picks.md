@@ -1,5 +1,5 @@
 ---
-title: Choosing what goes in a row — sources, freshness and overrides
+title: Choosing what goes in a row
 description: Where candidate titles come from, how often a row changes, how to override any of it per row or per person, and how to stop one watch skewing someone's picks.
 heading: What goes in a row
 nav_order: 3
@@ -11,7 +11,7 @@ Settings → **Finding titles** controls where candidate titles come from. Short
 source you enable, keeps only what's already in your library, then ranks them (a simple, no-AI
 score) and writes each pick's "why" in code. More sources = wider reach. Available today:
 
-- **TMDB — similar titles**: the baseline — titles TMDB says are similar to what each person watched.
+- **TMDB — similar titles**: the baseline. Titles TMDB says are similar to what each person watched.
 - **TMDB — discover by taste**: widens into popular, well-rated titles in the genres each person
   leans toward (derived from their watch history).
 - **Trakt — related titles** (needs a Trakt API key, added in Connections): uses Trakt's
@@ -35,7 +35,7 @@ libraries you pick.
 Settings → Finding titles has three more dials (each per-row overridable):
 
 - **How often it changes** (called **Freshness** in Settings, where the global lives) — how
-  often a row's picks change. This is a **cadence, not a nightly shuffle**:
+  often a row's picks change. This is **how often, not a nightly shuffle**:
   `1.0` refreshes every night, lower means every few days, and `0.0` means "build once, then never
   reshuffle". On most nights an unchanged row is left exactly as-is — no rebuild, no Plex write
   — which is why a person's row stays familiar instead of being reshuffled daily. On a refresh night
@@ -46,12 +46,12 @@ Settings → Finding titles has three more dials (each per-row overridable):
   filtered out. Default keeps anything finished out of the picks.
 - **Watches the AI web search looks up** — how many of each person's recent titles the AI web-search
   source looks up (one cached search each), taken off the front of the list above. It's the main
-  **cost lever** on that source — lower it to spend fewer tokens/Exa searches.
+  **cost lever** on that source. Lower it to spend fewer tokens/Exa searches.
 
 ### If a watched title still gets recommended
 
 Shortlist reads each person's **complete** watched set from Plex every run — including titles they
-only _marked_ watched (ticked off, or a whole season marked) rather than played — so this is rare.
+only _marked_ watched (ticked off, or a whole season marked) rather than played. So this is rare.
 It reads the library _as that user_, with the per-user server token Plex mints for every share, and
 `viewCount > 0` covers both plays and marks at any depth. Nothing to configure, and it works whether
 or not Shortlist runs on the same machine as Plex. (This replaced the old playback-history read,
@@ -104,7 +104,7 @@ row.
 - **Disable a user, or drop someone from a row's audience** → that person's now-stale collections are
   removed immediately.
 - **Remove from Plex** (the button on each row) → clears a row's collections on demand, without
-  deleting the row's settings — handy to force a rebuild on the next run.
+  deleting the row's settings. Handy to force a rebuild on the next run.
 - **Disable a row** (its on/off switch) → its collection comes off Plex Home on the next run. A row
   whose title is dynamic (built from a top pick) is left for that rebuild; use **Remove from Plex** if
   you want it gone right now. Everything left in place stays private — the row's label keeps it

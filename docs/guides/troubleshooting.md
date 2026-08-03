@@ -1,5 +1,5 @@
 ---
-title: Troubleshooting — when a row doesn't turn up
+title: Troubleshooting and backups
 description: The common failures and what causes them, plus what Shortlist backs up and what it can't restore.
 heading: Troubleshooting and backups
 nav_order: 7
@@ -28,7 +28,7 @@ nav_order: 7
 - **Did anything drift out of sync?** — Settings → Danger Zone → **What Shortlist has on your
   Plex** ("Check Plex") lists every shortlist-labeled collection read straight from the server (not
   the database), flagging any whose user/row no longer exists in the app. Every collection is
-  labeled at creation (atomically — a collection that can't be labeled is deleted rather than left
+  labeled at creation (in one step — a collection that can't be labeled is deleted rather than left
   as an orphan), so a cleanup always finds them all; this is how you confirm it.
 
 ## Backups

@@ -1,5 +1,5 @@
 ---
-title: How to make a Plex collection visible to only one user
+title: Make a Plex collection visible to one user
 description: Plex has no per-user collections, but label restrictions on share filters get you there. The mechanism, the manual steps, the ordering mistake that leaks, and the version requirements.
 heading: How to make a Plex collection visible to only one user
 ---
@@ -19,7 +19,7 @@ every collection in it. There is no "share this collection with Alice only" chec
 never has been.
 
 What Plex does have is a per-share content filter. When you share a library, you can restrict what
-that person sees by rating, by genre — and by **label**. That last one is the lever, because labels
+that person sees by rating, by genre. And by **label**. That last one is the lever, because labels
 are something you control and Plex evaluates them per account.
 
 So the trick isn't making a collection visible to one person. It's making it **invisible to everyone
@@ -81,7 +81,7 @@ it a minute later" doesn't necessarily un-show it.
 
 The safe order is:
 
-1. Create the collection **unpromoted** — not on any shelf yet.
+1. Create the collection **unpromoted**. Not on any shelf yet.
 2. Label it.
 3. Merge the `label!=` exclusion into **every other account's** share filter.
 4. **Only then** promote it to Home / Recommended.
@@ -100,7 +100,7 @@ contentRating!=R,label!=picks_bob,label!=picks_carol
 
 If you overwrite that string with just your own exclusion, you have silently removed someone's
 parental-control restriction or another tool's rules. Parse it, union your label into the existing
-`label!=` values, and leave every other condition byte-identical.
+`label!=` values, and leave every other condition exactly as they were.
 
 **Snapshot the original values before your first change.** It's the only way to put a server back
 the way you found it.
@@ -122,7 +122,7 @@ Doing it by hand is realistic for one or two collections. Past that you want it 
 [**Shortlist**](https://github.com/stevezau/shortlist) is a self-hosted container that does exactly
 this, on a schedule. It builds a personalized "Picked for You" collection for each user from their
 own Plex watch history, labels it `shortlist_<user>`, merges the exclusions into every other
-account's share filter, and only then promotes the rows to Home — in that order, every run.
+account's share filter, and only then promotes the rows to Home. In that order, every run.
 
 It also handles the parts this page warns you about: it snapshots your share filters before the first
 change and restores them exactly on uninstall, it merges rather than rebuilds, it skips the owner, and

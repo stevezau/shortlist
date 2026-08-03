@@ -1,5 +1,5 @@
 ---
-title: FAQ — per-user Plex collections, privacy and Kometa
+title: "FAQ: per-user Plex collections and privacy"
 description: How Shortlist makes a Plex collection visible to only one user, what the server owner can see, whether it conflicts with Kometa, and how to uninstall cleanly.
 heading: FAQ
 ---
@@ -14,7 +14,8 @@ The order matters: a row is created **hidden**, and only made visible once the "
 everyone else" rules are already in place — so there's no window where the wrong person could see
 it. Your existing sharing settings are saved beforehand, and **Uninstall** puts them back exactly.
 
-This needs Plex Media Server **1.43.2.10687 or newer**. Older versions ignore the hiding rule.
+This needs Plex Media Server **1.43.2.10687 or newer**, and **Plex Pass** on the admin account,
+because the hiding rule is a Pass feature. Older versions ignore it.
 
 ## Why do I get two rows — one under Movies and one under TV Shows?
 
@@ -35,7 +36,7 @@ rows**.
 
 So it adds hide-this-label rules to every account your server is shared with. Nothing else in their
 settings is touched — Shortlist reads what's there, adds only its own entries, and leaves the rest
-byte-for-byte identical. The original is saved first, and Uninstall restores all of them.
+exactly as they were. The original is saved first, and Uninstall restores all of them.
 
 ## Do I get a row myself?
 
@@ -90,7 +91,7 @@ In Shortlist it powers the optional web-search source. You have three choices:
   save money and the search half stays identical. Only the choosing changes.
 - **The cost is predictable.** Exa bills per search, not per word, and Shortlist reports those
   searches separately from AI usage. Results are reused for 14 days and shared across everyone on
-  your server, so a popular film is looked up once — not once per person.
+  your server, so a popular film is looked up once. Not once per person.
 - **It's built for this job.** Because the results arrive as extracted text, the model spends its
   effort judging films rather than wading through web pages.
 
@@ -116,6 +117,10 @@ what to watch next. No usernames, no account IDs, no genres, no viewing times.
 One flow, with a preview first. Every account's sharing settings are restored from the copy taken
 before Shortlist's first change, every Shortlist collection is deleted, and you get a report of
 exactly what changed. Your server ends up as we found it.
+
+You can also rehearse the whole thing before trusting it: start the container with
+`SHORTLIST_DRY_RUN=1` and every run logs exactly what it *would* change while writing nothing to
+Plex.
 
 ## Managed users and kids' accounts?
 

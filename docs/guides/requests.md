@@ -1,5 +1,5 @@
 ---
-title: Requests — sending missing titles to Radarr and Sonarr
+title: "Requests: Radarr and Sonarr"
 description: Let Shortlist ask Radarr or Sonarr for titles your people want that the library doesn't have yet, with an approval inbox and guardrails.
 heading: Requests (Radarr and Sonarr)
 nav_order: 6
@@ -93,7 +93,7 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 
 The auto-send bar is deliberately higher than the bar to be requestable at all: a title is sent
 without asking only if it clears **both** `requests.auto_min_demand` (default 3 distinct people) and
-`requests.auto_min_rating` (default 8.0) — a 7.9 wanted by twenty people still waits. Beyond that:
+`requests.auto_min_rating` (default 8.0). A 7.9 wanted by twenty people still waits. Beyond that:
 
 - **On an exclusion list** — a past delete in Radarr/Sonarr leaves the title on an import-exclusion
   list, and Shortlist will never auto-send one (the app would refuse the add anyway). The card says

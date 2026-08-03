@@ -12,8 +12,8 @@
   image: user-detail.png
   alt: A user detail page listing that person's ranked picks, each with the title that inspired it
   path: /users/sarah
-  width: 2880
-  height: 2342
+  width: 1440
+  height: 1171
 
 - title: Watch a run happen
   body: >-
@@ -22,5 +22,5 @@
   image: run-detail.png
   alt: A run detail page showing per-user timings, the picks delivered, and a live activity log
   path: /runs/42
-  width: 2880
-  height: 1742
+  width: 1440
+  height: 871

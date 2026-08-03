@@ -763,7 +763,7 @@ figcaption {
   background: var(--accent-quiet);
 }
 
-.pipeline__stage h4 {
+.pipeline__stage h3 {
   font-size: 0.94rem;
   margin-bottom: 0.3rem;
 }

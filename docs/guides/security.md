@@ -1,5 +1,5 @@
 ---
-title: Exposing Shortlist to the internet safely
+title: Exposing Shortlist to the internet
 description: "What to know before publishing Shortlist outside your network: TLS, proxies, the API token, and what's in a backup."
 heading: Putting it on the internet
 nav_order: 8
