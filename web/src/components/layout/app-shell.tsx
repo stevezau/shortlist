@@ -139,7 +139,7 @@ function SessionFooter() {
         Sign out
       </Button>
       <p className="px-1 text-xs text-muted-foreground">
-        Shortlist · beta
+        Shortlist
         {version.data?.current_version
           ? ` · ${version.data.current_version}`
           : ""}
@@ -252,7 +252,10 @@ export function AppShell() {
           ),
           success: <CircleCheck className="h-4 w-4 text-success" aria-hidden />,
           error: (
-            <CircleAlert className="h-4 w-4 text-destructive-text" aria-hidden />
+            <CircleAlert
+              className="h-4 w-4 text-destructive-text"
+              aria-hidden
+            />
           ),
         }}
       />

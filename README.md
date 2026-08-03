@@ -15,9 +15,10 @@
 ![AI-Assisted](https://img.shields.io/badge/AI-assisted%20development-8A2BE2)
 
 > [!IMPORTANT]
-> **Shortlist is a brand-new app in public beta.** It works and it's running in production, but
-> you may hit rough edges. **Please report bugs** — open an issue with what happened and your
-> `Settings → System → Copy diagnostics` bundle. Thank you for helping test it. 🙏
+> **Shortlist 1.0.** It modifies other people's Plex views and share permissions, so it is built to
+> be careful: every write is previewed by `--dry-run`, your share filters are snapshotted before
+> they're touched, and a full uninstall puts everything back. **Please report bugs** — open an issue
+> with what happened and your `Settings → System → Copy diagnostics` bundle.
 
 ## The problem: "what should I watch next?"
 
@@ -102,9 +103,9 @@ account is told to hide that label, so only its owner ever sees it.
 
 ## Screenshots
 
-|                                                                    |                                                             |
-| ------------------------------------------------------------------ | ----------------------------------------------------------- |
-| ![A user's picks and why](docs/images/user-detail.png)             | ![A run in progress](docs/images/run-detail.png)            |
+|                                                                     |                                                             |
+| ------------------------------------------------------------------- | ----------------------------------------------------------- |
+| ![A user's picks and why](docs/images/user-detail.png)              | ![A run in progress](docs/images/run-detail.png)            |
 | **Each person's row, and _why_ each pick** — "Because you watched…" | **Watch every run** — history → candidates → rank → deliver |
 
 <sub>App screenshots use placeholder titles (a test library); the Plex row above is a real server.</sub>
@@ -162,12 +163,12 @@ Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-starte
 
 📖 **[stevezau.github.io/shortlist](https://stevezau.github.io/shortlist/)** — the docs as a website.
 
-|                                              |                                                                                     |
-| -------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [Getting started](docs/getting-started.md)   | Install, wizard, first run                                                          |
-| [Guides](docs/guides.md)                     | Rows, schedules, requests, AI cost, troubleshooting                                 |
-| [Reference](docs/reference.md)               | Settings, API, env vars                                                             |
-| [FAQ](docs/faq.md)                           | Privacy model, Kometa, uninstall                                                    |
+|                                            |                                                     |
+| ------------------------------------------ | --------------------------------------------------- |
+| [Getting started](docs/getting-started.md) | Install, wizard, first run                          |
+| [Guides](docs/guides.md)                   | Rows, schedules, requests, AI cost, troubleshooting |
+| [Reference](docs/reference.md)             | Settings, API, env vars                             |
+| [FAQ](docs/faq.md)                         | Privacy model, Kometa, uninstall                    |
 
 **Background:** [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md)
 — the label + share-filter mechanism this is built on, and the ordering mistake that leaks.

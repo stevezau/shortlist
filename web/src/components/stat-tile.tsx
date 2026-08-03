@@ -30,7 +30,13 @@ export function StatTile({
   title?: string;
 }) {
   return (
-    <div className="rounded-lg border bg-elevated px-4 py-3.5" title={title}>
+    // `min-w-0`: these sit in a `grid-cols-2`, and a grid item's default `min-width: auto` is its
+    // min-content width — so a pair of tiles refused to shrink below 322px and ran off a 320px
+    // screen. With it they take the column they were given.
+    <div
+      className="min-w-0 rounded-lg border bg-elevated px-4 py-3.5"
+      title={title}
+    >
       <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
         <Icon className={cn("h-3.5 w-3.5", TONE[tone])} aria-hidden="true" />
         {label}

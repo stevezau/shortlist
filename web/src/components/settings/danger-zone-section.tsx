@@ -1,6 +1,5 @@
 import { Link } from "react-router";
 
-import { CleanupAuditCard } from "@/components/settings/cleanup-audit-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useSaveSettings } from "@/lib/queries";
@@ -19,7 +18,9 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
       >
         Danger zone
       </h2>
-      <CleanupAuditCard />
+      {/* The read-only Plex audit used to sit here, above everything. It was the safest control on
+          the page — it changes nothing — under the scariest heading, which reads as a warning it
+          does not deserve. It lives under Advanced now. */}
       <Card className="border-destructive/40">
         <CardContent className="space-y-4 pt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">

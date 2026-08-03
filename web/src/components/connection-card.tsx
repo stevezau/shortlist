@@ -191,8 +191,10 @@ export function ConnectionCard({
   return (
     <Card data-testid={`connection-${service}`}>
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-2.5">
+        {/* Wraps, and the name side may shrink: the glyph, the service name and the Set up/Test
+            buttons together held the card open to 326px on a 320px screen. */}
+        <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-2.5">
             <span className="relative">
               <span className="grid h-9 w-9 place-items-center rounded-lg border bg-elevated [&>svg]:h-5 [&>svg]:w-5">
                 {glyph}

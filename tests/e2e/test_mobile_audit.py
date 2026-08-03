@@ -31,6 +31,20 @@ pytestmark = pytest.mark.e2e
 #: that survives 390 survives nearly every Android too; 320 (iPhone SE 1st gen) is a stretch goal.
 PHONE = {"width": 390, "height": 844}
 
+#: iPhone SE (1st gen) / iPhone 5 — measured, but not enforced. See `ENFORCED_WIDTHS`.
+NARROW = {"width": 320, "height": 568}
+
+#: Which widths FAIL the build rather than just reporting.
+#:
+#: 390 is the floor we hold: every route, the wizard, the nav drawer and every dialog fit it exactly.
+#: 320 is measured because the numbers are useful, but two pages still exceed it — the dashboard's
+#: per-row counts by 13px, and the row editor's two stat tiles by 60px. Both now need a LAYOUT
+#: decision (stack what is currently side by side, at a breakpoint below `sm`), not another
+#: containment fix — the min-content causes have all been dealt with. That is a design call, and
+#: enforcing it would either block the build on a 2016 phone or invite someone to "fix" it by
+#: quietly widening the tolerance. Reported every run so it cannot be forgotten.
+ENFORCED_WIDTHS = {PHONE["width"]}
+
 #: Apple's HIG says 44x44pt, Material says 48x48dp. 40 is the floor below which a control is a
 #: genuine miss-tap risk rather than merely tight — deliberately lenient so findings are real.
 MIN_TAP = 40
@@ -112,7 +126,7 @@ FIND_SMALL_TAPS = """
 """.replace("MIN_TAP", str(MIN_TAP))
 
 
-def _phone(browser: Browser, app: ShortlistApp):
+def _phone(browser: Browser, app: ShortlistApp, *, width: int = PHONE["width"]):
     """A phone-sized context carrying a valid owner session.
 
     The session has to be injected the same way `conftest._owner_page` does it — without the cookie
@@ -120,7 +134,8 @@ def _phone(browser: Browser, app: ShortlistApp):
     reporting a clean bill of health.
     """
     cookie = session_serializer(app.session_secret).dumps({"account_id": OWNER_ACCOUNT_ID, "username": "owner"})
-    context = browser.new_context(base_url=app.url, viewport=PHONE, is_mobile=True, has_touch=True)
+    viewport = {"width": width, "height": PHONE["height"]}
+    context = browser.new_context(base_url=app.url, viewport=viewport, is_mobile=True, has_touch=True)
     context.add_cookies([{"name": SESSION_COOKIE, "value": cookie, "url": app.url}])
     return context
 
@@ -175,9 +190,10 @@ def _report(findings: dict[str, list], kind: str) -> str:
     return f"{kind} on {len(findings)} route(s):" + "".join(lines)
 
 
-def test_no_page_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistApp) -> None:
+@pytest.mark.parametrize("width", [PHONE["width"], NARROW["width"]], ids=["390px", "320px"])
+def test_no_page_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistApp, width: int) -> None:
     build_real_rows(app)  # real rows, picks and history, so pages carry real-length content
-    context = _phone(browser, app)
+    context = _phone(browser, app, width=width)
     page = context.new_page()
     overflow: dict[str, list] = {}
     taps: dict[str, list] = {}
@@ -196,6 +212,10 @@ def test_no_page_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistApp
     if taps:
         print("\nTAP TARGETS UNDER {}px — {}".format(MIN_TAP, _report(taps, "small controls")))
 
+    if width not in ENFORCED_WIDTHS:
+        if overflow:
+            print(f"\nKNOWN AT {width}px — {_report(overflow, 'horizontal overflow')}")
+        return
     assert not overflow, _report(overflow, "HORIZONTAL OVERFLOW")
 
 
@@ -231,3 +251,53 @@ def test_the_mobile_drawer_opens_and_covers_the_nav(browser: Browser, app: Short
         )
     finally:
         context.close()
+
+
+#: (label, route, the control that opens it, text proving it opened). Dialogs are the blind spot a
+#: route sweep cannot reach: they mount over the page, size themselves independently of it, and a
+#: footer of buttons is exactly the shape that runs off a narrow screen.
+DIALOGS = [
+    ("rename a row", "/rows", "Rename", "Rename|name"),
+    ("delete a row", "/rows", "Delete", "Delete|permanently|for good"),
+    ("remove a row from Plex", "/rows", "Remove from Plex", "Remove|Plex"),
+    ("run selected rows", "/runs", "Run selected rows…", "Run|rows|select"),
+]
+
+
+@pytest.mark.parametrize("width", [PHONE["width"], NARROW["width"]], ids=["390px", "320px"])
+def test_no_dialog_scrolls_sideways_on_a_phone(browser: Browser, app: ShortlistApp, width: int) -> None:
+    """Open each confirm/edit dialog and measure it.
+
+    Dialogs are `w-full max-w-lg`, so the panel itself cannot overflow — but its CONTENTS can, and a
+    dialog that scrolls sideways can put its confirm button out of reach with no way to scroll to it
+    on a touch screen. Nothing else in this file opens one.
+    """
+    build_real_rows(app)
+    context = _phone(browser, app, width=width)
+    page = context.new_page()
+    overflow: dict[str, list] = {}
+    try:
+        for label, path, opener, proof in DIALOGS:
+            page.goto(path)
+            page.wait_for_timeout(1200)
+            button = page.get_by_role("button", name=opener).first
+            if button.count() == 0:
+                continue  # the control is not on this page in this state; the route sweep covers that
+            try:
+                button.click(timeout=5000)
+                page.get_by_text(__import__("re").compile(proof, __import__("re").I)).first.wait_for(timeout=5000)
+            except Exception:
+                continue  # could not open it; not this test's job to assert the interaction
+            page.wait_for_timeout(400)  # the panel zooms in — measuring mid-transform reports a phantom
+            scroll = page.evaluate(PAGE_SCROLLS)
+            if scroll["overflowBy"] > SLOP:
+                overflow[label] = [
+                    f"page scrolls {scroll['overflowBy']}px past {scroll['clientWidth']}px",
+                    *page.evaluate(FIND_OVERFLOW),
+                ]
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(200)
+    finally:
+        context.close()
+
+    assert not overflow, _report(overflow, "HORIZONTAL OVERFLOW (dialogs)")

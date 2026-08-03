@@ -115,7 +115,9 @@ export function RunUsersTab({
                 {runStatusLabel(selected.status)}
               </Badge>
             </CardTitle>
-            <div className="flex items-center gap-3">
+            {/* Wraps: the duration line plus the "How we picked" link needed 192px beside a title
+                that already fills a narrow screen. */}
+            <div className="flex flex-wrap items-center gap-3">
               <p className="text-sm text-muted-foreground">
                 {formatDuration(selected.duration_ms)}
                 {selected.llm_tokens > 0

@@ -6,6 +6,7 @@ import { Segmented } from "@/components/segmented";
 import { Card, CardContent } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { settingBool } from "@/lib/format";
+import { CleanupAuditCard } from "@/components/settings/cleanup-audit-card";
 import { useSaveSettings } from "@/lib/queries";
 import type { Settings } from "@/lib/types";
 
@@ -62,6 +63,9 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
       <h2 id="advanced-heading" className="text-lg font-semibold">
         Advanced
       </h2>
+      {/* Moved out of the Danger zone: it only READS Plex and reports what it finds, so filing it
+          under a destructive heading made the safest control on the page look like the riskiest. */}
+      <CleanupAuditCard />
       <Card>
         <CardContent className="space-y-3 pt-6">
           <div>

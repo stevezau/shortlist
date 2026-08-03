@@ -5,7 +5,7 @@ FastAPI backend + React SPA + SQLite, with a pure-Python engine (per-user watche
 PMS via each share's server token → TMDB similar-titles → LLM curate/explain → per-user Plex
 collection + label-restriction privacy).
 
-**Status: beta.** In production on the maintainer's server: the FastAPI server runs the engine on
+**Status: 1.0.** In production on the maintainer's server: the FastAPI server runs the engine on
 its own nightly schedule (APScheduler), with the React SPA and Docker
 packaging. Read these
 before any feature work:

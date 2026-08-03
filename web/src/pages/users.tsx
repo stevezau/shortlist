@@ -137,7 +137,8 @@ export function UsersPage() {
         title="Users"
         subtitle="Everyone on your Plex server. Turn someone on and they start getting the rows you've built."
         actions={
-          <div className="flex gap-2">
+          // Wraps: three buttons need 345px in one line and ran off a 320px screen.
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               onClick={() => sync.mutate()}

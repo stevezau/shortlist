@@ -241,23 +241,22 @@ concurrent edit). Everything in **Fixed** is on `dev` as of this date; everythin
 
 ### Open — not fixed, with the reason
 
-1. **`maintenance.prune` is invisible on the Jobs page.** It is `manual=True` (`services/jobs.py`),
-   so it is filtered out of the "Automatic" group (`pages/jobs.tsx:281` `!e.manual`) — and it is not
-   one of the five hardcoded `JobRow`s in "Run now". Its counts _are_ in the page totals, so a failed
-   prune shows "1 failed" in the header chip with **no row anywhere to click**. Needs a `JobRow` +
-   a run mutation, which is a functional change, not copy.
+1. ~~**`maintenance.prune` is invisible on the Jobs page.**~~ CLOSED 2026-08-03 — it has its own
+   `JobRow` in "Run now" (`pages/jobs.tsx`, "Clear now") with a `SchedulePanel`, a run mutation, and
+   error/queued/done states. Verified during the v1 sweep; this entry was stale.
 2. ~~**`advanced-section.tsx:38` falls back to `runs.retention ?? 100`.**~~ CLOSED 2026-08-03 — now
    `?? 3`, matching `settings_store.DEFAULTS`. Fixed alongside the `events.retention` control below.
 3. **The Plex card's "Plex token" field has no "where do I get this" link**, unlike TMDB/MDBList/Exa.
    Normally filled by the wizard's PIN flow, so it only bites someone re-entering it by hand. Left
    alone rather than assert a support URL I could not verify.
-4. **The read-only Plex audit sits at the top of the Danger zone** (`danger-zone-section.tsx:22`).
-   It is the safest control on the page under the scariest heading; it reads better under Advanced.
+4. ~~**The read-only Plex audit sits at the top of the Danger zone.**~~ CLOSED 2026-08-03 —
+   `CleanupAuditCard` moved to `advanced-section.tsx`, above the log-level card.
 5. **`JobDetail` renders raw result keys** ("Asked to" + a JSON blob, then `fixed`/`orphans`/
    `demoted` verbatim). Diagnostic rather than everyday, so left as is.
-6. **The Jobs "Run now" group mixes reads and writes** with nothing distinguishing them: "Sync watch
-   history" only reads, while "Sync check" writes corrections to Plex and can delete a collection.
-   The consequence is only visible once a row is expanded.
+6. ~~**The Jobs "Run now" group mixes reads and writes.**~~ CLOSED 2026-08-03 — `EFFECT_TAGS`
+   (`pages/jobs.tsx`) puts a "Changes Plex" / "Can delete" tag on the LINE, rendered by
+   `EffectTag` in `job-row.tsx`. A job with no tag changes nothing outside Shortlist's own records.
+   Verified during the v1 sweep; this entry was stale.
 7. **Backend job-catalogue copy is in `services/jobs.py`**, not the SPA — it reads well, but it is
    the one place a copy pass over `web/` will always miss. Worth noting for the next audit.
 
@@ -392,11 +391,10 @@ issue #61's "Wanted by" filter, in the same two files.
 2. **`ARR_STATUS_LABELS` uses "Not monitored"**, Sonarr/Radarr's own word for a state that means
    "it isn't even looking" (`_status_for`). Kept deliberately — matching the Arr's vocabulary is how
    the owner finds the toggle there — but it is jargon by the letter of the rule.
-3. **`docs/guides.md` still carries two claims the UI stopped making.** "It drops off the list on
-   the next run" (the arr-presence badge) is the false-on-Sonarr-v3 claim fixed in the SPA in the
-   first pass — `show_present_tmdb` is empty on v3, so the pending row survives. And the inbox
-   section says "Send to Sonarr/Radarr" / "Sent to Sonarr/Radarr" where the page standardised on
-   films-first. Both are docs-only and outside the two items this pass was scoped to.
+3. ~~**`docs/guides.md` still carries two claims the UI stopped making.**~~ CLOSED 2026-08-03 —
+   both fixed when the guide was split into `docs/guides/`. `requests.md` now says films drop off on
+   the next run while **shows only drop off on Sonarr v4** (v3 does not report the TMDB id), and the
+   inbox reads "Send to Radarr/Sonarr", films-first. Verified during the v1 sweep.
 
 ## Row editor: delete/rename/tiles (2026-08-03) — ALL RESOLVED
 
