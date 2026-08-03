@@ -157,7 +157,7 @@ export function PosterField({
               A tall poster (2:3) looks best. JPG or PNG, up to 8&nbsp;MB.
             </p>
             {uploadError && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive-text">
                 {uploadError}
               </p>
             )}
@@ -172,7 +172,11 @@ export function PosterField({
               : "An AI-generated image from your text and style, using your AI provider."}
           </p>
           {isAiMode && provider.data && !provider.data.capable && (
-            <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm text-warning-foreground">
+            // No `text-warning-foreground` here: that token is the near-black ink meant for a SOLID
+            // `bg-warning` chip, and on this 5%-tint panel it rendered the whole warning as
+            // black-on-black. The border and tint already mark it as a warning — the text keeps the
+            // card's own foreground, like the other warning panels in this editor.
+            <p className="rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-sm">
               {provider.data.reason} You can use a <strong>Text</strong> poster
               instead — it needs no AI provider.
             </p>
@@ -225,11 +229,12 @@ export function PosterField({
             )}
           </div>
           <p className="text-sm text-muted-foreground">
-            The image is generated once and reused across runs — it refreshes
-            when you change the text or style.
+            The image is made once and then kept &mdash; every rebuild of the
+            row reuses it. It&rsquo;s only redrawn when you change the text or
+            the style.
           </p>
           {previewError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-text">
               {previewError}
             </p>
           )}

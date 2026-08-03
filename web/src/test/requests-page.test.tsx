@@ -1,10 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RequestCandidate } from "@/lib/types";
+import type { RequestCandidate, User } from "@/lib/types";
 import { RequestsPage } from "@/pages/requests";
 
 const {
@@ -15,8 +21,10 @@ const {
   restoreRequests,
   clearRequests,
   getSettings,
+  getUsers,
 } = vi.hoisted(() => ({
   listRequests: vi.fn(),
+  getUsers: vi.fn((): Promise<unknown[]> => Promise.resolve([])),
   sendRequests: vi.fn((_ids: number[], _dryRun?: boolean) =>
     Promise.resolve({ sent: 1, dry_run: false, outcomes: [] }),
   ),
@@ -36,7 +44,9 @@ const {
 vi.mock("@/lib/api", () => ({
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
   api: {
-    listRequests: () => listRequests(),
+    // The names go through: the "Wanted by" filter is the SERVER's, applied before its 500-row cap,
+    // so a test that swallowed the argument could not tell it apart from filtering the loaded page.
+    listRequests: (wantedBy?: string[]) => listRequests(wantedBy),
     sendRequests: (ids: number[], dryRun?: boolean) =>
       sendRequests(ids, dryRun),
     rejectRequests: (ids: number[]) => rejectRequests(ids),
@@ -44,8 +54,34 @@ vi.mock("@/lib/api", () => ({
     restoreRequests: (ids: number[]) => restoreRequests(ids),
     clearRequests: (ids: number[]) => clearRequests(ids),
     getSettings: () => getSettings(),
+    getUsers: () => getUsers(),
   },
 }));
+
+/** A users-list row, for the username → display-name resolution the inbox does client-side. */
+function person(username: string, displayName: string): User {
+  return {
+    id: username.length,
+    plex_account_id: 0,
+    username,
+    slug: username,
+    nickname: "",
+    friendly_name: "",
+    display_name: displayName,
+    avatar_url: "",
+    user_type: "shared",
+    restricted: false,
+    restriction_profile: "",
+    enabled: true,
+    cold_start: false,
+    request_tag: "",
+    prefs: {},
+    history_depth: 0,
+    last_run_at: null,
+    hit_rate: null,
+    preview_titles: [],
+  };
+}
 
 function candidate(
   overrides: Partial<RequestCandidate> = {},
@@ -86,6 +122,18 @@ function renderPage(initialEntry = "/requests") {
   );
 }
 
+/** Pick someone in the "Wanted by" box.
+ *
+ * It was a row of buttons, one per person; with forty sharers that was a wall, so it is now a search
+ * box with a list. Tests go through the same two steps a person does: open the box, click the name.
+ */
+async function pickPerson(name: string) {
+  await userEvent.click(screen.getByRole("combobox", { name: /Wanted by/i }));
+  await userEvent.click(
+    await screen.findByRole("option", { name: new RegExp(`^${name},`) }),
+  );
+}
+
 describe("RequestsPage", () => {
   beforeEach(() => {
     listRequests.mockReset();
@@ -95,6 +143,7 @@ describe("RequestsPage", () => {
     restoreRequests.mockClear();
     clearRequests.mockClear();
     getSettings.mockResolvedValue({ "requests.enabled": true });
+    getUsers.mockResolvedValue([]);
   });
 
   it("shows an empty state when nothing has ever been queued", async () => {
@@ -114,7 +163,11 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     expect(await screen.findByText("Amazing Digital Circus")).toBeTruthy();
-    expect(screen.getByText(/Sonarr.s exclusion list/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Sonarr was told never to add this again/i),
+    ).toBeTruthy();
+    // The Arr's own word for it stays, so the owner can find the setting there.
+    expect(screen.getByText(/import exclusion/i)).toBeTruthy();
   });
 
   it("shows a distinct 'off' empty state when requests are disabled", async () => {
@@ -123,7 +176,7 @@ describe("RequestsPage", () => {
     renderPage();
     // Never implies auto-send is running; points the owner at Settings to turn it on.
     expect(await screen.findByText(/Requests are off/i)).toBeTruthy();
-    expect(screen.getByText(/Enable in Settings/i)).toBeTruthy();
+    expect(screen.getByText(/Go to Settings . Requests/i)).toBeTruthy();
   });
 
   it("files a sent title under the Sonarr/Radarr send log with its outcome and when", async () => {
@@ -431,6 +484,268 @@ describe("RequestsPage", () => {
     expect(screen.getByText("Middling")).toBeTruthy();
   });
 
+  it("filters the queue down to one person's requests (issue #61)", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+      candidate({
+        id: 3,
+        tmdb_id: 300,
+        title: "Shared Pick",
+        wanters: ["Sarah", "Mike"],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    // Each name carries how many of the titles on this tab they wanted.
+    await pickPerson("Sarah");
+    expect(screen.getByText("Sarah Pick")).toBeTruthy();
+    expect(screen.getByText("Shared Pick")).toBeTruthy(); // Sarah wanted this one too
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+  });
+
+  it("asks the server for the picked names instead of filtering the loaded page", async () => {
+    const loaded = [
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ];
+    // The server's answer for Sarah carries a title the first read never returned — the shape the
+    // 500-row cap creates, and the one thing filtering the loaded page could never produce.
+    listRequests.mockImplementation((wantedBy?: string[]) =>
+      Promise.resolve(
+        wantedBy?.length
+          ? [
+              loaded[0],
+              candidate({
+                id: 3,
+                tmdb_id: 300,
+                title: "Buried Sarah Pick",
+                wanters: ["Sarah"],
+              }),
+            ]
+          : loaded,
+      ),
+    );
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    await pickPerson("Sarah");
+
+    expect(await screen.findByText("Buried Sarah Pick")).toBeTruthy();
+    expect(listRequests).toHaveBeenCalledWith(["Sarah"]);
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+    // Her chip is re-counted from that answer — "(1)" beside two of her titles would be a lie.
+    expect(screen.getByText("Sarah (2)")).toBeTruthy();
+  });
+
+  it("says the page limit applies until a name is picked, then that it doesn't", async () => {
+    // 498 rejected titles the Waiting tab never draws, plus two waiting ones: enough rows for the
+    // server's 500-row cap to be in play without jsdom rendering five hundred cards.
+    const filler = Array.from({ length: 498 }, (_, i) =>
+      candidate({
+        id: 1000 + i,
+        tmdb_id: 1000 + i,
+        title: `Old ${i}`,
+        status: "rejected",
+      }),
+    );
+    const waiting = [
+      candidate({ id: 1, tmdb_id: 1, title: "Sarah Pick", wanters: ["Sarah"] }),
+      candidate({ id: 2, tmdb_id: 2, title: "Mike Pick", wanters: ["Mike"] }),
+    ];
+    listRequests.mockImplementation((wantedBy?: string[]) =>
+      Promise.resolve(
+        wantedBy?.length
+          ? [
+              waiting[0],
+              candidate({
+                id: 3,
+                tmdb_id: 3,
+                title: "Buried Sarah Pick",
+                wanters: ["Sarah"],
+              }),
+            ]
+          : [...waiting, ...filler],
+      ),
+    );
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    expect(
+      screen.getByText(/This page loads the first 500 titles/),
+    ).toBeTruthy();
+
+    await pickPerson("Sarah");
+    await screen.findByText("Buried Sarah Pick");
+    // The limit described the unfiltered read. It does not describe this one, so it must stop
+    // being shown — that disclosure is what this change exists to retire.
+    expect(
+      screen.queryByText(/This page loads the first 500 titles/),
+    ).toBeNull();
+    expect(
+      screen.getByText(/Showing every title on file for the name you picked/),
+    ).toBeTruthy();
+  });
+
+  it("takes several people at once, showing anything any of them wanted", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+      candidate({ id: 3, tmdb_id: 300, title: "Ann Pick", wanters: ["Ann"] }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    await pickPerson("Sarah");
+    await pickPerson("Mike");
+    // Union, not intersection — two people picked means "either of them", or the list would empty.
+    expect(screen.getByText("Sarah Pick")).toBeTruthy();
+    expect(screen.getByText("Mike Pick")).toBeTruthy();
+    expect(screen.queryByText("Ann Pick")).toBeNull();
+    // Un-ticking the last name goes back to everyone, rather than showing nothing.
+    await pickPerson("Sarah");
+    await pickPerson("Mike");
+    expect(screen.getByText("Ann Pick")).toBeTruthy();
+  });
+
+  it("marks the picked names as pressed and clears them with 'Clear filters'", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    // Nobody picked yet, so there is no chip and everything is on screen.
+    expect(screen.queryByText("Sarah (1)")).toBeNull();
+
+    await pickPerson("Sarah");
+    expect(screen.getByText("Sarah (1)")).toBeTruthy(); // she is now a chip
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+
+    // The same "Clear filters" control that resets the rating/vote floors also drops the names.
+    await userEvent.click(
+      screen.getByRole("button", { name: "Clear filters" }),
+    );
+    expect(screen.getByText("Mike Pick")).toBeTruthy();
+    expect(screen.queryByText("Sarah (1)")).toBeNull();
+  });
+
+  it("takes a person back off with the x on their chip", async () => {
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    await pickPerson("Sarah");
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Stop filtering by Sarah" }),
+    );
+
+    expect(await screen.findByText("Mike Pick")).toBeTruthy();
+  });
+
+  it("says the people filter emptied the tab rather than showing a blank list", async () => {
+    // Sarah has nothing waiting, only something sent — picking her on the Sent tab and switching
+    // is impossible (tab changes reset the filter), so drive it from a rating floor instead: the
+    // point is that an emptied list explains itself for every tab, not just Waiting.
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sent Low",
+        status: "sent",
+        rating: 5.2,
+      }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Sent Lower",
+        status: "sent",
+        rating: 5.0,
+      }),
+    ]);
+    renderPage("/requests?tab=sent");
+    await screen.findByText("Sent Low");
+    await userEvent.selectOptions(screen.getByLabelText("Rating"), "9+");
+    // NOT "Nothing sent yet" — two titles are on file and one control brings them back.
+    expect(screen.queryByText(/Nothing sent yet/i)).toBeNull();
+    expect(
+      screen.getByText(/No sent title clears these filters/i),
+    ).toBeTruthy();
+    expect(screen.getByText(/2 are on this tab in total/i)).toBeTruthy();
+  });
+
+  it("offers no 'Wanted by' filter when a single person wanted everything", async () => {
+    listRequests.mockResolvedValue([
+      candidate({ id: 1, tmdb_id: 100, title: "One", wanters: ["Sarah"] }),
+      candidate({ id: 2, tmdb_id: 200, title: "Two", wanters: ["Sarah"] }),
+    ]);
+    renderPage();
+    await screen.findByText("One");
+    // Filtering to the only person there is would hide nothing, so the control isn't drawn.
+    expect(screen.queryByRole("button", { name: /^Sarah/ })).toBeNull();
+  });
+
+  it("drops a name from the filter once nothing on the tab carries it", async () => {
+    // Sarah's only title is sent while her name is ticked. Her chip goes with it, so filtering on
+    // her would empty the queue with no visible control to undo — the list falls back to everyone.
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    await pickPerson("Sarah");
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        status: "sent",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ]);
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: /Sarah Pick/i }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Delete/i }));
+    await waitFor(() => expect(screen.getByText("Mike Pick")).toBeTruthy());
+    expect(screen.queryByRole("button", { name: /^Sarah/ })).toBeNull();
+  });
+
   it("offers no library split when the queue is a single media type", async () => {
     listRequests.mockResolvedValue([
       candidate({ id: 1, title: "Dune", media_type: "movie" }),
@@ -583,7 +898,147 @@ describe("RequestsPage", () => {
     ]);
     renderPage();
     expect(await screen.findByText(/Wanted by Sarah, Mike/)).toBeTruthy();
-    expect(screen.getByText(/wanted by 3 people/)).toBeTruthy();
+    expect(screen.getByText(/Wanted by 3 people/)).toBeTruthy();
+  });
+
+  it("shows the display name for each wanter, and the username itself when nobody matches", async () => {
+    // `wanters` stores the bare Plex username; every other page shows `display_name || username`.
+    getUsers.mockResolvedValue([person("sarah_p89", "Sarah")]);
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        title: "Poor Things",
+        wanters: ["sarah_p89", "ghost_account"],
+        why: [
+          {
+            user: "sarah_p89",
+            row: "Comedy Classics",
+            seed: "Fawlty Towers",
+            source: "tmdb_similar",
+          },
+        ],
+      }),
+    ]);
+    renderPage();
+    // Known username -> the friendly name; unknown one -> itself, never a blank.
+    expect(
+      await screen.findByText(/Wanted by Sarah, ghost_account/),
+    ).toBeTruthy();
+    // The why-line carries the same usernames, so it resolves them the same way.
+    expect(screen.getByText("Sarah")).toBeTruthy();
+    expect(screen.queryByText(/sarah_p89/)).toBeNull();
+  });
+
+  it("labels the 'Wanted by' chips with display names but still filters on the username", async () => {
+    getUsers.mockResolvedValue([
+      person("sarah_p89", "Sarah"),
+      person("m_jones", "Mike"),
+    ]);
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["sarah_p89"],
+      }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Mike Pick",
+        wanters: ["m_jones"],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    // The chip reads as the person, not as their login...
+    // The option reads as the person, not as their login...
+    await userEvent.click(screen.getByRole("combobox", { name: /Wanted by/i }));
+    expect(await screen.findByRole("option", { name: /^Sarah,/ })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: /sarah_p89/ })).toBeNull();
+
+    // ...and picking it still narrows the list, because the filter is keyed on the username.
+    await userEvent.click(screen.getByRole("option", { name: /^Sarah,/ }));
+    expect(screen.getByText("Sarah Pick")).toBeTruthy();
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+  });
+
+  it("offers people who have nothing on the page at all", async () => {
+    // The names used to be inferred from the titles on screen, and the page loads at most 500. So
+    // anyone whose requests were all older than that was missing from the picker — and the filter
+    // itself would have found them perfectly well, if only they could be picked. The list of people
+    // must not be limited by the page you happen to be looking at.
+    getUsers.mockResolvedValue([
+      person("sarah_p89", "Sarah"),
+      person("quiet_one", "Quiet Pete"),
+    ]);
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["sarah_p89"],
+      }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Sarah Pick Two",
+        wanters: ["sarah_p89"],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+
+    await userEvent.click(screen.getByRole("combobox", { name: /Wanted by/i }));
+    const list = await screen.findByRole("listbox");
+
+    // Pete wanted none of the loaded titles, but he is still there to pick...
+    expect(
+      within(list).getByRole("option", { name: "Quiet Pete" }),
+    ).toBeTruthy();
+    // ...and carries NO count, because "0" would read as "has never asked for anything" when it
+    // only means "nothing of theirs is on this tab".
+    expect(
+      within(list).queryByRole("option", { name: /Quiet Pete, 0/ }),
+    ).toBeNull();
+    expect(
+      within(list).getByRole("option", { name: /^Sarah, 2 titles/ }),
+    ).toBeTruthy();
+  });
+
+  it("finds someone by their Plex login as well as their display name", async () => {
+    // Whoever invited these people knows them by the login they typed into Plex, so searching for
+    // it has to work even though the list shows the friendlier name.
+    getUsers.mockResolvedValue([
+      person("sarah_p89", "Sarah"),
+      person("m_jones", "Mike"),
+    ]);
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["sarah_p89"],
+      }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Mike Pick",
+        wanters: ["m_jones"],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+
+    await userEvent.click(screen.getByRole("combobox", { name: /Wanted by/i }));
+    await userEvent.type(
+      screen.getByRole("combobox", { name: /Wanted by/i }),
+      "p89",
+    );
+
+    const list = await screen.findByRole("listbox");
+    const options = within(list).getAllByRole("option");
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveAccessibleName(/^Sarah,/);
   });
 
   it("truncates a long wanters list to three names plus a +N more count", async () => {
@@ -681,7 +1136,7 @@ describe("RequestsPage", () => {
     expect(await screen.findByText(/Requests are off/i)).toBeTruthy();
     expect(screen.getByText("Fallout")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /to Sonarr\/Radarr/i }),
+      screen.getByRole("button", { name: /to Radarr\/Sonarr/i }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: /Reject/i })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /Fallout/i })).toBeDisabled();

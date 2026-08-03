@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, cast, func
+from sqlalchemy import String, case, cast, func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import DEFAULT_ROW_TEMPLATE
@@ -175,8 +175,14 @@ class _RowNamer:
         # The row's own template, the default row falling back to the global one (the per-user
         # override tier of engine `resolve_row_template` is dropped for this aggregate label, and a
         # custom row uses its stored name). Rendered per library below.
+        # The default row's template is the GLOBAL one, full stop — never its own column. The engine
+        # forces that column empty when it builds specs (`context_builder.py:604,698`), so reading it
+        # here made reports the one surface that could disagree with what Plex actually got: a
+        # database carrying a stale value (written before the API guarded it) shows the old name for
+        # ever, while delivery uses the global. Ignoring it makes this match delivery on both old and
+        # new databases, so no migration is needed to clean the column up.
         self._templates = {
-            c.slug: (c.name_template or (default_template if c.slug == DEFAULT_SLUG else c.name))
+            c.slug: (default_template if c.slug == DEFAULT_SLUG else (c.name_template or c.name))
             for c in session.query(Collection).all()
         }
 
@@ -465,4 +471,100 @@ def effectiveness(session: Session, window: str, *, next_watch_sync: str | None 
         "per_row": per_row,
         "top_titles": [{"tmdb_id": tid, "media_type": mt, "title": ttl, "watchers": n} for tid, mt, ttl, n in top_rows],
         "recent": recent,
+    }
+
+
+def row_effectiveness(session: Session, slug: str, now: datetime | None = None) -> dict:
+    """Is ONE row working? The numbers the row editor shows beside that row's settings.
+
+    Deliberately not a slice of ``effectiveness``: that report is ~30 queries (its own docstring says
+    so, and it runs in a worker thread because it stalled the event loop) and computing all of it to
+    print three numbers on a settings page is the wrong trade. This is four queries against the same
+    columns and the same definitions, so the two can never disagree about what a "hit" is.
+
+    The rate comes from a MATURED cohort — picks old enough to have had their full
+    ``HIT_WINDOW_DAYS`` to be watched. Everything younger is counted in the all-time totals but kept
+    out of the rate, because a row delivered last night has a 0% rate for no reason other than time,
+    and a settings page that told someone their new row was failing would send them to change
+    settings that were never the problem. `matured` is None until such a cohort exists, and the UI is
+    expected to say "too early to tell" rather than render a zero.
+
+    Args:
+        session: Open DB session.
+        slug: The row's ``collection_slug``, as stamped on its picks.
+        now: Clock injection point for tests; defaults to the real UTC now.
+
+    Returns:
+        Delivered/watched counts all-time and over the matured cohort, a per-library split of that
+        cohort (a row spanning two libraries genuinely performs differently in each), and when the
+        row first delivered anything — which is what tells "never run" apart from "ran last night".
+    """
+    now = now or datetime.now(UTC)
+    mine = [PickRow.collection_slug == slug]
+
+    def counts(extra: list) -> tuple[int, int]:
+        delivered = session.query(func.count(func.distinct(_PERSON_TITLE))).filter(*mine, *extra).scalar() or 0
+        watched = (
+            session.query(func.count(func.distinct(_PERSON_TITLE)))
+            .filter(PickRow.watched_at.isnot(None), *mine, *extra)
+            .scalar()
+            or 0
+        )
+        return delivered, watched
+
+    delivered_all, watched_all = counts([])
+    first = session.query(func.min(PickRow.created_at)).filter(*mine).scalar()
+    last = session.query(func.max(PickRow.created_at)).filter(*mine).scalar()
+
+    # Counted the SAME way `/api/runs?collection=<slug>` selects them, because the panel's Runs tile
+    # links straight to that list — a tile that says 40 above a list of 11 is worse than no tile.
+    # Both therefore count runs STILL ON RECORD: `runs.retention` prunes old runs and nulls the
+    # picks' run_id (migration 0040, so picks outlive their run), and neither side pretends the
+    # pruned ones are still there.
+    built_in = session.query(PickRow.run_id).filter(*mine).distinct()
+    runs = session.query(func.count(Run.id)).filter(Run.id.in_(built_in)).scalar() or 0
+
+    matured_until = now - timedelta(days=HIT_WINDOW_DAYS)
+    cohort = [PickRow.created_at < matured_until]
+    cohort_delivered, cohort_watched = counts(cohort)
+
+    per_library: list[dict] = []
+    if cohort_delivered:
+        rows = (
+            session.query(
+                PickRow.library,
+                func.count(func.distinct(_PERSON_TITLE)),
+                # COUNT(DISTINCT ...) skips NULLs, so an unwatched pick contributes nothing —
+                # which is what makes one GROUP BY answer both halves of the ratio per library.
+                func.count(func.distinct(case((PickRow.watched_at.isnot(None), _PERSON_TITLE)))),
+            )
+            .filter(*mine, *cohort)
+            .group_by(PickRow.library)
+            .all()
+        )
+        per_library = [
+            {"library": lib or "", "delivered": d, "watched": w, "rate": _rate(w, d)}
+            for lib, d, w in sorted(rows, key=lambda r: -r[1])
+        ]
+
+    return {
+        "delivered": delivered_all,
+        "watched": watched_all,
+        "runs": runs,
+        "first_delivered_at": iso_utc(first) if first else None,
+        "last_delivered_at": iso_utc(last) if last else None,
+        "matured_days": HIT_WINDOW_DAYS,
+        # None, not a zeroed dict: "no cohort yet" and "a cohort that landed nothing" are different
+        # answers and the panel says different things about them.
+        "matured": (
+            {
+                "delivered": cohort_delivered,
+                "watched": cohort_watched,
+                "rate": _rate(cohort_watched, cohort_delivered),
+                "cohort_to": iso_utc(matured_until),
+            }
+            if cohort_delivered
+            else None
+        ),
+        "per_library": per_library,
     }

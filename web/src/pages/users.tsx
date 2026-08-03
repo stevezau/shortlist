@@ -137,7 +137,8 @@ export function UsersPage() {
         title="Users"
         subtitle="Everyone on your Plex server. Turn someone on and they start getting the rows you've built."
         actions={
-          <div className="flex gap-2">
+          // Wraps: three buttons need 345px in one line and ran off a 320px screen.
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               onClick={() => sync.mutate()}
@@ -198,13 +199,16 @@ export function UsersPage() {
       <Dialog open={confirmEnableOpen} onOpenChange={setConfirmEnableOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>
-              Give a Picked-for-You row to all {userCount} users?
-            </DialogTitle>
+            <DialogTitle>Turn on all {userCount} users?</DialogTitle>
+            {/* "each user gets a row" was an over-claim: an account with a Plex restriction
+                profile is skipped (Plex hides every collection from it), and a person still needs
+                to be in some row's audience. */}
             <DialogDescription>
-              This turns everyone on, so each user gets their own private
-              Picked-for-You row on the next run. Turn anyone back off
-              individually whenever you like.
+              Everyone here is switched on, so each of them gets their own
+              private row the next time the rows they&rsquo;re in are built.
+              Accounts Plex won&rsquo;t show collections to &mdash; the ones
+              badged with a restriction profile &mdash; stay skipped. Turn
+              anyone back off individually whenever you like.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -229,10 +233,17 @@ export function UsersPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Turn off every user?</DialogTitle>
+            {/* NOT "share filters are left untouched" — turning someone off queues a privacy pass
+                that WRITES their share filter (users.py `remove_users_rows` → `queue_privacy_sync`),
+                which is what stops a disabled account seeing the shared rows too. */}
             <DialogDescription>
-              This disables all users and removes every Picked-for-You row from
-              Plex right away. Share filters and snapshots are left untouched —
-              turn anyone back on to rebuild their row on the next run.
+              This turns everyone off and takes every Picked-for-You row off
+              Plex right away. Each account&rsquo;s Plex sharing settings are
+              updated to match, so nobody is left seeing a row that no longer
+              belongs to them. The record of how sharing looked before you
+              installed Shortlist is kept, so a full uninstall can still put it
+              back &mdash; and turning anyone back on rebuilds their row on its
+              next run.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -264,7 +275,7 @@ export function UsersPage() {
         empty={
           <EmptyState
             title="No users yet"
-            hint="Shortlist hasn’t imported any Plex users. Use “Sync users” above, or check the Plex connection under Settings."
+            hint="Shortlist hasn’t found anyone on your server. Press “Sync users” above to ask plex.tv again — and if that turns up nothing, check the server address and token in Settings → Connections, on the Plex card."
           />
         }
       >

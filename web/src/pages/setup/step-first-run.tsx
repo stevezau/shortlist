@@ -115,7 +115,7 @@ function ProgressCard({
             title={detail}
             className={cn(
               "truncate text-sm",
-              stage === "error" ? "text-destructive" : "text-muted-foreground",
+              stage === "error" ? "text-destructive-text" : "text-muted-foreground",
             )}
           >
             {detail}
@@ -132,7 +132,7 @@ function ProgressCard({
         )}
         {stage === "error" && (
           <TriangleAlert
-            className="h-4 w-4 shrink-0 text-destructive"
+            className="h-4 w-4 shrink-0 text-destructive-text"
             aria-hidden="true"
           />
         )}
@@ -197,10 +197,10 @@ export function StepFirstRun({ complete }: StepProps) {
       {!started && (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            This builds a real row for every enabled user — history → candidates
-            → curating → collection → privacy sync — and you get to watch every
-            stage live. Each row is delivered hidden and only shown to the
-            person it&rsquo;s for.
+            This looks at what everyone has watched, finds titles they should
+            enjoy, and adds a row to each person&rsquo;s Plex. You can watch it
+            happen, one person at a time. Every row is delivered hidden and only
+            ever shown to the person it&rsquo;s for.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -226,7 +226,7 @@ export function StepFirstRun({ complete }: StepProps) {
             </Button>
           </div>
           {run.isError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-text">
               {apiErrorMessage(
                 run.error,
                 "The run could not start. Check the server log and try again.",
@@ -279,8 +279,9 @@ export function StepFirstRun({ complete }: StepProps) {
                       className="h-3.5 w-3.5 animate-spin"
                       aria-hidden="true"
                     />
-                    All rows built — finishing up: merging privacy filters
-                    across every account, then promoting the rows onto Home.
+                    All rows built — finishing up: hiding each person&rsquo;s
+                    row from everyone else, then putting them on the Home
+                    screen.
                   </p>
                 )}
                 {!finished && (
@@ -316,7 +317,7 @@ export function StepFirstRun({ complete }: StepProps) {
           <p
             className={
               failed
-                ? "inline-flex items-center gap-2 text-lg font-semibold text-destructive"
+                ? "inline-flex items-center gap-2 text-lg font-semibold text-destructive-text"
                 : "inline-flex items-center gap-2 text-lg font-semibold text-success"
             }
           >
@@ -356,7 +357,7 @@ export function StepFirstRun({ complete }: StepProps) {
                 Something went wrong on this run — copy the details below when
                 reporting it:
               </p>
-              <p className="rounded-md bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+              <p className="rounded-md bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive-text">
                 {finishedError}
               </p>
             </div>

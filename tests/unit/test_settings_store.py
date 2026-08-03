@@ -116,3 +116,27 @@ class TestASecretNeedsASecretBox:
             values = SettingsStore(session).all_public()
 
         assert values["plex.token"] == "•••••"
+
+
+class TestUnsetIsNotTheSameAsStoringABlank:
+    """`unset` removes the row; `set(key, "")` writes one. For the crons the UI can switch off, those
+    two states mean opposite things — off vs. run at the built-in default (`scheduler._OFF_ABLE`)."""
+
+    def test_unset_removes_the_row_so_has_row_goes_back_to_false(self, sessions):
+        with sessions() as session:
+            store = SettingsStore(session)
+            store.set("sync.check_cron", "")
+            assert store.has_row("sync.check_cron") is True
+
+            assert store.unset("sync.check_cron") is True
+
+            assert store.has_row("sync.check_cron") is False
+            # Back to the declared default, exactly as a key that was never written reads.
+            assert store.get("sync.check_cron") == DEFAULTS["sync.check_cron"]
+
+    def test_unsetting_a_key_with_no_row_is_a_no_op(self, sessions):
+        with sessions() as session:
+            store = SettingsStore(session)
+
+            assert store.unset("sync.check_cron") is False
+            assert store.has_row("sync.check_cron") is False

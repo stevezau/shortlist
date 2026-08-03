@@ -93,7 +93,7 @@ export function RowScheduleField({
             }}
           />
           <p className="text-sm text-muted-foreground">
-            Times are the server&rsquo;s, not yours.
+            Times use the clock on the machine running Shortlist, not your own device.
           </p>
         </div>
       )}
@@ -108,8 +108,8 @@ export function RowScheduleField({
       {(mode === "nightly" || mode === "weekly") && (
         <p className="text-sm text-muted-foreground">
           {mode === "weekly"
-            ? `Rebuilds every Sunday at ${time} server time.`
-            : `Rebuilds nightly at ${time} server time.`}
+            ? `Rebuilds every Sunday at ${time}, Shortlist's clock.`
+            : `Rebuilds nightly at ${time}, Shortlist's clock.`}
         </p>
       )}
     </div>

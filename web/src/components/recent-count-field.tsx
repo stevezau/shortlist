@@ -6,6 +6,13 @@ import { Label } from "@/components/ui/label";
 const RECENT_COUNT_MIN = 1;
 const RECENT_COUNT_MAX = 25;
 
+/** The one name this setting goes by, everywhere it appears (Settings → Finding titles and the row
+ *  editor). It names the single source it affects, because it is only a slice of the list
+ *  {@link MaxSeedsField} governs — `candidates.py` searches `seeds[:recent_count]` — and a name that
+ *  said "watches" alone was indistinguishable from the row-wide one. Exported so every screen
+ *  imports the name rather than retyping it; the row editor and Settings had already drifted apart. */
+export const RECENT_COUNT_LABEL = "Watches the AI web search looks up";
+
 /** Clamp any number to the valid recent-watches range (matches the API's 1..25 bound). */
 function clampRecentCount(n: number): number {
   if (Number.isNaN(n)) return RECENT_COUNT_MIN;
@@ -22,14 +29,14 @@ function clampRecentCount(n: number): number {
 export function RecentCountField({
   value,
   onChange,
-  label = "Watches the AI searches from",
+  label = RECENT_COUNT_LABEL,
 }: {
   value: number;
   onChange: (count: number) => void;
   /** Caption above the input. Pass "" when the surrounding block already renders one — an
    *  `InheritableField` does, and rendering both printed the same heading twice with the toggle
-   *  sandwiched between them. The input keeps an `aria-label` either way, so suppressing the
-   *  visible caption never costs the field its accessible name. */
+   *  sandwiched between them. Suppressing it falls back to an `aria-label`, so the field never
+   *  loses its accessible name. */
   label?: string;
 }) {
   const id = useId();
@@ -51,24 +58,29 @@ export function RecentCountField({
   return (
     <div className="space-y-1.5">
       {label ? <Label htmlFor={id}>{label}</Label> : null}
-      <Input
-        id={id}
-        aria-label="Watches the AI searches from"
-        type="number"
-        inputMode="numeric"
-        min={RECENT_COUNT_MIN}
-        max={RECENT_COUNT_MAX}
-        value={text}
-        onChange={(event) => setText(event.target.value)}
-        onBlur={commit}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            commit();
-          }
-        }}
-        className="w-28"
-      />
+      <div className="flex items-center gap-2">
+        <Input
+          id={id}
+          // Only when the visible caption is suppressed: an aria-label WINS over a <label>, so
+          // setting it unconditionally overrode the per-person caption the user-row card passes.
+          aria-label={label ? undefined : RECENT_COUNT_LABEL}
+          type="number"
+          inputMode="numeric"
+          min={RECENT_COUNT_MIN}
+          max={RECENT_COUNT_MAX}
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit();
+            }
+          }}
+          className="w-24"
+        />
+        <span className="text-sm text-muted-foreground">watches</span>
+      </div>
     </div>
   );
 }

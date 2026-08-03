@@ -479,8 +479,25 @@ export function useSetUserRowOverride(userId: number) {
   });
 }
 
-export function useRequests() {
-  return useQuery({ queryKey: queryKeys.requests, queryFn: api.listRequests });
+/**
+ * The approval inbox, optionally narrowed to the people named in `wantedBy`.
+ *
+ * The narrowing is the SERVER's, not this page's: `GET /api/requests` applies it before its 500-row
+ * cap, so picking a name searches the whole history rather than the page that happened to load.
+ *
+ * No names keeps the exact key (and URL) the unfiltered inbox has always used, so the page's own
+ * unfiltered read and a `useRequests([])` share one cache entry instead of fetching twice. Names are
+ * sorted into the key so ticking Sarah-then-Mike and Mike-then-Sarah are the same query. Every
+ * mutation invalidates `["requests"]`, which is a prefix of these keys, so filtered reads refresh
+ * with the rest.
+ */
+export function useRequests(wantedBy: string[] = []) {
+  const names = [...wantedBy].sort();
+  return useQuery({
+    queryKey:
+      names.length > 0 ? [...queryKeys.requests, names] : queryKeys.requests,
+    queryFn: () => api.listRequests(names),
+  });
 }
 
 export function useArrStatus() {
@@ -611,5 +628,15 @@ export function useLogs(
     // buries the real error under a stream of identical ones. The error state offers Retry.
     refetchInterval: (query) => (follow && !query.state.error ? 3000 : false),
     placeholderData: (previous) => previous,
+  });
+}
+
+/** How one row has actually performed. Only fetched for a SAVED row — a row being created has no
+ *  history, and asking for one would 404. */
+export function useCollectionEffectiveness(id: number | null) {
+  return useQuery({
+    queryKey: ["collection-effectiveness", id],
+    queryFn: () => api.getCollectionEffectiveness(id as number),
+    enabled: id !== null,
   });
 }

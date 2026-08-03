@@ -59,8 +59,10 @@ export function StepCustomize({ update, next }: StepProps) {
       },
       {
         id: "dynamic",
-        label: DYNAMIC_TPL,
-        hint: "Rewritten nightly from each user's top seed.",
+        // Rendered, not raw. Its sibling above calls renderRowName and this did not, so the card
+        // showed "Because you watched {top_seed}" — template syntax presented as finished copy.
+        label: renderRowName(DYNAMIC_TPL),
+        hint: "Renamed each night after whatever they watched most recently.",
       },
       { id: "custom", label: "Custom…", hint: "Your words, your emoji." },
     ];
@@ -143,18 +145,19 @@ export function StepCustomize({ update, next }: StepProps) {
         />
         <p className="mt-3 text-xs text-muted-foreground">
           This previews the row&rsquo;s <em>title</em> as it&rsquo;ll appear on
-          Plex — the &ldquo;Because you watched&hellip;&rdquo; option even fills
-          in a real example. The tiles are placeholders: the actual posters come
-          from each person&rsquo;s own library after the first run.
+          Plex &mdash; the &ldquo;Because you watched&hellip;&rdquo; option even
+          fills in a real example. The tiles are placeholders: the real posters
+          come from each person&rsquo;s own library once Shortlist builds the
+          rows, on the last screen of this setup.
         </p>
       </div>
 
       <RowSizeField value={rowSize} onChange={setRowSize} />
 
       <p className="text-sm text-muted-foreground">
-        This row refreshes nightly to start. Every row runs on its own schedule
-        — change the cadence, or turn it off, in the row&rsquo;s editor once
-        you&rsquo;re set up.
+        This row refreshes nightly to start with. Each row keeps its own
+        schedule &mdash; change how often it refreshes, or switch it off
+        altogether, in the row&rsquo;s editor once you&rsquo;re set up.
       </p>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -176,7 +179,7 @@ export function StepCustomize({ update, next }: StepProps) {
         </Button>
       </div>
       {save.isError && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive-text">
           {apiErrorMessage(save.error, "Saving failed. Try again.")}
         </p>
       )}

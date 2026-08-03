@@ -67,13 +67,15 @@ DEFAULTS: dict[str, Any] = {
     # "what changed on whose share at 03:31" (plex-safety rule 10) is the one record an operator may
     # want long after the run detail around it is gone.
     "events.retention": 0,
-    # Read only what changed since the last sync (Plex's `lastViewedAt>=` filter) instead of every
-    # watched title, every night, per user, per library. An incremental read cannot see an un-watch
-    # or a deletion, so a COMPLETE read still runs every `sync.watch_full_days` regardless — this
-    # switch only decides whether the nights in between are cheap. Off = always read everything.
+    # Read only what changed since the last sync instead of every watched title, every night, per
+    # user, per library. An incremental read notices an un-watch inside the window it covered, but
+    # nothing further back and no deletion, so a COMPLETE read still runs every `sync.watch_full_days`
+    # regardless — this switch only decides whether the nights in between are cheap. Off = always
+    # read everything.
     "sync.watch_incremental": True,
     # How often the complete re-read happens, in days. It is the only thing that can notice a title
-    # being un-watched or removed, so it is not optional — only its frequency is.
+    # un-watched or removed longer ago than the nightly read reaches back, so it is not optional —
+    # only its frequency is.
     "sync.watch_full_days": 7,
     # (the schedulable crons are added below, derived from scheduler.DEFAULT_CRONS)
     "backup.max_keep": 10,  # how many backups to retain
@@ -235,6 +237,16 @@ class SettingsStore:
             return self._secrets.decrypt(value)
         return value
 
+    def has_row(self, key: str) -> bool:
+        """Whether this key has been WRITTEN, as opposed to falling back to its default.
+
+        `get` deliberately hides that distinction — a caller wants the effective value. For the
+        off-able crons it matters: an absent row means "run at the built-in default", a stored blank
+        means OFF, and both come back from `get` as "". Anything that must tell "never set" from
+        "set to empty" — the settings audit, for one — asks here.
+        """
+        return self._session.get(Setting, key) is not None
+
     def set(self, key: str, value: Any) -> None:
         self._require_box(key)
         if key in SECRET_KEYS and value:
@@ -245,6 +257,21 @@ class SettingsStore:
         else:
             row.value = {"v": value}
         self._session.commit()
+
+    def unset(self, key: str) -> bool:
+        """Delete this key's row, putting it back to "never written". Returns whether a row went.
+
+        The counterpart to `has_row`, and the only way to express "use the built-in default" for a
+        cron the UI can switch off: writing "" there means OFF (`scheduler._OFF_ABLE`), so the
+        default is reachable ONLY by removing the row. Storing a blank and deleting the row are
+        different states — see `scheduler._resolve_cron`.
+        """
+        row = self._session.get(Setting, key)
+        if row is None:
+            return False
+        self._session.delete(row)
+        self._session.commit()
+        return True
 
     def all_public(self) -> dict[str, Any]:
         """Everything except secrets; secrets appear redacted when set (UI contract).

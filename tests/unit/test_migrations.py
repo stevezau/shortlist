@@ -415,3 +415,74 @@ class TestThePreMigrationBackup:
 
         assert len(self._backups(tmp_path)) == 1
         assert self._backups(tmp_path)[0].endswith("_pre-migration.db")
+
+
+class TestUpgradingAnOldInstall:
+    """A database that has been running since an early beta must reach head with its data intact.
+
+    Every other test in this file starts empty, so they prove the SCHEMA arrives correctly and say
+    nothing about the rows already in it. The failure this guards is the one that only ever happens
+    to other people: a `batch_alter_table` rebuild that silently drops rows, a NOT NULL added over a
+    column real data left NULL, a FK rebuild that loses its parent. Nobody upgrading from 1.0 onward
+    is on a fresh database, and 1.0 is the version people jump to from an old beta.
+    """
+
+    #: The oldest revision a real install can be sitting on. `0001` is the squashed initial schema,
+    #: so this walks the whole published chain.
+    OLDEST = "0001"
+
+    def _seed_at_oldest(self, config_dir: Path) -> None:
+        """Bring a database up to the oldest revision and put representative rows in it."""
+        cfg = _alembic(config_dir)
+        command.upgrade(cfg, self.OLDEST)
+        con = sqlite3.connect(config_dir / "shortlist.db")
+        try:
+            # Only the tables 0001 created, and only the columns it declared — anything newer would
+            # be testing the destination rather than the journey.
+            cols = {row[1] for row in con.execute("PRAGMA table_info(users)")}
+            assert "username" in cols, "0001 is not the schema this test assumes"
+            # Every NOT NULL column 0001 declared, spelled out — a partial insert would fail on
+            # the constraint rather than on anything this test is about.
+            con.execute(
+                "INSERT INTO users (plex_account_id, username, slug, avatar_url, user_type, enabled,"
+                " cold_start, label, request_tag, prefs)"
+                " VALUES (100, 'sarah', 'sarah', '', 'shared', 1, 0, 'shortlist_sarah', 'sarah', '{}')"
+            )
+            con.execute(
+                "INSERT INTO settings (key, value, updated_at)"
+                " VALUES ('plex.url', '\"http://pms:32400\"', '2026-01-01 00:00:00')"
+            )
+            con.commit()
+        finally:
+            con.close()
+
+    def test_an_early_beta_database_reaches_head_with_its_rows_intact(self, tmp_path: Path):
+        self._seed_at_oldest(tmp_path)
+
+        run_migrations(tmp_path)
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            users = con.execute("SELECT username, slug, plex_account_id FROM users").fetchall()
+            settings = con.execute("SELECT value FROM settings WHERE key = 'plex.url'").fetchall()
+            columns = {row[1] for row in con.execute("PRAGMA table_info(users)")}
+        finally:
+            con.close()
+        # Proves the chain was actually walked rather than the database sitting where it was seeded:
+        # `nickname` arrives in 0030 and `restricted` in 0041, neither of which exists at 0001.
+        assert {"nickname", "restricted"} <= columns, "the upgrade did not run past the seeded revision"
+        assert users == [("sarah", "sarah", 100)], "the upgrade lost or altered an existing user"
+        assert settings == [('"http://pms:32400"',)], "the upgrade lost an existing setting"
+
+    def test_an_upgraded_old_database_has_no_drift_from_the_models(self, tmp_path: Path):
+        """The same no-drift guarantee the fresh path gets.
+
+        A migration can be written so it produces the right schema from empty and a subtly different
+        one from an existing database — a `batch_alter_table` that reflects what is actually there
+        rather than what the migration assumes. This is the only test that would catch that.
+        """
+        self._seed_at_oldest(tmp_path)
+
+        run_migrations(tmp_path)
+
+        assert _diffs(tmp_path) == []

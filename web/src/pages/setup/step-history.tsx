@@ -70,7 +70,9 @@ export function StepHistory({ data, update, next }: StepProps) {
   return (
     <div className="space-y-6">
       <div className="space-y-2">
-        <Label htmlFor={tmdbId}>TMDB API key (required)</Label>
+        <Label htmlFor={tmdbId}>
+          The Movie Database (TMDB) API key (required)
+        </Label>
         <Input
           id={tmdbId}
           type="password"
@@ -84,9 +86,10 @@ export function StepHistory({ data, update, next }: StepProps) {
           autoComplete="off"
         />
         <p className="text-sm text-muted-foreground">
-          Shortlist asks TMDB which titles are similar to the ones each user
-          watched, then keeps only the ones already in your library. A key is
-          free from themoviedb.org → Settings → API.
+          TMDB is a free film and TV catalogue. Shortlist asks it which titles
+          are like the ones each person watched, then keeps only the ones
+          already in your library. Sign up at themoviedb.org and the key is
+          under Settings → API.
         </p>
       </div>
 
@@ -104,12 +107,12 @@ export function StepHistory({ data, update, next }: StepProps) {
       </div>
 
       {saveTmdb.isSuccess && !saveTmdb.data.ok && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive-text">
           {saveTmdb.data.message}
         </p>
       )}
       {saveTmdb.isError && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive-text">
           {apiErrorMessage(saveTmdb.error, "Could not save that TMDB key.")}
         </p>
       )}

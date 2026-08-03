@@ -96,9 +96,15 @@ CATALOG: tuple[JobKind, ...] = (
         kind="sync.users",
         label="Sync people from Plex",
         description=(
-            "Re-read who has access to your server from plex.tv and Tautulli. This is what notices a "
-            "new person (and writes the share filters that stop them seeing everyone else's rows) and "
-            "what notices someone leaving."
+            "Asks plex.tv who currently has access to your server, and brings Shortlist's list of "
+            "people into line with it. Someone new is added, and the filter that hides other people's "
+            "rows from them is written immediately, so they never get a look at anyone else's row. "
+            "Someone who no longer has access is switched off and their rows are taken off Plex. "
+            "Display names are refreshed from Tautulli if you have it connected, and a row still "
+            "sitting on Plex under somebody's old name is renamed to match."
+            "\n\nRuns at 04:47 by default. If it ever looks like half the people you share with "
+            "vanished at once — almost always a bad reply from plex.tv rather than a real change — "
+            "nobody is switched off and the refusal is recorded for you to look at instead."
         ),
         manual=True,
         # A WRITER, despite the name. The handler calls `rename_after_nickname` inline, which renames
@@ -114,9 +120,13 @@ CATALOG: tuple[JobKind, ...] = (
         kind="sync.history",
         label="Sync watch history",
         description=(
-            "Re-read every enabled person's watched set. Drives every recommendation, and marks "
-            "delivered picks as watched so the dashboard's hit rate stays current. Reads only — "
-            "nothing on Plex changes."
+            "Re-reads what each person has watched, straight from your Plex server. This is what "
+            "every recommendation is built from, and it is also how Shortlist notices that a title it "
+            "put in front of someone was actually watched — the numbers on your dashboard come from "
+            "it. Reads only: nothing on Plex changes and nobody's rows move."
+            "\n\nRuns at 04:17 by default. Normally it reads only what changed since the last pass, "
+            "with one complete re-read a week — that full pass is the only thing that can notice a "
+            "title being un-watched or removed from the library."
         ),
         manual=True,
         writes_plex=False,  # "Reads only — nothing on Plex changes", as the description says
@@ -125,17 +135,25 @@ CATALOG: tuple[JobKind, ...] = (
     ),
     JobKind(
         kind="sync.check",
-        label="Sync check",
+        label="Check and fix rows on Plex",
         description=(
-            "Checks every row on Plex against what Shortlist intends, and fixes anything that "
-            "drifted. Rows fall out of step when a run doesn't finish, when the container restarts "
+            "Looks at every collection Shortlist has put on your Plex server and puts back the ones "
+            "that ended up in the wrong place — somebody else's row left sitting on YOUR Home screen, "
+            "or a paused person's row that never came down. Press Check now and it tells you what it "
+            "would change without touching anything; the Fix button then makes those changes."
+            "\n\nIt can also DELETE a collection, which is the one thing here you cannot undo. A "
+            "collection labelled for somebody Shortlist no longer knows about can't be hidden from "
+            "anyone, so the only way to clear it out of your Collections tab is to remove it. Only "
+            "the Fix button ever does that: the nightly pass takes such a collection off the shelves, "
+            "reports it, and leaves the deleting to you."
+            "\n\nRows fall out of step when a run doesn't finish, when the container restarts "
             "mid-write, or when someone was paused or disabled while their row was already live — a "
             "run only updates the people in that run, so everyone else keeps whatever they last had."
             "\n\nRuns nightly at 05:45 by default — after the rows build and after the privacy pass, "
-            "so it checks the state those actually left behind. Unlike Privacy sync, which only ever "
-            "makes the server more private, this one WRITES corrections to Plex and changes what "
-            "people see, so it is the one schedule you can switch off completely: clear the box and "
-            "it stays off rather than falling back to the default."
+            "so it checks the state those actually left behind. Because it writes corrections to "
+            "Plex unattended, it is the one schedule you can switch off completely: open this job and "
+            "choose Off under Frequency. It then stays off rather than falling back to 05:45, and "
+            "Check now still works whenever you press it."
         ),
         manual=True,
         schedule_job_id="sync-check",
@@ -146,17 +164,33 @@ CATALOG: tuple[JobKind, ...] = (
         kind="privacy.sync",
         label="Privacy sync",
         description=(
-            "Merge every account's share filter so nobody sees anyone else's row. Builds, delivers "
-            "and promotes nothing — it can only ever make the server more private."
+            "Goes through every Plex account you share with and updates the filter that keeps other "
+            "people's rows out of sight. That filter is the whole privacy system: each account is "
+            "told to ignore the label Shortlist puts on everybody else's collections."
+            "\n\nIt only ever hides. It builds no rows, delivers nothing, puts nothing on anyone's "
+            "Home screen and deletes nothing, so the worst it can do is make your server more "
+            "private — which is why it is safe to press at any time."
+            "\n\nRuns at 05:15 by default, after the two syncs above, so it works from a list of "
+            "people that has just been refreshed."
         ),
         manual=True,
         schedule_job_id="privacy-sync",
         schedule_setting="privacy.sync_cron",
+        trigger=(
+            "Also runs on its own whenever something changes who should see what: someone switched "
+            "on or off, a row's audience changed, or a new account turning up on your server."
+        ),
     ),
     JobKind(
         kind="backup.take",
         label="Back up the database",
-        description="Copy the database to /config/backups and prune to the keep limit.",
+        description=(
+            "Takes a copy of Shortlist's own database — your rows, settings, people and history — and "
+            "saves it under /config/backups, where you can restore it from below. The oldest copies "
+            "are deleted once there are more than the number you keep (10 by default). Nothing on "
+            "Plex is touched."
+            "\n\nRuns at 03:00 by default, before anything else in the night."
+        ),
         manual=True,
         writes_plex=False,  # local filesystem only
         schedule_job_id="db-backup",
@@ -164,13 +198,20 @@ CATALOG: tuple[JobKind, ...] = (
     ),
     JobKind(
         kind="maintenance.prune",
-        label="Apply the retention limits",
+        label="Clear out old records",
         description=(
-            "Delete runs and audit events older than the retention you set in Settings, and drop "
-            "expired cache rows. Local database housekeeping — nothing on Plex changes."
-            "\n\nRuns nightly at 06:15 by default, last of the night. It is also queued after every "
-            "run, and the schedule is the floor under that: a server whose rows have no cron — or one "
-            "paused from the Danger Zone — has no runs to queue it, and would never prune again."
+            "Deletes Shortlist's own old records so the database doesn't grow for ever: run history "
+            "older than the “Runs kept” limit in Settings → Advanced (three months by "
+            "default), and saved lookups from TMDB and your libraries that have since expired. "
+            "Nothing on Plex changes and nobody's rows move — this only touches Shortlist's own "
+            "database."
+            "\n\nWhat it never deletes: the figures on your dashboard, and the record of which "
+            "collection belongs to whom, so clearing history can't strand a row on somebody's server. "
+            "It also trims the log of what Shortlist has changed, to the “Change log kept” limit in "
+            "the same place — which is set to Forever by default, so nothing there is deleted until "
+            "you choose a limit."
+            "\n\nRuns nightly at 06:15 by default, last of the night, once everything else has "
+            "finished writing."
         ),
         manual=True,
         writes_plex=False,  # local database only
@@ -179,35 +220,62 @@ CATALOG: tuple[JobKind, ...] = (
         # it — discarding the record of a run that had already written to Plex.
         schedule_job_id="maintenance-prune",
         schedule_setting="maintenance.prune_cron",
-        trigger="Queued after every run, and runnable by hand.",
+        trigger=(
+            "Also runs after every row build. The timer still matters: a server whose rows have no "
+            "schedule — or one paused from the Danger Zone — has no builds to trigger it, and would "
+            "never tidy up at all."
+        ),
     ),
     JobKind(
         kind="user.cleanup",
         label="Remove a disabled person's rows",
-        description="Deletes the collections belonging to someone you disabled.",
+        description=(
+            "Deletes the Plex collections belonging to somebody who has been switched off, so their "
+            "row stops sitting in your Collections tab. What Shortlist knows about them stays, so "
+            "switching them back on builds their row again on the next run."
+        ),
         manual=False,
-        trigger="Queued when you disable someone.",
+        trigger=(
+            "Queued when you switch somebody off, and when a people sync notices somebody no longer "
+            "has access to your server."
+        ),
     ),
     JobKind(
         kind="user.hide",
         label="Hide a paused person's rows",
-        description="Takes a paused person's rows off every surface, keeping the collections so unpausing is instant.",
+        description=(
+            "Takes a paused person's rows off every Plex shelf without deleting anything. The "
+            "collection stays where it is, so un-pausing puts the same row straight back instead of "
+            "waiting for it to be built again."
+        ),
         manual=False,
-        trigger="Queued when you pause someone.",
+        trigger="Queued when you pause somebody.",
     ),
     JobKind(
         kind="user.restore",
         label="Put an un-paused person's rows back",
-        description="Re-promotes the rows that pausing hid.",
+        description=(
+            "Puts an un-paused person's rows back on the shelves that pausing took them off. "
+            "Everybody else's privacy filters are re-merged first, and if that fails nothing is put "
+            "back — a row must never reappear before the filters that hide it from other people do."
+        ),
         manual=False,
-        trigger="Queued when you un-pause someone.",
+        trigger="Queued when you un-pause somebody.",
     ),
     JobKind(
         kind="row.reconcile",
-        label="Tidy up after a row change",
-        description="Brings Plex back in line after a row is renamed, retargeted, or has its audience narrowed.",
+        label="Remove a row's collections from Plex",
+        description=(
+            "Takes a row's collections off Plex once they should no longer be there — the row was "
+            "deleted or switched off, somebody was dropped from who gets it, or it stopped covering a "
+            "library it had already built in. It only ever removes; building and renaming are done "
+            "elsewhere."
+        ),
         manual=False,
-        trigger="Queued when you change a row.",
+        trigger=(
+            "Queued when you delete a row, switch one off, change how it is built, narrow who gets "
+            "it, or drop one of its libraries."
+        ),
     ),
 )
 
@@ -683,7 +751,14 @@ def _sync_check(state, payload: dict) -> dict:
     # WOULD remove. The owner sees that in the preview and presses Fix, which arrives here with
     # `confirmed`. Without this split, upgrading turned on a job that silently deleted from Plex.
     confirmed = bool(payload.get("confirmed"))
-    _converge_phase(ctx, set(), report, may_delete=confirmed and not dry_run)
+    # A DRY RUN is granted the same authority so that it REPORTS the orphans a real pass would
+    # destroy. `may_delete=confirmed or dry_run` withheld it, so converge took the "not allowed
+    # to delete" branch and filed every orphan under `converged` instead — leaving `orphans` empty in
+    # the preview the UI reads, so its "this will delete N collections, this cannot be undone"
+    # callout could never render and Fix deleted unannounced. Granting it here cannot delete
+    # anything: `dry_run` is True only when `ctx.config.dry_run` is (it is one of the two terms it is
+    # OR'd from), and converge checks that flag before every delete, logging the would-be removal.
+    _converge_phase(ctx, set(), report, may_delete=confirmed or dry_run)
     # Deletions are reported SEPARATELY and named first. Folding them into `fixed` would hide the one
     # irreversible thing this does behind a number, in the very preview an operator reads to decide
     # whether to run it for real.

@@ -29,7 +29,7 @@ describe("RowSizeField", () => {
   it("commits a freely typed size on blur", async () => {
     const committed: number[] = [];
     render(<Harness start={15} onCommit={(n) => committed.push(n)} />);
-    const input = screen.getByLabelText(/Row size/i);
+    const input = screen.getByLabelText(/How many titles/i);
 
     await userEvent.clear(input);
     await userEvent.type(input, "33");
@@ -41,7 +41,7 @@ describe("RowSizeField", () => {
   it("clamps values above the max down to the ceiling", async () => {
     const committed: number[] = [];
     render(<Harness start={15} onCommit={(n) => committed.push(n)} />);
-    const input = screen.getByLabelText(/Row size/i);
+    const input = screen.getByLabelText(/How many titles/i);
 
     await userEvent.clear(input);
     await userEvent.type(input, "9999");
@@ -54,7 +54,7 @@ describe("RowSizeField", () => {
   it("restores the last good value when the field is left blank", async () => {
     const committed: number[] = [];
     render(<Harness start={20} onCommit={(n) => committed.push(n)} />);
-    const input = screen.getByLabelText(/Row size/i);
+    const input = screen.getByLabelText(/How many titles/i);
 
     await userEvent.clear(input);
     await userEvent.tab(); // blur with an empty field must not save 0 or NaN

@@ -1,6 +1,5 @@
 import { Link } from "react-router";
 
-import { CleanupAuditCard } from "@/components/settings/cleanup-audit-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useSaveSettings } from "@/lib/queries";
@@ -15,11 +14,13 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
     <section aria-labelledby="danger-heading" className="space-y-3">
       <h2
         id="danger-heading"
-        className="text-lg font-semibold text-destructive"
+        className="text-lg font-semibold text-destructive-text"
       >
         Danger zone
       </h2>
-      <CleanupAuditCard />
+      {/* The read-only Plex audit used to sit here, above everything. It was the safest control on
+          the page — it changes nothing — under the scariest heading, which reads as a warning it
+          does not deserve. It lives under Advanced now. */}
       <Card className="border-destructive/40">
         <CardContent className="space-y-4 pt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -27,11 +28,16 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
               <p className="font-medium">
                 {pausedAll ? "Everything is paused" : "Pause all users"}
               </p>
+              {/* Precise: a run still STARTS (`enabled_profiles` returns [] while paused, and the
+                engine still does its privacy sweep on an empty user list). What stops is any row
+                being built or re-picked. */}
               <p className="text-sm text-muted-foreground">
-                Stops all runs — both scheduled and manual — until you resume.
+                Nobody is processed on any run, scheduled or manual, until you
+                resume &mdash; so no row is rebuilt and nobody&rsquo;s picks
+                change.
                 <br />
-                Nobody is enabled or disabled, and every row stays on Plex
-                exactly as it is.
+                Nobody is enabled or disabled, and the rows already on Plex stay
+                where they are.
               </p>
             </div>
             <Button

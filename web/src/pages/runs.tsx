@@ -157,7 +157,7 @@ function RunRow({ run }: { run: Run }) {
               </span>
             )}
             {run.stats.users_error > 0 && (
-              <span className="text-destructive">
+              <span className="text-destructive-text">
                 {" "}
                 · {run.stats.users_error} failed
               </span>
@@ -284,9 +284,10 @@ export function RunsPage() {
           <DialogHeader>
             <DialogTitle>Clear all run history?</DialogTitle>
             <DialogDescription>
-              This clears the browsable run history and per-run traces. Your
-              dashboard metrics (delivered, watched, hit rate) are kept — only
-              the run list is cleared. Nothing changes on Plex.
+              This empties the list below and the step-by-step record of each
+              run. Everything the Dashboard counts &mdash; what was put in
+              people&rsquo;s rows, and what they went on to watch &mdash; is
+              kept. Nothing changes on Plex.
             </DialogDescription>
           </DialogHeader>
           {clearRuns.isError && (
@@ -351,7 +352,9 @@ export function RunsPage() {
             hint={
               rowSlug
                 ? "This row hasn't been built in any recorded run yet. It'll show up here after its next run."
-                : "Shortlist hasn't built any rows so far. Start one with the button above, or wait for the nightly schedule."
+                : // There is no single global schedule any more — each row carries its own cron
+                  // (Collection.schedule), and a row with a blank one never runs on a timer at all.
+                  "Shortlist hasn't built any rows so far. Start one with the button above, or wait for a row to reach its own schedule — each row is given one in its editor, on the Rows page."
             }
           />
         }

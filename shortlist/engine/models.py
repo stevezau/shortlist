@@ -303,10 +303,27 @@ class RowSpec:
     # actually watched, which is what a `{top_seed}` ("Because you watched X") title claims; the default
     # blends the whole recent history. None -> inherit EngineConfig.max_seeds.
     max_seeds: int | None = None
+    # How many of this person's most recent watches this row may be built from, of which ONE (per media
+    # type) is chosen each run — the row cycles a step a day rather than sitting on their newest watch
+    # for ever. 1 (the default) is the original behaviour: always the most recent.
+    #
+    # Distinct from `max_seeds`, which is the axis people reach for first and the wrong one: raising
+    # that BLENDS more watches into one row, diluting the very claim a `{top_seed}` title makes. This
+    # keeps the row about a single watch and moves WHICH one (issue #57).
+    #
+    # Per-row with a plain default rather than an inheritable global (like `pick_order`): whether a row
+    # is about one fixed watch or a rotation is a property of what that row IS, not a server policy.
+    seed_window: int = 1
     # How this row's picks are ORDERED in the delivered collection — "best" (our ranking), "rating"
-    # (highest TMDB score first), "newest" (most recent release first) or "shuffle" (a different order
-    # each day). Plex only sorts a collection by release date, alphabetically, or by the custom order
-    # we write, so every one of these is applied here and delivered as that custom order.
+    # (highest TMDB score first), "newest" (most recent release first), "shuffle" (a different order
+    # each day), "new_first" (titles that arrived this run lead) or "rotate" (the front advances by one
+    # title a day, so every pick gets a turn there). Plex only sorts a collection by release date,
+    # alphabetically, or by the custom order we write, so every one of these is applied here and
+    # delivered as that custom order.
+    #
+    # "new_first" and "rotate" are issue #63's two asks. Both are PRESENTATION, like the rest of this
+    # setting: neither changes which titles the row holds or which ones leave it, so neither can be
+    # used to make a row cycle faster — that is `freshness`, the refresh cadence.
     #
     # Per-row with a plain default rather than an inheritable global (like `media` and `rewatch`, not
     # like `freshness`): the right order is a property of what a row IS, so a server-wide default

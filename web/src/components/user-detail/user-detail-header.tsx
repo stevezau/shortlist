@@ -86,10 +86,16 @@ export function UserDetailHeader({ user }: { user: User }) {
         </div>
       </header>
 
+      {/* Runs are watched on the Runs page — the Dashboard is the watch-tracking report and shows
+          nothing live, so pointing there sent people somewhere the run never appears. */}
       {startRun.isSuccess && (
         <p className="text-sm text-muted-foreground">
-          Run started for {user.display_name || user.username} only — watch it
-          live on the Dashboard.
+          Run started for {user.display_name || user.username} only &mdash;
+          follow it on{" "}
+          <Link to="/runs" className="font-medium underline">
+            Runs
+          </Link>
+          .
         </p>
       )}
 

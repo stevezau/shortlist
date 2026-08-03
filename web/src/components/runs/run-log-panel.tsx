@@ -51,7 +51,7 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
         className={cn(
           "min-w-0",
           entry.stage === "error"
-            ? "text-destructive"
+            ? "text-destructive-text"
             : "text-muted-foreground",
         )}
       >

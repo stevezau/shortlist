@@ -1,0 +1,49 @@
+# Everything Shortlist talks to, in one place. This exists because the page used to
+# scatter the answer across five sections: TMDB in the steps, Radarr in a card near
+# the bottom, the AI providers in two places. Somebody scanning for "does it do
+# Sonarr" had to read the whole page.
+#
+# Say plainly what is required and what isn't. Only Plex and TMDB are needed.
+# Six groups on purpose: the grid puts them in two clean rows of three.
+
+- group: Required
+  items:
+    - name: Plex Media Server
+      note: 1.43.2.10687 or newer, with Plex Pass on the admin account
+    - name: TMDB
+      note: free API key, finds similar titles
+
+- group: Watch history
+  items:
+    - name: Plex
+      note: built in, nothing to set up
+    - name: Tautulli
+      note: optional, only improves the names people are shown by
+
+- group: More suggestions
+  items:
+    - name: Trakt
+      note: optional, finds titles TMDB misses
+    - name: MDBList
+      note: optional, ratings from IMDb, Rotten Tomatoes and others
+
+- group: Getting missing titles
+  items:
+    - name: Radarr
+      note: optional, for films
+    - name: Sonarr
+      note: optional, for TV
+
+- group: AI models
+  items:
+    - name: Claude, GPT, Gemini
+      note: optional, writes the reason next to each pick
+    - name: Ollama, llama.cpp, LM Studio, vLLM, LocalAI
+      note: optional, any model you run yourself
+
+- group: Web search
+  items:
+    - name: Exa
+      note: optional, and the only way a model you run yourself can search
+    - name: Your AI provider's own search
+      note: optional, works with Claude, GPT and Gemini

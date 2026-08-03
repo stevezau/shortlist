@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from shortlist.engine.history import ShareTokenWatchSource, derive_seeds, distinct_recent
+import pytest
+
+from shortlist.engine.clients.plex_pms import WatchedRead
+from shortlist.engine.history import NoWatchToken, ShareTokenWatchSource, derive_seeds, distinct_recent
 from shortlist.engine.models import MediaType, UserType
 from tests.conftest import make_profile, make_watched
 
@@ -13,6 +17,12 @@ from tests.conftest import make_profile, make_watched
 def _section(key: str, section_type: str) -> SimpleNamespace:
     """A stand-in for a plexapi library section — the source only reads `.key` and `.type`."""
     return SimpleNamespace(key=key, type=section_type)
+
+
+def _read(*items) -> WatchedRead:
+    """What the PMS client hands back. `covers_window` is False throughout: `fetch` always asks
+    for everything (`since=None`), so there is no window to have covered."""
+    return WatchedRead(items=list(items), covers_window=False)
 
 
 class TestShareTokenWatchSource:
@@ -25,7 +35,7 @@ class TestShareTokenWatchSource:
     def _source(self, mock_plex, mock_plextv, *, owner_token: str = "OWNER-TOK") -> ShareTokenWatchSource:
         # Two libraries, one of each type, so fetch() must iterate both and pick the media type per one.
         mock_plex._server.library.sections.return_value = [_section("1", "movie"), _section("2", "show")]
-        mock_plex.watched_titles = MagicMock(return_value=[])
+        mock_plex.watched_titles = MagicMock(return_value=_read())
         return ShareTokenWatchSource(mock_plex, mock_plextv, owner_token=owner_token)
 
     def test_owner_is_read_with_the_admin_token_never_the_shared_roster(self, mock_plex, mock_plextv):
@@ -85,13 +95,40 @@ class TestShareTokenWatchSource:
         assert result == []
         mock_plex.watched_titles.assert_not_called()
 
+    def test_a_missing_token_raises_from_fetch_section_rather_than_reading_as_empty(self, mock_plex, mock_plextv):
+        """`fetch` may fail soft; `fetch_section` must not. It feeds the watched-title CACHE, which
+        treats what a read returns as the truth for the window it covers and deletes the rest — so
+        "plex.tv would not mint a token just now" arriving as "they have watched nothing" wipes the
+        history it was meant to refresh and stamps the sync a success."""
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {}
+        mock_plextv.canary_server_token.side_effect = PermissionError("PIN-protected")
+        profile = make_profile(username="pin", user_type=UserType.MANAGED, account_id=200)
+
+        with pytest.raises(NoWatchToken):
+            source.fetch_section(profile, _section("1", "movie"), MediaType.MOVIE)
+
+        mock_plex.watched_titles.assert_not_called()
+
+    def test_the_owner_still_reads_with_the_admin_token_rather_than_raising(self, mock_plex, mock_plextv):
+        """The OWNER row of the matrix is NOT vacuous here: `_token_for` returns the admin token
+        without consulting the roster, so it takes a different path to the raise above and must keep
+        reading normally. (SHARED-with-a-roster-miss collapses onto the MANAGED row — both fall
+        through to the same canary exchange and the same `token is None`.)"""
+        source = self._source(mock_plex, mock_plextv)
+        profile = make_profile(username="steve", user_type=UserType.OWNER, account_id=1)
+
+        source.fetch_section(profile, _section("1", "movie"), MediaType.MOVIE)
+
+        assert {call.args[2] for call in mock_plex.watched_titles.call_args_list} == {"OWNER-TOK"}
+
     def test_selects_the_media_type_per_library_and_aggregates_across_them(self, mock_plex, mock_plextv):
         source = self._source(mock_plex, mock_plextv)
         mock_plextv.shared_server_tokens.return_value = {100: "SARAH-TOK"}
         mock_plex.watched_titles.side_effect = lambda key, mt, tok, since=None: (
-            [make_watched("Heat", media_type=MediaType.MOVIE)]
+            _read(make_watched("Heat", media_type=MediaType.MOVIE))
             if mt is MediaType.MOVIE
-            else [make_watched("Suits", media_type=MediaType.SHOW)]
+            else _read(make_watched("Suits", media_type=MediaType.SHOW))
         )
 
         items = source.fetch(make_profile(account_id=100), min_completion=0.7)
@@ -116,7 +153,7 @@ class TestShareTokenWatchSource:
         def read(key, media_type, token, since=None):
             if media_type is MediaType.MOVIE:
                 raise RuntimeError("section unreadable")
-            return [make_watched("Suits", media_type=MediaType.SHOW)]
+            return _read(make_watched("Suits", media_type=MediaType.SHOW))
 
         mock_plex.watched_titles.side_effect = read
         items = source.fetch(make_profile(account_id=100), min_completion=0.7)
@@ -137,7 +174,7 @@ class TestShareTokenWatchSource:
         def read(key, media_type, token, since=None):
             if media_type is MediaType.SHOW:
                 raise SectionNotShared("section 12 is not shared with this user")
-            return [make_watched("Dune", media_type=MediaType.MOVIE)]
+            return _read(make_watched("Dune", media_type=MediaType.MOVIE))
 
         mock_plex.watched_titles.side_effect = read
         items = source.fetch(make_profile(account_id=100), min_completion=0.7)
@@ -259,6 +296,106 @@ class TestDeriveSeeds:
 
         assert {s.media_type for s in one} == {MediaType.SHOW}
         assert {s.media_type for s in two} == {MediaType.SHOW, MediaType.MOVIE}
+
+    def test_a_window_of_one_is_always_the_most_recent_watch(self):
+        """The default, and every caller's behaviour before cycling existed."""
+        history = [make_watched(f"Movie {i}", days_ago=i) for i in range(5)]
+        ids = {f"Movie {i}": i + 1 for i in range(5)}
+
+        for offset in range(4):  # the offset is inert at window 1 — no accidental rotation
+            seeds = derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=1, cycle_offset=offset)
+            assert [s.title for s in seeds] == ["Movie 0"]
+
+    def test_a_window_cycles_one_step_per_offset_and_covers_every_watch(self):
+        """The point of the feature: consecutive runs never repeat, and each watch in the window gets
+        its turn. A random pick would satisfy neither, and a repeat looks exactly like the stuck row
+        this exists to fix (issue #57).
+
+        Deliberately gives the seeds a TMDB-ID order that contradicts their recency order. The step is
+        taken over the ID order, so a fixture where the two agree (ids ascending with recency, the
+        obvious way to write this) passes whichever ordering the code actually uses and cannot tell a
+        correct implementation from the one that shipped this bug.
+        """
+        history = [make_watched(f"Movie {i}", days_ago=i) for i in range(5)]
+        ids = {"Movie 0": 903, "Movie 1": 105, "Movie 2": 511, "Movie 3": 42, "Movie 4": 777}
+
+        led_by = [
+            derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=3, cycle_offset=day)[0].title
+            for day in range(6)
+        ]
+
+        assert set(led_by) == {"Movie 0", "Movie 1", "Movie 2"}, "the window is covered, not sampled"
+        assert all(a != b for a, b in pairwise(led_by)), "consecutive runs must differ"
+        assert led_by[:3] == led_by[3:], "the cycle repeats with the window's period, so nothing is skipped"
+
+    def test_cycling_keeps_moving_for_someone_who_watches_every_night(self):
+        """The regression that made cycling WORSE than leaving it off, for the people most likely to
+        turn it on.
+
+        Stepping over the RECENCY order cancels against their history: that list's head shifts by one
+        each time they finish something, and the offset advances by one a night, so the same seed led
+        for `window` nights running while their newer watches never led at all — C, C, C, F, F, F for
+        a person whose newest watch went D, E, F, G, H. Indistinguishable from the stuck row of issue
+        #57, which is what this feature was built to relieve.
+        """
+        titles = [f"Movie {i}" for i in range(8)]
+        ids = {t: i + 1 for i, t in enumerate(titles)}
+
+        led_by = []
+        for night in range(6):
+            watched = titles[: night + 3]  # one more finished film every night
+            history = [make_watched(t, days_ago=len(watched) - 1 - i) for i, t in enumerate(watched)]
+            led_by.append(
+                derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=3, cycle_offset=night)[0].title
+            )
+
+        assert all(a != b for a, b in pairwise(led_by)), f"a nightly watcher's row must keep moving, got {led_by}"
+        assert len(set(led_by)) >= 4, f"and must not orbit two titles while they watch six, got {led_by}"
+
+    def test_cycling_a_movies_and_tv_row_follows_the_more_recent_type(self):
+        """A one-seed `media=both` row keeps only the strongest lead, so the two media types' leads
+        have to compete on recency. Listing movies first unconditionally made a TV watcher's row
+        announce a film from a month ago the moment they turned cycling on."""
+        history = [make_watched(f"Show {i}", days_ago=i, media_type=MediaType.SHOW) for i in range(3)]
+        history += [make_watched(f"Film {i}", days_ago=30 + i, media_type=MediaType.MOVIE) for i in range(3)]
+        ids = {f"Show {i}": 10 + i for i in range(3)} | {f"Film {i}": 50 + i for i in range(3)}
+
+        led_by = [
+            derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=3, cycle_offset=day)[0]
+            for day in range(3)
+        ]
+
+        assert all(s.media_type is MediaType.SHOW for s in led_by), f"got {[(s.title) for s in led_by]}"
+
+    def test_a_window_wider_than_the_history_degrades_to_what_they_watched(self):
+        """Someone with two watches and a window of five cycles between the two, rather than
+        returning nothing on the days the window points past the end of their history."""
+        history = [make_watched(f"Movie {i}", days_ago=i) for i in range(2)]
+        ids = {f"Movie {i}": i + 1 for i in range(2)}
+
+        led_by = [
+            derive_seeds(history, lambda w: ids[w.title], max_seeds=1, window=5, cycle_offset=day)[0].title
+            for day in range(4)
+        ]
+
+        assert led_by == ["Movie 0", "Movie 1", "Movie 0", "Movie 1"]
+
+    def test_cycling_advances_both_media_types_of_a_movies_and_tv_row(self):
+        """Cycling is per media type, not across the flat list. A `media=both` row seeds one movie and
+        one show, so rotating the flat list would spend the whole window on whichever type this person
+        watches more of and pin the other half to its newest title for ever."""
+        history = [make_watched(f"Show {i}", days_ago=i, media_type=MediaType.SHOW) for i in range(3)]
+        history += [make_watched(f"Movie {i}", days_ago=i, media_type=MediaType.MOVIE) for i in range(3)]
+        ids = {f"Show {i}": i + 1 for i in range(3)} | {f"Movie {i}": 100 + i for i in range(3)}
+
+        def led_by(day: int) -> dict:
+            seeds = derive_seeds(history, lambda w: ids[w.title], max_seeds=2, window=3, cycle_offset=day)
+            return {s.media_type: s.title for s in seeds}
+
+        day0, day1 = led_by(0), led_by(1)
+
+        assert day0 == {MediaType.MOVIE: "Movie 0", MediaType.SHOW: "Show 0"}
+        assert day1 == {MediaType.MOVIE: "Movie 1", MediaType.SHOW: "Show 1"}, "both halves advance, not just one"
 
     def test_reserves_seed_budget_for_the_minority_media_type(self):
         # A TV-heavy watcher: 20 recent shows + 3 older movies. The movies must still seed, or a

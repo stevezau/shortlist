@@ -1,0 +1,460 @@
+---
+layout: default
+---
+{%- comment -%}
+House style for this page: plain words, and almost no em dashes. An earlier version
+had 29 of them and read like machine-written marketing. Anything every self-hosted
+app already has (a dark UI, a healthcheck, multi-arch images) is not a selling point
+and doesn't appear. Each idea is stated once: the privacy guarantees live in the
+privacy section and nowhere else, because they used to be on the page twice.
+{%- endcomment -%}
+<main id="main">
+
+  <!-- ------------------------------------------------------------- hero -- -->
+  <section class="hero">
+    <div class="wrap">
+      <div class="hero__inner">
+        <h1>Every Plex user gets <em>their own</em> recommendations</h1>
+        <p class="hero__sub">
+          Shortlist looks at what each person on your server has watched, then builds them a
+          &ldquo;Picked for You&rdquo; row on their Plex home screen that only they can see. It
+          refreshes overnight.
+        </p>
+        <div class="hero__cta">
+          <a class="btn btn--primary btn--lg" href="{{ '/getting-started/' | relative_url }}">
+            Get started
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+              <path d="M5 12h13M13 6l6 6-6 6"/>
+            </svg>
+          </a>
+          <a class="btn btn--ghost btn--lg" href="{{ site.repo }}">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7 0-.7 0-.7 1.2.1 1.9 1.2 1.9 1.2 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-5.9 0-1.3.5-2.4 1.2-3.2 0-.4-.5-1.6.2-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.4 4.7 18.4 5 18.4 5c.7 1.6.2 2.8.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"/>
+            </svg>
+            View source
+          </a>
+        </div>
+        <p class="hero__meta">
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            One Docker container
+          </span>
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            No AI key needed
+          </span>
+          <span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            Puts your Plex back if you remove it
+          </span>
+        </p>
+      </div>
+
+      <figure class="hero__shot">
+        <div class="frame">
+          <img src="{{ '/images/plex-picked-for-you.jpg' | relative_url }}" width="1600" height="422"
+               alt="A Movies Picked for You row on Plex, filled with film posters">
+        </div>
+        <figcaption>
+          A &ldquo;Picked for You&rdquo; row on Plex &mdash; private to that user, and built from what they watched.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------- problem -- -->
+  <section class="section section--tint">
+    <div class="wrap">
+      <div class="section__head section__head--center" style="margin-bottom:0">
+        <span class="eyebrow">The problem</span>
+        <h2>Plex shows everyone the same rows</h2>
+        <p class="section__lede">
+          Everyone on your server opens Plex to a big library and no idea what to put on. The rows
+          Plex builds are the same for every account and lean on its own streaming catalogue, so they
+          don't know your sister has watched every heist film you own and your dad hasn't touched one.
+        </p>
+        <p class="section__lede" style="margin-top:1rem">
+          Shortlist gives each person a row of their own instead.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------ how it works -- -->
+  <section class="section" id="how-it-works">
+    <div class="wrap">
+      <div class="section__head section__head--center">
+        <span class="eyebrow">How it works</span>
+        <h2>Four steps, every night</h2>
+        <p class="section__lede">
+          Shortlist runs on a schedule you choose. It works through your users one at a time, so a
+          problem with one person's row never stops anyone else getting theirs.
+        </p>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <h3>Read what they watched</h3>
+          <p>
+            Each person's own Plex history. A 20-episode binge counts as one show rather than twenty
+            episodes, so a single series doesn't drown out everything else.
+          </p>
+        </div>
+        <div class="step">
+          <h3>Find things like it</h3>
+          <p>
+            Similar titles from TMDB and Trakt, plus an optional web search for recent ones. Anything
+            you don't already have in your library gets dropped.
+          </p>
+        </div>
+        <div class="step">
+          <h3>Choose and explain</h3>
+          <p>
+            Shortlist picks the best ones and writes the reason for each. This works with no AI at
+            all. Add an AI model and it writes the reasons instead.
+          </p>
+        </div>
+        <div class="step">
+          <h3>Put it on their home screen</h3>
+          <p>
+            The row goes to Plex hidden, everyone else is told not to show it, and only then does it
+            appear. That order is what keeps it private.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------- templates -- -->
+  <section class="section" id="templates">
+    <div class="wrap">
+      <div class="section__head section__head--center">
+        <span class="eyebrow">Rows</span>
+        <h2>It isn't only “Picked for You”</h2>
+        <p class="section__lede">
+          That's the default, but a row is really a recipe: what goes in it, how big it is, who sees
+          it and how often it changes. Pick one of these to start from and change anything you like.
+          You can run as many as you want at once.
+        </p>
+      </div>
+
+      <div class="templates">
+        {%- for t in site.data.templates -%}
+        <div class="template">
+          <span class="template__emoji" aria-hidden="true">{{ t.emoji }}</span>
+          <div>
+            <h3>
+              {{ t.title }}
+              {%- if t.shared %} <span class="tag">shared</span>{% endif -%}
+            </h3>
+            <p>{{ t.blurb }}</p>
+          </div>
+        </div>
+        {%- endfor -%}
+      </div>
+
+      <p class="center mt-lg" style="color:var(--muted);font-size:0.92rem">
+        Every one of these is built per person, except “Popular on this server”, which is the same
+        row for everybody.
+      </p>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------- privacy -- -->
+  <section class="section section--tint" id="privacy">
+    <div class="wrap">
+      <div class="privacy">
+        <div>
+          <span class="eyebrow">Privacy</span>
+          <h2>A row nobody else can see</h2>
+          <p class="section__lede">
+            Plex can't share a collection with one person. What it can do is hide things by
+            <strong>label</strong>. So Shortlist labels each row, then tells every other account to
+            hide that label. What's left is a row only its owner sees.
+          </p>
+          <p class="section__lede" style="margin-top:1rem">
+            The order those steps happen in matters more than the trick itself. Do it the obvious way
+            round and the row is briefly visible to your whole server. Every run goes:
+          </p>
+          <p style="margin-top:1.5rem">
+            <a class="btn btn--ghost" href="{{ '/plex-per-user-collections/' | relative_url }}">
+              How the hiding works
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+            </a>
+          </p>
+        </div>
+
+        <ol class="order">
+          <li><div><strong>Clear up first</strong><span>Remove any row Plex can't hide for that kind of library, before anything else happens.</span></div></li>
+          <li><div><strong>Send the row hidden</strong><span>It exists in Plex, but it isn't on anyone's home screen yet.</span></div></li>
+          <li><div><strong>Hide it from everyone else</strong><span>Every other account is told to hide that row's label. Their existing settings are left exactly as they were.</span></div></li>
+          <li><div><strong>Now show it</strong><span>Only now does the row appear, so it is never visible before it is private.</span></div></li>
+        </ol>
+      </div>
+
+      <div class="grid grid--3 mt-lg">
+        <div class="card">
+          <div class="card__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M12 3 4 6v6c0 5 3.4 8.2 8 9 4.6-.8 8-4 8-9V6Z"/><path d="m9 12 2 2 4-4"/>
+            </svg>
+          </div>
+          <h3>Your settings are saved first</h3>
+          <p>Shortlist copies your sharing settings before it changes anything. Removing it puts them back the way they were.</p>
+        </div>
+        <div class="card">
+          <div class="card__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h10"/>
+            </svg>
+          </div>
+          <h3>It adds, it doesn't replace</h3>
+          <p>Shortlist reads what is already in your sharing settings and adds only its own entries. Anything you or another tool set is left alone.</p>
+        </div>
+        <div class="card">
+          <div class="card__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M3 6h18v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 3v4M16 3v4M9 13h6"/>
+            </svg>
+          </div>
+          <h3>It leaves Kometa alone</h3>
+          <p>Only the collections Shortlist made are ever touched. Anything else on your server is spotted and skipped.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------------- features -- -->
+  <section class="section" id="features">
+    <div class="wrap">
+      <div class="section__head section__head--center">
+        <span class="eyebrow">Features</span>
+        <h2>What you get</h2>
+      </div>
+
+      <div class="grid grid--3 grid--trio">
+        {%- for f in site.data.features -%}
+        <div class="card">
+          <div class="card__icon">{{ f.icon }}</div>
+          <h3>{{ f.title }}</h3>
+          <p>{{ f.body }}</p>
+        </div>
+        {%- endfor -%}
+      </div>
+    </div>
+  </section>
+
+  <!-- --------------------------------------------------------- showcase -- -->
+  <section class="section section--tint" id="screenshots">
+    <div class="wrap">
+      <div class="section__head section__head--center">
+        <span class="eyebrow">Behind the row</span>
+        <h2>See why each person got what they got</h2>
+        <p class="section__lede">
+          These screenshots use a test library with made-up titles, so no real accounts appear. The
+          Plex row at the top of this page is from a real server.
+        </p>
+      </div>
+
+      <div class="shots">
+        {%- for s in site.data.screenshots -%}
+        <div class="shot">
+          <div class="shot__text">
+            <h3>{{ s.title }}</h3>
+            <p>{{ s.body }}</p>
+          </div>
+          <div class="frame frame--chrome">
+            <div class="frame__bar">
+              <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+              <span class="frame__title">{{ s.path }}</span>
+            </div>
+            <img src="{{ s.image | prepend: '/images/' | relative_url }}" alt="{{ s.alt }}" loading="lazy" width="{{ s.width }}" height="{{ s.height }}">
+          </div>
+        </div>
+        {%- endfor -%}
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------- works with -- -->
+  <section class="section" id="works-with">
+    <div class="wrap">
+      <div class="section__head section__head--center">
+        <span class="eyebrow">Works with</span>
+        <h2>Where the suggestions come from, and where they go</h2>
+        <p class="section__lede">
+          Shortlist pulls candidates from TMDB and Trakt, and from a web search if you want one. An
+          AI model can do the choosing and write the reasons, or Shortlist does it itself. What comes
+          out goes onto Plex home screens, and anything you're missing can go to Radarr or Sonarr.
+        </p>
+      </div>
+
+      <div class="pipeline">
+        <div class="pipeline__stage">
+          <h3>Suggestions in</h3>
+          <p>TMDB · Trakt · MDBList · web search</p>
+        </div>
+        <span class="pipeline__arrow" aria-hidden="true">→</span>
+        <div class="pipeline__stage pipeline__stage--core">
+          <h3>Shortlist decides</h3>
+          <p>on its own, or with an AI model</p>
+        </div>
+        <span class="pipeline__arrow" aria-hidden="true">→</span>
+        <div class="pipeline__stage">
+          <h3>Results out</h3>
+          <p>a private Plex row each · Radarr &amp; Sonarr requests</p>
+        </div>
+      </div>
+
+      <p class="center" style="color:var(--muted);font-size:0.92rem;margin:1.75rem 0 0">
+        Only Plex and a free TMDB key are required. Everything else is there if you already run it.
+      </p>
+
+      <div class="grid grid--3 grid--trio">
+        {%- for g in site.data.works_with -%}
+        <div class="card">
+          <h3>{{ g.group }}</h3>
+          <ul class="supports">
+            {%- for i in g.items -%}
+            <li><strong>{{ i.name }}</strong><span>{{ i.note }}</span></li>
+            {%- endfor -%}
+          </ul>
+        </div>
+        {%- endfor -%}
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------- quickstart -- -->
+  <section class="section section--tint" id="install">
+    <div class="wrap">
+      <div class="section__head section__head--center">
+        <span class="eyebrow">Quick start</span>
+        <h2>Running in about ten minutes</h2>
+        <p class="section__lede">
+          Start the container and open it in a browser. A setup wizard connects your Plex account,
+          asks who should get rows, and builds the first ones.
+        </p>
+      </div>
+
+      <div class="grid grid--2">
+        <div class="codeblock">
+          <div class="codeblock__bar">
+            <span>docker compose</span>
+            <button class="copy" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+              </svg>
+              <span class="copy__label">Copy</span>
+            </button>
+          </div>
+<pre><code>mkdir shortlist &amp;&amp; cd shortlist
+curl -fsSLO https://raw.githubusercontent.com/stevezau/shortlist/master/docker-compose.example.yml
+mv docker-compose.example.yml docker-compose.yml
+docker compose up -d</code></pre>
+        </div>
+
+        <div class="codeblock">
+          <div class="codeblock__bar">
+            <span>docker run</span>
+            <button class="copy" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>
+              </svg>
+              <span class="copy__label">Copy</span>
+            </button>
+          </div>
+<pre><code>docker run -d --name shortlist \
+  -p 5959:5959 \
+  -e TZ=Etc/UTC \
+  -e PUID=1000 -e PGID=1000 \
+  -v /path/to/shortlist/config:/config \
+  --restart unless-stopped \
+  {{ site.ghcr }}:latest</code></pre>
+        </div>
+      </div>
+
+      <div class="callout mt-lg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"/><path d="M12 16v-5M12 8h.01"/>
+        </svg>
+        <div>
+          <p>
+            <strong>Want to try it without touching your server?</strong> Add
+            <code>-e SHORTLIST_DRY_RUN=1</code>. Shortlist will show you everything it would do and
+            write nothing to Plex until you are happy.
+          </p>
+        </div>
+      </div>
+
+      <p class="center mt-lg" style="color:var(--muted);font-size:0.92rem">
+        Needs Plex Media Server 1.43.2.10687 or newer, Plex Pass on the admin account, and a free
+        TMDB key. <a href="{{ '/getting-started/' | relative_url }}">Full requirements &rarr;</a>
+      </p>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------------- faq -- -->
+  <section class="section" id="faq">
+    <div class="wrap">
+      <div class="section__head section__head--center">
+        <span class="eyebrow">Questions</span>
+        <h2>Common questions</h2>
+      </div>
+
+      <div class="faq">
+        {%- for q in site.data.faq -%}
+        <details>
+          <summary>{{ q.q }}</summary>
+          <div class="faq__body">{{ q.a | markdownify }}</div>
+        </details>
+        {%- endfor -%}
+      </div>
+
+      <p class="center mt-lg">
+        <a class="btn btn--ghost" href="{{ '/faq/' | relative_url }}">
+          Read the full FAQ
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+        </a>
+      </p>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------- closing -- -->
+  <section class="section section--tint">
+    <div class="wrap">
+      <div class="section__head section__head--center" style="margin-bottom:0">
+        <h2>Give it a try</h2>
+        <p class="section__lede">
+          Shortlist is new and still in beta, though it runs in production every night. If something
+          breaks, please open an issue.
+        </p>
+        <div class="hero__cta" style="margin-top:1.75rem">
+          <a class="btn btn--primary btn--lg" href="{{ '/getting-started/' | relative_url }}">Install Shortlist</a>
+          <a class="btn btn--ghost btn--lg" href="{{ site.repo }}">Star it on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+{%- comment -%}
+FAQPage structured data, generated from the same _data/faq.yml the section above
+renders, so the markup and the rich result can never drift apart.
+{%- endcomment -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {%- for q in site.data.faq -%}
+    {
+      "@type": "Question",
+      "name": {{ q.q | jsonify }},
+      "acceptedAnswer": { "@type": "Answer", "text": {{ q.a | markdownify | strip_html | normalize_whitespace | strip | jsonify }} }
+    }{%- unless forloop.last -%},{%- endunless -%}
+    {%- endfor -%}
+  ]
+}
+</script>

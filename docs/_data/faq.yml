@@ -1,0 +1,68 @@
+# Landing-page FAQ. Questions are worded the way people actually type them into a
+# search box, because this list also becomes the page's FAQPage structured data:
+# these answers are what a search engine or an AI assistant will quote back.
+#
+# Keep them plain and short. No em dashes, no jargon, and no phrasing that sounds
+# like a brochure. Every answer must match /faq, which is the fuller version.
+
+- q: Can I give each Plex user recommendations based on what they watched?
+  a: >-
+    Yes, that is exactly what Shortlist does. It reads each person's own Plex history, finds films and
+    shows in your library they haven't seen but are likely to want, and puts them in a "Picked for You"
+    row on that person's Plex home screen. Everyone gets a different row, and each row is only visible
+    to the person it was made for. It runs on a schedule you set, usually overnight.
+
+- q: Can you make a Plex collection visible to only one user?
+  a: >-
+    Not directly, but you can get there. Plex has no per-user collections. What it does have is the
+    ability to hide things by **label**. Give the collection a label, then set every *other* account to
+    hide that label, and one person is left able to see it. You need Plex Media Server
+    **1.43.2.10687 or newer**, because older versions ignore that setting on the Home and Recommended
+    shelves. The order is the risky part: make the collection hidden first, hide it from everyone else,
+    and only then show it. Do it the other way round and it is briefly visible to your whole server.
+
+- q: Do I need an AI or OpenAI key to use Shortlist?
+  a: >-
+    No. Shortlist works with no AI and no key. It picks the titles itself, and the suggestions come
+    from TMDB, which is free. Adding an AI model is optional. If you do add one (Claude, GPT, Gemini,
+    or something you run yourself like Ollama, llama.cpp, LM Studio, vLLM or LocalAI) it writes the
+    short reason next to each pick and can search the web for recent titles TMDB doesn't return. That
+    web search is off until you turn it on.
+
+- q: Will the AI recommend films I don't actually have?
+  a: >-
+    No. The AI only ever chooses from titles already confirmed to be in your library and not yet
+    watched by that person. Anything else it suggests is thrown away and logged, so a made-up title
+    can't reach anyone's row.
+
+- q: Does Shortlist conflict with Kometa?
+  a: >-
+    No, they are built to run side by side. Shortlist only ever changes collections it made itself,
+    which carry its own `shortlist_*` label. Everything else on your server, including every Kometa
+    collection, is spotted and skipped. It is the same story with your sharing settings: Shortlist
+    reads what is there and adds only its own entries, leaving the rest alone.
+
+- q: What can the server owner see?
+  a: >-
+    Everything. Plex cannot hide collections from the account that owns the server, so the admin
+    account's home screen shows every user's row, not just its own. That is a Plex limitation rather
+    than a Shortlist choice. If you share with other people and want a tidy home screen, watch on a
+    Plex Home user and keep the admin account for admin.
+
+- q: What happens to my Plex settings if I uninstall?
+  a: >-
+    They go back exactly as they were. Shortlist copies every account's sharing settings before it
+    makes its first change, and removing it restores them from that copy and deletes the collections it
+    created. You can also try the whole thing first without touching anything: set
+    `SHORTLIST_DRY_RUN=1` and it will show you every change it would make while writing nothing.
+
+- q: What do I need to run it?
+  a: >-
+    Plex Media Server **1.43.2.10687 or newer**, Plex Pass on the admin account, a free TMDB key, and
+    somewhere to run one Docker container. Tautulli, Radarr, Sonarr, Trakt, MDBList and an AI key are
+    all optional. Images run on both Intel and ARM machines.
+
+- q: Does Shortlist work with Jellyfin or Emby?
+  a: >-
+    No, it is Plex only. The way each row is kept private relies on a Plex feature for hiding things by
+    label, and there is nothing equivalent in Jellyfin or Emby to build it on.

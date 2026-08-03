@@ -124,8 +124,8 @@ function ArrCard({
             <p className="font-medium">{title}</p>
             <p className="text-sm text-muted-foreground">
               {service === "radarr"
-                ? "Handles movie requests."
-                : "Handles TV show requests."}
+                ? "Fetches the films Shortlist asks for."
+                : "Fetches the TV shows Shortlist asks for."}
             </p>
           </div>
         </div>
@@ -134,20 +134,23 @@ function ArrCard({
         {!connected ? (
           <div className="space-y-2 rounded-md border border-dashed bg-muted/30 p-3">
             <p className="text-sm text-muted-foreground">
-              {title} isn&rsquo;t connected yet. Add its address and API key in{" "}
+              {title} isn&rsquo;t connected yet. Add its address and API key on
+              the {title} card in{" "}
               <strong className="font-medium text-foreground">
                 Connections
               </strong>
-              , then pick its quality profile and folder here.
+              , then come back and choose how good a copy to grab and which
+              folder to save it in.
             </p>
             <Button variant="outline" size="sm" onClick={onGoToConnections}>
               Go to Connections
             </Button>
           </div>
         ) : options.isError ? (
-          <p className="text-sm text-destructive">
-            Couldn&rsquo;t load {title}&rsquo;s profiles and folders — check its
-            connection in the Connections section and test it again.
+          <p className="text-sm text-destructive-text">
+            Couldn&rsquo;t reach {title} to load its quality profiles and
+            folders. Check its address and API key on the {title} card in
+            Connections, and press Test there.
           </p>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
@@ -221,6 +224,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
   const autoRatingId = useId();
   const tagId = useId();
   const ratingLabel = RATING_LABELS[form.ratingSource];
+  // MDBList reports a vote count only for the audience-scored sources; the engine's rating gate
+  // skips the vote floor for the two critic scores (`VOTE_SOURCES` in clients/mdblist.py).
+  const countsVotes = !["tomatoes", "metacritic"].includes(form.ratingSource);
 
   // "Connected" for the dropdown fetch means the SAVED settings already have a URL and key on file
   // (the key comes back redacted). A just-typed-but-unsaved value doesn't count — the server reads
@@ -270,11 +276,12 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
           <div className="space-y-1">
             <p className="font-medium">Fill in the gaps automatically</p>
             <p className="text-sm text-muted-foreground">
-              When a great pick isn&rsquo;t in your library yet, Shortlist can
-              ask Radarr or Sonarr to grab it. The strongest picks are sent
-              automatically; the rest wait in your{" "}
+              When a title would have been a great pick for someone but
+              isn&rsquo;t in your library, Shortlist can ask Radarr or Sonarr
+              &mdash; the apps that fetch films and TV &mdash; to get it. You
+              decide which go out on their own and which wait in your{" "}
               <strong className="font-medium text-foreground">Requests</strong>{" "}
-              inbox for a yes or no. You control where that line sits below.
+              inbox for a yes or no.
             </p>
           </div>
           <Switch
@@ -286,8 +293,9 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
 
         {!form.enabled && (
           <p className="text-sm text-muted-foreground">
-            Off — turn this on to set up automatic requests and choose the
-            rules.
+            Off &mdash; runs won&rsquo;t ask Radarr or Sonarr for anything, and
+            nothing new reaches your Requests inbox. Turn it on to connect the
+            apps and set the rules.
           </p>
         )}
 
@@ -339,15 +347,137 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 className="max-w-xs"
               />
               <p className="text-sm text-muted-foreground">
-                Every movie/show Shortlist requests gets this tag in
-                Radarr/Sonarr (created there if it doesn&rsquo;t exist), so you
-                can spot, filter, or auto-manage what it added. Leave blank for
-                no tag.
+                Every film or show Shortlist asks for gets this label in
+                Radarr/Sonarr &mdash; a &ldquo;tag&rdquo;, in their words, which
+                Shortlist creates there if it doesn&rsquo;t already exist. It
+                lets you spot or filter what Shortlist added. Leave blank for no
+                tag.
               </p>
             </div>
 
+            {/* Deliberately BEFORE Guardrails. Read the other way round, "Minimum rating 7" looked
+                like the bar for requesting at all, and the owner only met the second, higher bar two
+                fieldsets later. The big choice — sent on its own, or waits for you — comes first;
+                the floor underneath both comes after it. */}
+            <fieldset className="space-y-4 rounded-lg border p-4">
+              <legend className="px-1 text-sm font-medium">
+                Send on its own, or ask me first
+              </legend>
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">
+                    Send the strongest titles without asking
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Titles that clear the higher bars here go out as soon as a
+                    run finds them. Everything else that clears your guardrails
+                    waits in your Requests inbox. Turn this off to look at every
+                    title yourself.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.autoSend}
+                  onCheckedChange={(autoSend) => set({ autoSend })}
+                  aria-label="Send the strongest titles without asking"
+                />
+              </div>
+
+              {form.autoSend && (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor={autoDemandId}>
+                        Send without asking when wanted by
+                      </Label>
+                      <Input
+                        id={autoDemandId}
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={form.autoMinDemand}
+                        onChange={(e) =>
+                          set({
+                            autoMinDemand: Math.max(1, Number(e.target.value)),
+                          })
+                        }
+                        className="w-28"
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        At least this many people. Wanted by fewer than this? It
+                        waits in the inbox.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={autoRatingId}>
+                        Send without asking when rated
+                      </Label>
+                      <Input
+                        id={autoRatingId}
+                        type="number"
+                        min={0}
+                        max={10}
+                        step={0.1}
+                        value={form.autoMinRating}
+                        onChange={(e) =>
+                          set({ autoMinRating: Number(e.target.value) })
+                        }
+                        className="w-28"
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        At least this {ratingLabel} score. Anything lower waits
+                        for your OK.
+                      </p>
+                    </div>
+                    {/* Weaker than "everything will be sent", on purpose: this fires when EITHER bar
+                        is below its guardrail, and one low bar only means that bar never holds a
+                        title back. */}
+                    {(form.autoMinDemand < form.minDemand ||
+                      form.autoMinRating < form.minRating) && (
+                      <p
+                        role="alert"
+                        className="text-sm text-warning sm:col-span-2"
+                      >
+                        A bar lower than the matching guardrail below stops
+                        nothing &mdash; anything that gets past the guardrails
+                        already clears it. Raise it above the guardrail to keep
+                        a queue to review.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {/* Lives here, not in Guardrails: the cap is only ever applied to automatic
+                        sends (`request_missing` checks it after the auto bars), and with this
+                        switch off it is never reached at all. */}
+                    <Segmented
+                      legend="Most to send automatically in one run"
+                      value={String(form.maxPerRun)}
+                      options={MAX_PER_RUN.map((n) => ({
+                        value: String(n),
+                        label: String(n),
+                      }))}
+                      onChange={(v) => set({ maxPerRun: Number(v) })}
+                    />
+                    {/* "per run", not "per night": `max_per_run` is counted once per run, and rows
+                        carry their own schedules, so a server can run more than once a night. */}
+                    <p className="text-sm text-muted-foreground">
+                      A hard cap on the titles a single run sends on its own,
+                      across both apps, so one run can never flood your
+                      downloads. Titles you approve by hand in the Requests
+                      inbox aren&rsquo;t capped.
+                    </p>
+                  </div>
+                </>
+              )}
+            </fieldset>
+
             <fieldset className="space-y-4 rounded-lg border p-4">
               <legend className="px-1 text-sm font-medium">Guardrails</legend>
+              <p className="text-sm text-muted-foreground">
+                The lowest bar a title must clear before Shortlist will ask for
+                it at all &mdash; whether it goes out on its own or waits in
+                your inbox.
+              </p>
 
               <div className="space-y-2">
                 <Segmented
@@ -370,7 +500,8 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                 {form.ratingSource !== "tmdb" &&
                   (mdblistConnected ? (
                     <p className="text-sm text-muted-foreground">
-                      Using your MDBList connection. Manage or test the key in{" "}
+                      Using your MDBList connection. The key lives on the
+                      MDBList card in{" "}
                       <button
                         type="button"
                         onClick={goToConnections}
@@ -378,7 +509,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       >
                         Connections
                       </button>
-                      .
+                      , where you can change or test it.
                     </p>
                   ) : (
                     <div
@@ -386,13 +517,14 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                       className="space-y-2 rounded-lg border border-warning/40 bg-warning/5 p-4"
                     >
                       <p className="text-sm font-medium">
-                        MDBList isn’t connected
+                        MDBList isn&rsquo;t connected
                       </p>
                       <p className="text-sm text-muted-foreground">
                         {RATING_LABELS[form.ratingSource]} scores come from
-                        MDBList. Add its free API key in Connections, or
-                        Shortlist falls back to TMDB scores and this choice
-                        won’t take effect.
+                        MDBList &mdash; one lookup that returns a title&rsquo;s
+                        score on every site. Paste its free API key on the
+                        MDBList card in Connections, or Shortlist falls back to
+                        TMDB scores and this choice won&rsquo;t take effect.
                       </p>
                       <Button
                         variant="outline"
@@ -423,7 +555,7 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor={votesId}>Minimum reviews</Label>
+                  <Label htmlFor={votesId}>Minimum votes</Label>
                   <Input
                     id={votesId}
                     type="number"
@@ -433,9 +565,13 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     onChange={(e) => set({ minVotes: Number(e.target.value) })}
                     className="w-28"
                   />
+                  {/* Rotten Tomatoes and Metacritic are critics' verdicts, and MDBList reports no
+                      vote count for them — `_gate_by_source` skips the floor entirely for those two
+                      (`VOTE_SOURCES`). Saying "keeps out obscure titles" there would be a lie. */}
                   <p className="text-sm text-muted-foreground">
-                    Keeps out obscure titles with a high {ratingLabel} score
-                    from very few votes.
+                    {countsVotes
+                      ? `Keeps out obscure titles with a high ${ratingLabel} score from very few votes.`
+                      : `${ratingLabel} is a critics' verdict rather than a public vote, so this number is ignored while it is your chosen source.`}
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -451,9 +587,12 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                     }
                     className="w-28"
                   />
+                  {/* Deliberately not "whose picks it appears in": a missing title can never BE
+                      anyone's pick (`filter_candidates` drops everything the library lacks). The
+                      count is the people Shortlist considered it for — `_record_demand`. */}
                   <p className="text-sm text-muted-foreground">
-                    Number of people whose picks it appears in before it&rsquo;s
-                    requested. 1 = anyone.
+                    How many different people it has to be a good match for
+                    before Shortlist asks. 1 = anyone.
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -495,112 +634,13 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   {form.minYear > 0 &&
                     form.maxYear > 0 &&
                     form.maxYear < form.minYear && (
-                      <p className="text-sm text-destructive">
-                        The latest year is before the earliest — no titles can
-                        match this range.
+                      <p className="text-sm text-destructive-text">
+                        The latest year is before the earliest &mdash; no titles
+                        can match this range.
                       </p>
                     )}
                 </div>
               </div>
-
-              <div className="space-y-2">
-                <Segmented
-                  legend="Most to auto-request per night"
-                  value={String(form.maxPerRun)}
-                  options={MAX_PER_RUN.map((n) => ({
-                    value: String(n),
-                    label: String(n),
-                  }))}
-                  onChange={(v) => set({ maxPerRun: Number(v) })}
-                />
-                <p className="text-sm text-muted-foreground">
-                  A hard cap on titles sent automatically each night, across
-                  both apps — so a night can never flood your downloads. Titles
-                  you approve by hand from the Requests inbox aren&rsquo;t
-                  capped.
-                </p>
-              </div>
-            </fieldset>
-
-            <fieldset className="space-y-4 rounded-lg border p-4">
-              <legend className="px-1 text-sm font-medium">
-                Auto-send vs. ask me
-              </legend>
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">
-                    Auto-send the strongest picks
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Titles clearing the higher bar below are requested for you
-                    each night. Everything else that clears the bars above waits
-                    in your Requests inbox. Turn this off to review every title
-                    yourself.
-                  </p>
-                </div>
-                <Switch
-                  checked={form.autoSend}
-                  onCheckedChange={(autoSend) => set({ autoSend })}
-                  aria-label="Auto-send the strongest picks"
-                />
-              </div>
-
-              {form.autoSend && (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor={autoDemandId}>
-                      Auto-send when wanted by
-                    </Label>
-                    <Input
-                      id={autoDemandId}
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={form.autoMinDemand}
-                      onChange={(e) =>
-                        set({
-                          autoMinDemand: Math.max(1, Number(e.target.value)),
-                        })
-                      }
-                      className="w-28"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      At least this many people. Wanted by fewer than this? It
-                      waits in the inbox.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor={autoRatingId}>Auto-send when rated</Label>
-                    <Input
-                      id={autoRatingId}
-                      type="number"
-                      min={0}
-                      max={10}
-                      step={0.1}
-                      value={form.autoMinRating}
-                      onChange={(e) =>
-                        set({ autoMinRating: Number(e.target.value) })
-                      }
-                      className="w-28"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      At least this {ratingLabel} score. Lower-rated picks wait
-                      for your OK.
-                    </p>
-                  </div>
-                  {(form.autoMinDemand < form.minDemand ||
-                    form.autoMinRating < form.minRating) && (
-                    <p
-                      role="alert"
-                      className="text-sm text-warning sm:col-span-2"
-                    >
-                      The auto-send bar is below the minimums above, so
-                      effectively everything that qualifies auto-sends. Raise it
-                      above the Guardrails to keep a manual queue.
-                    </p>
-                  )}
-                </div>
-              )}
             </fieldset>
           </div>
         )}

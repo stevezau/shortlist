@@ -4,6 +4,63 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-08-04
+
+First stable release. No breaking changes from `0.1.0-beta.9` — the version number is a statement
+about stability, not a rewrite. An existing install upgrades in place; the migrations run on boot
+after taking a pre-migration backup.
+
+### Added
+
+- **A "Because you watched" row can cycle its seed** instead of sitting on the newest watch for
+  weeks, so the row keeps moving even when someone's viewing does not.
+- **The row editor is a page**, showing what the row will actually do — and whether it is working —
+  beside the settings that decide it. Rows can be renamed and deleted from there.
+- **A way back from Off**, and a request filter that reaches past the 500-row inbox cap: picking a
+  name under "Wanted by" now asks the SERVER, so it searches every title on file rather than the
+  page that happened to load.
+- **Two new row orders, for when the front of a row feels stuck** ([#63](https://github.com/stevezau/shortlist/issues/63)):
+  **Just added** puts whatever is new to the row at the front, and **Taking turns** advances the
+  front by one title a day so every pick gets a spell there. Both are presentation only — neither
+  changes which titles a row holds, or how often it refreshes, which is still **Freshness**.
+  "Newest" is now labelled **Newest released**, to keep it distinct from "Just added".
+- **A rebuilt documentation site**, split into eight task-shaped guides.
+- **The row editor leads with how the row is doing** — delivered, watched, runs and last built,
+  across the top. Runs links to that row's own history, and counts the runs that list actually
+  holds, so the number and the page behind it can never disagree.
+
+### Fixed
+
+- **An un-watch is noticed within the night's read** rather than waiting up to a week for the full
+  re-read. Only when the read proves it covered its window — a truncated walk deletes nothing, so a
+  PMS that omits `totalSize` can never be mistaken for "they un-watched everything".
+- **A library removed from the server no longer counts as watched for ever.** Its cached titles and
+  cursor are swept on the weekly pass. A library that is merely unshared is left alone — that
+  history is still true.
+- **`fetch_section` raises instead of returning an empty set** when plex.tv will not mint a token.
+  Reported as "nothing watched", it made a full read wipe the section and stamp the sync a success.
+- **The dashboard and Rows pages no longer scroll sideways on a phone** (134px and 184px past a
+  390px screen; Rows put the Delete button out of reach entirely). Every route, the wizard, the nav
+  drawer and every dialog now fit 390px, enforced by `tests/e2e/test_mobile_audit.py`.
+- **The drift check's off switch now turns it off.**
+- **Pages no longer wait on Plex.** The library list behind every row card was read live from the
+  server on each page load, so while a job was deleting collections — one DELETE took 15.8s inside
+  Plex's own write lock — every page queued behind it. It is cached now, concurrent misses collapse
+  into one read, and a failed refresh serves the last good answer instead of an error.
+- **Turning a row off asks first.** The next run takes that row off Plex for everyone who has it,
+  which a bare switch gave no hint of. Turning one back on is unchanged — it removes nothing.
+- **Rename only offers itself when the name has changed**, and now does the rename rather than
+  showing you another button to press. Pressed on an unchanged name it used to rewrite every
+  collection, for every person, to the name they already had.
+- Warnings look like warnings, small grey text is readable, and the settings are explained in words
+  a first-time user already knows.
+
+### Changed
+
+- The read-only Plex audit moved out of the Danger zone into Advanced — it changes nothing, and
+  filing it under a destructive heading made the safest control on the page look like the riskiest.
+- Renaming moved off the Rows list and into the editor, beside the name it changes.
+
 ## [0.1.0-beta.9] - 2026-08-02
 
 ### Added
@@ -40,7 +97,7 @@ All notable changes to this project are documented here. This project follows
   captioned with its current values so a closed section still answers "is what I want in here?".
 - Several settings now say what they do: "Make this a 'watch it again' row" (was "Lead with things
   they've seen"), "Watches the AI searches from" (was "Recent watches to search", and it is hidden on
-  rows that do not use AI web search, where it did nothing), and freshness now says it decides *which*
+  rows that do not use AI web search, where it did nothing), and freshness now says it decides _which_
   titles a row holds rather than the order they appear in.
 
 ## [0.1.0-beta.5] - 2026-07-22
@@ -82,10 +139,10 @@ picking from the wrong end of it.
   match" and "#19, loosely related" arrived indistinguishable — and `/similar` (keyword matching)
   was weighted the same as `/recommendations` (what people actually watch together).
 - **Ranking now asks whether a title is similar, not just well-rated.** With position discarded, the
-  only thing separating candidates was TMDB's average vote — which on real data put *Traitors*, a
+  only thing separating candidates was TMDB's average vote — which on real data put _Traitors_, a
   reality competition show, at the top of a medical drama's row.
 - **Genre coherence.** Position alone wasn't enough: TMDB tags The Pitt simply "Drama", as it does
-  nearly everything it suggests. But Torchwood and The Sandman are *also* "Sci-Fi & Fantasy", and
+  nearly everything it suggests. But Torchwood and The Sandman are _also_ "Sci-Fi & Fantasy", and
   that foreign genre is the whole difference.
 
 Sources with no ranking of their own — discover, Trakt, the AI sources — are unaffected. They are
@@ -123,13 +180,13 @@ Second beta. Mostly the things the first beta's users ran into.
 
 ### The owner is a user now
 
-- **You get a row too.** Shortlist only ever built rows for accounts you *share with*, so on a
+- **You get a row too.** Shortlist only ever built rows for accounts you _share with_, so on a
   one-person server it did nothing at all — plex.tv's user list never includes the account that owns
   the server ([#1]). The owner is now synced like anyone else, disabled by default so an existing
   install gains a switch rather than a row appearing unannounced. Their watch history is read from
   the PMS local account, which is named after your plex.tv **username**, not your display title.
 - **The honest caveat, stated up front.** Plex cannot hide a collection from the server owner, so
-  your own Home shows *every* user's row. The app says so where it matters instead of leaving you to
+  your own Home shows _every_ user's row. The app says so where it matters instead of leaving you to
   discover it.
 
 ### Say why, not just what

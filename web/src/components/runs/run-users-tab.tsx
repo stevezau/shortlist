@@ -76,7 +76,7 @@ export function RunUsersTab({
           role="alert"
           className="flex gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
         >
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive-text" />
           <p>
             <span className="font-medium">
               {commonError.count} people failed with the same problem.
@@ -115,7 +115,9 @@ export function RunUsersTab({
                 {runStatusLabel(selected.status)}
               </Badge>
             </CardTitle>
-            <div className="flex items-center gap-3">
+            {/* Wraps: the duration line plus the "How we picked" link needed 192px beside a title
+                that already fills a narrow screen. */}
+            <div className="flex flex-wrap items-center gap-3">
               <p className="text-sm text-muted-foreground">
                 {formatDuration(selected.duration_ms)}
                 {selected.llm_tokens > 0

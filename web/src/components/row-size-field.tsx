@@ -13,7 +13,7 @@ import { ROW_SIZE_MAX, ROW_SIZE_MIN, clampRowSize } from "@/lib/constants";
 export function RowSizeField({
   value,
   onChange,
-  label = "Row size",
+  label = "How many titles",
   hint = `Any number of titles from ${ROW_SIZE_MIN} to ${ROW_SIZE_MAX}.`,
 }: {
   value: number;

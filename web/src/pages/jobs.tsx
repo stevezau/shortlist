@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   Cog,
   Database,
+  Eraser,
   Lock,
   RefreshCw,
   ShieldCheck,
@@ -25,7 +26,12 @@ import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { queuedReason, useRunActive, useWritesPlex } from "@/lib/job-activity";
-import { queryKeys, useSettings, useSaveSettings } from "@/lib/queries";
+import {
+  queryKeys,
+  useSchedule,
+  useSettings,
+  useSaveSettings,
+} from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
 import type {
   JobCatalogEntry,
@@ -38,9 +44,40 @@ import type {
 const PENDING_LABELS: Record<string, string> = {
   "sync.history": "Sync watch history",
   "sync.users": "Sync people from Plex",
-  "sync.check": "Sync check",
+  "sync.check": "Check and fix rows on Plex",
   "privacy.sync": "Privacy sync",
   "backup.take": "Back up the database",
+  "maintenance.prune": "Clear out old records",
+};
+
+/**
+ * What each job you can press CHANGES, on the line rather than a paragraph deep.
+ *
+ * "Run now" mixes jobs with wildly different consequences: one only reads, two only touch
+ * Shortlist's own database, and one can delete a collection off your Plex server for good. They all
+ * looked identical until you expanded them. A job with no tag here changes nothing outside
+ * Shortlist's own records — which is a claim each of those three descriptions makes too.
+ */
+const EFFECT_TAGS: Record<
+  string,
+  { text: string; title: string; destructive?: boolean }
+> = {
+  "sync.users": {
+    text: "Changes Plex",
+    title:
+      "Adds and removes people, and takes the rows of anyone who has lost access off your Plex server.",
+  },
+  "sync.check": {
+    text: "Can delete",
+    title:
+      "Writes corrections to Plex, and after you have read the preview and pressed Fix it can delete a collection for good. Nothing is deleted before you press Fix.",
+    destructive: true,
+  },
+  "privacy.sync": {
+    text: "Changes Plex",
+    title:
+      "Rewrites every account's share filter. It only ever hides things, so it can only make your server more private.",
+  },
 };
 
 function pendingEntry(kind: string): JobCatalogEntry {
@@ -62,13 +99,27 @@ function pendingEntry(kind: string): JobCatalogEntry {
   };
 }
 
-function GroupHeading({ title, hint }: { title: string; hint?: string }) {
+function GroupHeading({
+  title,
+  hint,
+  note,
+}: {
+  title: string;
+  hint?: string;
+  /** A second line, for something too important to be a trailing aside on the heading. */
+  note?: string;
+}) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-2 px-1">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {title}
-      </h2>
-      {hint && <span className="text-xs text-muted-foreground">· {hint}</span>}
+    <div className="space-y-1 px-1">
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {title}
+        </h2>
+        {hint && (
+          <span className="text-xs text-muted-foreground">· {hint}</span>
+        )}
+      </div>
+      {note && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   );
 }
@@ -83,36 +134,78 @@ function GroupHeading({ title, hint }: { title: string; hint?: string }) {
  * and not change it. Anything with a `schedule_setting` now gets this.
  */
 function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
+  const queryClient = useQueryClient();
   const settings = useSettings();
+  const schedule = useSchedule();
   const saveSettings = useSaveSettings();
   if (!entry.schedule_setting) return null;
+
+  // `null` is not "blank": it deletes the stored cron, which is the only way to say "use the
+  // built-in default" for a schedule where a stored blank means OFF (server: scheduler._OFF_ABLE).
+  const save = (cron: string | null) =>
+    saveSettings.mutate(
+      { [entry.schedule_setting]: cron },
+      {
+        onSuccess: () => {
+          // Both, and both matter: the panel reads the EFFECTIVE cron from /api/schedule, and the
+          // row's next-run comes from the catalogue. Without these a schedule you just changed goes
+          // on showing the old one until the catalogue's idle poll comes round.
+          queryClient.invalidateQueries({ queryKey: queryKeys.schedule });
+          queryClient.invalidateQueries({ queryKey: queryKeys.jobsCatalog });
+        },
+      },
+    );
+
+  // A schedule that can be switched OFF has to be edited against the cron it ACTUALLY runs on, not
+  // the stored setting: for those, a stored blank means off while an absent row means "the built-in
+  // default", and `GET /api/settings` folds the default in, so the two are the same "" there. Reading
+  // that made the off switch appear only once some other frequency had been saved — on a default
+  // install there was no off control at all, for the one job the code goes out of its way to let you
+  // switch off (scheduler._register_sync_check).
+  if (entry.schedule_optional) {
+    // A failed fetch is not a slow one. Treating them alike left a permanent skeleton where the off
+    // switch belongs — the only control on this page that could get stuck with no way back.
+    if (schedule.isError) {
+      return (
+        <p role="alert" className="text-sm text-destructive-text">
+          Couldn&rsquo;t load this schedule, so it can&rsquo;t be changed here
+          right now.{" "}
+          <button
+            type="button"
+            onClick={() => schedule.refetch()}
+            className="underline underline-offset-4"
+          >
+            Try again
+          </button>
+        </p>
+      );
+    }
+    if (!schedule.data) return <Skeleton className="h-8 w-72" />;
+    const job = schedule.data.jobs.find((j) => j.kind === entry.kind);
+    return (
+      <div className="space-y-2">
+        <CronPicker
+          value={job?.cron ?? ""}
+          onChange={save}
+          blankLabel="Off"
+          // The way back from Off. The cron comes from the server so the SPA never holds a second
+          // copy of it, and picking it saves `null` rather than a cron, so the setting goes back to
+          // inheriting the built-in time instead of pinning today's value of it.
+          defaultCron={job?.default_cron ?? ""}
+          onRestoreDefault={() => save(null)}
+        />
+        <p className="text-xs text-muted-foreground">
+          Off means it never runs on its own &mdash; the button on this row
+          still works whenever you press it.
+        </p>
+      </div>
+    );
+  }
 
   const stored =
     ((settings.data ?? {})[entry.schedule_setting] as string | undefined) ?? "";
 
-  return (
-    <div className="space-y-2">
-      <CronPicker
-        value={stored}
-        onChange={(cron) =>
-          saveSettings.mutate({ [entry.schedule_setting]: cron })
-        }
-      />
-      {/* Only offered where blank genuinely means OFF. Everywhere else a blank cron falls back to the
-          built-in default, so a "turn off" button there would be a lie. */}
-      {entry.schedule_optional && stored !== "" && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs text-muted-foreground"
-          disabled={saveSettings.isPending}
-          onClick={() => saveSettings.mutate({ [entry.schedule_setting]: "" })}
-        >
-          Turn this schedule off
-        </Button>
-      )}
-    </div>
-  );
+  return <CronPicker value={stored} onChange={save} />;
 }
 
 // --- live slots: what is happening, or just happened, because you pressed the button -------------
@@ -272,6 +365,16 @@ export function JobsPage() {
       invalidateJobs();
     },
   });
+  // Foreground, unlike the privacy pass: this one deletes rows from Shortlist's own SQLite and comes
+  // back in well under a second, so waiting for the real "pruned N runs" line beats a toast that
+  // only says it started. It takes no arguments — the retention limits come from settings.
+  const pruneNow = useMutation({
+    mutationFn: () => api.runJob("maintenance.prune", {}),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.runs });
+      invalidateJobs();
+    },
+  });
 
   const entries = catalog.data ?? [];
   const byKind = Object.fromEntries(entries.map((e) => [e.kind, e]));
@@ -321,7 +424,9 @@ export function JobsPage() {
       <PageHeader
         icon={Wrench}
         title="Jobs"
-        subtitle="Background maintenance Shortlist does for you. Run any of it now when something has drifted, rather than waiting for the nightly run."
+        // Not "the nightly run": these are five separate jobs on five separate timers, and rows
+        // build on their own schedules again — there is no one nightly thing to wait for.
+        subtitle="The upkeep Shortlist does in the background — refreshing who has access, re-reading what people watched, and keeping Plex in step with what you've set. Each one runs on its own timer; press Run to do it now instead."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -358,7 +463,7 @@ export function JobsPage() {
             </button>
           )}
           {totals.failed > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive-text">
               {totals.failed} failed
             </span>
           )}
@@ -385,12 +490,17 @@ export function JobsPage() {
       ) : (
         <div className="space-y-5">
           <section className="space-y-2">
-            <GroupHeading title="Run now" hint="you start these" />
+            <GroupHeading
+              title="Run now"
+              hint="each on its own timer — open one to see or change when"
+              note="A tag says what a job changes on your Plex server. Anything without one only reads, or only touches Shortlist's own records."
+            />
             <div className="overflow-hidden rounded-md border">
               <JobRow
                 first
                 entry={entryFor("sync.users")}
                 queuedTitle={queuedTitleFor("sync.users")}
+                tag={EFFECT_TAGS["sync.users"]}
                 icon={UsersIcon}
                 action={{
                   label: "Run",
@@ -492,7 +602,10 @@ export function JobsPage() {
                         />
                       )}
                       {!watchedRunning && watchedResult?.ok === false && (
-                        <p role="alert" className="text-sm text-destructive">
+                        <p
+                          role="alert"
+                          className="text-sm text-destructive-text"
+                        >
                           The sync couldn&rsquo;t finish
                           {watchedResult.error
                             ? ` (${watchedResult.error})`
@@ -542,10 +655,13 @@ export function JobsPage() {
               <JobRow
                 entry={entryFor("sync.check")}
                 queuedTitle={queuedTitleFor("sync.check")}
+                tag={EFFECT_TAGS["sync.check"]}
                 icon={ShieldCheck}
                 panel={<SchedulePanel entry={entryFor("sync.check")} />}
                 action={{
-                  label: "Check for drift",
+                  // Not "Check for drift": "drift" is our word for it, not anyone else's, and the
+                  // button has to read as the safe half of a two-step — this one only looks.
+                  label: "Check now",
                   run: () => driftPreview.mutate(),
                   pending: driftPreview.isPending,
                 }}
@@ -628,6 +744,7 @@ export function JobsPage() {
               <JobRow
                 entry={entryFor("privacy.sync")}
                 queuedTitle={queuedTitleFor("privacy.sync")}
+                tag={EFFECT_TAGS["privacy.sync"]}
                 icon={Lock}
                 panel={<SchedulePanel entry={entryFor("privacy.sync")} />}
                 action={{
@@ -677,6 +794,59 @@ export function JobsPage() {
                   ) : null
                 }
                 panel={<BackupPanel />}
+              />
+
+              {/* The retention pass. It was `manual: true` — so the "Automatic" group filtered it
+                  out — and it was not one of the hardcoded rows here either, which left it in the
+                  page totals with no row anywhere. A prune that failed showed "1 failed" in the
+                  header and there was nothing to click, nothing to read, and no way to retry. */}
+              <JobRow
+                entry={entryFor("maintenance.prune")}
+                queuedTitle={queuedTitleFor("maintenance.prune")}
+                icon={Eraser}
+                action={{
+                  label: "Clear now",
+                  run: () => pruneNow.mutate(),
+                  pending: pruneNow.isPending,
+                }}
+                live={
+                  pruneNow.isError || pruneNow.data ? (
+                    <div className="flex flex-col gap-3">
+                      {pruneNow.isError && (
+                        <MutationAlert
+                          error={pruneNow.error}
+                          fallback="Couldn't clear out old records. Try again."
+                          onRetry={() => pruneNow.mutate()}
+                        />
+                      )}
+                      {/* `status` matters here for the same reason it does on the check above: the
+                          job can come back still queued, and reporting a tidy-up that never ran
+                          would be a lie. */}
+                      {pruneNow.data &&
+                        !pruneNow.data.error &&
+                        pruneNow.data.status !== "done" && (
+                          <p className="text-sm text-muted-foreground">
+                            Queued — it will run as soon as there's a free slot.
+                          </p>
+                        )}
+                      {pruneNow.data?.status === "done" && (
+                        <Succeeded>
+                          {pruneNow.data.detail ||
+                            "There was nothing old enough to clear out."}
+                        </Succeeded>
+                      )}
+                      {pruneNow.data?.error && (
+                        <p
+                          role="alert"
+                          className="text-sm text-destructive-text"
+                        >
+                          {pruneNow.data.error}
+                        </p>
+                      )}
+                    </div>
+                  ) : null
+                }
+                panel={<SchedulePanel entry={entryFor("maintenance.prune")} />}
               />
             </div>
           </section>

@@ -68,7 +68,7 @@ function RunLine({ run, userSlug }: { run: UserRun; userSlug: string }) {
             Something went wrong building this person&rsquo;s row — copy the
             details below when reporting it:
           </p>
-          <p className="font-mono text-xs text-destructive">{run.error}</p>
+          <p className="font-mono text-xs text-destructive-text">{run.error}</p>
         </div>
       ) : run.reason ? (
         // Not a failure — the run deliberately left this person out, and said why.

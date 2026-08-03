@@ -83,6 +83,40 @@ describe("AdvancedSection", () => {
     expect((input as HTMLInputElement).value).toBe("120");
   });
 
+  it("defaults both retention knobs to what the server defaults to", async () => {
+    renderSection({});
+
+    // Run history: 3 months (settings_store.DEFAULTS). This read `?? 100` — unreachable, and out of
+    // the API's 0–24 bound if it ever had been reached.
+    const runs = screen.getByRole("group", { name: "History retention" });
+    expect(
+      within(runs)
+        .getByRole("button", { name: "3mo" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+
+    // The change log: 0, and 0 means for ever — the audit trail outlives the runs around it.
+    const events = screen.getByRole("group", { name: "Change log retention" });
+    expect(
+      within(events)
+        .getByRole("button", { name: "Forever" })
+        .getAttribute("aria-pressed"),
+    ).toBe("true");
+  });
+
+  it("auto-saves a change-log limit under its own settings key", async () => {
+    renderSection({});
+    const events = screen.getByRole("group", { name: "Change log retention" });
+
+    await userEvent.click(within(events).getByRole("button", { name: "6mo" }));
+
+    // The key matters as much as the value: both knobs offer the same chips, and writing this one
+    // to `runs.retention` would silently bin run history instead.
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith({ "events.retention": 6 }),
+    );
+  });
+
   it("auto-saves a typed custom timeout as a number", async () => {
     renderSection({});
     // Each of the three number knobs has its own Custom… — scope to the timeout group so the click

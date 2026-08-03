@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Request
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import Collection, iso_utc
-from shortlist.server.scheduler import effective_cron
+from shortlist.server.scheduler import DEFAULT_CRONS, effective_cron
 from shortlist.server.services.jobs import CATALOG
 from shortlist.server.settings_store import SettingsStore
 
@@ -39,6 +39,11 @@ class ScheduleJobOut(PassthroughModel):
     setting: str  # the settings key the UI writes to change this cron
     cron: str  # the cron it ACTUALLY runs on, defaults resolved; "" = not scheduled
     using_default: bool  # the cron came from the built-in default, not from something the owner set
+    # The built-in cron this job falls back to when nothing is stored — the SPA has no copy of
+    # `scheduler.DEFAULT_CRONS` and must not grow one, so "put this schedule back on its built-in
+    # time" is only offerable if the server says what that time is. Send `null` for `setting` in
+    # `PUT /api/settings` to go back to it.
+    default_cron: str
     optional: bool
     writes_plex: bool
     next_run: str | None
@@ -98,6 +103,10 @@ async def schedule(request: Request) -> dict:
                 # Whether that came from the default rather than something the owner set, so the UI
                 # can say "built-in default" instead of implying they chose it.
                 "using_default": not str(store.get(entry.schedule_setting) or "").strip(),
+                # What that default IS. Sent because the alternative is a second copy of
+                # DEFAULT_CRONS in the SPA, and the last time a cron default had two copies the
+                # drift check was documented as off-by-default for months while it ran nightly.
+                "default_cron": DEFAULT_CRONS.get(entry.schedule_setting, ""),
                 "optional": entry.schedule_optional,
                 "writes_plex": entry.writes_plex,
                 "next_run": next_run(entry.schedule_job_id),

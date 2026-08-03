@@ -33,7 +33,7 @@ from shortlist.server.auth import require_owner
 from shortlist.server.db.models import DEFAULT_SLUG, Collection, CollectionAudience, Event, PickRow, User
 from shortlist.server.scheduler import rebuild_schedule
 from shortlist.server.services import collection_reconcile as reconcile
-from shortlist.server.services import jobs, poster_service
+from shortlist.server.services import jobs, poster_service, report_service
 from shortlist.server.services.poster_service import load_upload
 from shortlist.server.settings_store import SettingsStore
 
@@ -50,7 +50,7 @@ MEDIA = {"movie", "show", "both"}
 # stays reachable from the library's Collections tab — it just claims no Home or Recommended slot.
 PLACEMENTS = {"both", "home", "library", "off"}
 #: How a row's picks are ordered in the delivered collection. Mirrors `engine.rows.ROW_ORDERS`.
-ORDERS = {"best", "rating", "newest", "shuffle"}
+ORDERS = {"best", "rating", "newest", "shuffle", "new_first", "rotate"}
 # "" (Plex default), "upload", "text" (built-in Pillow), "ai" (image model). "generate" is the
 # pre-text-engine name for "ai", accepted for backward compatibility.
 POSTER_MODES = {"", "upload", "text", "ai", "generate"}
@@ -129,6 +129,10 @@ class CollectionIn(BaseModel):
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
+    # How many recent watches the row cycles between, one per run. 1 = always the most recent.
+    # Capped at 20: past that the "recent" the row's title claims stops being true, and the cycle takes
+    # three weeks to come round — indistinguishable from the stuck row this exists to fix.
+    seed_window: int = Field(default=1, ge=1, le=20)
     pick_order: str = _closed_set(ORDERS, "best", "How the delivered collection is ordered.")
     library_keys: list[str] = Field(default_factory=list)  # [] -> every library of the row's media type
     placement: str = _closed_set(PLACEMENTS, "both", "Where the OWNER's own collection appears.")
@@ -186,6 +190,7 @@ class CollectionOut(PassthroughModel):
     freshness: float | None
     recent_count: int | None
     max_seeds: int | None
+    seed_window: int
     pick_order: str = _closed_set_out(ORDERS, "How the delivered collection is ordered.")
     placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
     placement_friends: str = _closed_set_out(PLACEMENTS, "Where each FRIEND's own collection appears.")
@@ -328,7 +333,14 @@ def _serialize(session, collection: Collection) -> dict:
         "size": collection.size,
         "media": collection.media,
         "sort_order": collection.sort_order,
-        "name_template": collection.name_template,
+        # Never ship the DEFAULT row's own column: its title is the global `row.name_template`,
+        # already rendered into `name` above. A database written before the API guarded that column
+        # still carries a stale value, and the SPA reads `name_template || name` in three places —
+        # so the editor would show a title Plex no longer uses, and the rename screen would send it
+        # as `old_template`, match nothing (`collection_reconcile.py:527`), report "renamed 0
+        # collections", and leave the next run to build a second collection beside the old one.
+        # Neutralising it here rather than in a migration keeps one place responsible for the rule.
+        "name_template": "" if collection.slug == DEFAULT_SLUG else collection.name_template,
         "min_watchers": collection.min_watchers,
         "request_tag": collection.request_tag or "",
         "candidate_sources": list(collection.candidate_sources or []),
@@ -338,6 +350,7 @@ def _serialize(session, collection: Collection) -> dict:
         "freshness": collection.freshness,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
+        "seed_window": int(collection.seed_window or 1),
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
         "placement_friends": collection.placement_friends or "both",
@@ -422,6 +435,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             freshness=body.freshness,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
+            seed_window=body.seed_window,
             pick_order=body.pick_order,
             placement=body.placement,
             placement_friends=body.placement_friends,
@@ -459,6 +473,7 @@ _PATCHABLE_COLUMNS = (
     "freshness",
     "recent_count",
     "max_seeds",
+    "seed_window",
     "pick_order",
     "placement",
     "placement_friends",
@@ -572,6 +587,16 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         )
         for column in _PATCHABLE_COLUMNS:
             if column in sent:
+                # The DEFAULT row must never carry its own `name_template`: its title IS the global
+                # `row.name_template`, written just above. The engine already knows this and forces
+                # the field empty for this row when it builds specs (`context_builder.py:604,698`),
+                # so a stored value never reaches delivery — but `report_service.py` PREFERS it over
+                # the global, so a row that has one shows a stale name in reports the moment
+                # Settings → Defaults changes. The rename screen sends `name` and `name_template`
+                # together, which is right for every other row, so the guard belongs here rather
+                # than in one caller: any client sending the field would otherwise reintroduce it.
+                if column == "name_template" and is_default:
+                    continue
                 setattr(collection, column, getattr(body, column))
         if "schedule" in sent:
             collection.schedule = body.schedule.strip()  # a whitespace-only cron means "no schedule"
@@ -776,9 +801,14 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
         # If called from the dialog flow, the PATCH already saved it — this is idempotent.
         new_template = body.name_template.strip()
         if new_template:
-            collection.name_template = new_template
+            # Same rule as the PATCH handler: the DEFAULT row's title IS the global setting, and its
+            # own column must stay empty. Writing it here would undo that guard within the same
+            # flow — the rename screen PATCHes and then immediately POSTs to this endpoint, so a
+            # column cleared one request ago came straight back.
             if slug == DEFAULT_SLUG:
                 SettingsStore(session).set("row.name_template", new_template)
+            else:
+                collection.name_template = new_template
             session.commit()
         else:
             # No template in the body — read the current one from the DB (already saved by PATCH).
@@ -1006,3 +1036,56 @@ async def delete_poster_image(collection_id: int, request: Request) -> None:
         # Cosmetic and privacy-neutral (the hiding label and promotion are untouched), so gate-exempt.
         # Best-effort + audited, exactly like the same revert from the row editor.
         await reconcile.run_poster_reset(state, slug=slug, build=build, scope="collection.poster")
+
+
+class RowLibraryEffectiveness(PassthroughModel):
+    """One library's share of a row's matured cohort. A row that builds in two libraries is two Plex
+    collections and genuinely performs differently in each, so they are never merged into one line."""
+
+    library: str
+    delivered: int
+    watched: int
+    rate: float | None  # None when nothing was delivered there
+
+
+class RowMaturedCohort(PassthroughModel):
+    """The picks old enough to be judged: delivered at least `matured_days` ago, so every one of them
+    has had its full window to be watched."""
+
+    delivered: int
+    watched: int
+    rate: float | None
+    cohort_to: str
+
+
+class RowEffectivenessOut(PassthroughModel):
+    """Whether one row is working, for the panel beside its settings."""
+
+    delivered: int  # all time, distinct person+title
+    watched: int
+    # Runs still on record that built this row — counted exactly as `/api/runs?collection=<slug>`
+    # selects them, since the panel's Runs tile links there. Pruned runs are in neither.
+    runs: int
+    first_delivered_at: str | None  # None = this row has never delivered anything
+    last_delivered_at: str | None  # None = same; otherwise the most recent delivery
+    matured_days: int
+    matured: RowMaturedCohort | None  # None = nothing is old enough to judge yet
+    per_library: list[RowLibraryEffectiveness]
+
+
+@router.get("/{collection_id}/effectiveness", response_model=RowEffectivenessOut)
+async def collection_effectiveness(collection_id: int, request: Request) -> dict:
+    """How this row has actually performed — delivered, watched, and the landing rate.
+
+    Its own endpoint rather than a slice of `/api/report/effectiveness`, which is ~30 queries and
+    runs in a worker thread for that reason; this is four, so opening the row editor costs nothing
+    like opening the dashboard. Both read the same columns through `report_service`, so they cannot
+    drift apart on what counts as a hit.
+    """
+    with request.app.state.sessions() as session:
+        collection = session.get(Collection, collection_id)
+        if collection is None:
+            raise HTTPException(status_code=404, detail="collection not found")
+        # Keyed on the SLUG, which is what picks are stamped with — a row renamed or re-created keeps
+        # its slug, and that is the identity its history hangs off.
+        return report_service.row_effectiveness(session, collection.slug)

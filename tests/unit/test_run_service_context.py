@@ -556,6 +556,130 @@ class TestSyncWatched:
         assert [i.title for i in history] == ["Dune"]
         assert fallback_calls == [], "a 403 must not trigger the complete-read fallback"
 
+    def _two_library_ctx(self, sections, read_section):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            plex=SimpleNamespace(sections=lambda: [SimpleNamespace(key=k, type="movie") for k in sections]),
+            history_source=SimpleNamespace(fetch=lambda p, **k: [], fetch_section=read_section),
+            config=SimpleNamespace(min_completion=0.7),
+        )
+
+    def test_a_library_removed_from_the_server_is_forgotten(self, service, sessions, monkeypatch):
+        """Nothing else sweeps these. `sync_section` only ever replaces sections it READ, so titles
+        cached from a library that no longer exists would go on counting as watched for ever —
+        suppressing recommendations on behalf of a library nobody can watch."""
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle, WatchSyncState
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+
+        def read_section(_profile, section, _media, since=None):
+            title = "Dune" if str(section.key) == "1" else "Heat"
+            return [
+                WatchedItem(
+                    title=title,
+                    media_type=MediaType.MOVIE,
+                    watched_at=datetime.now(UTC),
+                    tmdb_id=int(section.key),
+                    rating_key=int(section.key),
+                )
+            ]
+
+        service.refresh_watched(self._two_library_ctx(["1", "2"], read_section), profile)
+        with sessions() as session:
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"Dune", "Heat"}
+
+        # Library 2 deleted from the server: it is simply absent from sections() now. Swept on the
+        # weekly pass only — the sweep believes one cached `/library/sections` answer, so it runs at
+        # the cadence of the full read rather than every sync.
+        history = service.refresh_watched(self._two_library_ctx(["1"], read_section), profile, force_full=True)
+
+        assert [item.title for item in history] == ["Dune"]
+        with sessions() as session:
+            assert [row.title for row in session.query(WatchedTitle).all()] == ["Dune"]
+            assert [state.section_key for state in session.query(WatchSyncState).all()] == ["1"]
+
+    def test_an_ordinary_sync_does_not_sweep_libraries(self, service, sessions, monkeypatch):
+        """One short `/library/sections` response would otherwise be applied to every user in the
+        sync — `PlexClient` caches that list for the life of the client, so a bad answer is pinned
+        for the whole run. Restricting the sweep to the weekly pass cuts the exposure ~168x."""
+        from datetime import UTC, datetime
+
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+
+        def read_section(_profile, section, _media, since=None):
+            return [
+                WatchedItem(
+                    title=f"T{section.key}",
+                    media_type=MediaType.MOVIE,
+                    watched_at=datetime.now(UTC),
+                    tmdb_id=int(section.key),
+                    rating_key=int(section.key),
+                )
+            ]
+
+        service.refresh_watched(self._two_library_ctx(["1", "2"], read_section), profile)
+
+        # A blip: sections() briefly answers with one library on an ordinary hourly sync.
+        service.refresh_watched(self._two_library_ctx(["1"], read_section), profile)
+
+        with sessions() as session:
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"T1", "T2"}
+
+    def test_a_library_that_is_merely_unshared_keeps_its_cached_history(self, service, sessions, monkeypatch):
+        """The distinction the sweep turns on. An unshared library is still ON the server — it 403s
+        per-person, on every sync, for every library someone isn't given — and what they watched there
+        is still true. Only libraries gone server-wide may be forgotten."""
+        from datetime import UTC, datetime
+
+        from shortlist.engine.clients.plex_pms import SectionNotShared
+        from shortlist.engine.models import MediaType, UserProfile, UserType, WatchedItem
+        from shortlist.server.db.models import User, WatchedTitle
+
+        with sessions() as session:
+            session.add(User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True))
+            session.commit()
+
+        profile = UserProfile(username="sarah", plex_account_id=1, user_type=UserType.SHARED, slug="sarah")
+        shared: dict[str, bool] = {"2": True}
+
+        def read_section(_profile, section, _media, since=None):
+            key = str(section.key)
+            if not shared.get(key, True):
+                raise SectionNotShared(f"section {key} is not shared with this user")
+            return [
+                WatchedItem(
+                    title=f"T{key}",
+                    media_type=MediaType.MOVIE,
+                    watched_at=datetime.now(UTC),
+                    tmdb_id=int(key),
+                    rating_key=int(key),
+                )
+            ]
+
+        service.refresh_watched(self._two_library_ctx(["1", "2"], read_section), profile)
+        shared["2"] = False  # access revoked, but the library is still on the server
+
+        # force_full so the sweep actually RUNS — otherwise this passes for the wrong reason.
+        service.refresh_watched(self._two_library_ctx(["1", "2"], read_section), profile, force_full=True)
+
+        with sessions() as session:
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"T1", "T2"}
+
     def test_the_prefill_skips_people_this_run_will_not_build_for(self, service):
         """Every row carries its own cron, so a SCHEDULED run is always scoped to a subset of rows.
 

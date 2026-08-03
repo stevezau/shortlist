@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,8 @@ const {
   runJob,
   getSchedule,
   getRuns,
+  getSettings,
+  putSettings,
 } = vi.hoisted(() => ({
   syncWatched: vi.fn(),
   syncUsers: vi.fn(),
@@ -23,6 +25,8 @@ const {
   runJob: vi.fn(),
   getSchedule: vi.fn(),
   getRuns: vi.fn(),
+  getSettings: vi.fn(),
+  putSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -37,6 +41,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       runJob,
       getSchedule,
       getRuns,
+      getSettings,
+      putSettings,
     },
   };
 });
@@ -64,12 +70,18 @@ const CATALOG = [
   entry("sync.history", { label: "Sync watch history" }),
   entry("sync.users", { label: "Sync people from Plex" }),
   entry("sync.check", {
-    label: "Sync check",
+    label: "Check and fix rows on Plex",
     description:
-      "Checks every row on Plex against what Shortlist intends, and fixes anything that drifted. Rows fall out of step when a run doesn't finish, when the container restarts mid-write, or when someone was paused or disabled while their row was already live.",
+      "Looks at every collection Shortlist has put on your Plex server and puts back the ones that ended up in the wrong place.\n\nRows fall out of step when a run doesn't finish, when the container restarts mid-write, or when someone was paused or disabled while their row was already live.",
+    schedule_setting: "sync.check_cron",
+    schedule_optional: true,
   }),
   entry("privacy.sync", { label: "Privacy sync" }),
   entry("backup.take", { label: "Back up the database" }),
+  entry("maintenance.prune", {
+    label: "Clear out old records",
+    schedule_setting: "maintenance.prune_cron",
+  }),
   entry("user.cleanup", {
     label: "Remove a disabled person's rows",
     manual: false,
@@ -282,7 +294,7 @@ describe("JobsPage — sync check", () => {
     expect(screen.queryByText(/container restarts mid-write/i)).toBeNull();
 
     await userEvent.click(
-      within(row).getByRole("button", { name: /^Sync check$/ }),
+      within(row).getByRole("button", { name: /^Check and fix rows on Plex$/ }),
     );
     expect(
       await screen.findByText(/container restarts mid-write/i),
@@ -304,7 +316,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
 
@@ -331,7 +343,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
 
@@ -357,7 +369,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
 
@@ -385,7 +397,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
 
@@ -417,7 +429,7 @@ describe("JobsPage — sync check", () => {
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /^Check for drift: Sync check$/,
+        name: /^Check now: Check and fix rows on Plex$/,
       }),
     );
     await userEvent.click(
@@ -564,6 +576,105 @@ describe("JobsPage — sync check", () => {
     expect(row).toHaveTextContent(/queued when you disable someone/i);
   });
 
+  it("gives the retention prune a row of its own, with a button that runs it", async () => {
+    // It is `manual: true`, so the "Automatic" group filters it out — and it used to be missing from
+    // the hardcoded "Run now" list as well. Its counts still fed the page totals, so a failed prune
+    // showed "1 failed" in the header with no row anywhere to click.
+    runJob.mockResolvedValue({
+      id: 7,
+      kind: "maintenance.prune",
+      status: "done",
+      detail: "Pruned 4 run(s), 0 audit event(s) and 12 expired cache row(s)",
+      error: null,
+      fixed: [],
+      orphans: [],
+    });
+    renderPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /^Clear now: Clear out old records$/,
+      }),
+    );
+
+    // Foreground and argument-free: the retention limits come from settings, not the button.
+    expect(runJob).toHaveBeenCalledWith("maintenance.prune", {});
+    expect(
+      await screen.findByText(/pruned 4 run\(s\), 0 audit event\(s\)/i),
+    ).toBeInTheDocument();
+  });
+
+  it("gives a failed prune somewhere to click, not just a number in the header", async () => {
+    getJobCatalog.mockResolvedValue([
+      entry("maintenance.prune", {
+        label: "Clear out old records",
+        total: 2,
+        failed: 1,
+        last: {
+          id: 9,
+          kind: "maintenance.prune",
+          status: "failed",
+          attempts: 3,
+          max_attempts: 3,
+          detail: "",
+          error: "OperationalError: database is locked",
+          created_at: "2026-07-28T10:00:00Z",
+          started_at: null,
+          finished_at: null,
+        },
+      }),
+    ]);
+    renderPage();
+
+    expect(await screen.findByText(/1 failed/i)).toBeInTheDocument();
+    const row = await screen.findByTestId("job-maintenance.prune");
+    expect(row).toHaveTextContent(/Failed/);
+
+    await userEvent.click(
+      within(row).getByRole("button", { name: /^Clear out old records$/ }),
+    );
+    expect(row).toHaveTextContent(/database is locked/i);
+  });
+
+  it("says on the line which jobs touch Plex, and marks the one that can delete", async () => {
+    // "Run now" mixes a read-only sweep with a job that writes corrections to Plex and can delete a
+    // collection for good. That difference used to be invisible until you expanded the row.
+    renderPage();
+
+    const destructive = await screen.findByTestId("job-sync.check");
+    expect(within(destructive).getByText("Can delete")).toBeInTheDocument();
+
+    const writes = await screen.findByTestId("job-privacy.sync");
+    expect(within(writes).getByText("Changes Plex")).toBeInTheDocument();
+
+    // The three that never touch Plex carry no tag — which is what the group's note promises.
+    for (const kind of ["sync.history", "backup.take", "maintenance.prune"]) {
+      const row = await screen.findByTestId(`job-${kind}`);
+      expect(within(row).queryByText(/Changes Plex|Can delete/)).toBeNull();
+    }
+  });
+
+  it("shows a manual job's other trigger, so a run nobody pressed is explained", async () => {
+    // `trigger` was rendered only for jobs with no button, so the text written for the two manual
+    // kinds that ALSO fire by themselves was never on screen anywhere.
+    getJobCatalog.mockResolvedValue([
+      entry("privacy.sync", {
+        label: "Privacy sync",
+        trigger:
+          "Also runs on its own whenever something changes who sees what.",
+      }),
+    ]);
+    renderPage();
+
+    const row = await screen.findByTestId("job-privacy.sync");
+    expect(row).not.toHaveTextContent(/also runs on its own/i);
+
+    await userEvent.click(
+      within(row).getByRole("button", { name: /^Privacy sync$/ }),
+    );
+    expect(row).toHaveTextContent(/also runs on its own/i);
+  });
+
   it("reserves no space under a row until that job has something to report", async () => {
     // The live slot sits in a PADDED wrapper. Passing an element whose children are all conditional
     // makes it always truthy, so every row carried a strip of dead space before anything had run.
@@ -669,5 +780,160 @@ describe("JobsPage — one place for everything on a timer", () => {
 
     // Falls back to the Jobs list rather than rendering an empty view.
     expect(await screen.findByText(/Picked for You/)).toBeInTheDocument();
+  });
+});
+
+describe("JobsPage — the schedule panel for a job you can switch off", () => {
+  /** The drift check as /api/schedule reports it: `cron` is the EFFECTIVE one, defaults resolved. */
+  function scheduleWithCheck(cron: string) {
+    return {
+      jobs: [
+        {
+          type: "job",
+          kind: "sync.check",
+          label: "Check and fix rows on Plex",
+          description: "",
+          setting: "sync.check_cron",
+          cron,
+          using_default: cron !== "",
+          // The built-in cron, which the server reports precisely so the SPA never holds a copy.
+          default_cron: "45 5 * * *",
+          optional: true,
+          writes_plex: true,
+          next_run: cron ? "2026-08-01T05:45:00Z" : null,
+        },
+      ],
+      rows: [],
+    };
+  }
+
+  beforeEach(() => {
+    getJobs.mockReset();
+    getJobs.mockResolvedValue([]);
+    getJobCatalog.mockReset();
+    getJobCatalog.mockResolvedValue(CATALOG);
+    getRuns.mockReset();
+    getRuns.mockResolvedValue([]);
+    getSettings.mockReset();
+    // A DEFAULT install: nothing stored, so the settings response is the folded-in blank. This is
+    // exactly the state in which the off switch used to be unreachable.
+    getSettings.mockResolvedValue({});
+    putSettings.mockReset();
+    putSettings.mockResolvedValue({});
+    getSchedule.mockReset();
+    getSchedule.mockResolvedValue(scheduleWithCheck("45 5 * * *"));
+    FakeEventSource.latest = null;
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  async function openDriftCheck() {
+    const row = await screen.findByTestId("job-sync.check");
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Check and fix rows on Plex" }),
+    );
+    return row;
+  }
+
+  it("offers Off on a default install, where nothing is stored yet", async () => {
+    renderPage();
+    const row = await openDriftCheck();
+
+    // The whole point: no cron is stored, so the old panel showed no off control at all — while the
+    // job ran nightly at 05:45. "Daily" must NOT be offered here: for this one job a blank cron is
+    // the off switch, so a chip labelled Daily would switch a Plex-writing job off.
+    expect(
+      await within(row).findByRole("button", { name: "Off" }),
+    ).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Daily" })).toBeNull();
+  });
+
+  it("shows the cron it actually runs on, not the blank that is stored", async () => {
+    renderPage();
+    const row = await openDriftCheck();
+
+    // Nothing is stored, so `GET /api/settings` reads "" here — the same "" that means OFF. The
+    // panel reads the EFFECTIVE cron from /api/schedule instead, which is the only place the
+    // built-in default is resolved, and lands on the built-in chip rather than Off.
+    const builtIn = await within(row).findByRole("button", {
+      name: "Built-in (05:45)",
+    });
+    expect(builtIn.getAttribute("aria-pressed")).toBe("true");
+    expect(
+      within(row)
+        .getByRole("button", { name: "Off" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+  });
+
+  it("labels the built-in chip with the time the server says it runs at", async () => {
+    // A chip that just said "Built-in" would not tell you what switching back to it does, and the
+    // SPA cannot know 05:45 on its own — a second copy of the server's DEFAULT_CRONS is how the
+    // drift check came to be documented as off-by-default while it ran nightly.
+    getSchedule.mockResolvedValue({
+      jobs: [{ ...scheduleWithCheck("").jobs[0], default_cron: "30 2 * * *" }],
+      rows: [],
+    });
+    renderPage();
+    const row = await openDriftCheck();
+
+    expect(
+      await within(row).findByRole("button", { name: "Built-in (02:30)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("saves null when the built-in chip is chosen, not a blank and not a copy of the cron", async () => {
+    // The three values are three different states: "" is OFF for this job, "45 5 * * *" PINS a copy
+    // of today's default, and null deletes the row — the only one that means "inherit the built-in".
+    getSchedule.mockResolvedValue(scheduleWithCheck(""));
+    renderPage();
+    const row = await openDriftCheck();
+
+    await userEvent.click(
+      await within(row).findByRole("button", { name: "Built-in (05:45)" }),
+    );
+
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith({ "sync.check_cron": null }),
+    );
+  });
+
+  it("saves a blank cron when Off is chosen — the value the scheduler reads as off", async () => {
+    renderPage();
+    const row = await openDriftCheck();
+
+    await userEvent.click(
+      await within(row).findByRole("button", { name: "Off" }),
+    );
+
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith({ "sync.check_cron": "" }),
+    );
+  });
+
+  it("selects Off once the schedule really is off", async () => {
+    getSchedule.mockResolvedValue(scheduleWithCheck(""));
+    renderPage();
+    const row = await openDriftCheck();
+
+    const off = await within(row).findByRole("button", { name: "Off" });
+    expect(off.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("still calls a blank cron Daily for a job that cannot be switched off", async () => {
+    renderPage();
+    const row = await screen.findByTestId("job-maintenance.prune");
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Clear out old records" }),
+    );
+
+    // For every other job a blank cron means "use the built-in default", which is daily — so the
+    // chip means what it says, and there is no off state to offer.
+    expect(
+      within(row).getByRole("button", { name: "Daily" }),
+    ).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Off" })).toBeNull();
+    // And no second way back to the default: Daily already IS it here, so a Built-in chip beside it
+    // would be two chips for one state.
+    expect(within(row).queryByRole("button", { name: /Built-in/ })).toBeNull();
   });
 });

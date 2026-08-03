@@ -293,6 +293,79 @@ class TestSystemResponseShapes:
         assert body == [{"title": "New Series (Unwatched)"}]  # you don't anchor a row to itself
         assert set(body[0]) == {"title"}
 
+    def test_the_library_list_is_read_from_plex_once_not_once_per_page_load(self, client: TestClient, monkeypatch):
+        """`/libraries` backs every row card, the library picker and the placement settings, and each
+        read is a PlexServer handshake plus a sections read. Plex serialises against its own database,
+        so on a busy server (one DELETE took 15.8s during a collection sweep, SFLIX 2026-08-04) every
+        page wanting a library list queued behind it. The list changes when someone adds a library."""
+        from types import SimpleNamespace
+
+        self._connect_plex(client)
+        reads = {"n": 0}
+
+        class FakePlex:
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                reads["n"] += 1
+                return [SimpleNamespace(key=1, title="Movies", type="movie")]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+
+        first = client.get("/api/system/libraries").json()
+        again = client.get("/api/system/libraries").json()
+
+        assert first == again
+        assert reads["n"] == 1, "the second page load must not go back to Plex"
+
+    def test_a_plex_that_fails_after_a_good_read_serves_the_cached_copy(self, client: TestClient, monkeypatch):
+        """A library list two minutes old is a far better answer than a broken page, and it is used
+        to populate a picker, never to decide a write. Without this, one slow moment on Plex empties
+        the library picker mid-edit."""
+        from types import SimpleNamespace
+
+        import shortlist.server.api.system as system_api
+
+        self._connect_plex(client)
+        state = {"fail": False}
+
+        class FakePlex:
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                if state["fail"]:
+                    raise TimeoutError("PMS is busy")
+                return [SimpleNamespace(key=1, title="Movies", type="movie")]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+        good = client.get("/api/system/libraries").json()
+
+        # Expire the entry so the next call really does go back to Plex, and make Plex fail.
+        client.app.state.__dict__["_plex_read_cache"]["libraries"] = (0.0, good)
+        state["fail"] = True
+
+        assert client.get("/api/system/libraries").json() == good
+        assert system_api._PLEX_READ_TTL_S > 0  # the knob this behaviour hangs off still exists
+
+    def test_a_plex_that_fails_with_nothing_cached_still_errors(self, client: TestClient, monkeypatch):
+        """Serving stale is a kindness, not a cover-up: with no previous answer there is nothing
+        honest to return, so the failure has to reach the caller."""
+        self._connect_plex(client)
+
+        class FakePlex:
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                raise TimeoutError("PMS is busy")
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+
+        with pytest.raises(TimeoutError):
+            client.get("/api/system/libraries")
+
 
 class TestClosedSetFieldsMatchWhatTheCodeWrites:
     """`LibraryOut.type` and `NotificationOut.severity` are `Literal`s now, not bare `str`.

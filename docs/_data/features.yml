@@ -1,0 +1,62 @@
+# The landing page feature grid. Kept as data rather than markup so the order and
+# wording can change without touching the layout. `icon` is inline SVG because the
+# site ships no icon font and no external requests.
+#
+# House style, learned the hard way: plain words, one idea per card, and almost no
+# em dashes. An earlier version had 29 of them on one page and read like a brochure
+# written by a machine. Table stakes (a dark UI, a healthcheck, multi-arch images)
+# don't get a card at all: every self-hosted app has those, so saying so is noise.
+
+- title: A private row for every user
+  body: >-
+    Built from what that person watched, and only they can see it. One container covers your whole
+    server. You get a row too, so it's still worth running if you're the only user.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3"/><path d="M2.5 19a6.5 6.5 0 0 1 13 0"/><path d="M16 5.5a3 3 0 0 1 0 5M18.5 19a6.5 6.5 0 0 0-2-4.7"/></svg>
+
+- title: Only films and shows you actually have
+  body: >-
+    Every suggestion is checked against your library first. Shortlist never makes up a title, and it
+    never sends anyone to something you don't own.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>
+
+- title: It tells you why
+  body: >-
+    Every pick comes with its reason, like “Because you watched Heat”. You can see what led to it and
+    change your mind about it.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 10h8M8 14h5"/><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-5.5A8 8 0 0 1 11 4h2a8 8 0 0 1 8 8Z"/></svg>
+
+- title: Ignore a film that skews someone's picks
+  body: >-
+    Somebody puts on a kids' film for a visiting nephew and suddenly that's all Shortlist suggests.
+    Tell it to ignore that watch. It stays in their Plex history, it just stops shaping their row.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg>
+
+- title: Suggestions from more than one place
+  body: >-
+    TMDB and Trakt find similar titles. An optional web search adds recent, well-reviewed ones they
+    miss. Shortlist runs that search itself, so it works even with an AI model that has no internet.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>
+
+- title: More than one row
+  body: >-
+    Give people a personal row, a “New this week” row everyone shares, or a row per library. Each one
+    has its own size, sources and audience. Start from a ready-made template instead of a blank form.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="5" rx="1.5"/><rect x="3" y="13" width="18" height="5" rx="1.5"/></svg>
+
+- title: Rows that don't change every day
+  body: >-
+    Pick how often each row refreshes, from nightly to once a fortnight. Nobody opens Plex to find
+    everything shuffled again overnight.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+
+- title: Ask Radarr or Sonarr for what's missing
+  body: >-
+    When a good suggestion isn't in your library, Shortlist can request it. This is off until you turn
+    it on. The best few send themselves each night and the rest wait for you to approve them.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+
+- title: See whether anyone is watching them
+  body: >-
+    A dashboard shows what Shortlist put in front of people and how much of it they actually played,
+    per person and per row.
+  icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19V5"/><path d="M4 19h16"/><path d="m7 15 4-5 3 3 5-7"/></svg>

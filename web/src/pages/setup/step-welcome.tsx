@@ -41,9 +41,11 @@ export function StepWelcome({ next }: StepProps) {
 
       <div className="space-y-3">
         <p className="text-sm text-muted-foreground">
-          Setup takes about ten minutes, including your first rows. Use an AI
-          curator (Claude, GPT, Gemini, or a local Ollama) — or none at all: the
-          built-in picker needs no keys and no cloud, and works just as well.
+          Setup takes about ten minutes, including your first rows. Shortlist
+          picks the titles in code, so it needs no AI keys and nothing in the
+          cloud. Adding an AI provider (Claude, GPT, Gemini, or one you run
+          yourself) is optional &mdash; it unlocks rows built from a live web
+          search, and AI-drawn artwork.
         </p>
         <Button size="lg" onClick={next}>
           Get started

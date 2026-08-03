@@ -61,7 +61,7 @@ function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
       </span>
       <div className="flex items-center gap-2">
         {syncNow.isError && (
-          <span role="alert" className="text-destructive">
+          <span role="alert" className="text-destructive-text">
             Couldn’t start the sync.
           </span>
         )}
@@ -195,7 +195,11 @@ function CountBar({
             ambiguity this rewrite is meant to remove. */}
         {delivered > 0 && ` · ${delivered} delivered`}
       </span>
-      <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted">
+      {/* Hidden on phones. The label and the bar are both `shrink-0`, so together they demand 264px
+          before the row name gets a pixel — which does not fit beside a name at 390px. The numbers
+          carry the information on their own; the bar's job is letting you compare rows down the
+          list by their right edges, and that only pays off where the list is wide enough to scan. */}
+      <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-muted sm:block">
         <div
           className="h-full rounded-full bg-primary"
           style={{ width: `${max > 0 ? (watched / max) * 100 : 0}%` }}
@@ -215,7 +219,11 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <Card>
+    // `min-w-0` because this Card is a GRID ITEM, and a grid item's default `min-width: auto`
+    // resolves to its min-content width. Without it the card sized itself to its widest line (508px
+    // on a 358px column), overflowed the page, and — because it then had room to spare — nothing
+    // inside ever truncated. The dashboard scrolled 134px sideways on a phone.
+    <Card className="min-w-0">
       <CardContent className="space-y-3 pt-6">
         <div>
           <h2 className="text-sm font-medium text-muted-foreground">{title}</h2>
@@ -304,7 +312,11 @@ function ByPerson({
       key={p.slug}
       className="flex items-center justify-between gap-3 text-sm"
     >
-      <span className="truncate">{p.display_name || p.username}</span>
+      {/* `min-w-0` is what makes `truncate` actually truncate here. `truncate` sets
+          `white-space: nowrap`, so this flex child's min-content width is the WHOLE name — without
+          `min-w-0` it refuses to shrink, and a long name pushes the line past a phone's screen
+          instead of ellipsing (the dashboard scrolled 134px sideways at 390px). */}
+      <span className="min-w-0 truncate">{p.display_name || p.username}</span>
       <CountBar watched={p.watched} delivered={p.delivered} max={max} />
     </div>
   );
@@ -361,8 +373,10 @@ function ByRow({
       className="flex items-center justify-between gap-3 text-sm"
     >
       <span className="flex min-w-0 items-center gap-1.5">
+        {/* `min-w-0` for the same reason as ByPerson above: `truncate` alone cannot shrink a flex
+            child, so the row name held the line open past the screen. */}
         <span
-          className={`truncate ${r.deleted ? "text-muted-foreground" : ""}`}
+          className={`min-w-0 truncate ${r.deleted ? "text-muted-foreground" : ""}`}
         >
           {r.name}
         </span>
@@ -491,7 +505,7 @@ function DeletedRows({
         <Button
           variant="ghost"
           size="sm"
-          className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+          className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-destructive-text"
           onClick={() => setConfirming(true)}
         >
           <Trash2 className="h-3 w-3" aria-hidden />
@@ -525,7 +539,9 @@ function ReportBody({
   const selector = (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-sm font-medium text-muted-foreground">Impact</h1>
+        {/* h2, not h1 — PageHeader above already owns the page's h1 ("Dashboard"), and two of them
+            leaves a screen reader with no page title at all. */}
+        <h2 className="text-sm font-medium text-muted-foreground">Impact</h2>
         <Segmented
           value={reportWindow}
           onChange={onWindowChange}
@@ -551,8 +567,8 @@ function ReportBody({
         <Card>
           <CardContent className="pt-6 text-sm text-muted-foreground">
             {runs.total === 0
-              ? "No picks delivered yet — run Shortlist, and once people start watching what it picked, the tracking shows up here."
-              : `Nothing delivered or watched in ${WINDOW_PHRASE[reportWindow]}. Try a longer window.`}
+              ? "Nothing has reached anyone's rows yet. Build them once from Runs — “Run all rows now” — and this page fills in as people start watching what Shortlist picked."
+              : `Nothing reached a row, and nothing was watched, in ${WINDOW_PHRASE[reportWindow]}. Try a longer window.`}
           </CardContent>
         </Card>
       </div>
@@ -588,7 +604,7 @@ function ReportBody({
         />
         <StatTile
           icon={Clock}
-          label="Avg to watch"
+          label="Time to watch"
           value={
             overall.avg_days_to_watch === null
               ? "—"
@@ -625,8 +641,8 @@ function ReportBody({
         </Section>
 
         <Section
-          title="Landing rate"
-          hint={`Share of picks watched within ${landing.matured_days} days of being delivered.`}
+          title="Picks that get watched"
+          hint={`Of the picks delivered, the share watched within ${landing.matured_days} days.`}
         >
           {landing.rate === null ? (
             <p className="text-sm text-muted-foreground">
@@ -666,8 +682,8 @@ function ReportBody({
       <div className="grid gap-4 lg:grid-cols-2">
         {report.top_titles.length > 0 && (
           <Section
-            title="Landing best"
-            hint={`Most-watched picks in ${WINDOW_PHRASE[reportWindow]}.`}
+            title="Most watched"
+            hint={`The picks the most people watched in ${WINDOW_PHRASE[reportWindow]}.`}
           >
             <ul className="space-y-1 text-sm">
               {report.top_titles.map((t) => (

@@ -30,7 +30,7 @@ export function MutationAlert({
     <div
       role="alert"
       className={cn(
-        "flex flex-wrap items-center gap-2 text-sm text-destructive",
+        "flex flex-wrap items-center gap-2 text-sm text-destructive-text",
         className,
       )}
     >

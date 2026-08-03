@@ -7,34 +7,35 @@ import { LibraryPicker } from "@/components/rows/library-picker";
 import { PlacementToggles } from "@/components/rows/placement-toggles";
 import { PosterField } from "@/components/rows/poster-field";
 import { RowScheduleField } from "@/components/rows/row-schedule-field";
-import { RowSection } from "@/components/rows/row-section";
+import { RowDestructiveActions } from "@/components/rows/row-destructive-actions";
+import { RowEffectivenessPanel } from "@/components/rows/row-effectiveness";
+import { RowPreview } from "@/components/rows/row-preview";
+import { SettingsGroup } from "@/components/rows/settings-group";
 import { RowShelfPlacement } from "@/components/rows/row-shelf-placement";
 import {
   effectiveSources,
   RowSourcesField,
 } from "@/components/rows/row-sources-field";
-import { TemplateVarsHintWithPreview } from "@/components/rows/template-vars-hint";
+import { TemplateVarsHint } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { MaxSeedsField } from "@/components/max-seeds-field";
-import { RecentCountField } from "@/components/recent-count-field";
+import { MAX_SEEDS_LABEL, MaxSeedsField } from "@/components/max-seeds-field";
+import {
+  RECENT_COUNT_LABEL,
+  RecentCountField,
+} from "@/components/recent-count-field";
+import { SeedWindowField } from "@/components/seed-window-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
 import { blankInput, toInput } from "@/lib/collections";
 import {
+  useCollectionEffectiveness,
+  useLibraries,
   useSaveCollection,
   useSaveSettings,
   useSettings,
@@ -42,11 +43,13 @@ import {
 import type { RowTemplate } from "@/lib/row-templates";
 import {
   freshnessGlobal,
+  freshnessGlobalValue,
   freshnessSeed,
   maxSeedsGlobal,
   recentCountGlobal,
   recentCountSeed,
   watchedPctGlobal,
+  watchedPctGlobalValue,
   watchedPctSeed,
 } from "@/lib/row-globals";
 import {
@@ -67,9 +70,9 @@ function namedRowSeeds(media: string): number {
 
 /** What each pick order actually does, in the row editor's voice: says what happens, not what it is.
  *
- *  "Shuffled" names its cost out loud. It is the only order that rewrites the collection on Plex on
- *  nights when nothing about the row has changed — the other three ride along with a refresh the row
- *  was doing anyway, so they cost nothing extra. */
+ *  "Shuffled" and "Taking turns" name their cost out loud. They are the two orders that rewrite the
+ *  collection on Plex on nights when nothing about the row has changed — the other four ride along
+ *  with a refresh the row was doing anyway, so they cost nothing extra. */
 function pickOrderHelp(
   order: CollectionInput["pick_order"],
   ratingLabel: string,
@@ -83,9 +86,69 @@ function pickOrderHelp(
       return "Most recently released first.";
     case "shuffle":
       return "A different order every day, from the same titles. The only order that writes to Plex on days the row is otherwise unchanged.";
+    case "new_first":
+      // Says "when the row refreshes" out loud because the commonest disappointment here is setting
+      // this on a row at the default freshness and seeing nothing move for a week.
+      return "Whatever is new goes to the front, the rest follow in match order. Only moves on the nights the row refreshes.";
+    case "rotate":
+      return "Everything keeps its place in the list, but the front moves along by one title a day, so each pick gets a turn there. Writes to Plex on days the row is otherwise unchanged.";
     default:
       return "Strongest suggestions first — how well each title matches what they watch.";
   }
+}
+
+/** What to tell someone about the seed budget on a row whose NAME mentions one title.
+ *
+ * Reads the value the row is actually on, because the three cases need different things said. A row
+ * already at the right number needs reassuring, not correcting; a row inheriting the global needs to
+ * know its name won't match its contents; and a movies-and-TV row needs to know 1 strands half of it.
+ * One static paragraph covering all three told a row sitting on 1 that it "fills itself from the
+ * other 29" — describing a row the person did not have.
+ */
+function seedAdvice(maxSeeds: number | null, media: string): ReactNode {
+  const want = namedRowSeeds(media);
+  const both = media === "both";
+
+  if (maxSeeds === want) {
+    return both
+      ? "This row names one title and is built from 2 watches — one film, one show. Each library gets a row named after something they actually watched."
+      : "This row names one title, and that is exactly what it’s built from. Nothing to change here.";
+  }
+
+  // A movies-and-TV row set to ONE seed has a worse problem than a mismatched name: a watch is
+  // either a film or a show, so one of the two libraries is left with nothing to build from and
+  // never gets a row at all. Lead with that, because it is the one that loses half the row.
+  if (both && maxSeeds !== null && maxSeeds < 2) {
+    return (
+      <>
+        This row covers <strong>movies and TV</strong>, but it&rsquo;s built
+        from one watch &mdash; and a watch is either a film or a show, never
+        both. One of your two libraries would get nothing. Set it to{" "}
+        <strong>2</strong>, or set the row to Movies only or TV only above.
+      </>
+    );
+  }
+
+  return (
+    <>
+      This row&rsquo;s name mentions <strong>one</strong> title, but{" "}
+      {maxSeeds === null ? (
+        <>
+          it&rsquo;s blending their whole recent viewing &mdash; so it will name
+          one watch and fill up with titles picked for all the others
+        </>
+      ) : (
+        // "1 watches" — the plural has to follow the number, and this branch is reachable at any
+        // value the field allows.
+        <>
+          it&rsquo;s built from {maxSeeds} watch{maxSeeds === 1 ? "" : "es"}
+          &nbsp;&mdash; so the name only matches part of what ends up in it
+        </>
+      )}
+      . Set it to <strong>{want}</strong>
+      {both && " — one film and one show"}.
+    </>
+  );
 }
 
 /**
@@ -204,29 +267,38 @@ export function RowEditor({
   template?: RowTemplate | null;
   users: User[];
   onClose: () => void;
-  onRename?: () => void;
+  /** Hands the typed-but-unapplied name to the rename screen, which still owns the Plex work. */
+  onRename?: (proposedName: string) => void;
 }) {
   const save = useSaveCollection();
   const saveSettings = useSaveSettings();
   // Read-only here: the editor never writes settings, it only names the globals a row inherits.
   const settings = useSettings();
+  const libraries = useLibraries();
+  const effectiveness = useCollectionEffectiveness(collection?.id ?? null);
   const ratingSource = asRatingSource(
     settings.data?.["recommendations.rating_source"],
   );
-  const ratingLabel = RATING_LABELS[ratingSource];  const [input, setInput] = useState<CollectionInput>(
+  const ratingLabel = RATING_LABELS[ratingSource];
+  const [input, setInput] = useState<CollectionInput>(
     collection
       ? toInput(collection)
       : { ...blankInput(), ...(template?.values ?? {}) },
   );
   const isDefault = collection?.slug === "picked";
 
+  // Held apart from `input` on purpose — see the Name field. The saved value is the TEMPLATE, since
+  // that is what a rename rewrites; `name` is only its rendered form.
+  const savedName = collection?.name_template || collection?.name || "";
+  const [renameDraft, setRenameDraft] = useState(savedName);
+  const renamePending = renameDraft.trim() !== savedName.trim();
+
   const set = (patch: Partial<CollectionInput>) =>
     setInput((prev) => ({ ...prev, ...patch }));
 
-  // "Watches the AI searches from" caps ONE source's lookups. On a row that doesn't use AI web
-  // search it changes nothing, so showing it invites someone to tune a setting with no effect —
-  // and it sat directly beneath "Watches to build from", which is the row-wide one, making the two
-  // read as rival answers to the same question.
+  // The AI web-search cap governs ONE source's lookups. On a row that doesn't use AI web search it
+  // changes nothing, so showing it invites someone to tune a setting with no effect — and it sits
+  // next to the row-wide seed budget, which the two labels now have to tell apart on their own.
   const usesWebSearch = effectiveSources(
     input.candidate_sources,
     settings.data,
@@ -245,26 +317,48 @@ export function RowEditor({
         generate: "AI image",
       } as Record<string, string>
     )[input.poster.mode] ?? "Plex’s own artwork";
+  // Whether this row's TITLE claims a particular watch. Mirrors the engine's `_names_a_seed`, and
+  // decides whether the cycle window is worth offering.
+  const namesASeed = (input.name_template || input.name).includes("{top_seed}");
+  // Whether that name CONTRADICTS the seed budget — the case `seedAdvice` asks the owner to change,
+  // as opposed to the one it simply confirms. Only the former is dressed as a warning: a
+  // movies-and-TV row on one seed leaves a whole library with no row at all, which is the same order
+  // of problem as `SharedRowReachWarning` and was reading as a neutral hint.
+  const seedBudgetMismatch =
+    namesASeed && input.max_seeds !== namedRowSeeds(input.media);
+  // Whether the engine forces this row to a nightly cadence — which it does for a row that FOLLOWS a
+  // watch, by name or by cycling. Both arms, not just `namesASeed`: an unnamed cycling row is run
+  // nightly too, so showing it a freshness slider would state a cadence the row does not obey.
+  const followsAWatch = namesASeed || input.seed_window > 1;
   const drawsOnSummary = [
     // "[]" means every library OF THIS ROW'S TYPE — saying "every library" on a movies row
     // contradicted the picker right below it, which ticks only the movie ones.
     input.library_keys.length === 0
-      ? ({ movie: "every movie library", show: "every TV library" } as Record<
-          string,
-          string
-        >)[input.media] ?? "every library"
+      ? ((
+          { movie: "every movie library", show: "every TV library" } as Record<
+            string,
+            string
+          >
+        )[input.media] ?? "every library")
       : `${input.library_keys.length} librar${input.library_keys.length === 1 ? "y" : "ies"}`,
     input.candidate_sources.length === 0
       ? "default sources"
       : `${input.candidate_sources.length} source${input.candidate_sources.length === 1 ? "" : "s"}`,
-    input.freshness === null
-      ? "default freshness"
-      : input.freshness >= 1
-        ? "refreshes nightly"
-        : input.freshness <= 0
-          ? "frozen"
-          : `${Math.round(input.freshness * 100)}% fresh`,
-    input.max_seeds === null ? null : `${input.max_seeds} watch${input.max_seeds === 1 ? "" : "es"}`,
+    // A followed-watch row's stored freshness is ignored by the engine, so reporting it here would
+    // describe a cadence the row does not run on.
+    followsAWatch
+      ? "refreshes nightly"
+      : input.freshness === null
+        ? "default freshness"
+        : input.freshness >= 1
+          ? "refreshes nightly"
+          : input.freshness <= 0
+            ? "frozen"
+            : `${Math.round(input.freshness * 100)}% fresh`,
+    input.max_seeds === null
+      ? null
+      : `${input.max_seeds} watch${input.max_seeds === 1 ? "" : "es"}`,
+    input.seed_window > 1 ? `cycling ${input.seed_window}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -295,494 +389,676 @@ export function RowEditor({
   };
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>{collection ? "Edit row" : "Add a row"}</DialogTitle>
-          <DialogDescription>
-            A row is a strip of “Picked for You”-style recommendations on your
-            users’ Plex home screens.
-          </DialogDescription>
-        </DialogHeader>
+    // A PAGE, not a dialog. A modal caps at 90% of the viewport, and it was that height limit — not
+    // the number of settings — that forced every group into a collapsed accordion. Which in turn hid
+    // the one warning that stops a movies-and-TV row building half empty, since it lived inside a
+    // section that starts closed. With the cap gone the groups can stay open, warnings can sit
+    // permanently beside the setting they concern, and there is room for the preview panel that
+    // turns each abstract setting into "here is what Sarah will see tonight".
+    <div className="mx-auto w-full max-w-6xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold">
+          {collection ? "Edit row" : "Add a row"}
+        </h1>
+        <p className="mt-1 text-muted-foreground">
+          A row is a strip of “Picked for You”-style recommendations on your
+          users’ Plex home screens.
+        </p>
+      </div>
 
-        {/* Purely informational — nothing about the template is stored on the row, and every
-            field it filled is editable below. It's here so a prefilled form doesn't read as
-            settings that appeared from nowhere. */}
-        {template && !collection && (
-          <p className="rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
-            Started from{" "}
-            <strong className="text-foreground">
-              {template.emoji} {template.title}
-            </strong>
-            {/* Several template titles end in an ellipsis ("Because you watched…"), which the
-                sentence stop then doubled into "…." — so the separator is a dash, not a full stop. */}
-            {" — change anything you like: "}
-            {template.highlights.join(", ").toLowerCase()}.
-          </p>
-        )}
+      {/* Purely informational — nothing about the template is stored on the row, and every
+          field it filled is editable below. It's here so a prefilled form doesn't read as
+          settings that appeared from nowhere. */}
+      {template && !collection && (
+        <p className="rounded-md bg-muted/60 px-3 py-2 text-sm text-muted-foreground">
+          Started from{" "}
+          <strong className="text-foreground">
+            {template.emoji} {template.title}
+          </strong>
+          {/* Several template titles end in an ellipsis ("Because you watched…"), which the
+              sentence stop then doubled into "…." — so the separator is a dash, not a full stop. */}
+          {" — change anything you like: "}
+          {template.highlights.join(", ").toLowerCase()}.
+        </p>
+      )}
 
-        <div className="space-y-5 py-2">
-          <div className="space-y-2">
-            <Label htmlFor="row-name">Name</Label>
-            {collection ? (
-              <div className="flex items-center gap-2">
-                <Input
-                  id="row-name"
-                  value={input.name || "Picked for You"}
-                  disabled
-                  className="flex-1 opacity-70"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    onClose();
-                    onRename?.();
-                  }}
-                >
-                  Rename
-                </Button>
-              </div>
-            ) : (
-              <>
-                <Input
-                  id="row-name"
-                  value={input.name}
-                  onChange={(e) => set({ name: e.target.value })}
-                  placeholder="e.g. ✨ Hidden Gems for {user}"
-                />
-                <TemplateVarsHintWithPreview template={input.name} />
-              </>
-            )}
-          </div>
+      {/* Across the top, like the dashboard's Impact strip — not down in the sidebar.
+          It lived at the BOTTOM of the sticky sidebar, which has its own scroller, so "is this row
+          working?" was hidden inside a second scroll area most people never noticed: the page looked
+          finished while the numbers sat below the fold of a column they had no reason to scroll.
+          It is also the one thing here that is not a setting — it is the outcome the settings are
+          for — so it belongs above them rather than beside them.
+          Saved rows only: a row being created has no history, and a strip of dashes answers nothing. */}
+      {collection && (
+        <RowEffectivenessPanel
+          data={effectiveness.data}
+          isLoading={effectiveness.isLoading}
+          rowSlug={collection.slug}
+        />
+      )}
 
-
-
-
-          <div className="space-y-2">
-            <Label>Built how?</Label>
-            <Segmented
-              value={input.build}
-              onChange={(build) =>
-                // Shared rows never request missing titles, so a request tag on one is inert —
-                // clear it when switching so no orphaned value lingers hidden in the row.
-                set({
-                  build,
-                  ...(build === "shared" ? { request_tag: "" } : {}),
-                })
-              }
-              options={[
-                { value: "per_person", label: "Per person" },
-                { value: "shared", label: "Shared" },
-              ]}
-            />
-            <p className="text-sm text-muted-foreground">
-              {input.build === "per_person"
-                ? "Each chosen person gets their own version, from their own viewing."
-                : "One version built from everyone’s viewing, the same for whoever can see it."}
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+        <div className="space-y-5">
+          {/* Names the left column, so the page reads as three labelled parts — how it is doing,
+              what you can change, what that will produce — instead of an unlabelled wall of cards
+              with a panel floating beside it. */}
+          <div>
+            <h2 className="text-base font-semibold">Row settings</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Everything that decides what this row picks, who gets it, and when
+              it rebuilds.
             </p>
           </div>
-
-          <AudiencePicker
-            audience={input.audience}
-            audienceUserIds={input.audience_user_ids}
-            users={users}
-            onChange={set}
-          />
-
-
-
-
-
-          {input.build === "shared" && (
+          <SettingsGroup
+            title="The basics"
+            description="What this row is called, who gets one, and how it's put together."
+          >
             <div className="space-y-2">
-              <Label htmlFor="min-watchers">
-                Only show titles at least this many people watched
-              </Label>
-              <Input
-                id="min-watchers"
-                type="number"
-                min={2}
-                max={50}
-                value={input.min_watchers}
-                onChange={(event) =>
+              <Label htmlFor="row-name">Name</Label>
+              {collection ? (
+                // Type here, but this is NOT part of the form: `renameDraft` is deliberately held
+                // apart from `input`, so Save can never carry a new name. Saving the name without
+                // renaming on Plex would leave the two disagreeing, with nothing on screen saying
+                // so. Applying it rewrites the collection for every person who has the row, one at
+                // a time with progress, which is why the work itself stays on its own screen.
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="row-name"
+                      value={renameDraft}
+                      onChange={(e) => setRenameDraft(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant={renamePending ? "default" : "outline"}
+                      size="sm"
+                      // Only once the name actually differs from the saved one. Enabled on an
+                      // unchanged name it offered to rewrite every collection on Plex, for every
+                      // person, to the name they already had — minutes of writes for no change.
+                      disabled={!renamePending || !renameDraft.trim()}
+                      onClick={() => {
+                        onClose();
+                        onRename?.(renameDraft.trim());
+                      }}
+                    >
+                      Rename…
+                    </Button>
+                  </div>
+                  {renamePending ? (
+                    <p role="status" className="text-sm text-warning">
+                      Not applied yet &mdash; press <strong>Rename</strong> to
+                      change it on Plex. Saving this page won&rsquo;t.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Renaming rewrites this row&rsquo;s collection on Plex for
+                      everyone who has it, so it happens on its own screen where
+                      you can watch it go through. Nothing else on this page is
+                      touched.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <Input
+                    id="row-name"
+                    value={input.name}
+                    onChange={(e) => set({ name: e.target.value })}
+                    placeholder="e.g. ✨ Hidden Gems for {user}"
+                  />
+                  {/* Just the list of placeholders here. What the name BECOMES is shown in the
+                    preview panel, which is always on screen — printing it twice made the field's
+                    own help longer without answering anything the panel didn't. */}
+                  <TemplateVarsHint />
+                </>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>One row each, or one for everyone?</Label>
+              <Segmented
+                value={input.build}
+                onChange={(build) =>
+                  // Shared rows never request missing titles, so a request tag on one is inert —
+                  // clear it when switching so no orphaned value lingers hidden in the row.
                   set({
-                    min_watchers: Math.max(2, Number(event.target.value) || 2),
+                    build,
+                    ...(build === "shared" ? { request_tag: "" } : {}),
                   })
                 }
-                className="w-24"
+                options={[
+                  { value: "per_person", label: "Per person" },
+                  { value: "shared", label: "Shared" },
+                ]}
               />
               <p className="text-sm text-muted-foreground">
-                Keeps one person’s viewing from ever showing up in a shared row.
-                2 is a good default.
+                {input.build === "per_person"
+                  ? "Everyone gets their own row, built from what they have watched. Nobody sees anyone else’s."
+                  : "One row, the same for everyone who can see it, built from what your users have watched between them."}
               </p>
-              <SharedRowReachWarning
-                users={users}
-                audience={input.audience}
-                audienceUserIds={input.audience_user_ids}
-                minWatchers={input.min_watchers}
-              />
             </div>
-          )}
 
-          <div className="space-y-2">
-            <Label>Order</Label>
-            <Segmented
-              value={input.pick_order}
-              onChange={(pick_order) => set({ pick_order })}
-              ariaLabel="How the titles in this row are ordered"
-              options={[
-                { value: "best", label: "Best match" },
-                { value: "rating", label: "Highest rated" },
-                { value: "newest", label: "Newest" },
-                { value: "shuffle", label: "Shuffled" },
-              ]}
+            <AudiencePicker
+              audience={input.audience}
+              audienceUserIds={input.audience_user_ids}
+              users={users}
+              onChange={set}
             />
-            <p className="text-sm text-muted-foreground">
-              {pickOrderHelp(input.pick_order, ratingLabel)}
-            </p>
-            {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
-                question "rated by whom?" at exactly this moment, and answering it by sending someone
-                to another screen is how the setting stayed undiscovered. It is still one server-wide
-                value, so the note says so rather than implying it is per-row. */}
-            {input.pick_order === "rating" && (
-              <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
-                <Label htmlFor="row-rating-source">Rated by</Label>
-                <select
-                  id="row-rating-source"
-                  value={ratingSource}
-                  onChange={(e) =>
-                    saveSettings.mutate({
-                      "recommendations.rating_source": asRatingSource(
-                        e.target.value,
+
+            {input.build === "shared" && (
+              <div className="space-y-2">
+                <Label htmlFor="min-watchers">
+                  Only show titles at least this many people watched
+                </Label>
+                <Input
+                  id="min-watchers"
+                  type="number"
+                  min={2}
+                  max={50}
+                  value={input.min_watchers}
+                  onChange={(event) =>
+                    set({
+                      min_watchers: Math.max(
+                        2,
+                        Number(event.target.value) || 2,
                       ),
                     })
                   }
-                  disabled={saveSettings.isPending}
-                  className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
-                >
-                  {RATING_SOURCES.map((source) => (
-                    <option key={source} value={source}>
-                      {RATING_LABELS[source]}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  {ratingSource === "tmdb"
-                    ? "TMDB needs no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic come from MDBList and need its API key in Settings → Requests."
-                    : `Scores come from MDBList — without its API key in Settings → Requests, ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
-                  Shared by every row ordered by rating.
+                  className="w-24"
+                />
+                <p className="text-sm text-muted-foreground">
+                  Keeps one person’s viewing from ever showing up in a shared
+                  row. 2 is a good default.
                 </p>
+                <SharedRowReachWarning
+                  users={users}
+                  audience={input.audience}
+                  audienceUserIds={input.audience_user_ids}
+                  minWatchers={input.min_watchers}
+                />
               </div>
             )}
-          </div>
+          </SettingsGroup>
 
-          <RowScheduleField
-            value={input.schedule}
-            onChange={(schedule) => set({ schedule })}
-          />
-
-          {!isDefault && (
-            <RowSizeField
-              value={input.size}
-              onChange={(size) => set({ size })}
-            />
-          )}
-
-          <RowSection
-            title="Artwork"
-            summary={posterSummary}
+          <SettingsGroup
+            title="What goes in it"
+            description="Which libraries this row can pick from, and what drives the picks."
+            summary={drawsOnSummary}
           >
-          <PosterField
-            value={input.poster}
-            onChange={(poster) => set({ poster })}
-            collectionId={collection?.id ?? null}
-            hasImage={collection?.poster?.has_image ?? false}
-          />
-          </RowSection>
+            <LibraryPicker
+              libraryKeys={input.library_keys}
+              media={input.media}
+              onChange={(next) =>
+                set({
+                  ...next,
+                  // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
+                  // without anyone touching the flag. Its control is hidden then, and the API refuses
+                  // the combination — which would be a save failing with no visible cause.
+                  ...(next.media !== "show" ? { unstarted_only: false } : {}),
+                })
+              }
+            />
 
-          <RowSection title="What it draws on" summary={drawsOnSummary}>
+            <RowSourcesField
+              value={input.candidate_sources}
+              onChange={(candidate_sources) => set({ candidate_sources })}
+            />
 
-          <LibraryPicker
-            libraryKeys={input.library_keys}
-            media={input.media}
-            onChange={(next) =>
-              set({
-                ...next,
-                // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
-                // without anyone touching the flag. Its control is hidden then, and the API refuses
-                // the combination — which would be a save failing with no visible cause.
-                ...(next.media !== "show" ? { unstarted_only: false } : {}),
-              })
-            }
-          />
-
-          <RowSourcesField
-            value={input.candidate_sources}
-            onChange={(candidate_sources) => set({ candidate_sources })}
-          />
-
-          <InheritableField
-            label="Already-watched titles"
-            labelFor="row-watched-pct"
-            description="How much of this row may be things a person has already finished. Leave on the global default to follow Settings → Finding titles."
-            ariaLabel="Use the global already-watched default"
-            inheriting={input.watched_pct === null}
-            globalValue={watchedPctGlobal(settings.data)}
-            onToggle={(on) =>
-              set({ watched_pct: on ? null : watchedPctSeed(settings.data) })
-            }
-            after={
-              <>
-                {/* The percentage above is a CEILING — it permits finished titles, it never prefers
+            <InheritableField
+              label="Already-watched titles"
+              labelFor="row-watched-pct"
+              description="How much of this row can be things they have already finished watching. At 0 the row is all new suggestions. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
+              ariaLabel="Use the global already-watched default"
+              inheriting={input.watched_pct === null}
+              globalValue={watchedPctGlobal(settings.data)}
+              onToggle={(on) =>
+                set({ watched_pct: on ? null : watchedPctSeed(settings.data) })
+              }
+              after={
+                <>
+                  {/* The percentage above is a CEILING — it permits finished titles, it never prefers
                     them, so on a library with plenty of unwatched candidates even 100% yields an
                     unwatched row. This switch is what actually makes a rewatch shelf, which is why
                     it is named after the row someone wants rather than after its effect on the
                     setting above: "lead with things they've seen" could only be understood by
                     someone who had already understood the ceiling. */}
-                <div className="flex items-start justify-between gap-4 rounded-md border p-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="row-rewatch">
-                      Make this a &ldquo;watch it again&rdquo; row
-                    </Label>
-                    <p className="text-sm text-muted-foreground">
-                      Films and shows they&rsquo;ve already finished lead the
-                      row, and new suggestions fill whatever is left. Turning
-                      this on also lets already-watched titles into the row, so
-                      there is nothing else to set.
-                    </p>
-                  </div>
-                  <Switch
-                    id="row-rewatch"
-                    aria-label="Make this a watch it again row"
-                    checked={input.rewatch}
-                    onCheckedChange={(rewatch) =>
-                      set({
-                        rewatch,
-                        // A rewatch row needs finished titles in its pool at all, so lift a 0% cap
-                        // off the global default in the same click — otherwise the switch silently
-                        // does nothing.
-                        ...(rewatch && input.watched_pct === 0
-                          ? { watched_pct: 1 }
-                          : {}),
-                        // Mutually exclusive: the two ask for opposite things, and the API refuses
-                        // the pair. Clearing it here means the owner never meets that error.
-                        ...(rewatch ? { unstarted_only: false } : {}),
-                      })
-                    }
-                  />
-                </div>
-
-                {/* Shown for shows only, and cleared when the row stops being a shows row: an
-                    invisible setting the API then refuses is a save that fails for no visible
-                    reason. */}
-                {input.media === "show" && (
                   <div className="flex items-start justify-between gap-4 rounded-md border p-3">
                     <div className="space-y-1">
-                      <Label htmlFor="row-unstarted">
-                        Only series they haven&rsquo;t started
+                      <Label htmlFor="row-rewatch">
+                        Make this a &ldquo;watch it again&rdquo; row
                       </Label>
                       <p className="text-sm text-muted-foreground">
-                        Drops any show they&rsquo;ve watched even one episode
-                        of. Normally only <em>finished</em> shows are skipped,
-                        so one they&rsquo;re three episodes into still turns up.
+                        Films and shows they&rsquo;ve already finished lead the
+                        row, and new suggestions fill whatever is left. Turning
+                        this on also lets already-watched titles into the row,
+                        so there is nothing else to set.
                       </p>
                     </div>
                     <Switch
-                      id="row-unstarted"
-                      aria-label="Only series they have not started"
-                      checked={input.unstarted_only}
-                      onCheckedChange={(unstarted_only) =>
+                      id="row-rewatch"
+                      aria-label="Make this a watch it again row"
+                      checked={input.rewatch}
+                      onCheckedChange={(rewatch) =>
                         set({
-                          unstarted_only,
-                          ...(unstarted_only ? { rewatch: false } : {}),
+                          rewatch,
+                          // A rewatch row needs finished titles in its pool at all, so lift a 0% cap
+                          // off the global default in the same click — otherwise the switch silently
+                          // does nothing.
+                          ...(rewatch && input.watched_pct === 0
+                            ? { watched_pct: 1 }
+                            : {}),
+                          // Mutually exclusive: the two ask for opposite things, and the API refuses
+                          // the pair. Clearing it here means the owner never meets that error.
+                          ...(rewatch ? { unstarted_only: false } : {}),
                         })
                       }
                     />
                   </div>
-                )}
-              </>
-            }
-          >
-            <WatchedSlider
-              id="row-watched-pct"
-              value={Math.round((input.watched_pct ?? 0) * 100)}
-              onChange={(pct) => set({ watched_pct: pct / 100 })}
-            />
-          </InheritableField>
 
-          <InheritableField
-            label="Freshness"
-            labelFor="row-freshness"
-            description="How often this row swaps in new titles — which titles it holds, not the sequence they appear in (that’s Order, below). Leave on the global default to follow Settings → Finding titles."
-            ariaLabel="Use the global freshness default"
-            inheriting={input.freshness === null}
-            globalValue={freshnessGlobal(settings.data)}
-            onToggle={(on) =>
-              set({ freshness: on ? null : freshnessSeed(settings.data) })
-            }
-          >
-            <FreshnessSlider
-              id="row-freshness"
-              value={Math.round((input.freshness ?? 0) * 100)}
-              onChange={(pct) => set({ freshness: pct / 100 })}
-            />
-          </InheritableField>
-
-          {usesWebSearch && (
-          <InheritableField
-            label="Watches the AI searches from"
-            description="How many of a person’s most recent watches the AI web-search source looks up for this row (one cached search each). Only affects rows using AI web search. Leave on the global default to follow Settings → Finding titles."
-            ariaLabel="Use the global recent-watches default"
-            inheriting={input.recent_count === null}
-            globalValue={recentCountGlobal(settings.data)}
-            onToggle={(on) =>
-              set({
-                recent_count: on ? null : recentCountSeed(settings.data),
-              })
-            }
-          >
-            <RecentCountField
-              label=""
-              value={input.recent_count ?? 0}
-              onChange={(next) => set({ recent_count: next })}
-            />
-          </InheritableField>
-          )}
-
-          <InheritableField
-            label="Watches to build from"
-            description={
-              <>
-                How many of a person&rsquo;s recent watches this row is built
-                from. The global default blends their whole recent history,
-                which is right for a general &ldquo;Picked for you&rdquo; row. A
-                small number makes the row about one or two specific things they
-                watched.
-              </>
-            }
-            ariaLabel="Use the default number of watches to build from"
-            inheriting={input.max_seeds === null}
-            globalValue={maxSeedsGlobal(settings.data)}
-            // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
-            // reaching for this control almost always wants a row about one specific watch, and
-            // the global is one switch-flip away again.
-            onToggle={(on) =>
-              set({ max_seeds: on ? null : namedRowSeeds(input.media) })
-            }
-            before={
-              (input.name_template || input.name).includes("{top_seed}") && (
-                <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
-                  This row is named{" "}
-                  <span className="font-mono">
-                    &ldquo;{input.name_template || input.name}&rdquo;
-                  </span>
-                  , so it names one title. Set this to{" "}
-                  <strong>{namedRowSeeds(input.media)}</strong> and the row
-                  really is what those watches led to &mdash; otherwise it names
-                  one watch and fills itself from the other 29.
-                  {input.media === "both" && (
-                    <>
-                      {" "}
-                      This row covers <strong>movies and TV</strong>, and a
-                      single watch is one or the other &mdash; so 1 would leave
-                      the other half empty. Use 2 to seed both, or set this row
-                      to Movies only or TV only above.
-                    </>
+                  {/* Shown for shows only, and cleared when the row stops being a shows row: an
+                    invisible setting the API then refuses is a save that fails for no visible
+                    reason. */}
+                  {input.media === "show" && (
+                    <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="row-unstarted">
+                          Only series they haven&rsquo;t started
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Drops any show they&rsquo;ve watched even one episode
+                          of. Normally only <em>finished</em> shows are skipped,
+                          so one they&rsquo;re three episodes into still turns
+                          up.
+                        </p>
+                      </div>
+                      <Switch
+                        id="row-unstarted"
+                        aria-label="Only series they have not started"
+                        checked={input.unstarted_only}
+                        onCheckedChange={(unstarted_only) =>
+                          set({
+                            unstarted_only,
+                            ...(unstarted_only ? { rewatch: false } : {}),
+                          })
+                        }
+                      />
+                    </div>
                   )}
-                </p>
-              )
-            }
-          >
-            <MaxSeedsField
-              label=""
-              value={input.max_seeds ?? 0}
-              onChange={(next) => set({ max_seeds: next })}
-            />
-          </InheritableField>
-          </RowSection>
-
-          <RowSection title="Where it appears" summary={placementSummary}>
-
-          <div className="space-y-3">
-            <Label>Where it shows</Label>
-            <p className="text-sm text-muted-foreground">
-              Which Plex screens this row appears on — matches Plex&rsquo;s
-              collection visibility toggles.
-            </p>
-            <PlacementToggles
-              placement={input.placement}
-              placementFriends={input.placement_friends}
-              isShared={input.build === "shared"}
-              users={users}
-              onChange={(placement, placementFriends) =>
-                set({ placement, placement_friends: placementFriends })
+                </>
               }
-            />
-            <div className="space-y-2 pt-2">
-              <span className="text-sm font-medium">
-                Position in the Recommended shelf
-              </span>
-              <p className="text-sm text-muted-foreground">
-                Where this row lands. Each library can inherit the global
-                default (Settings → Row placement), sit at the{" "}
-                <strong>Top</strong>, or anchor right after/before one of your
-                collections.
-              </p>
-              <RowShelfPlacement
-                value={input.hub_anchor}
-                libraryKeys={input.library_keys}
-                media={input.media}
-                pinnedTop={input.pin_top}
-                onConsumePin={() => set({ pin_top: false })}
-                onChange={(hub_anchor) => set({ hub_anchor })}
+            >
+              <WatchedSlider
+                id="row-watched-pct"
+                value={Math.round((input.watched_pct ?? 0) * 100)}
+                onChange={(pct) => set({ watched_pct: pct / 100 })}
               />
-            </div>
-          </div>
-          </RowSection>
+            </InheritableField>
 
-          <RowSection title="Requests" summary={requestSummary}>
-          {input.build !== "shared" && (
-            <div className="space-y-2 border-t pt-4">
-              <Label htmlFor="row-request-tag">Request tag (optional)</Label>
-              <Input
-                id="row-request-tag"
-                value={input.request_tag}
-                onChange={(event) => set({ request_tag: event.target.value })}
-                placeholder="e.g. picked-for-family"
-                maxLength={64}
-                className="max-w-xs"
+            {/* Nothing at all for a row that follows a watch. The cadence is fixed for those rows, so
+                a heading and a paragraph explaining a control that isn't there is just something else
+                to read past — the section summary already says "refreshes nightly". */}
+            {!followsAWatch && (
+              <InheritableField
+                label="How often it changes"
+                labelFor="row-freshness"
+                description="How often this row swaps some of its titles for new ones. Leave it on the global default to use the figure from Settings → Finding titles, where you set it once for every row."
+                ariaLabel="Use the global freshness default"
+                inheriting={input.freshness === null}
+                globalValue={freshnessGlobal(settings.data)}
+                onToggle={(on) =>
+                  set({ freshness: on ? null : freshnessSeed(settings.data) })
+                }
+              >
+                <FreshnessSlider
+                  id="row-freshness"
+                  value={Math.round((input.freshness ?? 0) * 100)}
+                  onChange={(pct) => set({ freshness: pct / 100 })}
+                />
+              </InheritableField>
+            )}
+
+            {usesWebSearch && (
+              <InheritableField
+                label={RECENT_COUNT_LABEL}
+                description={`AI web search looks up one watch at a time — “what to watch if you liked X”. This is how many of their most recent watches it asks about: the front slice of the same list “${MAX_SEEDS_LABEL}” sets. More gives wider results and takes more searches. It changes nothing for the other sources.`}
+                ariaLabel="Use the global recent-watches default"
+                inheriting={input.recent_count === null}
+                globalValue={recentCountGlobal(settings.data)}
+                onToggle={(on) =>
+                  set({
+                    recent_count: on ? null : recentCountSeed(settings.data),
+                  })
+                }
+              >
+                <RecentCountField
+                  label=""
+                  value={input.recent_count ?? 0}
+                  onChange={(next) => set({ recent_count: next })}
+                />
+              </InheritableField>
+            )}
+
+            <InheritableField
+              label={MAX_SEEDS_LABEL}
+              description={
+                <>
+                  How many recent watches this row is built from. Every source
+                  works from these. A high number blends their whole recent
+                  viewing, which suits a general &ldquo;Picked for you&rdquo;
+                  row. A low number makes the row about one or two specific
+                  things they watched.
+                </>
+              }
+              ariaLabel="Use the default number of watches every source builds from"
+              inheriting={input.max_seeds === null}
+              globalValue={maxSeedsGlobal(settings.data)}
+              // Turning this OFF seeds the NAMED-row value (1 or 2), not the global — someone
+              // reaching for this control almost always wants a row about one specific watch, and
+              // the global is one switch-flip away again.
+              //
+              // Turning it ON also drops the cycle back to 1. The cycle control only renders for a
+              // 1..2-seed row, so leaving the window set here would hide it while the engine went on
+              // cycling the row AND forcing it to nightly rebuilds, with nothing in the editor to
+              // explain it or undo it.
+              onToggle={(on) =>
+                set(
+                  on
+                    ? { max_seeds: null, seed_window: 1 }
+                    : { max_seeds: namedRowSeeds(input.media) },
+                )
+              }
+              // The advice has to read the CURRENT value, not assume the global. Static copy told
+              // someone already sitting on 1 that their row "fills itself from the other 29", which
+              // is only true while it inherits the 30-watch default — so the one hint meant to make
+              // this setting clear was describing a row they didn't have.
+              before={
+                namesASeed && (
+                  <p
+                    role={seedBudgetMismatch ? "status" : undefined}
+                    className={
+                      seedBudgetMismatch
+                        ? "rounded-md border border-warning/40 bg-warning/5 p-3 text-sm"
+                        : "rounded-md bg-muted/60 p-3 text-sm text-muted-foreground"
+                    }
+                  >
+                    {seedAdvice(input.max_seeds, input.media)}
+                  </p>
+                )
+              }
+            >
+              <MaxSeedsField
+                label=""
+                value={input.max_seeds ?? 0}
+                // Typing a wider budget hides the cycle control too, so it has to reset the window
+                // for the same reason the inherit toggle above does — otherwise the row keeps
+                // cycling with no way to see or stop it.
+                onChange={(next) =>
+                  set(
+                    next > 2
+                      ? { max_seeds: next, seed_window: 1 }
+                      : { max_seeds: next },
+                  )
+                }
+              />
+            </InheritableField>
+
+            {/* Only for a row that builds from one or two watches. Above that it is blending a whole
+                history and "which watch does it follow" has no answer, so asking would be noise. */}
+            {(input.max_seeds ?? 0) > 0 && (input.max_seeds ?? 0) <= 2 && (
+              <div className="space-y-3 border-t pt-4">
+                <p className="text-sm font-medium">Which watch it follows</p>
+                <p className="text-sm text-muted-foreground">
+                  Normally this row follows their most recent watch, and stays
+                  on it until they finish something else. Raise this and it
+                  cycles through that many of their recent watches instead
+                  &mdash; a different one each day, then back round again.
+                </p>
+                <SeedWindowField
+                  label=""
+                  value={input.seed_window}
+                  onChange={(next) => set({ seed_window: next })}
+                />
+                {input.seed_window > 1 && (
+                  <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+                    Cycling rebuilds this row whenever the watch changes, so it
+                    writes to Plex most nights. Set it back to 1 if you&rsquo;d
+                    rather the row only changed when they actually watch
+                    something new.
+                  </p>
+                )}
+              </div>
+            )}
+          </SettingsGroup>
+
+          <SettingsGroup
+            title="How it's shown, and when it runs"
+            description="The order titles appear in, how many there are, and when Shortlist rebuilds the row."
+          >
+            <div className="space-y-2">
+              <Label>What order the titles appear in</Label>
+              <Segmented
+                value={input.pick_order}
+                onChange={(pick_order) => set({ pick_order })}
+                ariaLabel="How the titles in this row are ordered"
+                options={[
+                  { value: "best", label: "Best match" },
+                  { value: "rating", label: "Highest rated" },
+                  // "Newest released", not "Newest": it sits two chips from "Just added", and the
+                  // two mean different things — when a film came out, vs when it joined this row.
+                  { value: "newest", label: "Newest released" },
+                  { value: "shuffle", label: "Shuffled" },
+                  { value: "new_first", label: "Just added" },
+                  { value: "rotate", label: "Taking turns" },
+                ]}
               />
               <p className="text-sm text-muted-foreground">
-                When Requests are on, titles asked for anyone in this row’s
-                audience get this tag in Sonarr/Radarr — on top of your global
-                tag and each person’s own tag. Leave blank for none.
+                {pickOrderHelp(input.pick_order, ratingLabel)}
               </p>
+              {/* The score to sort on is chosen HERE, not in Settings. "Highest rated" raises the
+                question "rated by whom?" at exactly this moment, and answering it by sending someone
+                to another screen is how the setting stayed undiscovered. It is still one server-wide
+                value, so the note says so rather than implying it is per-row. */}
+              {input.pick_order === "rating" && (
+                <div className="space-y-1.5 rounded-md border bg-muted/30 p-3">
+                  <Label htmlFor="row-rating-source">Rated by</Label>
+                  <select
+                    id="row-rating-source"
+                    value={ratingSource}
+                    onChange={(e) =>
+                      saveSettings.mutate({
+                        "recommendations.rating_source": asRatingSource(
+                          e.target.value,
+                        ),
+                      })
+                    }
+                    disabled={saveSettings.isPending}
+                    className="h-9 w-56 rounded-md border bg-background px-3 text-sm"
+                  >
+                    {RATING_SOURCES.map((source) => (
+                      <option key={source} value={source}>
+                        {RATING_LABELS[source]}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    {ratingSource === "tmdb"
+                      ? "TMDB scores need no setup. IMDb, Trakt, Rotten Tomatoes and Metacritic all come from MDBList, a free service that fetches every site’s score in one lookup — add its key under Settings → Connections."
+                      : `Scores come from MDBList, a free service that fetches every site’s score in one lookup. Add its key under Settings → Connections, or ${ratingLabel} rows quietly fall back to TMDB.`}{" "}
+                    Shared by every row ordered by rating.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <RowScheduleField
+              value={input.schedule}
+              onChange={(schedule) => set({ schedule })}
+            />
+
+            {!isDefault && (
+              <RowSizeField
+                value={input.size}
+                onChange={(size) => set({ size })}
+              />
+            )}
+          </SettingsGroup>
+
+          <SettingsGroup
+            title="Where it appears"
+            description="Which Plex screens this row shows up on, and where in the shelf."
+            summary={placementSummary}
+          >
+            <div className="space-y-3">
+              <Label>Where it shows</Label>
+              <PlacementToggles
+                placement={input.placement}
+                placementFriends={input.placement_friends}
+                isShared={input.build === "shared"}
+                users={users}
+                onChange={(placement, placementFriends) =>
+                  set({ placement, placement_friends: placementFriends })
+                }
+              />
+              <div className="space-y-2 pt-2">
+                <span className="text-sm font-medium">
+                  Position in the Recommended shelf
+                </span>
+                <p className="text-sm text-muted-foreground">
+                  Where this row sits on the shelf. In each library it can
+                  follow the default &mdash; Settings → Row placement sets where
+                  all your rows go &mdash; or sit at the <strong>Top</strong>,
+                  or right after or right before one of your own collections.
+                </p>
+                <RowShelfPlacement
+                  value={input.hub_anchor}
+                  libraryKeys={input.library_keys}
+                  media={input.media}
+                  pinnedTop={input.pin_top}
+                  onConsumePin={() => set({ pin_top: false })}
+                  onChange={(hub_anchor) => set({ hub_anchor })}
+                />
+              </div>
+            </div>
+          </SettingsGroup>
+
+          <SettingsGroup
+            title="Artwork"
+            description="The picture Plex shows on the row. Optional — Plex uses its own by default."
+            summary={posterSummary}
+            defaultOpen={false}
+          >
+            <PosterField
+              value={input.poster}
+              onChange={(poster) => set({ poster })}
+              collectionId={collection?.id ?? null}
+              hasImage={collection?.poster?.has_image ?? false}
+            />
+          </SettingsGroup>
+
+          <SettingsGroup
+            title="Requests"
+            description="Mark the titles people ask for from this row, so you can spot them in Radarr and Sonarr — the apps that go and fetch them. Optional."
+            summary={requestSummary}
+            defaultOpen={false}
+          >
+            {input.build !== "shared" && (
+              <div className="space-y-2 border-t pt-4">
+                <Label htmlFor="row-request-tag">Request tag (optional)</Label>
+                <Input
+                  id="row-request-tag"
+                  value={input.request_tag}
+                  onChange={(event) => set({ request_tag: event.target.value })}
+                  placeholder="e.g. picked-for-family"
+                  maxLength={64}
+                  className="max-w-xs"
+                />
+                <p className="text-sm text-muted-foreground">
+                  With Requests switched on, anything someone asks for from this
+                  row arrives in Radarr or Sonarr carrying this tag &mdash;
+                  alongside the tag every Shortlist request gets and the one for
+                  the person who asked. Leave it blank to add nothing extra.
+                </p>
+              </div>
+            )}
+          </SettingsGroup>
+
+          {save.isError && (
+            <p role="alert" className="text-sm text-destructive-text">
+              {apiErrorMessage(
+                save.error,
+                "Couldn’t save this row. Try again.",
+              )}
+            </p>
+          )}
+
+          {/* Last, and fenced off: these two reach into Plex, and neither is undone by Cancel. A row
+              being created has nothing to remove yet. */}
+          {collection && (
+            <div className="space-y-3 rounded-lg border border-destructive/30 p-5">
+              <div className="space-y-1">
+                <h2 className="text-base font-semibold text-destructive-text">
+                  Remove this row
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Taking it off Plex keeps its settings here, so the next run
+                  builds it again. Deleting it doesn&rsquo;t. Either way the
+                  titles stay in your library.
+                  <br />
+                  To turn it off without removing anything today, use the toggle
+                  on the Rows page — the next run takes it off Plex for you.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <RowDestructiveActions
+                  collection={collection}
+                  onDeleted={onClose}
+                />
+              </div>
             </div>
           )}
-          </RowSection>
         </div>
 
-        {save.isError && (
-          <p role="alert" className="text-sm text-destructive">
-            {apiErrorMessage(save.error, "Couldn’t save this row. Try again.")}
-          </p>
-        )}
+        {/* Sticky so it stays beside whichever setting is being changed — the point is watching the
+            outcome move as you touch things, which it cannot do if it scrolls off.
+            The max-height + scroll is a safety valve for a very tall preview on a short window, not
+            a place to put content: anything parked below the fold here is effectively invisible,
+            which is exactly why the effectiveness panel moved to the top of the page. */}
+        <aside className="space-y-5 lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
+          {/* Outside the card, matching "Row settings" opposite, so the two columns start level. */}
+          <div>
+            <h2 className="text-base font-semibold">What this row will do</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Updates as you change things. Nothing is saved until you press
+              save.
+            </p>
+          </div>
+          <RowPreview
+            input={input}
+            users={users}
+            libraries={libraries.data ?? []}
+            settings={settings.data}
+            followsAWatch={followsAWatch}
+            globalFreshness={freshnessGlobalValue(settings.data)}
+            globalWatchedPct={watchedPctGlobalValue(settings.data)}
+          />
+        </aside>
+      </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            onClick={submit}
-            loading={save.isPending}
-            disabled={!input.name.trim()}
-          >
-            {collection ? "Save changes" : "Add row"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      {/* Pinned to the bottom of the viewport: on a long page the save button would otherwise be
+          somewhere off-screen, and "where did Save go" is exactly the friction a dialog didn't have. */}
+      <div className="sticky bottom-0 z-10 -mx-4 flex justify-end gap-2 border-t bg-background px-4 py-3 sm:-mx-6 sm:px-6">
+        <Button variant="outline" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          onClick={submit}
+          loading={save.isPending}
+          disabled={!input.name.trim()}
+        >
+          {collection ? "Save changes" : "Add row"}
+        </Button>
+      </div>
+    </div>
   );
 }

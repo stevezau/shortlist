@@ -52,11 +52,11 @@ export const WIZARD_STEPS: readonly WizardStepMeta[] = [
   },
   {
     title: "Recommendations & history",
-    why: "A TMDB key (required) powers recommendations. Watch history is read from Plex per user; Tautulli is optional, only for friendlier display names.",
+    why: "A free key from The Movie Database (TMDB) is required — it is the catalogue Shortlist searches for titles to suggest. Watch history is read from Plex for each person; Tautulli is optional, only for friendlier display names.",
   },
   {
-    title: "Choose your curator",
-    why: "An LLM re-ranks titles you already own — it can't invent anything. Shortlist is fully functional without one.",
+    title: "Add an AI provider (optional)",
+    why: "Only used if you switch on AI web search for a row later: it searches the web for titles, then keeps the ones already in your library. It also unlocks AI poster art. Picks are chosen in code either way, so Shortlist works the same without one.",
   },
   {
     title: "Pick your users",

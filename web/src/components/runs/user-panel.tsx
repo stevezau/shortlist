@@ -130,7 +130,7 @@ function LibraryPicks({ entry }: { entry: RunLibraryBreakdown }) {
         </p>
       )}
       {entry.deleted.length > 0 && (
-        <p className="text-xs font-medium text-destructive">
+        <p className="text-xs font-medium text-destructive-text">
           Row deleted (this person no longer gets this row):{" "}
           {entry.deleted.join(", ")}
         </p>
@@ -228,7 +228,7 @@ export function UserPanel({
         </p>
         {/* Raw detail is contained: it scrolls inside its own box and wraps long tokens (the encoded
             Plex uri) so it can never push the page sideways. */}
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive">
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
           {result.error}
         </pre>
         <CopyForGitHubButton run={run} result={result} />

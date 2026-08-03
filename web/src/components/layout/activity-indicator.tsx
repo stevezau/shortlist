@@ -64,7 +64,7 @@ function JobLine({
           />
         ) : job.status === "failed" ? (
           <CircleAlert
-            className="h-3 w-3 shrink-0 text-destructive"
+            className="h-3 w-3 shrink-0 text-destructive-text"
             aria-hidden
           />
         ) : (

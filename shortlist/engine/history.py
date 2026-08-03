@@ -25,6 +25,15 @@ from shortlist.engine.models import MediaType, Seed, UserProfile, UserType, Watc
 RECENCY_HALF_LIFE_DAYS = 45.0
 
 
+class NoWatchToken(RuntimeError):
+    """No server token could be obtained to read a user's watched state with.
+
+    Distinct from "they have watched nothing", and the distinction is load-bearing: the watched-title
+    cache DELETES what a read does not return, so a token failure reported as an empty set wipes the
+    very history it was meant to refresh.
+    """
+
+
 class HistorySource(Protocol):
     def fetch(
         self, user: UserProfile, *, min_completion: float, since: datetime | None = None
@@ -96,10 +105,23 @@ class ShareTokenWatchSource:
         Raises rather than swallowing: the caller decides whether one unreadable library is fatal,
         and for the cache it must be — advancing a cursor past a read that failed would silently
         skip whatever it missed.
+
+        That includes a missing token, which used to return `[]` here in flat contradiction of the
+        line above. The cache treats what a read returns as the truth for the window it covers and
+        deletes the rest, so "plex.tv would not mint a token just now" arriving as "they have watched
+        nothing" wiped a person's cached history and stamped the sync a success.
+
+        Returns:
+            A `WatchedRead` — the titles PLUS whether the read provably covered its window. The
+            cache deletes cached titles the read did not return, so it needs to know the difference
+            between "not watched any more" and "we did not read that far".
+
+        Raises:
+            NoWatchToken: No server token could be obtained for this user.
         """
         token = self._token_for(user)
         if token is None:
-            return []
+            raise NoWatchToken(f"no server token for {user.username}")
         return self._plex.watched_titles(section.key, media_type, token, since=since)
 
     def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
@@ -121,7 +143,7 @@ class ShareTokenWatchSource:
         for section in self._plex.sections():
             media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
             try:
-                items.extend(self._plex.watched_titles(section.key, media_type, token, since=since))
+                items.extend(self._plex.watched_titles(section.key, media_type, token, since=since).items)
             except SectionNotShared:
                 # Not shared with them, so "nothing watched there" is the right answer, not a
                 # degraded one. DEBUG, not WARNING: `sections()` is the OWNER's library list, so
@@ -167,12 +189,44 @@ def distinct_recent(history: list[WatchedItem], limit: int) -> list[WatchedItem]
     return out
 
 
+def _cycle_window(seeds: list[Seed], window: int, offset: int) -> list[Seed]:
+    """Move one of the ``window`` most recent seeds to the front, advancing one step per offset.
+
+    A CYCLE rather than a random pick, deliberately. Random repeats: choosing from three watches at
+    random gives the same one two nights running about a third of the time, and a row that names its
+    seed then looks exactly as stuck as the bug this feature exists to relieve (issue #57 — a person
+    watching plenty of new things still saw "Because you watched Little Brother" for weeks).
+
+    The step is taken over the window ordered by TMDB ID, not by recency. Ordering by recency looks
+    like the obvious choice and is wrong: that list's head shifts by one every time the person watches
+    something new, and the offset advances by one a night, so for anyone watching nightly the two
+    cancel exactly — the same seed leads for `window` nights running and the watches that entered in
+    between never lead at all. Measured before this was keyed on identity: at window 3, a person
+    finishing a film a night saw C, C, C, F, F, F while their newest watch went D, E, F, G, H. That is
+    a WORSE row than not cycling, handed to the heaviest watchers, who are the ones most likely to
+    turn it on. An ID order is arbitrary but stable, so the cancellation cannot arise: when their
+    window is unchanged it cycles cleanly through every member, and when it churns the churn itself is
+    the variety.
+
+    The rest of the window is kept BEHIND the chosen seed in weight order rather than dropped, so a
+    row whose budget is wider than one still fills from the same recent watches it always did.
+    """
+    w = min(window, len(seeds))
+    if w <= 1:
+        return seeds
+    chosen = sorted(seeds[:w], key=lambda s: s.tmdb_id)[offset % w]
+    i = next(n for n, s in enumerate(seeds) if s.tmdb_id == chosen.tmdb_id)
+    return [seeds[i], *seeds[:i], *seeds[i + 1 :]]
+
+
 def derive_seeds(
     history: list[WatchedItem],
     resolve_tmdb_id,
     *,
     max_seeds: int = 30,
     blocked: set[int] | None = None,
+    window: int = 1,
+    cycle_offset: int = 0,
 ) -> list[Seed]:
     """Collapse history into weighted seeds: distinct titles, weighted purely by RECENCY.
 
@@ -190,6 +244,11 @@ def derive_seeds(
             ``tmdb_id`` of its own (adapters resolve via the library index or TMDB search). Items that
             resolve to None are skipped.
         max_seeds: Cap (the most recently watched titles win).
+        window: How many of the most recent watches this row may be built from, of which
+            ``cycle_offset`` selects one per media type. 1 (the default) always takes the most recent,
+            which is every caller's behaviour before seed cycling existed.
+        cycle_offset: Which of the window to lead with — the run's day plus a stable per-(row, user)
+            phase, so one person's row advances a step a day and two people's rows advance out of step.
     """
     if not history:
         return []
@@ -227,6 +286,21 @@ def derive_seeds(
     # last 60 watches were TV, so her Movies row stayed empty despite 598 movie watches; 2026-07-20).
     movies = [s for s in seeds if s.media_type is MediaType.MOVIE]
     shows = [s for s in seeds if s.media_type is MediaType.SHOW]
+    if window > 1:
+        # Cycle within each media type, not across the flat list. A `media=both` row seeds one movie
+        # and one show, so rotating the flat list would spend the whole window on whichever type this
+        # person watches more of and leave the other half pinned to its newest title for ever.
+        movies = _cycle_window(movies, window, cycle_offset)
+        shows = _cycle_window(shows, window, cycle_offset)
+        # Rebuild the flat list to LEAD with what the cycle chose. The balancing below re-derives
+        # `ordered` by filtering this list, so leaving it in pure weight order would quietly undo the
+        # rotation and hand back the newest watch again.
+        # Weight order, NOT (movies, shows) order. `max_seeds=1` keeps only the first of these, so
+        # listing movies unconditionally first handed every one-seed movies-and-TV row to a film —
+        # a TV watcher who turned cycling on had their row start naming a film from a month ago.
+        leads = sorted((group[0] for group in (movies, shows) if group), key=lambda s: s.weight, reverse=True)
+        lead_keys = {(s.tmdb_id, s.media_type) for s in leads}
+        seeds = leads + [s for s in seeds if (s.tmdb_id, s.media_type) not in lead_keys]
     if not (movies and shows):
         return seeds[:max_seeds]  # single media type — nothing to balance
     per_type = max(1, max_seeds // 3)  # each present type keeps >= a third of the budget (if it has that many)

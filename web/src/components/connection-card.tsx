@@ -191,8 +191,10 @@ export function ConnectionCard({
   return (
     <Card data-testid={`connection-${service}`}>
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-2.5">
+        {/* Wraps, and the name side may shrink: the glyph, the service name and the Set up/Test
+            buttons together held the card open to 326px on a 320px screen. */}
+        <CardTitle className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-2.5">
             <span className="relative">
               <span className="grid h-9 w-9 place-items-center rounded-lg border bg-elevated [&>svg]:h-5 [&>svg]:w-5">
                 {glyph}
@@ -233,7 +235,7 @@ export function ConnectionCard({
                   </Button>
                 </div>
                 {save.isError && (
-                  <p className="text-xs text-destructive">
+                  <p className="text-xs text-destructive-text">
                     {apiErrorMessage(save.error, "Remove failed.")}
                   </p>
                 )}
@@ -258,7 +260,7 @@ export function ConnectionCard({
                     variant="ghost"
                     size="icon"
                     aria-label={`Remove ${title} connection`}
-                    className="text-muted-foreground hover:text-destructive"
+                    className="text-muted-foreground hover:text-destructive-text"
                     onClick={() => setConfirmRemove(true)}
                   >
                     <Trash2 aria-hidden="true" />
@@ -352,7 +354,7 @@ export function ConnectionCard({
               );
             })}
             {save.isError && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive-text">
                 {apiErrorMessage(
                   save.error,
                   "Saving failed. Check the server log and try again.",
@@ -374,7 +376,7 @@ export function ConnectionCard({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="ml-auto text-destructive hover:text-destructive"
+                  className="ml-auto text-destructive-text hover:text-destructive-text"
                   onClick={clear}
                   disabled={save.isPending}
                 >

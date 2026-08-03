@@ -157,6 +157,8 @@ describe("StepUsers — the owner's own line", () => {
       await screen.findByText(/Heads up, server owner/i),
     ).toBeInTheDocument();
     // The sentence is split by an <em>, so match the fragment that lives in one text node.
-    expect(screen.getByText(/people.s rows from you/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/people.s rows out of the library.s Collections tab/i),
+    ).toBeInTheDocument();
   });
 });

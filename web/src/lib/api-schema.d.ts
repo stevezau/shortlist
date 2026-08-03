@@ -144,6 +144,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/collections/{collection_id}/effectiveness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Collection Effectiveness
+         * @description How this row has actually performed — delivered, watched, and the landing rate.
+         *
+         *     Its own endpoint rather than a slice of `/api/report/effectiveness`, which is ~30 queries and
+         *     runs in a worker thread for that reason; this is four, so opening the row editor costs nothing
+         *     like opening the dashboard. Both read the same columns through `report_service`, so they cannot
+         *     drift apart on what counts as a hit.
+         */
+        get: operations["collection_effectiveness_api_collections__collection_id__effectiveness_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/collections/{collection_id}/poster/image": {
         parameters: {
             query?: never;
@@ -431,9 +456,27 @@ export interface paths {
          *     Rows the owner cleared from the Sent log (``hidden``) are excluded — they stay in the DB as sent
          *     tombstones (so the title isn't re-requested) but never show in the UI again.
          *
-         *     Capped at :data:`MAX_INBOX`. The cap is applied AFTER the status sort, in Python, because the
-         *     ordering is by (status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows
-         *     rather than the oldest history.
+         *     Args:
+         *         request: The FastAPI request, for the session factory.
+         *         wanted_by: Repeated query parameter (``?wanted_by=sarah&wanted_by=mike``) naming the people
+         *             whose titles to keep — matched against ``wanters``, which holds bare Plex usernames.
+         *             A title is kept if ANY of the named people wanted it (union, not intersection), matching
+         *             what the inbox's "Wanted by" chips mean. Omitted (or empty) means everyone, which is the
+         *             unfiltered inbox — no caller that leaves it off sees any change.
+         *
+         *     Returns:
+         *         The matching rows, capped at :data:`MAX_INBOX`.
+         *
+         *     The cap is applied AFTER the status sort, in Python, because the ordering is by
+         *     (status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows rather than
+         *     the tail of the history. ``wanted_by`` is applied BEFORE the cap — a filter applied to the capped
+         *     page could only ever search the 500 rows the cap left, and "what does this new person still
+         *     need?" is precisely the question that wants everything on file for one person.
+         *
+         *     The name filter runs in Python rather than SQL: the read below is already unbounded (`.all()`
+         *     over every non-hidden row — the cap bounds the PAYLOAD, not the query), so filtering the rows
+         *     already in memory costs nothing extra, and it avoids depending on SQLite's JSON1 `json_each` to
+         *     ask whether a JSON array column contains a value.
          */
         get: operations["list_requests_api_requests_get"];
         put?: never;
@@ -1842,7 +1885,7 @@ export interface components {
              * @default best
              * @enum {string}
              */
-            pick_order: "best" | "newest" | "rating" | "shuffle";
+            pick_order: "best" | "new_first" | "newest" | "rating" | "rotate" | "shuffle";
             /**
              * Pin Top
              * @default false
@@ -1880,6 +1923,11 @@ export interface components {
              * @default 30 3 * * *
              */
             schedule: string;
+            /**
+             * Seed Window
+             * @default 1
+             */
+            seed_window: number;
             /**
              * Size
              * @default 15
@@ -1952,7 +2000,7 @@ export interface components {
              * @description How the delivered collection is ordered.
              * @enum {string}
              */
-            pick_order: "best" | "newest" | "rating" | "shuffle";
+            pick_order: "best" | "new_first" | "newest" | "rating" | "rotate" | "shuffle";
             /** Pin Top */
             pin_top: boolean;
             /**
@@ -1976,6 +2024,8 @@ export interface components {
             rewatch: boolean;
             /** Schedule */
             schedule: string;
+            /** Seed Window */
+            seed_window: number;
             /** Size */
             size: number;
             /** Slug */
@@ -2931,6 +2981,63 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * RowEffectivenessOut
+         * @description Whether one row is working, for the panel beside its settings.
+         */
+        RowEffectivenessOut: {
+            /** Delivered */
+            delivered: number;
+            /** First Delivered At */
+            first_delivered_at: string | null;
+            /** Last Delivered At */
+            last_delivered_at: string | null;
+            matured: components["schemas"]["RowMaturedCohort"] | null;
+            /** Matured Days */
+            matured_days: number;
+            /** Per Library */
+            per_library: components["schemas"]["RowLibraryEffectiveness"][];
+            /** Runs */
+            runs: number;
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowLibraryEffectiveness
+         * @description One library's share of a row's matured cohort. A row that builds in two libraries is two Plex
+         *     collections and genuinely performs differently in each, so they are never merged into one line.
+         */
+        RowLibraryEffectiveness: {
+            /** Delivered */
+            delivered: number;
+            /** Library */
+            library: string;
+            /** Rate */
+            rate: number | null;
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * RowMaturedCohort
+         * @description The picks old enough to be judged: delivered at least `matured_days` ago, so every one of them
+         *     has had its full window to be watched.
+         */
+        RowMaturedCohort: {
+            /** Cohort To */
+            cohort_to: string;
+            /** Delivered */
+            delivered: number;
+            /** Rate */
+            rate: number | null;
+            /** Watched */
+            watched: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * RowOverrideOut
          * @description This person's stored tweaks for one row. `None` on either field means "use the row's own".
          */
@@ -3253,6 +3360,8 @@ export interface components {
         ScheduleJobOut: {
             /** Cron */
             cron: string;
+            /** Default Cron */
+            default_cron: string;
             /** Description */
             description: string;
             /** Kind */
@@ -4132,6 +4241,37 @@ export interface operations {
             };
         };
     };
+    collection_effectiveness_api_collections__collection_id__effectiveness_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RowEffectivenessOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_poster_image_api_collections__collection_id__poster_image_get: {
         parameters: {
             query?: never;
@@ -4510,7 +4650,10 @@ export interface operations {
     };
     list_requests_api_requests_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only titles at least one of these people wanted (the `wanters` usernames). */
+                wanted_by?: string[] | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -4524,6 +4667,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestCandidateOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

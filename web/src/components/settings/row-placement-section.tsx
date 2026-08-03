@@ -90,7 +90,7 @@ function LibraryPlacement({
           <div className="space-y-1">
             <Label htmlFor={`anchor-${library.key}`}>Collection</Label>
             {collections.isError ? (
-              <p className="text-sm text-destructive">
+              <p className="text-sm text-destructive-text">
                 Couldn’t load this library’s collections.
               </p>
             ) : (

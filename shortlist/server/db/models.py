@@ -171,6 +171,11 @@ class Collection(Base):
     # How many watched titles SEED this row — what every source searches from, not just the web one.
     # NULL -> inherit the engine default (30).
     max_seeds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # How many of a person's most recent watches this row may be built from, of which ONE is chosen per
+    # run so the row advances instead of sitting on their newest watch for ever. 1 = always the most
+    # recent (the original behaviour). Not nullable and not inheritable, like pick_order: whether a row
+    # rotates belongs to what that row IS, not to a server-wide default.
+    seed_window: Mapped[int] = mapped_column(Integer, default=1, nullable=False, server_default="1")
     # How the delivered collection is ORDERED: best | rating | newest | shuffle. Not nullable and not
     # inheritable — unlike freshness/max_seeds there is no global default to fall back to, because the
     # right order belongs to what a row IS rather than to the server.
@@ -399,9 +404,11 @@ class WatchedTitle(Base):
     sync AND again inside every run. On a 40-user server that is hundreds of large XML responses a
     night for a set that changes by a handful of items.
 
-    Caching it makes the nightly read incremental (`lastViewedAt>=` the cursor). The cache is not the
-    source of truth: `watch_sync_state.last_full_at` drives a periodic complete re-read, because an
-    incremental read cannot see an un-watch or a deletion.
+    Caching it makes the nightly read incremental — back to the cursor, applied client-side against
+    `sort=lastViewedAt:desc` because the PMS silently ignores a `lastViewedAt>=` filter. The cache is
+    not the source of truth: an incremental read that provably covered its window can notice an
+    un-watch INSIDE it (`watch_cache._drop_vanished_since`), but nothing further back, so
+    `watch_sync_state.last_full_at` still drives a periodic complete re-read.
     """
 
     __tablename__ = "watched_titles"
@@ -437,8 +444,9 @@ class WatchSyncState(Base):
 
     `cursor_viewed_at` is advanced ONLY after a complete successful page walk, and deliberately set
     slightly behind the newest thing seen — see `WatchCache` for why. `last_full_at` is what makes
-    the incremental read safe: an incremental read cannot see an un-watch or a deletion, so a
-    complete re-read has to happen on a schedule regardless.
+    the incremental read safe: an incremental read sees an un-watch only inside the window it
+    covered, never one further back or a title deleted from the library, so a complete re-read has
+    to happen on a schedule regardless.
     """
 
     __tablename__ = "watch_sync_state"

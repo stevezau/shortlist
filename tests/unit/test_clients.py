@@ -941,7 +941,7 @@ class TestWatchedTitles:
         )
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
 
-        items = mock_plex.watched_titles("1", MediaType.MOVIE, "SARAH-TOK")
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "SARAH-TOK").items
 
         assert len(items) == 1
         item = items[0]
@@ -989,7 +989,7 @@ class TestWatchedTitles:
 
         items = mock_plex.watched_titles(
             "1", MediaType.MOVIE, token="SARAH-TOK", since=datetime(2026, 7, 1, tzinfo=UTC)
-        )
+        ).items
 
         titles = [i.title for i in items]
         assert "Also Recent" in titles, f"the walk stopped on a missing timestamp: {titles}"
@@ -1015,7 +1015,7 @@ class TestWatchedTitles:
 
         items = mock_plex.watched_titles(
             "1", MediaType.MOVIE, token="SARAH-TOK", since=datetime(2026, 7, 20, tzinfo=UTC)
-        )
+        ).items
 
         # "Older" is before the cutoff and legitimately dropped; the point is the walk did not STOP
         # there and still returned the two newer titles behind it.
@@ -1037,7 +1037,9 @@ class TestWatchedTitles:
         )
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._watched_xml_raw(shows, 2)))
 
-        items = mock_plex.watched_titles("2", MediaType.SHOW, token="SARAH-TOK", since=datetime(2026, 7, 1, tzinfo=UTC))
+        items = mock_plex.watched_titles(
+            "2", MediaType.SHOW, token="SARAH-TOK", since=datetime(2026, 7, 1, tzinfo=UTC)
+        ).items
 
         assert [i.title for i in items] == ["Recent Show"], "the cutoff must work for shows too"
         assert items[0].media_type is MediaType.SHOW
@@ -1061,7 +1063,7 @@ class TestWatchedTitles:
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._watched_xml((42, "Heat", 1785000000))))
         since = datetime(2026, 7, 1, tzinfo=UTC)
 
-        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since)
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since).items
 
         assert [i.title for i in items] == ["Heat"]
         params = respx.calls.last.request.url.params
@@ -1091,7 +1093,7 @@ class TestWatchedTitles:
         )
         since = datetime.fromtimestamp(1784000000, tz=UTC)
 
-        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since)
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since).items
 
         assert [i.title for i in items] == ["Watched today", "Watched yesterday"]
 
@@ -1112,7 +1114,7 @@ class TestWatchedTitles:
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=recorded))
 
         # A cutoff older than all three, so nothing is stopped early and the whole page is parsed.
-        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=datetime(2025, 1, 1, tzinfo=UTC))
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=datetime(2025, 1, 1, tzinfo=UTC)).items
 
         assert [i.tmdb_id for i in items] == [100001, 100002, 100003]
         # Newest first, exactly as the recorded response is ordered.
@@ -1145,7 +1147,7 @@ class TestWatchedTitles:
         )
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
 
-        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK").items
         assert items[0].watch_count == 1
 
     @respx.mock
@@ -1161,7 +1163,7 @@ class TestWatchedTitles:
         )
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
 
-        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK")
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
 
         item = items[0]
         assert (item.title, item.tmdb_id, item.media_type) == ("Suits", 37680, MediaType.SHOW)
@@ -1180,7 +1182,7 @@ class TestWatchedTitles:
             "</MediaContainer>"
         )
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
-        assert mock_plex.watched_titles("1", MediaType.MOVIE, "TOK") == []
+        assert mock_plex.watched_titles("1", MediaType.MOVIE, "TOK").items == []
 
     @respx.mock
     def test_a_403_raises_section_not_shared_not_a_generic_http_error(self, mock_plex: PlexClient):
@@ -1221,7 +1223,7 @@ class TestWatchedTitles:
             "</MediaContainer>"
         )
         respx.get(self._URL).mock(return_value=httpx.Response(200, text=xml))
-        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK").items
         assert [i.title for i in items] == ["Good"]
 
     def test_the_configured_timeout_reaches_the_raw_watched_read(self, mock_plex: PlexClient, monkeypatch):
@@ -1262,7 +1264,7 @@ class TestWatchedTitles:
             )
 
         respx.get(self._URL).mock(side_effect=page)
-        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK").items
 
         assert {i.tmdb_id for i in items} == {1, 2}
         assert len(respx.calls) == 2  # paged: first page short of total, second fetched the rest, then stop
@@ -1519,6 +1521,187 @@ class TestWatchedPagingWithoutTotalSize:
 
         respx.get(self._URL).mock(side_effect=respond)
 
-        items = mock_plex.watched_titles("1", MediaType.MOVIE, token="TOK")
+        items = mock_plex.watched_titles("1", MediaType.MOVIE, token="TOK").items
 
         assert len(items) == 1200, f"read stopped early: {len(items)} of 1200"
+
+
+class TestWatchedWindowCoverage:
+    """The contract between the PMS walk and the watched-title CACHE, tested across the seam.
+
+    The cache deletes cached titles an incremental read did not return, which is only safe while the
+    read really did return everything at or after the cutoff. `watched_titles` has three ways to stop
+    and only two of them prove that, so it says so explicitly via `WatchedRead.covers_window` rather
+    than leaving the caller to assume it.
+
+    Tested here rather than in `test_watch_cache.py` because both halves have to be REAL: the cache's
+    own tests mock the reader, and a mocked reader is free to implement the very assumption under
+    test. This drives the real client over real HTTP into the real cache.
+    """
+
+    _URL = "http://plex.local:32400/library/sections/1/all"
+    _NOW = 1785000000
+
+    def _mock_url(self, mock_plex: PlexClient) -> None:
+        mock_plex._server.url.return_value = self._URL
+
+    def _page(self, rows: list[tuple[int, str, int]], *, size: int, total: int | None, ascending: bool = False) -> str:
+        ordered = sorted(rows, key=lambda r: r[2], reverse=not ascending)
+        videos = "".join(
+            f'<Video ratingKey="{key}" title="{title}" year="2000" viewCount="1" lastViewedAt="{seen}">'
+            f'<Guid id="tmdb://{key}"/></Video>'
+            for key, title, seen in ordered
+        )
+        attrs = f'size="{size}"'
+        if total is not None:
+            attrs += f' totalSize="{total}"'
+        return f"<MediaContainer {attrs}>{videos}</MediaContainer>"
+
+    def _read(self, mock_plex: PlexClient, body: str, *, since_ago: int = 100000):
+        from datetime import UTC, datetime
+
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=body))
+        since = datetime.fromtimestamp(self._NOW - since_ago, tz=UTC)
+        return mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since)
+
+    @respx.mock
+    def test_coverage_is_claimed_when_the_walk_saw_a_title_older_than_the_cutoff(self, mock_plex: PlexClient):
+        """The healthy case: stopping ON a real older timestamp proves everything newer was emitted.
+
+        `total=99` on purpose, well above the three rows returned, so `read_whole_library` stays False
+        and `reached_cutoff` is the SOLE prover. With a matching total both provers fire and this test
+        passes even if `reached_cutoff` is deleted from the expression — while the real-server shape
+        (a 1077-title library where the walk stops on page 1 and never reaches the total) would
+        silently stop claiming coverage, disabling un-watch detection everywhere with a green suite.
+        """
+        rows = [(1, "Today", self._NOW), (2, "Yesterday", self._NOW - 1000), (3, "Ages ago", self._NOW - 9_000_000)]
+
+        read = self._read(mock_plex, self._page(rows, size=3, total=99))
+
+        assert [i.title for i in read.items] == ["Today", "Yesterday"]
+        assert read.covers_window is True
+
+    @respx.mock
+    def test_coverage_is_claimed_when_the_walk_reached_the_reported_total(self, mock_plex: PlexClient):
+        """No title old enough to trip the cutoff, but the server said how many there were and we
+        read them all — so there was nothing left to miss."""
+        rows = [(1, "Today", self._NOW), (2, "Yesterday", self._NOW - 1000)]
+
+        read = self._read(mock_plex, self._page(rows, size=2, total=2))
+
+        assert [i.title for i in read.items] == ["Today", "Yesterday"]
+        assert read.covers_window is True
+
+    @respx.mock
+    def test_coverage_is_REFUSED_when_a_short_page_ends_a_walk_with_no_total(self, mock_plex: PlexClient):
+        """The bug this flag exists for. A server that omits `totalSize` AND caps the container ends
+        the walk on a short page having read only part of the window — indistinguishable, from the
+        cache's side, from the user un-watching everything it did not send."""
+        rows = [(1, "Today", self._NOW), (2, "Yesterday", self._NOW - 1000)]
+
+        read = self._read(mock_plex, self._page(rows, size=2, total=None))
+
+        assert [i.title for i in read.items] == ["Today", "Yesterday"]
+        assert read.covers_window is False, "a short page with no total proves nothing about the window"
+
+    @respx.mock
+    def test_coverage_is_REFUSED_when_the_sort_was_not_honoured(self, mock_plex: PlexClient):
+        """The fallback abandons the sort MID-WALK; pages already read keep whatever order they came
+        in, so one failure taints the whole read rather than just the page that failed."""
+        rows = [(1, "Oldest", self._NOW - 9_000_000), (2, "Middle", self._NOW - 1000), (3, "Newest", self._NOW)]
+
+        read = self._read(mock_plex, self._page(rows, size=3, total=3, ascending=True))
+
+        assert read.covers_window is False
+
+    @respx.mock
+    def test_coverage_is_REFUSED_when_the_order_was_never_actually_observed(self, mock_plex: PlexClient):
+        """A page with one comparable stamp passes the order check without demonstrating anything —
+        `all(pairwise([x]))` is vacuously true. Paired with a capped container and no `totalSize`
+        (the same server shape behind the original bug), the cutoff stop would otherwise claim
+        coverage on the strength of a sort nobody ever saw working."""
+        one_old_stamp = [(1, "Ages ago", self._NOW - 9_000_000)]
+
+        read = self._read(mock_plex, self._page(one_old_stamp, size=1, total=None))
+
+        assert read.items == []
+        assert read.covers_window is False
+
+    @respx.mock
+    def test_a_full_read_never_claims_window_coverage(self, mock_plex: PlexClient):
+        """There is no window to have covered, and the full path replaces the section outright."""
+        self._mock_url(mock_plex)
+        respx.get(self._URL).mock(
+            return_value=httpx.Response(200, text=self._page([(1, "Heat", self._NOW)], size=1, total=1))
+        )
+
+        read = mock_plex.watched_titles("1", MediaType.MOVIE, "TOK")
+
+        assert [i.title for i in read.items] == ["Heat"]
+        assert read.covers_window is False
+
+    @respx.mock
+    def test_a_truncated_walk_does_not_delete_the_cache_it_could_not_read(self, mock_plex, tmp_path):
+        """End to end, both halves real: the exact server shape above, driven into `WatchCache`.
+
+        Before `covers_window` existed this deleted `Older` — a title nobody un-watched — because the
+        walk simply never reached it. That is the failure the flag prevents, and it is invisible to
+        any test that mocks the reader.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import User, WatchedTitle
+        from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
+        from shortlist.server.services.watch_cache import WatchCache
+
+        run_migrations(tmp_path)
+        sessions = make_session_factory(make_engine(tmp_path))
+        with sessions() as session:
+            user = User(username="sarah", slug="sarah", plex_account_id=1, user_type="shared", enabled=True)
+            session.add(user)
+            session.commit()
+            user_id = user.id
+
+        cache = WatchCache(sessions)
+        self._mock_url(mock_plex)
+        # 100s apart, well inside CURSOR_OVERLAP (5 min) — so `Older` really is in the window the
+        # next read covers, and is therefore a genuine deletion candidate. Space them further and the
+        # cursor moves past `Older`, the delete can never reach it, and this test proves nothing.
+        everything = [(1, "Newest", self._NOW), (2, "Older", self._NOW - 100)]
+        person = SimpleNamespace(username="sarah", slug="sarah")
+
+        # Seed: a healthy full read caches both titles.
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything, size=2, total=2)))
+        with sessions() as session:
+            cache.sync_section(
+                session,
+                person,
+                user_id,
+                "1",
+                MediaType.MOVIE,
+                lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
+                force_full=True,
+            )
+            session.commit()
+        with sessions() as session:
+            assert {r.title for r in session.query(WatchedTitle).all()} == {"Newest", "Older"}
+
+        # Now the server truncates: one capped page, no totalSize. `Older` is inside the window the
+        # cursor asks for, but the walk stops before reaching it.
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._page(everything[:1], size=1, total=None)))
+        with sessions() as session:
+            cache.sync_section(
+                session,
+                person,
+                user_id,
+                "1",
+                MediaType.MOVIE,
+                lambda since: mock_plex.watched_titles("1", MediaType.MOVIE, "TOK", since=since),
+                now=datetime.now(UTC) + timedelta(seconds=1),
+            )
+            session.commit()
+
+        with sessions() as session:
+            titles = {r.title for r in session.query(WatchedTitle).all()}
+        assert titles == {"Newest", "Older"}, "a title the walk never reached was deleted as an un-watch"

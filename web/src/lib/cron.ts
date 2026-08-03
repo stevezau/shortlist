@@ -188,6 +188,23 @@ function describeDayOfWeek(dow: string): string | null {
 }
 
 /**
+ * The clock time a once-a-day cron fires, as "05:45" — short enough for a chip label.
+ *
+ * Returns null for anything that is not "every day at a fixed time", because a bare "05:45" would
+ * misdescribe a weekday-only cron ("45 5 * * 1", Mondays) or a stepped one ("17 every-4-hours").
+ * The caller falls back to a label with no time in it rather than showing a wrong one.
+ */
+export function dailyCronTime(expression: string): string | null {
+  if (!isValidCron(expression)) return null;
+  const [minute = "", hour = "", dom, month, dow] = expression
+    .trim()
+    .split(/\s+/);
+  if (dom !== "*" || month !== "*" || dow !== "*") return null;
+  if (!/^\d+$/.test(minute) || !/^\d+$/.test(hour)) return null;
+  return `${hour.padStart(2, "0")}:${minute.padStart(2, "0")}`;
+}
+
+/**
  * A cron expression as a sentence — "Every 4 hours, at 17 minutes past".
  *
  * Covers the shapes the pickers can produce plus the common hand-written ones. Returns "" for an

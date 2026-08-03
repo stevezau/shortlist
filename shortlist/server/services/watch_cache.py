@@ -5,11 +5,20 @@ was read COMPLETE — per user, per library, 500 titles a page with full metadat
 nightly sync and then again inside every run. On a 40-user server that is hundreds of large XML
 responses a night for a set that changes by a handful of items.
 
-**The rule that keeps it correct.** An incremental read is a partial answer by construction: Plex's
-``lastViewedAt>=`` filter cannot show a title that was un-watched, deleted, or whose timestamp never
-moved. So the cache is never treated as authoritative — ``last_full_at`` drives a periodic COMPLETE
-re-read that replaces the section outright. Incremental is an optimisation on top of a full read, not
-a replacement for one.
+**The rule that keeps it correct.** An incremental read is a partial answer by construction: it cannot
+show a title that was un-watched, deleted, or whose timestamp never moved. So the cache is never
+treated as authoritative — ``last_full_at`` drives a periodic COMPLETE re-read that replaces the
+section outright. Incremental is an optimisation on top of a full read, not a replacement for one.
+
+**Un-watching.** Removal happens at three different scopes, because no cheaper one subsumes the next:
+
+* within the incremental window, a cached title the read did not return is dropped — but only when
+  the read PROVES it covered that window (`WatchedRead.covers_window`). A truncated walk looks
+  identical from here, so unproven coverage tops up and deletes nothing;
+* outside it, only the periodic full read can notice, since nothing in an incremental response
+  points at a title watched before the cursor;
+* whole libraries removed from the server are swept by `forget_dead_sections`, which the full read
+  cannot do — it only ever replaces sections it successfully read.
 """
 
 from __future__ import annotations
@@ -112,21 +121,37 @@ class WatchCache:
 
         The cursor is advanced only after `read` returns — a read that raises leaves the cursor
         exactly where it was, so the next attempt re-covers the same ground rather than skipping it.
+
+        `read` may return a `WatchedRead` (what the PMS client gives back) or a bare list of items.
+        A bare list carries no coverage claim, so it never deletes — see `_read_items`.
         """
         now = now or utcnow()
         full = force_full or self.needs_full(session, user_id, section_key, now=now)
         state = _state(session, user_id, section_key)
         since = None if full else _aware(state.cursor_viewed_at) if state else None
 
-        items = read(since)
+        items, covers_window = _read_items(read(since))
 
         if full:
-            # Replace, don't merge: a full read is the ONLY thing that can notice an un-watch or a
-            # deleted title, and merging would keep the very rows it exists to drop.
+            # Replace, don't merge: a full read is the ONLY thing that can notice an un-watch of
+            # something watched long ago, and merging would keep the very rows it exists to drop.
             session.query(WatchedTitle).filter(
                 WatchedTitle.user_id == user_id, WatchedTitle.section_key == section_key
             ).delete(synchronize_session=False)
             session.flush()
+        elif since is not None and covers_window:
+            _drop_vanished_since(session, user_id, section_key, since, items, user.username)
+        elif since is not None:
+            # Read the window but could not prove it read ALL of it — a server that omits `totalSize`
+            # and caps the container, or one whose sort was not honoured. Absence means "we did not
+            # read that far", not "un-watched", so top up and delete nothing. Degrades to exactly the
+            # pre-cache behaviour: a title lingers until the periodic full read, which is a stale row
+            # rather than a deleted one.
+            logger.debug(
+                "watch cache: {} section {} — window coverage unproven, topping up without deleting",
+                user.username,
+                section_key,
+            )
 
         for item in items:
             _upsert(session, user_id, section_key, media_type, item)
@@ -162,6 +187,121 @@ class WatchCache:
             total,
         )
         return SyncOutcome(section_key=section_key, full=full, fetched=len(items), total=total)
+
+    def forget_dead_sections(self, session: Session, user_id: int, live_section_keys: set[str]) -> int:
+        """Drop cached titles and cursors for libraries the server no longer has.
+
+        Nothing else ever removes these. The periodic full read only replaces sections it successfully
+        READ, so a library deleted from the PMS leaves its rows behind for ever — still counted in the
+        watched set, still suppressing recommendations, for titles that no longer exist.
+
+        NOT the same as a library someone simply isn't shared. That one raises `SectionNotShared`, is
+        expected on every sync for every library a person doesn't have, and their history for it is
+        still true — so it is deliberately left alone. Only libraries gone SERVER-wide are swept.
+
+        The cursor goes with the titles: dropping rows but keeping `WatchSyncState` would leave
+        `needs_full` answering False against an empty cache, so a section that came back would stay
+        thin until its next scheduled full read instead of self-healing on the very next sync.
+
+        Returns the number of cached titles dropped.
+        """
+        if not live_section_keys:
+            # An empty library list is far likelier a PMS blip than a server with no libraries, and
+            # acting on it would wipe every cached watch for this person. Do nothing.
+            return 0
+        dropped = (
+            session.query(WatchedTitle)
+            .filter(WatchedTitle.user_id == user_id, WatchedTitle.section_key.notin_(live_section_keys))
+            .delete(synchronize_session=False)
+        )
+        session.query(WatchSyncState).filter(
+            WatchSyncState.user_id == user_id, WatchSyncState.section_key.notin_(live_section_keys)
+        ).delete(synchronize_session=False)
+        if dropped:
+            session.flush()
+            logger.info("watch cache: dropped {} cached title(s) from libraries no longer on the server", dropped)
+        return dropped
+
+
+def _read_items(result) -> tuple[list[WatchedItem], bool]:
+    """Normalise what `read(since)` handed back into (items, covers_window).
+
+    A bare list is treated as NOT covering its window. That is the safe default and it is the honest
+    one: a caller that returns a plain list has made no claim about how much of the window it read,
+    and the only thing the flag gates is deletion. Test doubles and any future history source that
+    yields plain items therefore top up without ever removing anything.
+    """
+    items = getattr(result, "items", result)
+    return list(items), bool(getattr(result, "covers_window", False))
+
+
+def _drop_vanished_since(
+    session: Session,
+    user_id: int,
+    section_key: str,
+    since: datetime,
+    items: list[WatchedItem],
+    username: str,
+) -> int:
+    """Remove cached titles the incremental read should have returned and didn't — an un-watch.
+
+    Only ever called when the read PROVED it covered its window (`WatchedRead.covers_window`) — the
+    walk either saw a timestamp older than the cutoff or reached the library's reported total, with
+    the sort honoured throughout. Under that condition what it returned IS every title in this
+    library viewed at or after `since`, so a cached row inside the same window that the walk did not
+    return is no longer watched: un-watched, or deleted from the library.
+
+    Do NOT relax that guard. A truncated walk looks identical from here — the caller cannot tell an
+    un-watch from "the server stopped sending" — and on a PMS that omits `totalSize` and caps the
+    container, an ordinary quiet night would delete everything else in the window.
+
+    Only the window is authoritative, and that is the limit of what any incremental scheme can do: an
+    un-watch of something viewed BEFORE the cursor leaves no trace in an incremental response at all,
+    so that one still waits for the periodic full read.
+
+    Safe against the missing-timestamp case by construction: a title the PMS reports with no
+    `lastViewedAt` is stamped 1970 by the reader and cached as 1970, so it sits outside every window
+    and this can never delete it — which matters, because the incremental walk skips such a title
+    rather than returning it.
+
+    Args:
+        since: The cutoff handed to the reader. Must be UTC — SQLite strips tzinfo on bind rather
+            than converting, so a non-UTC aware value would compare against UTC rows as if it were
+            UTC. Every caller gets this from `_aware`, which assumes UTC for the naive values SQLite
+            hands back.
+
+    Returns:
+        The number of cached titles dropped.
+    """
+    # Loaded and diffed in Python rather than a `rating_key NOT IN (...)` delete: the window holds
+    # only what was viewed since the cursor (a handful), while the returned set can be the whole
+    # library on a server that reports a total and pages through it — so this is both the smaller
+    # query and the one with no bound-variable ceiling.
+    window = (
+        session.query(WatchedTitle)
+        .filter(
+            WatchedTitle.user_id == user_id,
+            WatchedTitle.section_key == section_key,
+            WatchedTitle.viewed_at >= since,
+        )
+        .all()
+    )
+    if not window:
+        return 0
+    still_watched = {key for key in (_cache_key(item) for item in items) if key is not None}
+    vanished = [row for row in window if row.rating_key not in still_watched]
+    for row in vanished:
+        session.delete(row)
+    if vanished:
+        session.flush()
+        logger.info(
+            "watch cache: {} section {} — dropped {} un-watched title(s): {}",
+            username,
+            section_key,
+            len(vanished),
+            ", ".join(row.title for row in vanished[:5]),
+        )
+    return len(vanished)
 
 
 def _state(session: Session, user_id: int, section_key: str) -> WatchSyncState | None:

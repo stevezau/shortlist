@@ -1,16 +1,15 @@
 ---
-title: Getting started — install Shortlist for Plex with Docker
+title: Install Shortlist for Plex with Docker
 description: Requirements, Docker install, first login and the setup wizard that connects your Plex server and builds each user's first personalized row.
+heading: Getting started
 ---
-
-# Getting started
 
 ## Requirements
 
 - **Plex Media Server 1.43.2.10687 or newer** — this is the version where Plex started honouring
   the setting that hides each row. On anything older, a private row could show up for other people.
   The wizard checks your version before you begin, so you'll know straight away.
-- **Plex Pass** on the server owner's account — the hiding feature is a Pass feature.
+- **Plex Pass** on the server owner's account. The hiding feature is a Pass feature.
 - A **TMDB API key** (free: themoviedb.org → Settings → API).
 
 ### Optional extras
@@ -48,12 +47,12 @@ docker run -d --name shortlist \
   ghcr.io/stevezau/shortlist:latest
 ```
 
-Open `http://your-host:5959`. A fresh install goes straight into the wizard — there is
+Open `http://your-host:5959`. A fresh install goes straight into the wizard. There is
 nothing to sign in to yet. Step 1 connects your Plex account (that's the sign-in, and it's
 what claims the instance for you); from then on Shortlist only opens for that account.
 
 > Set Shortlist up on your own network first. Until you sign in with Plex and link a server,
-> anyone who can open the page could claim it as theirs — so don't put it on the public internet
+> anyone who can open the page could claim it as theirs, so don't put it on the public internet
 > until you've finished the wizard. Once you've claimed it, it's yours.
 
 The wizard has **7 steps**, and the progress bar counts them the same way this list does:
@@ -61,7 +60,7 @@ The wizard has **7 steps**, and the progress bar counts them the same way this l
 1. **Welcome** — a short intro screen. Read it and continue.
 2. **Connect Plex** — sign in with a PIN, then pick your server. Shortlist checks your Plex
    version, Plex Pass, and libraries, and tells you in plain English whether each one is OK.
-3. **Recommendations & history** — choose where picks come from (TMDB, Trakt, AI web search).
+3. **Recommendations & history**. Choose where picks come from (TMDB, Trakt, AI web search).
    Watch history comes straight from Plex with no setup. Tautulli is optional, and only improves
    the names people are shown by.
 4. **Choose your AI provider** — Claude / GPT / Gemini / a local server / **None**. Keys stay
@@ -71,41 +70,52 @@ The wizard has **7 steps**, and the progress bar counts them the same way this l
 6. **Make it yours** — the row's name, how many titles it holds, and how often it refreshes. Each
    row keeps its own schedule; there's no single global one.
 
-   The name can be plain text, or use a placeholder that fills itself in:
-
-   | Placeholder      | Becomes                 | Example                    |
-   | ---------------- | ----------------------- | -------------------------- |
-   | `{library_name}` | the library's name      | "✨ Movies Picked for You" |
-   | `{user}`         | the person's name       | "Sarah's picks"            |
-   | `{top_seed}`     | their current favourite | "Because you watched Dune" |
+   The name can be plain text, or use a placeholder that fills itself in per person, such as
+   `{library_name}`, `{user}` or `{top_seed}`. See [Naming a row](guides/rows.md#naming-a-row)
+   for what each one becomes.
 
 7. **First run** — watch it build, person by person. When it finishes, everyone has their row.
 
 ## Trying it safely
 
-Shortlist is new and modifies real Plex share permissions, so it's fair to want to watch it before
-trusting it. Two ways to de-risk your first run:
+Shortlist is new and it changes real Plex sharing settings, so you may well want to watch it work
+before you trust it. Two ways to do that:
 
 - **Safe mode** — start the container with `-e SHORTLIST_DRY_RUN=1`. Every run then logs exactly what
   it _would_ change and writes **nothing** to Plex. Walk the whole flow, read the run activity, and
   only remove the flag (and recreate the container) once you're happy.
 - **One user first** — on the Users page, disable everyone except a test account, run, then sign in
-  as that account (not the owner — the owner sees every row) and confirm they see only their own row.
+  as that account (not the owner. The owner sees every row) and confirm they see only their own row.
 
 The **first real run is the slowest**: it builds every enabled user's rows and merges every account's
-share filter. Later runs are much faster — most rows are unchanged and skipped.
+share filter. Later runs are much faster. Most rows are unchanged and skipped.
 
 Every row is kept private automatically: it's a labeled collection excluded on every other
 account's share, delivered hidden and only promoted once those exclusions are in place. Your share
 filters are snapshotted before the first change, so **Uninstall** (Settings → Danger Zone) puts them
-back exactly as they were. This hiding relies on Plex Media Server ≥ 1.43.2.10687 — older builds
+back exactly as they were. This hiding relies on Plex Media Server ≥ 1.43.2.10687. Older builds
 ignore the label exclusion, which is why the wizard surfaces your version before you begin.
 
-## The one honest caveat
+## One thing you should know
 
-You're in the user list too, so you can give yourself a row like anyone else — on a one-person
+You're in the user list too, so you can give yourself a row like anyone else. On a one-person
 server that's the whole point.
 
 What Plex cannot do is hide collections from the **server owner**: your own Home shows every user's
 row, not just yours. If you share the server with other people and want a clean Home, watch on a
 Plex Home user and keep the admin account for administration.
+
+## You're set up. What now?
+
+Everyone has a row and it will refresh on its own. Worth doing next:
+
+- **Check it landed.** Sign in as somebody who isn't you and confirm they see their row, and only
+  theirs. The owner account sees everybody's, so it can't tell you this.
+- **Add another kind of row.** "Picked for You" is one of eight templates.
+  See [Rows and templates](guides/rows.md).
+- **Decide how often rows change.** Each row keeps its own schedule.
+  See [Schedules](guides/schedules.md).
+- **Let it fill gaps in your library.** Shortlist can ask Radarr or Sonarr for titles your people
+  want but you don't have. See [Requests](guides/requests.md).
+
+If a row doesn't turn up, [Troubleshooting](guides/troubleshooting.md) lists what usually causes it.

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -75,18 +76,45 @@ MAX_INBOX = 500
 
 
 @router.get("")
-def list_requests(request: Request) -> list[RequestCandidateOut]:
+def list_requests(
+    request: Request,
+    wanted_by: Annotated[
+        list[str] | None,
+        Query(description="Only titles at least one of these people wanted (the `wanters` usernames)."),
+    ] = None,
+) -> list[RequestCandidateOut]:
     """The whole inbox: pending first (most-wanted, best-rated on top), then sent, then rejected.
 
     Rows the owner cleared from the Sent log (``hidden``) are excluded — they stay in the DB as sent
     tombstones (so the title isn't re-requested) but never show in the UI again.
 
-    Capped at :data:`MAX_INBOX`. The cap is applied AFTER the status sort, in Python, because the
-    ordering is by (status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows
-    rather than the oldest history.
+    Args:
+        request: The FastAPI request, for the session factory.
+        wanted_by: Repeated query parameter (``?wanted_by=sarah&wanted_by=mike``) naming the people
+            whose titles to keep — matched against ``wanters``, which holds bare Plex usernames.
+            A title is kept if ANY of the named people wanted it (union, not intersection), matching
+            what the inbox's "Wanted by" chips mean. Omitted (or empty) means everyone, which is the
+            unfiltered inbox — no caller that leaves it off sees any change.
+
+    Returns:
+        The matching rows, capped at :data:`MAX_INBOX`.
+
+    The cap is applied AFTER the status sort, in Python, because the ordering is by
+    (status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows rather than
+    the tail of the history. ``wanted_by`` is applied BEFORE the cap — a filter applied to the capped
+    page could only ever search the 500 rows the cap left, and "what does this new person still
+    need?" is precisely the question that wants everything on file for one person.
+
+    The name filter runs in Python rather than SQL: the read below is already unbounded (`.all()`
+    over every non-hidden row — the cap bounds the PAYLOAD, not the query), so filtering the rows
+    already in memory costs nothing extra, and it avoids depending on SQLite's JSON1 `json_each` to
+    ask whether a JSON array column contains a value.
     """
+    wanted = {name for name in (wanted_by or []) if name}
     with request.app.state.sessions() as session:
         rows = session.query(RequestCandidate).filter(~RequestCandidate.hidden).all()
+    if wanted:
+        rows = [r for r in rows if wanted.intersection(r.wanters or ())]
     rows.sort(key=lambda r: (_STATUS_ORDER.get(r.status, 9), -r.demand, -r.rating))
     rows = rows[:MAX_INBOX]
     return [

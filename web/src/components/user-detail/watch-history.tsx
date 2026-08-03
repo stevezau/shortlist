@@ -25,7 +25,13 @@ function episodeLabel(item: WatchItem): string | null {
  *  to a separate settings panel to retype a title that's already on screen is the kind of small
  *  friction that means the feature never gets used.
  */
-export function WatchHistory({ userId, user }: { userId: number; user?: User }) {
+export function WatchHistory({
+  userId,
+  user,
+}: {
+  userId: number;
+  user?: User;
+}) {
   const query = useUserHistory(userId);
   const block = useBlockSeed(userId);
   const alreadyBlocked = new Set(
@@ -87,7 +93,7 @@ export function WatchHistory({ userId, user }: { userId: number; user?: User }) 
                         className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
                         disabled={block.isPending}
                         title={`Stop "${item.title}" shaping their picks`}
-                        aria-label={`Block ${item.title} as a seed`}
+                        aria-label={`Block ${item.title} — stop it shaping their picks`}
                         onClick={() =>
                           block.mutate({
                             tmdbId: item.tmdb_id as number,

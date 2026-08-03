@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from shortlist.engine.rows import ROW_ORDERS
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.db.models import User
 from shortlist.server.settings_store import SettingsStore
@@ -42,6 +43,7 @@ COLLECTION_KEYS = {
     "freshness",
     "recent_count",
     "max_seeds",
+    "seed_window",
     "pick_order",
     "placement",
     "placement_friends",
@@ -116,6 +118,63 @@ class TestCollectionsSeed:
             from shortlist.server.db.models import Collection
 
             assert session.query(Collection).filter_by(slug="picked").one().name == "✨ Picked for You"
+
+    def test_default_row_never_stores_its_own_name_template(self, client: TestClient):
+        """The rename screen sends `name` AND `name_template` — right for every other row, wrong here.
+
+        The default row's title is the global `row.name_template`. The engine already forces this
+        column empty when it builds specs, so a stored value never reaches Plex — but the report
+        service used to prefer it, so a row carrying one showed a stale name for ever once Settings →
+        Defaults moved on. The guard is server-side rather than in the caller: any client sending the
+        field would otherwise put the row back into that state.
+        """
+        client.put("/api/settings", json={"values": {"row.name_template": "✨ {library_name} Picked for You"}})
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+
+        r = client.patch(
+            f"/api/collections/{picked['id']}",
+            json={"name": "✨ {library_name} Handpicked", "name_template": "✨ {library_name} Handpicked"},
+        )
+        assert r.status_code == 200
+
+        # The global moved; the row's own column did not.
+        assert client.get("/api/settings").json()["row.name_template"] == "✨ {library_name} Handpicked"
+        with client.app.state.sessions() as session:
+            from shortlist.server.db.models import Collection
+
+            assert session.query(Collection).filter_by(slug="picked").one().name_template == ""
+
+        # The rename SCREEN does not stop at the PATCH — it immediately POSTs /rename with the same
+        # template. Guarding only the PATCH left the column cleared for exactly one request.
+        client.post(
+            f"/api/collections/{picked['id']}/rename",
+            json={"name_template": "✨ {library_name} Handpicked", "old_template": ""},
+        )
+        with client.app.state.sessions() as session:
+            from shortlist.server.db.models import Collection
+
+            assert session.query(Collection).filter_by(slug="picked").one().name_template == ""
+
+    def test_default_row_never_serves_a_stale_name_template(self, client: TestClient):
+        """A database written before the guard still carries a value; the API must not ship it.
+
+        The SPA reads `name_template || name` in three places, so a stale column would show a title
+        Plex no longer uses — and the rename screen would send it as `old_template`, match nothing,
+        report "renamed 0 collections", and leave the next run to build a second collection beside
+        the old one.
+        """
+        from shortlist.server.db.models import Collection
+
+        client.put("/api/settings", json={"values": {"row.name_template": "✨ {library_name} Picked for You"}})
+        with client.app.state.sessions() as session:
+            session.query(Collection).filter_by(slug="picked").update({Collection.name_template: "✨ Stale Name"})
+            session.commit()
+
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        assert picked["name_template"] == ""
+        # `name` for this row IS the global template (delivery renders it per library), so the SPA's
+        # `name_template || name` now lands on the live value instead of the stale column.
+        assert picked["name"] == "✨ {library_name} Picked for You"
 
     def test_editing_the_default_rows_name_writes_the_global_template_and_reconciles(
         self, client: TestClient, monkeypatch
@@ -238,6 +297,29 @@ class TestCollectionsSeed:
         # A row that never set one keeps None, so the engine falls back to its own budget.
         assert next(s for s in specs if s.slug == "picked").max_seeds is None
 
+    def test_per_row_seed_window_round_trips_and_reaches_the_spec(self, client: TestClient):
+        """How many recent watches a row cycles between. Unlike max_seeds it is NOT nullable — there
+        is no global to inherit, because whether a row rotates belongs to what that row is."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Cycling Row", "seed_window": 3})
+        assert created.status_code == 201 and created.json()["seed_window"] == 3
+        assert client.post("/api/collections", json={"name": "X", "seed_window": 0}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "seed_window": 21}).status_code == 422
+
+        cid = created.json()["id"]
+        patch = {"name": "Cycling Row"}
+        assert client.patch(f"/api/collections/{cid}", json={**patch, "seed_window": 5}).json()["seed_window"] == 5
+        client.patch(f"/api/collections/{cid}", json={**patch, "seed_window": 3})
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        assert next(s for s in specs if s.slug == "cycling_row").seed_window == 3
+        # A row that never set one takes their most recent watch — the behaviour before cycling existed.
+        assert next(s for s in specs if s.slug == "picked").seed_window == 1
+
     def test_global_max_seeds_is_bounded_and_defaults_to_the_engines_own(self, client: TestClient):
         """The server-wide seed budget: bounds, round-trip, and a default that matches the engine's.
 
@@ -279,6 +361,33 @@ class TestCollectionsSeed:
         spec = next(s for s in specs if s.slug == "top_row")
         assert spec.placement == "library" and spec.pin_top is True
         assert spec.show_library and not spec.show_home  # library-only
+
+    @pytest.mark.parametrize("order", ROW_ORDERS)
+    def test_every_pick_order_round_trips_and_reaches_the_spec(self, order, client: TestClient):
+        """Each order the engine implements must survive the whole path: POST -> DB -> RowSpec.
+
+        Parametrized over `ROW_ORDERS` — the engine's own tuple — rather than a list written out
+        here, so adding a seventh order without widening the API's `ORDERS` set fails this test
+        instead of shipping a value the engine honours but the API rejects with a 422.
+        """
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": f"Order {order}", "pick_order": order})
+        assert created.status_code == 201, f"the API rejected {order!r}: {created.json()}"
+        assert created.json()["pick_order"] == order
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        spec = next(s for s in specs if s.slug == created.json()["slug"])
+        assert spec.pick_order == order, f"{order!r} did not reach the engine spec"
+
+    def test_an_unknown_pick_order_is_rejected(self, client: TestClient):
+        """The closed set is what stops a typo silently delivering in rank order for ever — the
+        engine's `_apply_order` falls back to the ranking rather than raising, so nothing downstream
+        would ever report it."""
+        assert client.post("/api/collections", json={"name": "X", "pick_order": "bogus"}).status_code == 422
 
     def test_an_all_surfaces_off_placement_round_trips(self, client: TestClient):
         """ "off" must survive the API — the UI's all-switches-off state has nowhere else to go, and
@@ -1778,3 +1887,164 @@ class TestClearDeletedRows:
         client.cookies.delete(SESSION_COOKIE)
         assert client.get("/api/report/deleted-rows").status_code == 401
         assert client.delete("/api/report/deleted-rows").status_code == 401
+
+
+class TestRowEffectiveness:
+    """`GET /api/collections/{id}/effectiveness` — is one row working?
+
+    The value under test is the MATURITY rule. A pick only counts as a hit if it is watched within
+    `HIT_WINDOW_DAYS`, so a rate computed over picks younger than that reads as failure for no
+    reason but time — and this panel sits beside the settings someone would then go and change.
+    """
+
+    def _picks(self, client: TestClient, slug: str, specs: list[tuple[int, int, bool, str]]) -> None:
+        """specs = (tmdb_id, days_ago, watched, library)."""
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import PickRow, Run
+
+        with client.app.state.sessions() as session:
+            uid = session.query(User).order_by(User.id).first().id
+            run = Run(trigger="manual", status="ok")
+            session.add(run)
+            session.flush()
+            now = datetime.now(UTC)
+            for tmdb_id, days_ago, watched, library in specs:
+                created = now - timedelta(days=days_ago)
+                session.add(
+                    PickRow(
+                        run_id=run.id,
+                        user_id=uid,
+                        tmdb_id=tmdb_id,
+                        media_type="movie",
+                        rating_key=tmdb_id,
+                        rank=1,
+                        collection_slug=slug,
+                        library=library,
+                        title=f"T{tmdb_id}",
+                        created_at=created,
+                        watched_at=created if watched else None,
+                    )
+                )
+            session.commit()
+
+    def _row_id(self, client: TestClient, slug: str = "picked") -> int:
+        return next(c["id"] for c in client.get("/api/collections").json() if c["slug"] == slug)
+
+    def test_a_row_that_never_delivered_says_so_rather_than_scoring_zero(self, client: TestClient):
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["first_delivered_at"] is None
+        assert body["matured"] is None
+        assert body["delivered"] == 0
+
+    def test_picks_too_young_to_judge_are_counted_but_not_scored(self, client: TestClient):
+        """The whole point. Five picks delivered yesterday, none watched — that is 0%, and reporting
+        it would send someone to change settings that were never the problem."""
+        self._picks(client, "picked", [(i, 1, False, "Movies") for i in range(1, 6)])
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["delivered"] == 5, "young picks still count towards the size"
+        assert body["matured"] is None, "but they must not produce a rate"
+        assert body["first_delivered_at"] is not None
+
+    def test_a_matured_cohort_is_scored_and_excludes_the_young(self, client: TestClient):
+        # Four matured (2 watched), plus two delivered yesterday that must not dilute the rate.
+        self._picks(
+            client,
+            "picked",
+            [
+                (1, 60, True, "Movies"),
+                (2, 60, True, "Movies"),
+                (3, 60, False, "Movies"),
+                (4, 60, False, "Movies"),
+                (5, 1, False, "Movies"),
+                (6, 1, False, "Movies"),
+            ],
+        )
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["delivered"] == 6, "all time counts everything"
+        assert body["matured"]["delivered"] == 4, "the score ignores picks that have not had their window"
+        assert body["matured"]["watched"] == 2
+        assert body["matured"]["rate"] == 0.5
+
+    def test_each_library_is_scored_separately(self, client: TestClient):
+        """A row across two libraries is two Plex collections, and the Movies half landing while the
+        TV half does not is the most actionable thing this panel can say."""
+        self._picks(
+            client,
+            "picked",
+            [(1, 60, True, "Movies"), (2, 60, True, "Movies"), (3, 60, False, "TV Shows"), (4, 60, False, "TV Shows")],
+        )
+
+        by_library = {
+            lib["library"]: lib
+            for lib in client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()["per_library"]
+        }
+
+        assert by_library["Movies"]["rate"] == 1.0
+        assert by_library["TV Shows"]["rate"] == 0.0
+
+    def test_another_row_s_history_is_not_counted(self, client: TestClient):
+        self._picks(client, "someone_else", [(1, 60, True, "Movies")])
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["delivered"] == 0
+
+    def test_an_unknown_row_is_a_404(self, client: TestClient):
+        assert client.get("/api/collections/9999/effectiveness").status_code == 404
+
+    def test_the_runs_count_matches_the_run_list_the_tile_links_to(self, client: TestClient):
+        """The Runs tile is a LINK to `/api/runs?collection=<slug>`, so the number on it has to be
+        the length of that list. A tile reading 3 above a list of 1 is worse than no tile."""
+        self._picks(client, "picked", [(1, 40, True, "Movies")])
+        self._picks(client, "picked", [(2, 20, False, "Movies")])
+        self._picks(client, "someone_else", [(3, 10, False, "Movies")])
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+        listed = client.get("/api/runs", params={"collection": "picked"}).json()
+
+        assert body["runs"] == 2, "one run per _picks call, and the other row's run is not ours"
+        assert body["runs"] == len(listed), "the tile and the list it opens must agree"
+
+    def test_the_runs_count_drops_a_run_that_has_been_pruned(self, client: TestClient):
+        """`runs.retention` deletes old runs and leaves the picks behind with a null `run_id`
+        (migration 0040). Both the count and the list it links to then stop claiming that run —
+        the alternative is a tile that counts history nobody can open."""
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import Run
+        from shortlist.server.services.run_persistence import prune_runs
+
+        self._picks(client, "picked", [(1, 40, True, "Movies")])
+        self._picks(client, "picked", [(2, 20, False, "Movies")])
+        # Age the first run past retention and prune it the way the real job does, rather than
+        # deleting the row by hand — the behaviour under test is `prune_runs` nulling `run_id`.
+        with client.app.state.sessions() as session:
+            oldest = session.query(Run).order_by(Run.id).first()
+            oldest.started_at = datetime.now(UTC) - timedelta(days=400)
+            session.commit()
+            assert prune_runs(session, retention_months=1) == 1
+            session.commit()
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+        listed = client.get("/api/runs", params={"collection": "picked"}).json()
+
+        assert body["runs"] == 1 == len(listed)
+        assert body["delivered"] == 2, "the picks themselves outlive their run"
+
+    def test_last_delivered_at_is_the_most_recent_delivery(self, client: TestClient):
+        """`first_delivered_at` tells "never run" from "ran once"; this tells "ran last night" from
+        "ran in March and has been idle since", which is the one a stalled row shows up in."""
+        from datetime import UTC, datetime, timedelta
+
+        self._picks(client, "picked", [(1, 60, False, "Movies"), (2, 3, False, "Movies")])
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["first_delivered_at"] < body["last_delivered_at"]
+        assert body["last_delivered_at"].startswith((datetime.now(UTC) - timedelta(days=3)).strftime("%Y-%m-%d"))

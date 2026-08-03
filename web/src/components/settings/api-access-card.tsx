@@ -135,7 +135,7 @@ export function ApiAccessCard() {
                 </Button>
                 <Button
                   variant="ghost"
-                  className="text-destructive hover:text-destructive"
+                  className="text-destructive-text hover:text-destructive-text"
                   onClick={() => revoke.mutate()}
                   loading={revoke.isPending}
                 >
@@ -157,7 +157,7 @@ export function ApiAccessCard() {
           )}
 
           {(create.isError || revoke.isError) && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-text">
               {apiErrorMessage(
                 create.error ?? revoke.error,
                 "Something went wrong. Try again.",

@@ -30,7 +30,7 @@ export function JobDetail({ job }: { job: Job }) {
   return (
     <div className="space-y-2 border-t bg-muted/20 px-4 py-3 text-sm">
       {job.error && (
-        <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-destructive">
+        <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-destructive-text">
           {job.error}
         </p>
       )}
@@ -64,7 +64,7 @@ function HistoryRow({ job, first }: { job: Job; first: boolean }) {
         {job.status === "failed" && (
           <TriangleAlert
             aria-hidden="true"
-            className="size-4 shrink-0 text-destructive"
+            className="size-4 shrink-0 text-destructive-text"
           />
         )}
         {job.status === "running" && (
@@ -114,7 +114,7 @@ export function JobHistory({ kind }: { kind: string }) {
   if (jobs.isPending) return <Skeleton className="h-16 w-full" />;
   if (jobs.isError) {
     return (
-      <p role="alert" className="px-1 py-2 text-sm text-destructive">
+      <p role="alert" className="px-1 py-2 text-sm text-destructive-text">
         Couldn&rsquo;t load this job&rsquo;s history.{" "}
         <button
           type="button"

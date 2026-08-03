@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from shortlist.engine.clients.plex_pms import WatchedRead
 from shortlist.engine.models import MediaType, WatchedItem
 from shortlist.server.db.models import User, WatchedTitle, WatchSyncState
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
@@ -55,16 +56,52 @@ def watched(title: str, *, tmdb_id: int, days_ago: float = 1, rating_key=_SAME_A
     )
 
 
-def sync(cache, sessions, user_id, items, *, force_full=False, capture=None):
-    """Run one section sync, recording the `since` the reader was asked for."""
+def sync(cache, sessions, user_id, items, *, force_full=False, capture=None, section=SECTION, covers_window=True):
+    """Run one section sync against a reader that returns `items` verbatim, whatever it was asked for.
+
+    Use `sync_pms` unless the point of the test IS the mismatch: a real incremental read returns
+    everything at or after `since`, including the deliberate overlap, so a reader that answers with
+    only the newest titles is claiming every other title in the window was un-watched.
+
+    `covers_window` is the reader's claim that it returned everything at or after `since` — the only
+    thing that lets the cache delete on absence. Pass False to model a truncated walk.
+    """
 
     def read(since):
         if capture is not None:
             capture.append(since)
-        return items
+        return WatchedRead(items=list(items), covers_window=covers_window and since is not None)
 
     with sessions() as session:
-        outcome = cache.sync_section(session, profile(), user_id, SECTION, MediaType.MOVIE, read, force_full=force_full)
+        outcome = cache.sync_section(session, profile(), user_id, section, MediaType.MOVIE, read, force_full=force_full)
+        session.commit()
+    return outcome
+
+
+def sync_pms(cache, sessions, user_id, library, *, force_full=False, capture=None, section=SECTION):
+    """Run one section sync against a reader modelling a HEALTHY PMS: `library` is what the server
+    holds NOW, the walk returns everything in it viewed at or after `since`, and it claims to have
+    covered the window.
+
+    Un-watching is therefore expressed the way it really happens — the title is simply absent from
+    the library on the next call — rather than by hand-picking what the reader returns.
+
+    This models the IDEAL reader. Whether the real `PlexClient.watched_titles` can actually deliver
+    that coverage — and correctly refuses to claim it when it cannot — is the contract between the
+    client and this cache, and is covered against real HTTP in
+    `test_clients.py::TestWatchedWindowCoverage`.
+    """
+
+    def read(since):
+        if capture is not None:
+            capture.append(since)
+        return WatchedRead(
+            items=[item for item in library if since is None or item.watched_at >= since],
+            covers_window=since is not None,
+        )
+
+    with sessions() as session:
+        outcome = cache.sync_section(session, profile(), user_id, section, MediaType.MOVIE, read, force_full=force_full)
         session.commit()
     return outcome
 
@@ -128,14 +165,20 @@ class TestCorrectness:
             assert [row.title for row in session.query(WatchedTitle).all()] == ["Heat"]
 
     def test_an_incremental_read_keeps_what_it_did_not_ask_about(self, sessions, user_id):
-        """The opposite failure: an incremental top-up must not be mistaken for the whole truth."""
+        """The opposite failure: an incremental top-up must not be mistaken for the whole truth. It
+        merges into what is already cached; only titles inside the window it actually covered are
+        ever removed."""
         cache = WatchCache(sessions)
-        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1, days_ago=30)])
+        library = [watched("Heat", tmdb_id=1, days_ago=30), watched("Dune", tmdb_id=2, days_ago=2)]
+        sync_pms(cache, sessions, user_id, library)
 
-        sync(cache, sessions, user_id, [watched("Dune", tmdb_id=2, days_ago=1)])
+        library.append(watched("Arrival", tmdb_id=3, days_ago=1))
+        asked: list[datetime | None] = []
+        sync_pms(cache, sessions, user_id, library, capture=asked)
 
+        assert asked[0] is not None and asked[0] > library[0].watched_at, "Heat sits outside the window"
         with sessions() as session:
-            assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune", "Arrival"}
 
     def test_re_seeing_a_title_updates_it_rather_than_duplicating_it(self, sessions, user_id):
         """The cursor overlaps deliberately, so every incremental read re-sees a few recent titles."""
@@ -155,8 +198,8 @@ class TestCorrectness:
         everything = [watched(f"T{i}", tmdb_id=i, days_ago=30 - i) for i in range(10)]
 
         cache = WatchCache(sessions)
-        sync(cache, sessions, user_id, everything[:6])
-        sync(cache, sessions, user_id, everything[6:])
+        sync_pms(cache, sessions, user_id, everything[:6])
+        sync_pms(cache, sessions, user_id, everything)
         with sessions() as session:
             incremental = {item.tmdb_id for item in cache.watched_set(session, user_id)}
 
@@ -164,7 +207,7 @@ class TestCorrectness:
             session.query(WatchedTitle).delete()
             session.query(WatchSyncState).delete()
             session.commit()
-        sync(cache, sessions, user_id, everything, force_full=True)
+        sync_pms(cache, sessions, user_id, everything, force_full=True)
         with sessions() as session:
             complete = {item.tmdb_id for item in cache.watched_set(session, user_id)}
 
@@ -222,3 +265,167 @@ class TestCorrectness:
         asked: list[datetime | None] = []
         sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1)], capture=asked)
         assert asked == [None], "the recovery read must send no filter at all"
+
+
+class TestUnwatching:
+    """People un-watch things — a mis-click, the kid's play on the wrong profile, a reset for a
+    rewatch. Removal happens at three scopes and none of them subsumes the next, so each is pinned
+    here separately."""
+
+    def test_an_incremental_read_drops_a_title_un_watched_inside_its_window(self, sessions, user_id):
+        """The read covers its window completely, so a cached title it did not return is not watched."""
+        cache = WatchCache(sessions)
+        library = [watched("Heat", tmdb_id=1, days_ago=2), watched("Dune", tmdb_id=2, days_ago=2)]
+        sync_pms(cache, sessions, user_id, library)
+
+        library.pop()  # Dune un-watched: no lastViewedAt any more, so the walk cannot return it
+        sync_pms(cache, sessions, user_id, library)
+
+        with sessions() as session:
+            assert [row.title for row in session.query(WatchedTitle).all()] == ["Heat"]
+
+    def test_an_un_watch_older_than_the_cursor_waits_for_the_full_read(self, sessions, user_id):
+        """The limit of any incremental scheme, pinned so nobody later mistakes it for a bug: nothing
+        in a response covering the last day points at a title watched a month ago."""
+        cache = WatchCache(sessions)
+        library = [watched("Heat", tmdb_id=1, days_ago=30), watched("Dune", tmdb_id=2, days_ago=1)]
+        sync_pms(cache, sessions, user_id, library)
+
+        library.pop(0)
+        sync_pms(cache, sessions, user_id, library)
+
+        with sessions() as session:
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
+
+        sync_pms(cache, sessions, user_id, library, force_full=True)
+
+        with sessions() as session:
+            assert [row.title for row in session.query(WatchedTitle).all()] == ["Dune"]
+
+    def test_a_title_with_no_watch_timestamp_is_never_dropped_by_the_window(self, sessions, user_id):
+        """A title Plex reports with no `lastViewedAt` is stamped 1970 and SKIPPED by the incremental
+        walk — so it is absent from every incremental response without having been un-watched. 1970
+        sits outside every window, which is the only thing stopping it being deleted on sight."""
+        cache = WatchCache(sessions)
+        no_stamp = WatchedItem(
+            title="Solaris",
+            media_type=MediaType.MOVIE,
+            watched_at=datetime(1970, 1, 1, tzinfo=UTC),
+            tmdb_id=9,
+            rating_key=9,
+        )
+        sync(cache, sessions, user_id, [no_stamp, watched("Heat", tmdb_id=1, days_ago=1)])
+
+        # The reader is right to omit it: the walk skips a no-timestamp title rather than returning it.
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1, days_ago=1)])
+
+        with sessions() as session:
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"Solaris", "Heat"}
+
+    def test_a_title_outside_the_window_survives_a_read_that_returns_nothing(self, sessions, user_id):
+        """The delete must be scoped to the window, not to 'everything the read didn't mention'."""
+        cache = WatchCache(sessions)
+        sync(
+            cache,
+            sessions,
+            user_id,
+            [watched("Heat", tmdb_id=1, days_ago=90), watched("Dune", tmdb_id=2, days_ago=1)],
+        )
+
+        sync(cache, sessions, user_id, [])
+
+        with sessions() as session:
+            titles = {row.title for row in session.query(WatchedTitle).all()}
+        assert titles == {"Heat"}, "the old title was outside the window and must survive"
+
+    def test_a_read_that_cannot_prove_it_covered_the_window_deletes_nothing(self, sessions, user_id):
+        """The guard that keeps a truncated read from reading as a mass un-watch.
+
+        A walk that stopped early looks identical from here: titles are simply absent. On a PMS that
+        omits `totalSize` and caps the container below our page size, an ordinary quiet night would
+        otherwise delete every cached title in the window. Unproven coverage tops up and removes
+        nothing — a stale row, never a deleted one.
+        """
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1, days_ago=2), watched("Dune", tmdb_id=2, days_ago=2)])
+
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1, days_ago=1)], covers_window=False)
+
+        with sessions() as session:
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
+
+    def test_a_reader_that_makes_no_coverage_claim_deletes_nothing(self, sessions, user_id):
+        """A reader returning a bare list — a test double, or any future source that isn't the PMS
+        client — has claimed nothing about how much of the window it read. Silently treating that as
+        full coverage is how this delete path would get re-enabled by accident."""
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1, days_ago=2), watched("Dune", tmdb_id=2, days_ago=2)])
+
+        with sessions() as session:
+            cache.sync_section(
+                session,
+                profile(),
+                user_id,
+                SECTION,
+                MediaType.MOVIE,
+                lambda since: [watched("Heat", tmdb_id=1, days_ago=1)],
+            )
+            session.commit()
+
+        with sessions() as session:
+            assert {row.title for row in session.query(WatchedTitle).all()} == {"Heat", "Dune"}
+
+    def test_one_section_un_watch_does_not_touch_another(self, sessions, user_id):
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1, days_ago=1)], section="1")
+        sync(cache, sessions, user_id, [watched("Dune", tmdb_id=2, days_ago=1)], section="2")
+
+        sync(cache, sessions, user_id, [], section="1")
+
+        with sessions() as session:
+            assert [row.title for row in session.query(WatchedTitle).all()] == ["Dune"]
+
+
+class TestDeadLibraries:
+    """A library removed from the server is swept by nothing else: the periodic full read only ever
+    replaces sections it successfully READ."""
+
+    def test_a_library_no_longer_on_the_server_is_forgotten(self, sessions, user_id):
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1)], section="1")
+        sync(cache, sessions, user_id, [watched("Dune", tmdb_id=2)], section="2")
+
+        with sessions() as session:
+            dropped = cache.forget_dead_sections(session, user_id, {"1"})
+            session.commit()
+
+        assert dropped == 1
+        with sessions() as session:
+            assert [row.title for row in session.query(WatchedTitle).all()] == ["Heat"]
+            assert [state.section_key for state in session.query(WatchSyncState).all()] == ["1"]
+
+    def test_the_cursor_goes_with_the_titles(self, sessions, user_id):
+        """Dropping rows but keeping the cursor would leave `needs_full` answering False against an
+        empty cache, so a library that came back would stay thin until its next scheduled full read."""
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [watched("Dune", tmdb_id=2)], section="2")
+        with sessions() as session:
+            assert cache.needs_full(session, user_id, "2") is False
+
+            cache.forget_dead_sections(session, user_id, {"1"})
+            session.commit()
+
+        with sessions() as session:
+            assert cache.needs_full(session, user_id, "2") is True
+
+    def test_an_empty_library_list_is_treated_as_a_blip_not_an_empty_server(self, sessions, user_id):
+        """Acting on it would wipe every cached watch for everyone on one bad PMS response."""
+        cache = WatchCache(sessions)
+        sync(cache, sessions, user_id, [watched("Heat", tmdb_id=1)])
+
+        with sessions() as session:
+            assert cache.forget_dead_sections(session, user_id, set()) == 0
+            session.commit()
+
+        with sessions() as session:
+            assert session.query(WatchedTitle).count() == 1

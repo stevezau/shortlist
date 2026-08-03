@@ -34,6 +34,7 @@ export function blankInput(): CollectionInput {
     freshness: null,
     recent_count: null,
     max_seeds: null,
+    seed_window: 1,
     pick_order: "best",
     placement: "both",
     placement_friends: "both",
@@ -67,6 +68,7 @@ export function toInput(collection: Collection): CollectionInput {
     freshness: collection.freshness ?? null,
     recent_count: collection.recent_count ?? null,
     max_seeds: collection.max_seeds ?? null,
+    seed_window: collection.seed_window ?? 1,
     pick_order: collection.pick_order ?? "best",
     placement: collection.placement ?? "both",
     placement_friends: collection.placement_friends ?? "both",
@@ -183,6 +185,12 @@ export function rowOverrides(
     parts.push(
       `Built from ${collection.max_seeds} ${collection.max_seeds === 1 ? "watch" : "watches"}`,
     );
+  }
+
+  // 1 = always their most recent watch (the default), so only badge a row that actually cycles —
+  // otherwise the setting is invisible on the rows page and nobody discovers they turned it on.
+  if ((collection.seed_window ?? 1) > 1) {
+    parts.push(`Cycles ${collection.seed_window} recent watches`);
   }
 
   // Only badge when placement differs from the "both" default.

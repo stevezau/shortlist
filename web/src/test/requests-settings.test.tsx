@@ -64,7 +64,9 @@ describe("RequestsSettings", () => {
 
     expect(screen.getByText("Radarr")).toBeTruthy();
     expect(screen.getByText("Sonarr")).toBeTruthy();
-    expect(screen.getByText(/Guardrails/i)).toBeTruthy();
+    // The legend, exactly — the auto-send copy now says "guardrails" too, so a loose regex
+    // matches three nodes.
+    expect(screen.getByText("Guardrails")).toBeTruthy();
   });
 
   it("points to Connections when neither app is connected", async () => {
@@ -157,7 +159,7 @@ describe("RequestsSettings", () => {
     // TMDB needs no external ratings service, so neither the connected note nor the warning belongs
     // here — a regression dropping the `!== "tmdb"` guard would wrongly show one of them.
     renderPanel({ "requests.enabled": true, "requests.rating_source": "tmdb" });
-    expect(await screen.findByText(/Guardrails/i)).toBeTruthy();
+    expect(await screen.findByText("Guardrails")).toBeTruthy();
     expect(screen.queryByText(/Using your MDBList connection/i)).toBeNull();
     expect(screen.queryByText(/MDBList isn.t connected/i)).toBeNull();
   });
@@ -176,5 +178,36 @@ describe("RequestsSettings", () => {
     ).toBeNull();
     expect(await screen.findByText("Quality")).toBeTruthy();
     expect(screen.getByText("Save to")).toBeTruthy();
+  });
+
+  it("teaches the auto-send choice before the guardrails it sits on top of", async () => {
+    renderPanel({ "requests.enabled": true });
+    const autoSend = await screen.findByText(
+      "Send on its own, or ask me first",
+    );
+    const guardrails = screen.getByText("Guardrails");
+    // DOCUMENT_POSITION_FOLLOWING (4): guardrails come AFTER the auto-send fieldset. Read the other
+    // way round, "Minimum rating 7" looked like the bar for requesting at all.
+    expect(
+      autoSend.compareDocumentPosition(guardrails) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("keeps the per-run cap with automatic sending, since that is all it caps", async () => {
+    // `max_per_run` is only ever checked after the auto-send bars (`request_missing`), so with
+    // automatic sending off it can never be reached — and must not read as a limit on the inbox.
+    renderPanel({ "requests.enabled": true, "requests.auto_send": false });
+    expect(await screen.findByText("Guardrails")).toBeTruthy();
+    expect(
+      screen.queryByText(/Most to send automatically in one run/i),
+    ).toBeNull();
+
+    await userEvent.click(
+      screen.getByLabelText(/Send the strongest titles without asking/i),
+    );
+    expect(
+      screen.getByText(/Most to send automatically in one run/i),
+    ).toBeTruthy();
   });
 });

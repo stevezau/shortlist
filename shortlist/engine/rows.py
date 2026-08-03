@@ -71,6 +71,25 @@ def effective_max_seeds(spec: RowSpec, cfg: EngineConfig) -> int:
     return spec.max_seeds if spec.max_seeds is not None else cfg.max_seeds
 
 
+def effective_seed_window(spec: RowSpec) -> int:
+    """How many recent watches this row may cycle between. 1 = always the most recent.
+
+    No global to inherit, unlike `max_seeds`: whether a row rotates is part of what that row is.
+    """
+    return max(1, spec.seed_window or 1)
+
+
+def seed_cycle_offset(row_slug: str, owner_slug: str, run_day: int) -> int:
+    """Which step of the cycle a row is on tonight.
+
+    A STABLE crc32 phase, never Python's per-process-salted ``hash`` — the same reasoning as
+    ``_is_refresh_night``: a phase that moved every restart would re-pick the seed on every run and
+    rebuild the row each time. Adding the phase to the day staggers people, so a server does not
+    re-derive every cycling row on the same night.
+    """
+    return run_day + zlib.crc32(f"{row_slug}|{owner_slug}".encode())
+
+
 def effective_recent_count(spec: RowSpec, cfg: EngineConfig) -> int:
     """How many recent watched titles the web-search source searches for this row: its own budget,
     else the run's. Module-level for the same reason as ``effective_max_seeds`` — a per-person row
@@ -318,12 +337,27 @@ def _reusable_prior(
     return out
 
 
-def _names_a_seed(spec: RowSpec) -> bool:
-    """Whether this row's TITLE claims a particular watch, and so has to keep answering to it."""
-    return "{top_seed}" in spec.name_template
+def _names_a_seed(spec: RowSpec, user: UserProfile, config: EngineConfig) -> bool:
+    """Whether this row's TITLE claims a particular watch, and so has to keep answering to it.
+
+    Reads the EFFECTIVE template, not `spec.name_template`. The DEFAULT row's own column is blank on
+    purpose — its title comes from the global `row.name_template`, which is what the wizard and
+    Settings edit (`context_builder`) — so testing the column alone answered "no" for the one row
+    every new install starts with, and the wizard offers "Because you watched {top_seed}" for
+    exactly that row. It was then neither forced nightly nor rebuilt when its seed moved: the row
+    kept a title naming a watch it was no longer built from, which is the whole bug this guards
+    (issue #57). Worse, the editor computes the same claim from the effective name, so it HID the
+    freshness control and promised "every night" for a row the engine refreshed every eight days.
+
+    `resolve_row_template` is the single source of truth for that precedence, and delivery renders
+    the delivered title through it too — so this now asks the same question the title answers.
+    """
+    return "{top_seed}" in resolve_row_template(spec, user, config)
 
 
-def _seed_moved(spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate]) -> bool:
+def _seed_moved(
+    spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate], user: UserProfile, config: EngineConfig
+) -> bool:
     """Whether a row NAMED after its seed is now built from a different one than last run's picks.
 
     A `{top_seed}` title renders from ``picks[0].seed_title`` (``delivery.render_row_name``), and the
@@ -344,7 +378,7 @@ def _seed_moved(spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate]) ->
     is the title correctly following its lead rather than a stale claim — the two only diverge above
     one seed, where a `{top_seed}` row already names its strongest watch while holding others.
     """
-    if not _names_a_seed(spec) or not prior_valid or not sub:
+    if not _names_a_seed(spec, user, config) or not prior_valid or not sub:
         return False
     current = sub[0].top_seed
     return prior_valid[0].seed_tmdb_id != (current.tmdb_id if current else None)
@@ -396,7 +430,7 @@ def _rated_by_source(picks: list[Pick], ctx: EngineContext) -> dict[tuple[int, M
     return overrides
 
 
-ROW_ORDERS = ("best", "rating", "newest", "shuffle")
+ROW_ORDERS = ("best", "rating", "newest", "shuffle", "new_first", "rotate")
 
 
 def _apply_order(
@@ -407,6 +441,7 @@ def _apply_order(
     user_slug: str,
     run_day: int,
     ratings: dict[tuple[int, MediaType], float] | None = None,
+    new_keys: set[tuple[int, MediaType]] | None = None,
 ) -> list[Pick]:
     """Order a row's picks for delivery. ``best`` (the default) leaves the ranking alone.
 
@@ -417,6 +452,20 @@ def _apply_order(
     ``shuffle`` is deliberately NOT random: it is a stable hash of (row, user, day), so a row shifts
     day to day but a re-run on the same night reproduces the same order. A genuinely random order
     would rewrite the collection on every retry and could never be asserted in a test.
+
+    ``new_first`` leads with the titles that arrived THIS run (in their own rank order), then the
+    survivors in theirs — issue #63's "push new recommendations to the front". `new_keys` is what
+    makes a pick "new"; an empty/None set means nothing arrived, so the order is a no-op. That is the
+    correct answer on the two paths where it happens: a carried-forward night has no newcomers, and a
+    bootstrap build is ALL newcomers, which leaves the ranking's order either way.
+
+    ``rotate`` answers the same issue's "cycle the ones at the top off" — but as a cyclic shift of the
+    display order, NOT as eviction. Eviction belongs to the refresh branch (weakest third out, every
+    `freshness` nights); expressing it here instead would need a second, persisted notion of position
+    and would collide with `rank`, which means match quality and is what `render_row_name` and
+    `_seed_moved` read. Rotating gives what the request was actually after — every title gets a turn
+    at the front, in the ranking's relative order — and gives it EVERY night rather than once per
+    refresh cycle, because this function runs on the carried-forward path too.
 
     Picks missing the value being sorted on (``rating``/``year`` are None or 0 on rows delivered
     before those were recorded) sort last but keep their relative order, so such a row degrades to
@@ -439,6 +488,18 @@ def _apply_order(
         return sorted(picks, key=lambda p: -(p.year or 0))
     if order == "shuffle":
         return sorted(picks, key=lambda p: _shuffle_key(row_slug, user_slug, run_day, p.tmdb_id))
+    if order == "new_first":
+        # Stable, so both groups keep the ranking's relative order inside themselves.
+        arrived = new_keys or set()
+        return sorted(picks, key=lambda p: 0 if (p.tmdb_id, p.media_type) in arrived else 1)
+    if order == "rotate":
+        if not picks:
+            return picks
+        # `run_day` and not a stored cursor: the front advances by the calendar, so a night that is
+        # skipped (a failed run, a paused server) never leaves the row stuck on one title, and a
+        # re-run on the same night reproduces the same order — the same property `shuffle` needs.
+        offset = run_day % len(picks)
+        return picks[offset:] + picks[:offset]
     return picks
 
 
@@ -965,6 +1026,20 @@ class RowPolicy:
         return excluded if rule else None
 
     def effective_freshness(self, spec: RowSpec) -> float:
+        """How often this row re-selects its titles — forced to nightly for a row that follows a watch.
+
+        Freshness is a CADENCE, and a row whose title names a watch (or that cycles between several)
+        is ABOUT recency: at the global default of 0.5 it re-checks its seed every ~8 days, so it goes
+        on claiming "Because you watched X" for a week after the person moved on, and a cycling row
+        advances a step a fortnight instead of a day. Reported as broken twice on issue #57, because
+        from the outside it is indistinguishable from broken.
+
+        Forced rather than merely defaulted, and forced over an explicit stored value too, because the
+        row editor HIDES the freshness control for these rows — honouring a slow value someone saved
+        before that would leave a row stuck with nothing in the UI to explain it or undo it.
+        """
+        if _names_a_seed(spec, self.user, self.cfg) or effective_seed_window(spec) > 1:
+            return 1.0
         return spec.freshness if spec.freshness is not None else self.cfg.freshness
 
     def effective_recent_count(self, spec: RowSpec) -> int:
@@ -988,8 +1063,22 @@ class RowPolicy:
 
         max_seeds is part of the key rather than a slice of a shared list because `derive_seeds`
         balances across media types (each present type keeps >= a third of the budget), so a
-        5-seed list is not the first 5 of a 30-seed one."""
-        key = (spec.media, tuple(sorted(str(k) for k in spec.library_keys)), effective_max_seeds(spec, self.cfg))
+        5-seed list is not the first 5 of a 30-seed one.
+
+        A CYCLING row keys on its window and its own cycle offset too. The offset folds in the row
+        slug, so two cycling rows that match on everything else still derive separately — without it
+        they would share one entry and land on the same watch, which is the opposite of what someone
+        turning this on asked for. A non-cycling row keys exactly as it always did (window 1, offset
+        0), so the common case still shares one derivation across rows."""
+        window = effective_seed_window(spec)
+        offset = seed_cycle_offset(spec.slug, self.user.slug, self.ctx.run_day) if window > 1 else 0
+        key = (
+            spec.media,
+            tuple(sorted(str(k) for k in spec.library_keys)),
+            effective_max_seeds(spec, self.cfg),
+            window,
+            offset,
+        )
         if key not in self.seed_cache:
             relevant = _history_for_row(self.ctx, self.user.history, spec)
             self.seed_cache[key] = derive_seeds(
@@ -997,6 +1086,8 @@ class RowPolicy:
                 self.resolve,
                 max_seeds=effective_max_seeds(spec, self.cfg),
                 blocked=self.user.blocked_seeds,
+                window=window,
+                cycle_offset=offset,
             )
         return self.seed_cache[key]
 
@@ -1271,15 +1362,24 @@ def _build_section_picks(
             keep_watched=spec.rewatch,
         )
         refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, fresh)
+        # Hoisted out of the refresh branch because the `new_first` order needs it on every path: a
+        # pick is "new" if this row was not already carrying it, whichever branch produced it.
+        prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
 
         if prior_valid and not refresh:
-            # Not this row's refresh night: redeliver last run's picks unchanged — no curator call
-            # (saves the tokens), and delivery's unchanged-skip then avoids the Plex write too. Pad
-            # only if a title has since left the library, so the row stays full.
+            # Not this row's refresh night: redeliver last run's picks unchanged, so delivery's
+            # unchanged-skip avoids the Plex write. Pad only if a title has since left the library,
+            # so the row stays full.
+            #
+            # What freshness does NOT save is LLM tokens, though this said it did for a long time and
+            # the claim survived into a cost warning to the owner. The candidate gather — the only
+            # thing that calls a curator — runs in `pools_for` ABOVE this function, before the
+            # refresh check, so it happens on every run at every cadence. `build_picks` is pure
+            # ranking. A slower cadence buys Plex writes, nothing else.
             sec_picks = prior_valid[:k]
             if len(sec_picks) < k and sub:
                 sec_picks = _pad_picks(sec_picks, sub, k)
-        elif prior_valid and not _seed_moved(spec, prior_valid, sub):
+        elif prior_valid and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg):
             # Refresh night: keep the strongest ~two-thirds by RANK (match quality — `prior_valid` is
             # ordered by the persisted rank column, not by how the row was displayed), and swap the
             # rest for genuinely-new titles.
@@ -1287,7 +1387,6 @@ def _build_section_picks(
             # bounce straight back — the internal anti-immediate-repeat guard that replaced staleness_runs.
             keep_n = min(len(prior_valid), round(_KEEP_FRACTION * k))
             kept = prior_valid[:keep_n]
-            prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
             fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
             new_picks = picker.build_picks(fresh_pool, k)
             survivors = kept + [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
@@ -1343,6 +1442,10 @@ def _build_section_picks(
         ranked = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
+        # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the
+        # watched cap and the rewatch reordering above can both backfill titles from `sub` that the
+        # branch never saw — those are new to the row too, and `new_first` has to lead with them.
+        new_keys = {(p.tmdb_id, p.media_type) for p in ranked if (p.tmdb_id, p.media_type) not in prior_ids}
         # "best" is a no-op, which is what keeps the rewatch/watched-cap orderings above intact
         # unless the owner explicitly asked for a different one.
         section_picks[section.key] = _apply_order(
@@ -1352,6 +1455,7 @@ def _build_section_picks(
             user_slug=user.slug,
             run_day=ctx.run_day,
             ratings=ratings,
+            new_keys=new_keys,
         )
         _log_row_provenance(user, spec, section, section_picks[section.key], sub, k)
     return section_picks
@@ -1730,7 +1834,17 @@ def _shared_row(
         logger.info("shared row '{}': no title watched by >= {} people yet", spec.slug, threshold)
         return None
 
-    seeds = derive_seeds(agg_history, resolve, max_seeds=effective_max_seeds(spec, cfg), blocked=agg.blocked_seeds)
+    # A shared row cycles off the row alone — its "owner" is the audience, not a person, so there is no
+    # user slug to stagger by. Everyone sees the same shared row, so there is nothing to stagger.
+    shared_window = effective_seed_window(spec)
+    seeds = derive_seeds(
+        agg_history,
+        resolve,
+        max_seeds=effective_max_seeds(spec, cfg),
+        blocked=agg.blocked_seeds,
+        window=shared_window,
+        cycle_offset=seed_cycle_offset(spec.slug, "", ctx.run_day) if shared_window > 1 else 0,
+    )
     # Same three narrowings a per-person row gets: its sources, its media, its libraries. Routed
     # through the same module-level helpers as the per-person path (not re-inlined) so the two never
     # drift apart — `effective_row_sources` also sorts, so a shared row and a per-person row with the

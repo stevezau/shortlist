@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router";
 
 import { BackLink } from "@/components/back-link";
+import { MAX_SEEDS_LABEL } from "@/components/max-seeds-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,17 +31,25 @@ export function RowRenamePage() {
   const collections = useCollections();
   const collection = collections.data?.find((c) => c.id === collectionId);
   const location = useLocation();
-  const navOldTemplate = (location.state as { oldTemplate?: string } | null)
-    ?.oldTemplate;
+  const navState = location.state as { proposedName?: string } | null;
 
-  // If we arrived from the row-card dialog, oldTemplate is set and we auto-start.
-  // If we arrived from the editor's Rename button, we need to ask first.
-  const [confirmed, setConfirmed] = useState(!!navOldTemplate);
+  // Arriving WITH a proposed name means the editor's Rename button sent us, and that click was the
+  // decision — it is only enabled once the name actually differs from the saved one, and it sits
+  // under a paragraph saying what renaming does. Asking again on arrival made the button mean
+  // "go to a page where you can press rename", which is not what it says.
+  //
+  // Arriving with NO state is someone at the URL directly, who has decided nothing yet: they get
+  // the form. That is the only path that still asks.
+  const autoStart = !!navState?.proposedName?.trim();
+  const [confirmed, setConfirmed] = useState(autoStart);
   const [newName, setNewName] = useState(
-    collection?.name_template || collection?.name || "",
+    // Carried from the editor when you typed a name there, so you don't retype it.
+    navState?.proposedName ||
+      collection?.name_template ||
+      collection?.name ||
+      "",
   );
   const [saving, setSaving] = useState(false);
-  const [oldTemplate, setOldTemplate] = useState(navOldTemplate ?? "");
 
   const [events, setEvents] = useState<RenameEvent[]>([]);
   const [running, setRunning] = useState(false);
@@ -106,17 +115,21 @@ export function RowRenamePage() {
     }
   }
 
-  // Auto-start if we came from the row-card dialog (oldTemplate is set).
-  // Suppressed deliberately: this fires an async mutation on mount, not a state sync. Triggering
-  // work when a condition first holds is exactly what an effect is for.
-  /* eslint-disable react-hooks/set-state-in-effect */
+  // Start as soon as the collection has loaded. `handleSubmit`, NOT `startRename`: the name still
+  // has to be SAVED before it is applied to Plex. The old auto-start called `startRename("", prev)`
+  // because the card's dialog had already saved it on the way here — that dialog is gone, and
+  // reusing its path from the editor would have streamed a rename to the name already on record.
+  //
+  // Guarded by a ref rather than by `running`/`events`, so a re-render between the click and the
+  // first streamed event cannot start a second rename over the top of the first.
+  const started = useRef(false);
   useEffect(() => {
-    if (confirmed && collection && !running && events.length === 0) {
-      startRename("", oldTemplate);
+    if (autoStart && collection && !started.current) {
+      started.current = true;
+      handleSubmit();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [confirmed, collection]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+  }, [autoStart, collection]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -138,7 +151,6 @@ export function RowRenamePage() {
         // straight after a rename that had in fact rewritten every one.
         defer_rename: true,
       });
-      setOldTemplate(prev);
       setConfirmed(true);
       startRename(newName, prev);
     } catch (e) {
@@ -183,9 +195,8 @@ export function RowRenamePage() {
                 A {"{top_seed}"} name promises the row is about one title. By
                 default the row is built from their 30 most recent watches, so
                 the name says one thing and the contents come from thirty. Lower{" "}
-                <strong>Watches to build from</strong> in the row editor to make
-                the name true &mdash; it tells you the right number for this
-                row.
+                <strong>{MAX_SEEDS_LABEL}</strong> in the row editor to make the
+                name true &mdash; it tells you the right number for this row.
               </p>
             )}
           </div>
@@ -208,7 +219,7 @@ export function RowRenamePage() {
       )}
 
       {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive-text">
           {error}
         </div>
       )}

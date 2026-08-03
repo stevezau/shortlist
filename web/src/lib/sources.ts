@@ -36,14 +36,14 @@ export const SOURCES: readonly SourceInfo[] = [
     id: "trakt",
     label: "Trakt — related titles",
     short: "Trakt",
-    desc: "Pulls 'what to watch next' picks from Trakt — often catches titles TMDB's similar list misses.",
+    desc: "Trakt is a site where people log what they watch. This pulls its “watch this next” picks, which often catch titles TMDB's similar list misses.",
     requires: "trakt",
   },
   {
     id: "llm_web",
     label: "AI — web search for what to watch next",
     short: "AI web search",
-    desc: "Searches the live web for current, well-reviewed titles, then keeps the ones already in your library. Uses your AI provider's own web search (Claude, GPT, or Gemini) or an Exa key — choose which under Search backend below.",
+    desc: "Searches the live web for well-reviewed titles to watch next, then keeps only the ones already in your library. Claude, GPT and Gemini do the searching themselves; other providers search through Exa, a search service built for AI. Pick which in Settings → Finding titles.",
     requires: "web_search",
   },
 ];

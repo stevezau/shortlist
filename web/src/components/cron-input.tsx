@@ -58,7 +58,7 @@ export function CronInput({
             )}
           </p>
         ) : (
-          <p className="text-xs text-destructive">
+          <p className="text-xs text-destructive-text">
             Not a schedule we recognise — this won’t be saved.
           </p>
         ))}

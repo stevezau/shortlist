@@ -121,9 +121,7 @@ describe("UsersPage", () => {
     );
     // Nothing happens until the confirm — mirrors the "Disable all" flow.
     expect(setAllUsersEnabled).not.toHaveBeenCalled();
-    expect(
-      screen.getByText(/Give a Picked-for-You row to all 1 users\?/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/Turn on all 1 users\?/i)).toBeTruthy();
 
     // Confirm inside the dialog.
     const dialogConfirm = screen

@@ -211,8 +211,8 @@ export function UserRowsSection({ user }: { user: User }) {
       isEmpty={(rows) => rows.length === 0}
       empty={
         <EmptyState
-          title="No rows reach this person"
-          hint="They aren’t in the audience of any row yet. Add a row, or set its audience to include them, on the Rows page."
+          title="No personal rows for this person"
+          hint="No per-person row includes them yet. Create one, or widen an existing row’s audience to cover them, on the Rows page. (Shared rows — the ones everybody sees — aren’t listed here.)"
           action={
             <Button asChild variant="outline" size="sm">
               <Link to="/rows">Go to Rows</Link>

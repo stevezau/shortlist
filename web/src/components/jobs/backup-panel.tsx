@@ -109,7 +109,7 @@ export function BackupPanel() {
           {restore.data.privacy_note && (
             <p
               role="alert"
-              className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm text-warning-foreground"
+              className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm"
             >
               {restore.data.privacy_note}
             </p>
@@ -125,7 +125,7 @@ export function BackupPanel() {
       {confirmRestore && (
         <p
           role="alert"
-          className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm text-warning-foreground"
+          className="rounded-md border border-warning/40 bg-warning/5 p-2 text-sm"
         >
           Restoring also puts back who could see which rows at the time of the
           backup. If you have narrowed a shared row&rsquo;s audience since then,
