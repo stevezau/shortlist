@@ -38,7 +38,9 @@ const {
 vi.mock("@/lib/api", () => ({
   apiErrorMessage: (_error: unknown, fallback: string) => fallback,
   api: {
-    listRequests: () => listRequests(),
+    // The names go through: the "Wanted by" filter is the SERVER's, applied before its 500-row cap,
+    // so a test that swallowed the argument could not tell it apart from filtering the loaded page.
+    listRequests: (wantedBy?: string[]) => listRequests(wantedBy),
     sendRequests: (ids: number[], dryRun?: boolean) =>
       sendRequests(ids, dryRun),
     rejectRequests: (ids: number[]) => rejectRequests(ids),
@@ -487,6 +489,93 @@ describe("RequestsPage", () => {
     expect(screen.getByText("Sarah Pick")).toBeTruthy();
     expect(screen.getByText("Shared Pick")).toBeTruthy(); // Sarah wanted this one too
     expect(screen.queryByText("Mike Pick")).toBeNull();
+  });
+
+  it("asks the server for the picked names instead of filtering the loaded page", async () => {
+    const loaded = [
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["Sarah"],
+      }),
+      candidate({ id: 2, tmdb_id: 200, title: "Mike Pick", wanters: ["Mike"] }),
+    ];
+    // The server's answer for Sarah carries a title the first read never returned — the shape the
+    // 500-row cap creates, and the one thing filtering the loaded page could never produce.
+    listRequests.mockImplementation((wantedBy?: string[]) =>
+      Promise.resolve(
+        wantedBy?.length
+          ? [
+              loaded[0],
+              candidate({
+                id: 3,
+                tmdb_id: 300,
+                title: "Buried Sarah Pick",
+                wanters: ["Sarah"],
+              }),
+            ]
+          : loaded,
+      ),
+    );
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
+
+    expect(await screen.findByText("Buried Sarah Pick")).toBeTruthy();
+    expect(listRequests).toHaveBeenCalledWith(["Sarah"]);
+    expect(screen.queryByText("Mike Pick")).toBeNull();
+    // Her chip is re-counted from that answer — "(1)" beside two of her titles would be a lie.
+    expect(screen.getByRole("button", { name: "Sarah (2)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Mike (1)" })).toBeTruthy();
+  });
+
+  it("says the page limit applies until a name is picked, then that it doesn't", async () => {
+    // 498 rejected titles the Waiting tab never draws, plus two waiting ones: enough rows for the
+    // server's 500-row cap to be in play without jsdom rendering five hundred cards.
+    const filler = Array.from({ length: 498 }, (_, i) =>
+      candidate({
+        id: 1000 + i,
+        tmdb_id: 1000 + i,
+        title: `Old ${i}`,
+        status: "rejected",
+      }),
+    );
+    const waiting = [
+      candidate({ id: 1, tmdb_id: 1, title: "Sarah Pick", wanters: ["Sarah"] }),
+      candidate({ id: 2, tmdb_id: 2, title: "Mike Pick", wanters: ["Mike"] }),
+    ];
+    listRequests.mockImplementation((wantedBy?: string[]) =>
+      Promise.resolve(
+        wantedBy?.length
+          ? [
+              waiting[0],
+              candidate({
+                id: 3,
+                tmdb_id: 3,
+                title: "Buried Sarah Pick",
+                wanters: ["Sarah"],
+              }),
+            ]
+          : [...waiting, ...filler],
+      ),
+    );
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    expect(
+      screen.getByText(/This page loads the first 500 titles/),
+    ).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Sarah (1)" }));
+    await screen.findByText("Buried Sarah Pick");
+    // The limit described the unfiltered read. It does not describe this one, so it must stop
+    // being shown — that disclosure is what this change exists to retire.
+    expect(
+      screen.queryByText(/This page loads the first 500 titles/),
+    ).toBeNull();
+    expect(
+      screen.getByText(/Showing every title on file for the name you picked/),
+    ).toBeTruthy();
   });
 
   it("takes several people at once, showing anything any of them wanted", async () => {

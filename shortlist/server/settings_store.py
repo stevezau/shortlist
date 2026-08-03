@@ -256,6 +256,21 @@ class SettingsStore:
             row.value = {"v": value}
         self._session.commit()
 
+    def unset(self, key: str) -> bool:
+        """Delete this key's row, putting it back to "never written". Returns whether a row went.
+
+        The counterpart to `has_row`, and the only way to express "use the built-in default" for a
+        cron the UI can switch off: writing "" there means OFF (`scheduler._OFF_ABLE`), so the
+        default is reachable ONLY by removing the row. Storing a blank and deleting the row are
+        different states — see `scheduler._resolve_cron`.
+        """
+        row = self._session.get(Setting, key)
+        if row is None:
+            return False
+        self._session.delete(row)
+        self._session.commit()
+        return True
+
     def all_public(self) -> dict[str, Any]:
         """Everything except secrets; secrets appear redacted when set (UI contract).
 

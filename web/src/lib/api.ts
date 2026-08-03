@@ -211,8 +211,7 @@ export const api = {
     total: number;
     /** True when a run held the writer lock, so the sync is queued rather than done. */
     queued: boolean;
-  }> =>
-    request("/api/users/sync", { method: "POST" }),
+  }> => request("/api/users/sync", { method: "POST" }),
 
   // --- Background jobs ---
   getJobs: (kind?: string, limit = 25): Promise<Job[]> =>
@@ -535,7 +534,15 @@ export const api = {
   },
 
   // --- Requests (Sonarr/Radarr approval inbox) ---
-  listRequests: (): Promise<RequestCandidate[]> => request("/api/requests"),
+  /** The approval inbox. `wantedBy` names the people to keep (bare Plex usernames, as stored in
+   *  `wanters`); the server applies it BEFORE its 500-row cap, so a name reaches the whole history
+   *  rather than the page. Empty/omitted = everyone, the unfiltered inbox. */
+  listRequests: (wantedBy: string[] = []): Promise<RequestCandidate[]> => {
+    const params = new URLSearchParams();
+    for (const name of wantedBy) params.append("wanted_by", name);
+    const query = params.toString();
+    return request(query ? `/api/requests?${query}` : "/api/requests");
+  },
 
   sendRequests: (ids: number[], dryRun = false): Promise<RequestSendResult> =>
     request("/api/requests/send", {

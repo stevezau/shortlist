@@ -67,6 +67,11 @@ def _settings_diff(store: SettingsStore, values: dict[str, object]) -> dict[str,
         # corrections to Plex and can delete a collection, so "who turned it off, and when" has to
         # be answerable (plex-safety rule 10).
         first_switch_off = key in DEFAULT_CRONS and new == "" and not store.has_row(key)
+        # `null` means "back to the built-in default" (the write loop deletes the row). When there is
+        # no row it changes nothing, so it must not audit — otherwise every save of a form that sends
+        # the whole object logs a change that did not happen.
+        if key in DEFAULT_CRONS and new is None and not store.has_row(key):
+            continue
         if old == new and not first_switch_off:
             continue
         changed[key] = {"from": _audit_value(key, old), "to": _audit_value(key, new)}
@@ -321,6 +326,8 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     _validate_values(update.values)
     _reject_blocked_urls(update.values)
     await _reject_a_different_server(request.app.state, update.values)
+    from shortlist.server.scheduler import DEFAULT_CRONS
+
     with request.app.state.sessions() as session:
         store = SettingsStore(session, request.app.state.secrets)
         # Two settings do real work on Plex, so their OLD values are read before the write. Storing
@@ -336,6 +343,13 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         for key, value in update.values.items():
             if key in SECRET_KEYS and value == REDACTED_PLACEHOLDER:
                 continue  # redacted placeholder round-tripped from the UI — no change
+            if value is None and key in DEFAULT_CRONS:
+                # `null` on a schedulable cron means "go back to the built-in default", and the only
+                # way to say that is to REMOVE the row: for `sync.check_cron` a stored blank means
+                # OFF (scheduler._OFF_ABLE), so writing "" would switch the job off, and writing the
+                # default expression would pin a copy of it rather than inherit it.
+                store.unset(key)
+                continue
             store.set(key, value)
         if changed:
             add_audit(session, "settings.change", "info", changed=changed)
@@ -351,8 +365,6 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         # `maintenance.prune_cron` saved the setting and left the live trigger alone until the next
         # container restart — and the drift check is the one schedule the UI offers to switch OFF,
         # so its off switch silently did nothing for the rest of the night.
-        from shortlist.server.scheduler import DEFAULT_CRONS
-
         if set(update.values) & (set(DEFAULT_CRONS) | {"backup.max_keep"}):
             from shortlist.server.scheduler import rebuild_schedule
 

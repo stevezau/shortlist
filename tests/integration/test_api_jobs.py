@@ -537,10 +537,22 @@ class TestScheduleApi:
                 "setting",
                 "cron",
                 "using_default",
+                "default_cron",
                 "optional",
                 "writes_plex",
                 "next_run",
             }, entry["kind"]
+
+    def test_every_job_reports_the_built_in_cron_it_falls_back_to(self, client: TestClient):
+        """The SPA has no copy of `DEFAULT_CRONS` and must not grow one, so the only way it can offer
+        "put this back on its built-in schedule" is for the server to say what that schedule is."""
+        from shortlist.server.scheduler import DEFAULT_CRONS
+
+        jobs = {entry["kind"]: entry for entry in client.get("/api/schedule").json()["jobs"]}
+        assert {entry["setting"]: entry["default_cron"] for entry in jobs.values()} == DEFAULT_CRONS
+        # Not merely non-empty: the value has to be the built-in itself, so a chip labelled with it
+        # names the time the job would actually run at.
+        assert jobs["sync.check"]["default_cron"] == "45 5 * * *"
 
     def test_the_privacy_sync_is_scheduled_by_default(self, client: TestClient):
         """The automatic Privacy Check was removed on 2026-07-16, so nothing verifies hiding after
@@ -601,6 +613,48 @@ class TestScheduleApi:
         assert client.app.state.scheduler.get_job(SYNC_CHECK_JOB_ID) is None, "off means off tonight, not next boot"
         off = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
         assert off["cron"] == "" and off["next_run"] is None
+
+    def test_restoring_the_built_in_default_puts_the_live_trigger_back(self, client: TestClient):
+        """`null` means "use the built-in default" — the only way back once a job is switched off.
+
+        Asserts the LIVE trigger, not that a next_run exists: the job is REMOVED while off, so it
+        has to be registered again, and a job left on a stale registration still reports a next run.
+
+        The other two assertions pin the state the restore has to land in, because several wrong
+        implementations produce the right times:
+        - writing "45 5 * * *" schedules the same minute but PINS a copy of the default, so a later
+          change to the built-in time would never reach this install (`using_default` catches it);
+        - writing `null` into the row instead of deleting it leaves `sync.check_cron` reading back
+          as `None` where every other unset cron reads "" (the settings assertion catches it).
+        """
+        from shortlist.server.scheduler import SYNC_CHECK_JOB_ID
+
+        assert client.put("/api/settings", json={"values": {"sync.check_cron": ""}}).status_code == 200
+        assert client.app.state.scheduler.get_job(SYNC_CHECK_JOB_ID) is None, "off first"
+
+        assert client.put("/api/settings", json={"values": {"sync.check_cron": None}}).status_code == 200
+
+        trigger = str(client.app.state.scheduler.get_job(SYNC_CHECK_JOB_ID).trigger)
+        assert "hour='5'" in trigger and "minute='45'" in trigger, f"not back on the built-in cron: {trigger}"
+        check = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
+        assert check["cron"] == "45 5 * * *"
+        assert check["using_default"] is True, "restored means INHERITING the built-in, not pinning a copy of it"
+        assert client.get("/api/settings").json()["sync.check_cron"] == "", "back to the shape of a never-set cron"
+
+    def test_restoring_a_default_that_is_already_in_force_changes_nothing(self, client: TestClient):
+        """A form that PUTs its whole object must not log a change it did not make (rule 10 is only
+        useful if the change log is all real changes)."""
+        from shortlist.server.db.models import Event
+
+        with client.app.state.sessions() as session:
+            before = session.query(Event).filter_by(scope="settings.change").count()
+
+        assert client.put("/api/settings", json={"values": {"sync.check_cron": None}}).status_code == 200
+
+        with client.app.state.sessions() as session:
+            assert session.query(Event).filter_by(scope="settings.change").count() == before
+        check = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
+        assert check["cron"] == "45 5 * * *" and check["using_default"] is True
 
     def test_every_schedulable_cron_takes_effect_on_save(self, client: TestClient):
         """The trigger set is derived from DEFAULT_CRONS, so a cron added there can never be the next

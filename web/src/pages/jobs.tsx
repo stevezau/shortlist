@@ -140,7 +140,9 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
   const saveSettings = useSaveSettings();
   if (!entry.schedule_setting) return null;
 
-  const save = (cron: string) =>
+  // `null` is not "blank": it deletes the stored cron, which is the only way to say "use the
+  // built-in default" for a schedule where a stored blank means OFF (server: scheduler._OFF_ABLE).
+  const save = (cron: string | null) =>
     saveSettings.mutate(
       { [entry.schedule_setting]: cron },
       {
@@ -182,7 +184,16 @@ function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
     const job = schedule.data.jobs.find((j) => j.kind === entry.kind);
     return (
       <div className="space-y-2">
-        <CronPicker value={job?.cron ?? ""} onChange={save} blankLabel="Off" />
+        <CronPicker
+          value={job?.cron ?? ""}
+          onChange={save}
+          blankLabel="Off"
+          // The way back from Off. The cron comes from the server so the SPA never holds a second
+          // copy of it, and picking it saves `null` rather than a cron, so the setting goes back to
+          // inheriting the built-in time instead of pinning today's value of it.
+          defaultCron={job?.default_cron ?? ""}
+          onRestoreDefault={() => save(null)}
+        />
         <p className="text-xs text-muted-foreground">
           Off means it never runs on its own &mdash; the button on this row
           still works whenever you press it.

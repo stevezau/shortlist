@@ -49,8 +49,9 @@ import { cn } from "@/lib/utils";
 const SETTINGS_LINK = "/settings#requests";
 
 /** The server caps one inbox read at 500 rows (`api/requests.py` MAX_INBOX), sorted waiting → sent →
- *  rejected, so filtering here narrows what was loaded rather than the whole history. Kept in step by
- *  hand: the count is only used to decide whether to say so. */
+ *  rejected. The rating/vote/media refinements below narrow those 500; the "Wanted by" names do not
+ *  — the server applies those BEFORE its cap, so a picked name reaches the whole history. Kept in
+ *  step by hand: the count is only used to decide which of those two things to say. */
 const MAX_LOADED = 500;
 
 function RequestsSkeleton() {
@@ -811,6 +812,17 @@ export function RequestsPage() {
     const offered = new Set(peopleOptions.map((p) => p.name));
     return new Set([...people].filter((name) => offered.has(name)));
   }, [people, peopleOptions]);
+
+  // The names go to the SERVER, which applies them before its 500-row cap — so picking someone
+  // reaches titles the read above never loaded, which is the whole point of the filter ("what does
+  // this new person still need?"). With nobody picked this is the same query key as `requestsQuery`,
+  // so the page still makes one request, not two.
+  const filteredQuery = useRequests([...activePeople]);
+  // What the lists on screen are built from. Until that answer lands — and if it fails — this stays
+  // the loaded page, which `applyPeople` below narrows client-side exactly as it did before, so a
+  // chip never blanks the list while it waits and never leaks someone else's titles into it.
+  const listRows = filteredQuery.data ?? rows;
+
   const applyPeople = <T extends { wanters: string[] }>(list: T[]): T[] =>
     activePeople.size === 0
       ? list
@@ -837,9 +849,33 @@ export function RequestsPage() {
     list.filter((r) => r.rating >= ratingFloor && r.vote_count >= votesFloor);
   const narrow = (list: RequestCandidate[]) =>
     sortRequests(applyThresholds(applyPeople(applyMedia(list))), sort);
-  const pendingShown = narrow(pending);
-  const sentShown = narrow(sent);
-  const rejectedShown = narrow(rejected);
+  // Built from the server's answer, not from `pending`/`sent`/`rejected` — those stay the loaded
+  // page, because the tab counts and the "Wanted by" roster have to keep describing the whole inbox
+  // rather than the slice a picked name narrowed it to.
+  const pendingRows = listRows.filter((r) => r.status === "pending");
+  const sentRows = listRows.filter((r) => r.status === "sent");
+  const rejectedRows = listRows.filter((r) => r.status === "rejected");
+  const pendingShown = narrow(pendingRows);
+  const sentShown = narrow(sentRows);
+  const rejectedShown = narrow(rejectedRows);
+
+  // The count beside a PICKED name is re-read from the server's answer, which isn't capped to this
+  // page — otherwise the chip could say "(12)" beside a list of forty of that person's titles.
+  // Unpicked names keep the loaded page's count; nothing better exists until they're picked.
+  const activeShown =
+    active === "waiting"
+      ? pendingRows
+      : active === "sent"
+        ? sentRows
+        : rejectedRows;
+  const exactCounts = new Map(
+    peopleOn(activeShown, nameOf).map((p) => [p.name, p.count]),
+  );
+  const peopleChips = peopleOptions.map((p) =>
+    activePeople.has(p.name)
+      ? { ...p, count: exactCounts.get(p.name) ?? p.count }
+      : p,
+  );
   // Whether anything is hiding titles right now — drives the "Clear filters" control and the
   // "nothing clears these filters" note. The media split is excluded on purpose: it only renders
   // when both types are present, so it can never be the reason a list is empty.
@@ -964,6 +1000,25 @@ export function RequestsPage() {
                 const showCount = activeFull.length - movieCount;
                 const showMediaFilter = movieCount > 0 && showCount > 0;
 
+                // The page limit says one of two different things, and must not say the wrong one.
+                // Unpicked, the read really is capped and some history is off the page. Once a name
+                // is picked the server re-reads the whole history for those people BEFORE capping,
+                // so the limit no longer describes what's on screen — unless their own titles fill
+                // it. Until that answer arrives (or if it failed) the list is still the loaded page
+                // narrowed here, so the unfiltered note stands.
+                const namesServed =
+                  activePeople.size > 0 && filteredQuery.data !== undefined;
+                const picked =
+                  activePeople.size === 1 ? "the name" : "the names";
+                const capNote =
+                  rows.length < MAX_LOADED
+                    ? null
+                    : !namesServed
+                      ? `This page loads the first ${MAX_LOADED} titles — waiting ones first, then sent, then rejected — so some sent or rejected titles may not be on it at all. Pick a name under “Wanted by” to search every title on file for that person instead.`
+                      : listRows.length >= MAX_LOADED
+                        ? `Showing the first ${MAX_LOADED} titles for ${picked} you picked.`
+                        : `Showing every title on file for ${picked} you picked — not just the ${MAX_LOADED} this page loads.`;
+
                 return (
                   <div className="space-y-6">
                     {!requestsEnabled && <RequestsOffBanner />}
@@ -1048,21 +1103,18 @@ export function RequestsPage() {
                           {activeFull.length > 1 &&
                             peopleOptions.length > 1 && (
                               <PeopleFilter
-                                people={peopleOptions}
+                                people={peopleChips}
                                 selected={activePeople}
                                 onToggle={togglePerson}
                               />
                             )}
                         </div>
                       )}
-                      {/* Only when the cap is actually in play — otherwise it is a warning about a
-                          limit nobody has hit. Filtering can only narrow what was loaded. */}
-                      {rows.length >= MAX_LOADED && (
+                      {/* Only when the cap is actually in play — otherwise it is a note about a
+                          limit nobody has hit. Wording decided above. */}
+                      {capNote && (
                         <p className="text-xs text-muted-foreground">
-                          This page loads the first {MAX_LOADED} titles &mdash;
-                          waiting ones first, then sent, then rejected. Filters
-                          narrow those {MAX_LOADED}, so some sent or rejected
-                          titles may not be on the page at all.
+                          {capNote}
                         </p>
                       )}
                     </div>
@@ -1238,7 +1290,10 @@ export function RequestsPage() {
                           )}
                         </div>
                         {clear.isError && (
-                          <p role="alert" className="text-sm text-destructive-text">
+                          <p
+                            role="alert"
+                            className="text-sm text-destructive-text"
+                          >
                             {apiErrorMessage(
                               clear.error,
                               "That didn't go through. Check the server log and try again.",
@@ -1307,7 +1362,10 @@ export function RequestsPage() {
                           )}
                         </div>
                         {restore.isError && (
-                          <p role="alert" className="text-sm text-destructive-text">
+                          <p
+                            role="alert"
+                            className="text-sm text-destructive-text"
+                          >
                             {apiErrorMessage(
                               restore.error,
                               "That didn't go through. Check the server log and try again.",

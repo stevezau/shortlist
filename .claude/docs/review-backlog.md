@@ -368,10 +368,27 @@ issue #61's "Wanted by" filter, in the same two files.
 
 ### Open — not fixed, with the reason
 
-1. **The `MAX_INBOX = 500` cap is disclosed, not solved.** `list_requests` sorts by
-   (status, −demand, −rating) and truncates to 500, so filtering — the new people filter included —
-   narrows what was loaded, not the whole history. The page now says so, but only once `rows.length`
-   actually reaches 500. A real fix is server-side filtering, which #61 explicitly scoped out.
+1. ~~**The `MAX_INBOX = 500` cap is disclosed, not solved.**~~ CLOSED 2026-08-03 — the "Wanted by"
+   filter is now the SERVER's. `GET /api/requests` takes a repeated `wanted_by` query parameter (one
+   `wanters` username per value, union not intersection) and applies it BEFORE the sort and the cap,
+   so picking a name searches the whole history rather than the 500 rows the page loaded. No
+   parameter means exactly what it meant before. It filters in **Python, not SQL**, on purpose: the
+   handler's read is already `.all()` over every non-hidden row (the cap bounds the payload, not the
+   query), so filtering rows already in memory costs nothing extra — and it avoids depending on
+   SQLite's JSON1 `json_each` to ask whether a JSON array column contains a value.
+
+   Three things worth keeping:
+   - **The cap note now tells one of two truths, and had to be able to tell either.** Unpicked it
+     still says the page loads 500; once a name is picked and the server's answer has landed it says
+     the limit no longer applies — and if that person's own titles fill the cap, it says _that_
+     instead. While the answer is in flight, or if it failed, the old note stands, because the list
+     is still the client-side narrowing of the loaded page (`applyPeople` is deliberately kept in
+     `narrow()` for exactly that window, so a chip never blanks the list or leaks someone else's).
+   - **The roster stays on the unfiltered read.** `peopleOptions` (and the tab counts) come from the
+     unfiltered query, or picking a name would delete every other chip and strand the filter.
+   - **A picked chip's count is re-read from the server's answer.** Otherwise the fix would have
+     introduced a fresh lie — "Sarah (12)" above a list of forty of Sarah's titles.
+
 2. **`ARR_STATUS_LABELS` uses "Not monitored"**, Sonarr/Radarr's own word for a state that means
    "it isn't even looking" (`_status_for`). Kept deliberately — matching the Arr's vocabulary is how
    the owner finds the toggle there — but it is jargon by the letter of the rule.
@@ -461,7 +478,32 @@ it had no control: nothing forced the question. The copy says what the log holds
 share-filter writes, settings changes) and admits there is no screen for it — it is read at
 `GET /api/events/log`, which no SPA page consumes.
 
-**Left open:** restoring the drift check's built-in 05:45 after switching it off means typing a cron
-(or plain English) into Custom — the picker has no chip for it, because the SPA is deliberately not
-allowed a second copy of `DEFAULT_CRONS` (`settings_store.py:144` records what that cost last time).
-Fixing it properly means adding the built-in default to `ScheduleJobOut`, which is an API change.
+**3. CLOSED (2026-08-03) — the way back to the built-in 05:45.** Switching the drift check off used
+to be one-way in practice: the only route back was typing a cron into Custom, because the picker had
+no chip for "the built-in default" and the SPA is deliberately not allowed a second copy of
+`DEFAULT_CRONS` (`settings_store.py:144` records what that cost last time). So the server now says
+what the default is, and the SPA still holds no copy of it:
+
+- `ScheduleJobOut` gained **`default_cron`** — the built-in cron for that job's setting, straight
+  from `DEFAULT_CRONS`. `GET /api/schedule` was already the panel's source for the effective cron,
+  so no new request. (OpenAPI snapshot + `api-schema.d.ts` regenerated.)
+- `CronPicker` gained a **`Built-in (05:45)`** chip, labelled from that cron via `dailyCronTime`,
+  which returns null for anything a bare clock time would misdescribe (weekday-only, stepped) so the
+  chip falls back to plain "Built-in" rather than lying. It only renders where a `defaultCron` is
+  passed — for the other five jobs the blank chip ("Daily") already IS restore-the-default, and two
+  chips for one state would be worse than none.
+- **On the wire, "use the built-in default" is `null`** — `PUT /api/settings
+{"sync.check_cron": null}` DELETES the row. The two obvious alternatives are both wrong, and both
+  are pinned by an assertion: `""` is the OFF switch for this job, and writing `45 5 * * *` pins a
+  copy of today's default (`using_default` would go false, and a later change to the built-in time
+  would never reach the install). `SettingsStore.unset` is the new counterpart to `has_row`.
+
+Both breakages were verified: storing `null` in the row instead of deleting it leaves
+`GET /api/settings` reporting `None` where every other unset cron reads `""`; writing the default
+expression fails the `using_default` assertion. The live-trigger assertion is the one that matters
+most — the job is REMOVED from APScheduler while off, so "restore" has to re-register it, and the
+test reads the trigger string rather than `next_run is not None`.
+
+**Still open here, small:** for the five jobs where blank means default, the chip is labelled
+"Daily" rather than the time it actually runs at ("Built-in (03:00)"). Accurate but vague; now
+cheap to fix, since `default_cron` is on every entry of `GET /api/schedule`.

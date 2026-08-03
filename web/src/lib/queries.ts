@@ -479,8 +479,25 @@ export function useSetUserRowOverride(userId: number) {
   });
 }
 
-export function useRequests() {
-  return useQuery({ queryKey: queryKeys.requests, queryFn: api.listRequests });
+/**
+ * The approval inbox, optionally narrowed to the people named in `wantedBy`.
+ *
+ * The narrowing is the SERVER's, not this page's: `GET /api/requests` applies it before its 500-row
+ * cap, so picking a name searches the whole history rather than the page that happened to load.
+ *
+ * No names keeps the exact key (and URL) the unfiltered inbox has always used, so the page's own
+ * unfiltered read and a `useRequests([])` share one cache entry instead of fetching twice. Names are
+ * sorted into the key so ticking Sarah-then-Mike and Mike-then-Sarah are the same query. Every
+ * mutation invalidates `["requests"]`, which is a prefix of these keys, so filtered reads refresh
+ * with the rest.
+ */
+export function useRequests(wantedBy: string[] = []) {
+  const names = [...wantedBy].sort();
+  return useQuery({
+    queryKey:
+      names.length > 0 ? [...queryKeys.requests, names] : queryKeys.requests,
+    queryFn: () => api.listRequests(names),
+  });
 }
 
 export function useArrStatus() {

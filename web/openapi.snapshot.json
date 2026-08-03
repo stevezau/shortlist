@@ -3871,6 +3871,10 @@
             "title": "Cron",
             "type": "string"
           },
+          "default_cron": {
+            "title": "Default Cron",
+            "type": "string"
+          },
           "description": {
             "title": "Description",
             "type": "string"
@@ -3923,6 +3927,7 @@
           "setting",
           "cron",
           "using_default",
+          "default_cron",
           "optional",
           "writes_plex",
           "next_run"
@@ -6322,8 +6327,31 @@
     },
     "/api/requests": {
       "get": {
-        "description": "The whole inbox: pending first (most-wanted, best-rated on top), then sent, then rejected.\n\nRows the owner cleared from the Sent log (``hidden``) are excluded \u2014 they stay in the DB as sent\ntombstones (so the title isn't re-requested) but never show in the UI again.\n\nCapped at :data:`MAX_INBOX`. The cap is applied AFTER the status sort, in Python, because the\nordering is by (status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows\nrather than the oldest history.",
+        "description": "The whole inbox: pending first (most-wanted, best-rated on top), then sent, then rejected.\n\nRows the owner cleared from the Sent log (``hidden``) are excluded \u2014 they stay in the DB as sent\ntombstones (so the title isn't re-requested) but never show in the UI again.\n\nArgs:\n    request: The FastAPI request, for the session factory.\n    wanted_by: Repeated query parameter (``?wanted_by=sarah&wanted_by=mike``) naming the people\n        whose titles to keep \u2014 matched against ``wanters``, which holds bare Plex usernames.\n        A title is kept if ANY of the named people wanted it (union, not intersection), matching\n        what the inbox's \"Wanted by\" chips mean. Omitted (or empty) means everyone, which is the\n        unfiltered inbox \u2014 no caller that leaves it off sees any change.\n\nReturns:\n    The matching rows, capped at :data:`MAX_INBOX`.\n\nThe cap is applied AFTER the status sort, in Python, because the ordering is by\n(status, demand, rating) and a SQL LIMIT before that sort would cut arbitrary rows rather than\nthe tail of the history. ``wanted_by`` is applied BEFORE the cap \u2014 a filter applied to the capped\npage could only ever search the 500 rows the cap left, and \"what does this new person still\nneed?\" is precisely the question that wants everything on file for one person.\n\nThe name filter runs in Python rather than SQL: the read below is already unbounded (`.all()`\nover every non-hidden row \u2014 the cap bounds the PAYLOAD, not the query), so filtering the rows\nalready in memory costs nothing extra, and it avoids depending on SQLite's JSON1 `json_each` to\nask whether a JSON array column contains a value.",
         "operationId": "list_requests_api_requests_get",
+        "parameters": [
+          {
+            "description": "Only titles at least one of these people wanted (the `wanters` usernames).",
+            "in": "query",
+            "name": "wanted_by",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only titles at least one of these people wanted (the `wanters` usernames).",
+              "title": "Wanted By"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -6338,6 +6366,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "List Requests",

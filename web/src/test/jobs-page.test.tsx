@@ -796,6 +796,8 @@ describe("JobsPage — the schedule panel for a job you can switch off", () => {
           setting: "sync.check_cron",
           cron,
           using_default: cron !== "",
+          // The built-in cron, which the server reports precisely so the SPA never holds a copy.
+          default_cron: "45 5 * * *",
           optional: true,
           writes_plex: true,
           next_run: cron ? "2026-08-01T05:45:00Z" : null,
@@ -849,10 +851,50 @@ describe("JobsPage — the schedule panel for a job you can switch off", () => {
     renderPage();
     const row = await openDriftCheck();
 
-    // 05:45 is no preset, so it lands in the custom box — the effective cron from /api/schedule,
-    // which is the only place the built-in default is resolved.
-    const input = await within(row).findByPlaceholderText("every 4 hours");
-    expect((input as HTMLInputElement).value).toBe("45 5 * * *");
+    // Nothing is stored, so `GET /api/settings` reads "" here — the same "" that means OFF. The
+    // panel reads the EFFECTIVE cron from /api/schedule instead, which is the only place the
+    // built-in default is resolved, and lands on the built-in chip rather than Off.
+    const builtIn = await within(row).findByRole("button", {
+      name: "Built-in (05:45)",
+    });
+    expect(builtIn.getAttribute("aria-pressed")).toBe("true");
+    expect(
+      within(row)
+        .getByRole("button", { name: "Off" })
+        .getAttribute("aria-pressed"),
+    ).toBe("false");
+  });
+
+  it("labels the built-in chip with the time the server says it runs at", async () => {
+    // A chip that just said "Built-in" would not tell you what switching back to it does, and the
+    // SPA cannot know 05:45 on its own — a second copy of the server's DEFAULT_CRONS is how the
+    // drift check came to be documented as off-by-default while it ran nightly.
+    getSchedule.mockResolvedValue({
+      jobs: [{ ...scheduleWithCheck("").jobs[0], default_cron: "30 2 * * *" }],
+      rows: [],
+    });
+    renderPage();
+    const row = await openDriftCheck();
+
+    expect(
+      await within(row).findByRole("button", { name: "Built-in (02:30)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("saves null when the built-in chip is chosen, not a blank and not a copy of the cron", async () => {
+    // The three values are three different states: "" is OFF for this job, "45 5 * * *" PINS a copy
+    // of today's default, and null deletes the row — the only one that means "inherit the built-in".
+    getSchedule.mockResolvedValue(scheduleWithCheck(""));
+    renderPage();
+    const row = await openDriftCheck();
+
+    await userEvent.click(
+      await within(row).findByRole("button", { name: "Built-in (05:45)" }),
+    );
+
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith({ "sync.check_cron": null }),
+    );
   });
 
   it("saves a blank cron when Off is chosen — the value the scheduler reads as off", async () => {
@@ -890,5 +932,8 @@ describe("JobsPage — the schedule panel for a job you can switch off", () => {
       within(row).getByRole("button", { name: "Daily" }),
     ).toBeInTheDocument();
     expect(within(row).queryByRole("button", { name: "Off" })).toBeNull();
+    // And no second way back to the default: Daily already IS it here, so a Built-in chip beside it
+    // would be two chips for one state.
+    expect(within(row).queryByRole("button", { name: /Built-in/ })).toBeNull();
   });
 });

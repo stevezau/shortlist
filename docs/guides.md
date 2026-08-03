@@ -452,7 +452,7 @@ Settings → Finding titles sets what a row uses **unless the row says otherwise
 | **How often it changes**, **Already-watched titles** | How often it refreshes, and how much already-watched it allows                            |
 | **Row size**, **Audience**                           | How many titles, and who gets it                                                          |
 | **Watches the AI web search looks up**               | How many recent watches AI web search looks up for this row (shown only on rows using it) |
-| **Request tag**                                      | The Sonarr/Radarr tag on titles requested for this row's audience                         |
+| **Request tag**                                      | The Radarr/Sonarr tag on titles requested for this row's audience                         |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can be AI-web-search-only
 pointed at just your 4K library, and your default "Picked for You" can stay on the global settings —
@@ -645,7 +645,7 @@ web UI fetches. An install behind a restrictive network, or a browser with an ad
 placeholder tile instead; so will a title TMDB has no artwork for, and one queued before posters existed
 (those fill in on the next run that re-surfaces the title). Nothing else on the page depends on it.
 
-Tick the ones you want and click **Send to Sonarr/Radarr**. For the rest you have two choices, and the
+Tick the ones you want and click **Send to Radarr/Sonarr**. For the rest you have two choices, and the
 difference is exactly what happens on the next run:
 
 - **Reject** — a permanent "no". The title is never re-queued AND never auto-sent by a later run. It
@@ -659,11 +659,11 @@ difference is exactly what happens on the next run:
 Both buttons carry a hover hint, and an always-visible line under the queue spells out the difference.
 A title already in the library stops appearing on its own, and one that's already been sent (still
 downloading, say) never re-consumes an auto-request slot, so a slow grab can't starve the queue.
-Everything sent to Sonarr/Radarr moves to the **Sent to Sonarr/Radarr** log — each entry keeping when
+Everything sent moves to the **Sent to Radarr & Sonarr** log — each entry keeping when
 it went, the app's answer (e.g. "added to Radarr"), and the same why-it-was-wanted breakdown. Each
-sent entry links straight to the title's page in Sonarr/Radarr, and a **Clear** button tidies items
+sent entry links straight to the title's page in Radarr or Sonarr, and a **Clear** button tidies items
 out of the log once you're done with them — Clear only hides the entry (the title stays in
-Sonarr/Radarr and is never re-requested), it never un-sends.
+Radarr or Sonarr and is never re-requested), it never un-sends.
 
 It stays cautious on purpose. Missing titles are deduplicated across all your users — three people
 wanting the same one is a single entry, and multi-person demand ranks it higher and can push it over
@@ -685,7 +685,9 @@ without asking only if it clears **both** `requests.auto_min_demand` (default 3 
 - **Over the per-run cap** — `requests.max_per_run` auto-worthy titles go per run; the rest wait.
 - **Already in Radarr/Sonarr** — the card shows a **Downloaded / Downloading / Searching / Not
   monitored** badge if either app already tracks it, which normally means it was added by hand after
-  it landed here. It drops off the list on the next run.
+  it landed here. Films drop off the list on the next run. **Shows only drop off on Sonarr v4** —
+  matching them back to the request needs Sonarr's own TMDB id, which v3 doesn't report, so on v3
+  the badge appears but the entry stays until you clear it yourself.
 
 ## Backups
 

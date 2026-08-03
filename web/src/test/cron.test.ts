@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { describeCron, isValidCron, parseNaturalSchedule } from "@/lib/cron";
+import {
+  dailyCronTime,
+  describeCron,
+  isValidCron,
+  parseNaturalSchedule,
+} from "@/lib/cron";
 
 describe("isValidCron", () => {
   it.each([
@@ -118,5 +123,26 @@ describe("describeCron", () => {
     "0 3 * * 1-3", // an arbitrary weekday range
   ])("returns empty for %s rather than a wrong sentence", (expression) => {
     expect(describeCron(expression)).toBe("");
+  });
+});
+
+describe("dailyCronTime", () => {
+  it("reads the clock time out of a once-a-day cron, zero-padded", () => {
+    // The label on the "Built-in" chip: short enough for a chip, and the time the job runs at.
+    expect(dailyCronTime("45 5 * * *")).toBe("05:45");
+    expect(dailyCronTime("0 3 * * *")).toBe("03:00");
+    expect(dailyCronTime("17 4 * * *")).toBe("04:17");
+    expect(dailyCronTime("15 6 * * *")).toBe("06:15");
+  });
+
+  it("returns null for anything a bare clock time would misdescribe", () => {
+    // "05:45" beside a Monday-only or every-five-hours cron would be a chip that lies about when the
+    // job runs, which is worse than a chip with no time on it.
+    expect(dailyCronTime("45 5 * * 1")).toBeNull();
+    expect(dailyCronTime("17 */4 * * *")).toBeNull();
+    expect(dailyCronTime("*/15 * * * *")).toBeNull();
+    expect(dailyCronTime("0 3 1 * *")).toBeNull();
+    expect(dailyCronTime("")).toBeNull();
+    expect(dailyCronTime("nonsense")).toBeNull();
   });
 });
