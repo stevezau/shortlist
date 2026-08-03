@@ -537,8 +537,10 @@
             "description": "How the delivered collection is ordered.",
             "enum": [
               "best",
+              "new_first",
               "newest",
               "rating",
+              "rotate",
               "shuffle"
             ],
             "title": "Pick Order",
@@ -767,8 +769,10 @@
             "description": "How the delivered collection is ordered.",
             "enum": [
               "best",
+              "new_first",
               "newest",
               "rating",
+              "rotate",
               "shuffle"
             ],
             "title": "Pick Order",

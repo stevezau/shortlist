@@ -415,7 +415,7 @@ def _rated_by_source(picks: list[Pick], ctx: EngineContext) -> dict[tuple[int, M
     return overrides
 
 
-ROW_ORDERS = ("best", "rating", "newest", "shuffle")
+ROW_ORDERS = ("best", "rating", "newest", "shuffle", "new_first", "rotate")
 
 
 def _apply_order(
@@ -426,6 +426,7 @@ def _apply_order(
     user_slug: str,
     run_day: int,
     ratings: dict[tuple[int, MediaType], float] | None = None,
+    new_keys: set[tuple[int, MediaType]] | None = None,
 ) -> list[Pick]:
     """Order a row's picks for delivery. ``best`` (the default) leaves the ranking alone.
 
@@ -436,6 +437,20 @@ def _apply_order(
     ``shuffle`` is deliberately NOT random: it is a stable hash of (row, user, day), so a row shifts
     day to day but a re-run on the same night reproduces the same order. A genuinely random order
     would rewrite the collection on every retry and could never be asserted in a test.
+
+    ``new_first`` leads with the titles that arrived THIS run (in their own rank order), then the
+    survivors in theirs — issue #63's "push new recommendations to the front". `new_keys` is what
+    makes a pick "new"; an empty/None set means nothing arrived, so the order is a no-op. That is the
+    correct answer on the two paths where it happens: a carried-forward night has no newcomers, and a
+    bootstrap build is ALL newcomers, which leaves the ranking's order either way.
+
+    ``rotate`` answers the same issue's "cycle the ones at the top off" — but as a cyclic shift of the
+    display order, NOT as eviction. Eviction belongs to the refresh branch (weakest third out, every
+    `freshness` nights); expressing it here instead would need a second, persisted notion of position
+    and would collide with `rank`, which means match quality and is what `render_row_name` and
+    `_seed_moved` read. Rotating gives what the request was actually after — every title gets a turn
+    at the front, in the ranking's relative order — and gives it EVERY night rather than once per
+    refresh cycle, because this function runs on the carried-forward path too.
 
     Picks missing the value being sorted on (``rating``/``year`` are None or 0 on rows delivered
     before those were recorded) sort last but keep their relative order, so such a row degrades to
@@ -458,6 +473,18 @@ def _apply_order(
         return sorted(picks, key=lambda p: -(p.year or 0))
     if order == "shuffle":
         return sorted(picks, key=lambda p: _shuffle_key(row_slug, user_slug, run_day, p.tmdb_id))
+    if order == "new_first":
+        # Stable, so both groups keep the ranking's relative order inside themselves.
+        arrived = new_keys or set()
+        return sorted(picks, key=lambda p: 0 if (p.tmdb_id, p.media_type) in arrived else 1)
+    if order == "rotate":
+        if not picks:
+            return picks
+        # `run_day` and not a stored cursor: the front advances by the calendar, so a night that is
+        # skipped (a failed run, a paused server) never leaves the row stuck on one title, and a
+        # re-run on the same night reproduces the same order — the same property `shuffle` needs.
+        offset = run_day % len(picks)
+        return picks[offset:] + picks[:offset]
     return picks
 
 
@@ -1320,6 +1347,9 @@ def _build_section_picks(
             keep_watched=spec.rewatch,
         )
         refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, fresh)
+        # Hoisted out of the refresh branch because the `new_first` order needs it on every path: a
+        # pick is "new" if this row was not already carrying it, whichever branch produced it.
+        prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
 
         if prior_valid and not refresh:
             # Not this row's refresh night: redeliver last run's picks unchanged, so delivery's
@@ -1342,7 +1372,6 @@ def _build_section_picks(
             # bounce straight back — the internal anti-immediate-repeat guard that replaced staleness_runs.
             keep_n = min(len(prior_valid), round(_KEEP_FRACTION * k))
             kept = prior_valid[:keep_n]
-            prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
             fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
             new_picks = picker.build_picks(fresh_pool, k)
             survivors = kept + [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
@@ -1398,6 +1427,10 @@ def _build_section_picks(
         ranked = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
+        # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the
+        # watched cap and the rewatch reordering above can both backfill titles from `sub` that the
+        # branch never saw — those are new to the row too, and `new_first` has to lead with them.
+        new_keys = {(p.tmdb_id, p.media_type) for p in ranked if (p.tmdb_id, p.media_type) not in prior_ids}
         # "best" is a no-op, which is what keeps the rewatch/watched-cap orderings above intact
         # unless the owner explicitly asked for a different one.
         section_picks[section.key] = _apply_order(
@@ -1407,6 +1440,7 @@ def _build_section_picks(
             user_slug=user.slug,
             run_day=ctx.run_day,
             ratings=ratings,
+            new_keys=new_keys,
         )
         _log_row_provenance(user, spec, section, section_picks[section.key], sub, k)
     return section_picks

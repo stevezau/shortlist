@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from shortlist.engine.rows import ROW_ORDERS
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.db.models import User
 from shortlist.server.settings_store import SettingsStore
@@ -360,6 +361,33 @@ class TestCollectionsSeed:
         spec = next(s for s in specs if s.slug == "top_row")
         assert spec.placement == "library" and spec.pin_top is True
         assert spec.show_library and not spec.show_home  # library-only
+
+    @pytest.mark.parametrize("order", ROW_ORDERS)
+    def test_every_pick_order_round_trips_and_reaches_the_spec(self, order, client: TestClient):
+        """Each order the engine implements must survive the whole path: POST -> DB -> RowSpec.
+
+        Parametrized over `ROW_ORDERS` — the engine's own tuple — rather than a list written out
+        here, so adding a seventh order without widening the API's `ORDERS` set fails this test
+        instead of shipping a value the engine honours but the API rejects with a 422.
+        """
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": f"Order {order}", "pick_order": order})
+        assert created.status_code == 201, f"the API rejected {order!r}: {created.json()}"
+        assert created.json()["pick_order"] == order
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        spec = next(s for s in specs if s.slug == created.json()["slug"])
+        assert spec.pick_order == order, f"{order!r} did not reach the engine spec"
+
+    def test_an_unknown_pick_order_is_rejected(self, client: TestClient):
+        """The closed set is what stops a typo silently delivering in rank order for ever — the
+        engine's `_apply_order` falls back to the ranking rather than raising, so nothing downstream
+        would ever report it."""
+        assert client.post("/api/collections", json={"name": "X", "pick_order": "bogus"}).status_code == 422
 
     def test_an_all_surfaces_off_placement_round_trips(self, client: TestClient):
         """ "off" must survive the API — the UI's all-switches-off state has nowhere else to go, and

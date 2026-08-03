@@ -980,10 +980,22 @@ describe("RowEditor — order", () => {
     expect(screen.getByText(/writes to Plex/i)).toBeInTheDocument();
   });
 
-  it("round-trips the chosen order into the PATCH body", async () => {
-    renderEditor(row({ pick_order: "best" }));
+  // Every chip, not just one. The failure this catches is a label reaching the PATCH body as the
+  // wrong value, and the six sit next to each other in one control — "Newest released" beside "Just
+  // added", "Shuffled" beside "Taking turns" — which is exactly where a mix-up would land.
+  it.each([
+    ["Best match", "best"],
+    ["Highest rated", "rating"],
+    ["Newest released", "newest"],
+    ["Shuffled", "shuffle"],
+    ["Just added", "new_first"],
+    ["Taking turns", "rotate"],
+  ])("round-trips the %s order into the PATCH body", async (label, value) => {
+    // Start on an order that is never the one under test, so a chip that silently fails to register
+    // cannot pass by leaving the row on the value we are asserting.
+    renderEditor(row({ pick_order: value === "best" ? "shuffle" : "best" }));
 
-    await userEvent.click(screen.getByRole("button", { name: "Newest" }));
+    await userEvent.click(screen.getByRole("button", { name: label }));
     await userEvent.click(
       screen.getByRole("button", { name: /Save changes/i }),
     );
@@ -991,7 +1003,21 @@ describe("RowEditor — order", () => {
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
     expect(
       (updateCollection.mock.calls.at(0)?.[1] as Collection).pick_order,
-    ).toBe("newest");
+    ).toBe(value);
+  });
+
+  it("warns that taking turns writes to Plex on otherwise-unchanged days", async () => {
+    renderEditor(row({ pick_order: "best" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Taking turns" }));
+
+    // Same disclosure "Shuffled" carries above: these are the only two orders that cost a Plex
+    // write on a night the row itself did not change, and the owner should not have to find that
+    // out from their run history.
+    expect(
+      screen.getByText(/front moves along by one title/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/writes to Plex/i)).toBeInTheDocument();
   });
 });
 

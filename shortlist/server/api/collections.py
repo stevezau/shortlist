@@ -50,7 +50,7 @@ MEDIA = {"movie", "show", "both"}
 # stays reachable from the library's Collections tab — it just claims no Home or Recommended slot.
 PLACEMENTS = {"both", "home", "library", "off"}
 #: How a row's picks are ordered in the delivered collection. Mirrors `engine.rows.ROW_ORDERS`.
-ORDERS = {"best", "rating", "newest", "shuffle"}
+ORDERS = {"best", "rating", "newest", "shuffle", "new_first", "rotate"}
 # "" (Plex default), "upload", "text" (built-in Pillow), "ai" (image model). "generate" is the
 # pre-text-engine name for "ai", accepted for backward compatibility.
 POSTER_MODES = {"", "upload", "text", "ai", "generate"}

@@ -115,8 +115,10 @@ function builtFromLine(input: CollectionInput): string | null {
 const ORDER_WORDS: Record<string, string> = {
   best: "Best match first",
   rating: "Highest rated first",
-  newest: "Newest first",
+  newest: "Newest released first",
   shuffle: "Shuffled daily",
+  new_first: "Just-added titles first",
+  rotate: "Taking turns at the front",
 };
 
 function Fact({ label, value }: { label: string; value: ReactNode }) {

@@ -1697,6 +1697,86 @@ class TestPerRowOverrides:
         assert sorted(day5) == sorted([12, 13, 14, 15, 16]), f"membership is exactly last run's, got {day5}"
         assert day5 != day6, f"the frozen row's ORDER still moves day to day, got {day5} both days"
 
+    def test_pick_order_new_first_leads_with_the_titles_that_arrived_this_run(self, ctx: EngineContext, mock_plextv):
+        """Issue #63's first ask. The prior row holds the pool's STRONGEST five, so the survivors are
+        exactly what `best` would put in front — if this passed with the newcomers already sorting
+        first, the order would be indistinguishable from the ranking and the test would prove nothing.
+
+        On a refresh night the branch keeps 3 of 5 survivors (10, 11, 12) and swaps in the next two
+        candidates (15, 16); `new_first` has to invert that.
+        """
+        self._ordered_row_ctx(ctx, "new_first")
+        # `_ordered_row_ctx` rebuilds the RowSpec without a freshness, so it inherits the config's
+        # 0.0 — "never refresh". This case is about the refresh branch, so ask for one.
+        ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=1.0)
+        ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([10, 11, 12, 13, 14])}
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        ids = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert ids == [15, 16, 10, 11, 12], f"newcomers first, survivors after, each in rank order — got {ids}"
+
+    def test_pick_order_new_first_is_a_no_op_when_nothing_arrived(self, ctx: EngineContext, mock_plextv, monkeypatch):
+        """A carried-forward night has no newcomers, so the row must sit still rather than scramble.
+
+        Without this, "new" defaulting to the whole row (or to none of it, sorted unstably) would
+        reorder a row on nights nothing changed — the one thing `freshness` exists to avoid, and a
+        Plex write for no reason.
+        """
+        self._ordered_row_ctx(ctx, "new_first", run_day=5)
+        ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=0.0)  # 0.0 = never refresh
+        ctx.previous_picks = {("sarah", "picked", "1"): self._prior_movies([12, 13, 14, 15, 16])}
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        built = spy_build_picks(monkeypatch)
+
+        ids = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert built == [], "a frozen row is redelivered, never rebuilt"
+        assert ids == [12, 13, 14, 15, 16], f"nothing arrived, so nothing moves — got {ids}"
+
+    def test_pick_order_rotate_advances_the_front_by_one_title_a_day(
+        self, ctx: EngineContext, mock_plextv, monkeypatch
+    ):
+        """Issue #63's second ask, and the property that makes it worth having: the front changes on a
+        row that never rebuilds. Asserted against exact rotations, not just "day 5 != day 6", because
+        the point is that the row stays in its ranking's relative order while the head advances — a
+        shuffle would also pass an inequality check.
+
+        Rotating rather than evicting is what keeps this in the display layer. Dropping the head
+        instead would need a persisted position that `rank` (match quality) cannot carry without
+        breaking `render_row_name` and `_seed_moved`.
+        """
+        prior = self._prior_movies([12, 13, 14, 15, 16])
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        built = spy_build_picks(monkeypatch)
+        seen = {}
+
+        for day in (5, 6, 7):
+            self._ordered_row_ctx(ctx, "rotate", run_day=day)
+            ctx.config.rows[0] = replace(ctx.config.rows[0], freshness=0.0)
+            ctx.previous_picks = {("sarah", "picked", "1"): prior}
+            seen[day] = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert built == [], "the front moves without a rebuild — ordering is presentation, not selection"
+        assert seen[5] == [12, 13, 14, 15, 16], f"day 5 (5 % 5 = 0) starts at the top, got {seen[5]}"
+        assert seen[6] == [13, 14, 15, 16, 12], f"day 6 advances the front by one, got {seen[6]}"
+        assert seen[7] == [14, 15, 16, 12, 13], f"day 7 advances it again, got {seen[7]}"
+
+    def test_pick_order_rotate_reproduces_the_same_order_within_a_day(self, ctx: EngineContext, mock_plextv):
+        """Same guarantee `shuffle` needs: a retry the same night must not rewrite the collection."""
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        self._ordered_row_ctx(ctx, "rotate", run_day=7)
+        first = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+        self._ordered_row_ctx(ctx, "rotate", run_day=7)
+        second = self._delivered_ids(pipeline_mod.run(ctx, [sarah]))
+
+        assert first == second, f"a re-run on the same night reproduces the row, got {first} then {second}"
+
     def _two_seed_named_row_ctx(self, ctx, pick_order: str, *, run_day: int = 5):
         """A `{top_seed}` row seeded by TWO watches, whose candidates sort differently by each order.
 

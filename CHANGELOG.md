@@ -19,6 +19,11 @@ after taking a pre-migration backup.
 - **A way back from Off**, and a request filter that reaches past the 500-row inbox cap: picking a
   name under "Wanted by" now asks the SERVER, so it searches every title on file rather than the
   page that happened to load.
+- **Two new row orders, for when the front of a row feels stuck** ([#63](https://github.com/stevezau/shortlist/issues/63)):
+  **Just added** puts whatever is new to the row at the front, and **Taking turns** advances the
+  front by one title a day so every pick gets a spell there. Both are presentation only — neither
+  changes which titles a row holds, or how often it refreshes, which is still **Freshness**.
+  "Newest" is now labelled **Newest released**, to keep it distinct from "Just added".
 - **A rebuilt documentation site**, split into eight task-shaped guides.
 
 ### Fixed

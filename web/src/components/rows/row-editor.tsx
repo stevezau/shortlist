@@ -70,9 +70,9 @@ function namedRowSeeds(media: string): number {
 
 /** What each pick order actually does, in the row editor's voice: says what happens, not what it is.
  *
- *  "Shuffled" names its cost out loud. It is the only order that rewrites the collection on Plex on
- *  nights when nothing about the row has changed — the other three ride along with a refresh the row
- *  was doing anyway, so they cost nothing extra. */
+ *  "Shuffled" and "Taking turns" name their cost out loud. They are the two orders that rewrite the
+ *  collection on Plex on nights when nothing about the row has changed — the other four ride along
+ *  with a refresh the row was doing anyway, so they cost nothing extra. */
 function pickOrderHelp(
   order: CollectionInput["pick_order"],
   ratingLabel: string,
@@ -86,6 +86,12 @@ function pickOrderHelp(
       return "Most recently released first.";
     case "shuffle":
       return "A different order every day, from the same titles. The only order that writes to Plex on days the row is otherwise unchanged.";
+    case "new_first":
+      // Says "when the row refreshes" out loud because the commonest disappointment here is setting
+      // this on a row at the default freshness and seeing nothing move for a week.
+      return "Whatever is new goes to the front, the rest follow in match order. Only moves on the nights the row refreshes.";
+    case "rotate":
+      return "Everything keeps its place in the list, but the front moves along by one title a day, so each pick gets a turn there. Writes to Plex on days the row is otherwise unchanged.";
     default:
       return "Strongest suggestions first — how well each title matches what they watch.";
   }
@@ -810,8 +816,12 @@ export function RowEditor({
                 options={[
                   { value: "best", label: "Best match" },
                   { value: "rating", label: "Highest rated" },
-                  { value: "newest", label: "Newest" },
+                  // "Newest released", not "Newest": it sits two chips from "Just added", and the
+                  // two mean different things — when a film came out, vs when it joined this row.
+                  { value: "newest", label: "Newest released" },
                   { value: "shuffle", label: "Shuffled" },
+                  { value: "new_first", label: "Just added" },
+                  { value: "rotate", label: "Taking turns" },
                 ]}
               />
               <p className="text-sm text-muted-foreground">

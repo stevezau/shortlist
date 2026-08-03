@@ -90,16 +90,21 @@ however often a row refreshes, so how often a row refreshes has no bearing on it
 
 **Row editor → Order** decides how a row's titles are arranged in Plex:
 
-| Order             | What you get                                                            |
-| ----------------- | ----------------------------------------------------------------------- |
-| **Best match**    | Strongest suggestions first, by how well each title matches their viewing |
-| **Highest rated** | Highest score first, from whichever service you configured              |
-| **Newest**        | Most recently released first                                            |
-| **Shuffled**      | A different order every day, from the same titles                       |
+| Order               | What you get                                                                 |
+| ------------------- | ---------------------------------------------------------------------------- |
+| **Best match**      | Strongest suggestions first, by how well each title matches their viewing    |
+| **Highest rated**   | Highest score first, from whichever service you configured                   |
+| **Newest released** | Most recently released first                                                 |
+| **Shuffled**        | A different order every day, from the same titles                            |
+| **Just added**      | Whatever is new to the row goes to the front, the rest follow in match order |
+| **Taking turns**    | The front moves along by one title a day, so every pick gets a turn there    |
 
 Plex itself only sorts a collection by release date, alphabetically, or by a custom order, so every
 one of these is applied by Shortlist and delivered as that custom order, which is what the Home row
 displays.
+
+**Newest released** and **Just added** are different things, and the difference matters: the first is
+about when a film or show came out, the second about when it joined this row.
 
 **Highest rated** uses TMDB by default, which needs no setup. To sort on IMDb, Trakt, Rotten Tomatoes
 or Metacritic instead, set **Settings → Finding titles → Rate titles using**. Those come from MDBList
@@ -107,13 +112,18 @@ and need its API key (the same one the Requests feature uses). Without a key, or
 quota is spent, the row falls back to TMDB for its _whole_ ordering rather than sorting half the row
 on one scale and half on another.
 
-**Shuffled** is the only one with a cost worth knowing about. The other three are applied while the
-row is being written anyway, so they are free; shuffled rewrites the collection on Plex every day,
-including days when nothing about the row has changed. On a server with many people that is real
-write volume, so it is off by default.
+**Shuffled** and **Taking turns** are the two with a cost worth knowing about. The other four are
+applied while the row is being written anyway, so they are free; these two rewrite the collection on
+Plex every day, including days when nothing about the row has changed. On a server with many people
+that is real write volume, so neither is on by default.
 
-A shuffle is stable within a day. Re-running a row the same night reproduces the same order, and two
+Both are stable within a day. Re-running a row the same night reproduces the same order, and two
 people's copies of one row shuffle differently.
+
+**Just added** only moves on the nights a row actually refreshes — on the other nights nothing has
+arrived, so there is nothing to put in front. How often that happens is **Freshness**, not this
+setting. If the front of a row feels stuck, freshness is usually the dial you want, and **Taking
+turns** is the one that moves the front every night regardless.
 
 ## Where a row shows
 

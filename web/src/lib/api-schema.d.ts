@@ -1885,7 +1885,7 @@ export interface components {
              * @default best
              * @enum {string}
              */
-            pick_order: "best" | "newest" | "rating" | "shuffle";
+            pick_order: "best" | "new_first" | "newest" | "rating" | "rotate" | "shuffle";
             /**
              * Pin Top
              * @default false
@@ -2000,7 +2000,7 @@ export interface components {
              * @description How the delivered collection is ordered.
              * @enum {string}
              */
-            pick_order: "best" | "newest" | "rating" | "shuffle";
+            pick_order: "best" | "new_first" | "newest" | "rating" | "rotate" | "shuffle";
             /** Pin Top */
             pin_top: boolean;
             /**
