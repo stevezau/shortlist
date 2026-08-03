@@ -337,12 +337,27 @@ def _reusable_prior(
     return out
 
 
-def _names_a_seed(spec: RowSpec) -> bool:
-    """Whether this row's TITLE claims a particular watch, and so has to keep answering to it."""
-    return "{top_seed}" in spec.name_template
+def _names_a_seed(spec: RowSpec, user: UserProfile, config: EngineConfig) -> bool:
+    """Whether this row's TITLE claims a particular watch, and so has to keep answering to it.
+
+    Reads the EFFECTIVE template, not `spec.name_template`. The DEFAULT row's own column is blank on
+    purpose — its title comes from the global `row.name_template`, which is what the wizard and
+    Settings edit (`context_builder`) — so testing the column alone answered "no" for the one row
+    every new install starts with, and the wizard offers "Because you watched {top_seed}" for
+    exactly that row. It was then neither forced nightly nor rebuilt when its seed moved: the row
+    kept a title naming a watch it was no longer built from, which is the whole bug this guards
+    (issue #57). Worse, the editor computes the same claim from the effective name, so it HID the
+    freshness control and promised "every night" for a row the engine refreshed every eight days.
+
+    `resolve_row_template` is the single source of truth for that precedence, and delivery renders
+    the delivered title through it too — so this now asks the same question the title answers.
+    """
+    return "{top_seed}" in resolve_row_template(spec, user, config)
 
 
-def _seed_moved(spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate]) -> bool:
+def _seed_moved(
+    spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate], user: UserProfile, config: EngineConfig
+) -> bool:
     """Whether a row NAMED after its seed is now built from a different one than last run's picks.
 
     A `{top_seed}` title renders from ``picks[0].seed_title`` (``delivery.render_row_name``), and the
@@ -363,7 +378,7 @@ def _seed_moved(spec: RowSpec, prior_valid: list[Pick], sub: list[Candidate]) ->
     is the title correctly following its lead rather than a stale claim — the two only diverge above
     one seed, where a `{top_seed}` row already names its strongest watch while holding others.
     """
-    if not _names_a_seed(spec) or not prior_valid or not sub:
+    if not _names_a_seed(spec, user, config) or not prior_valid or not sub:
         return False
     current = sub[0].top_seed
     return prior_valid[0].seed_tmdb_id != (current.tmdb_id if current else None)
@@ -1023,7 +1038,7 @@ class RowPolicy:
         row editor HIDES the freshness control for these rows — honouring a slow value someone saved
         before that would leave a row stuck with nothing in the UI to explain it or undo it.
         """
-        if _names_a_seed(spec) or effective_seed_window(spec) > 1:
+        if _names_a_seed(spec, self.user, self.cfg) or effective_seed_window(spec) > 1:
             return 1.0
         return spec.freshness if spec.freshness is not None else self.cfg.freshness
 
@@ -1364,7 +1379,7 @@ def _build_section_picks(
             sec_picks = prior_valid[:k]
             if len(sec_picks) < k and sub:
                 sec_picks = _pad_picks(sec_picks, sub, k)
-        elif prior_valid and not _seed_moved(spec, prior_valid, sub):
+        elif prior_valid and not _seed_moved(spec, prior_valid, sub, policy.user, policy.cfg):
             # Refresh night: keep the strongest ~two-thirds by RANK (match quality — `prior_valid` is
             # ordered by the persisted rank column, not by how the row was displayed), and swap the
             # rest for genuinely-new titles.

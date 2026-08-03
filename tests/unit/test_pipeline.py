@@ -3611,6 +3611,32 @@ class TestSeedCycling:
 
         assert policy.effective_freshness(spec) == expected, why
 
+    def test_the_DEFAULT_row_is_forced_nightly_from_the_global_template(self, ctx: EngineContext):
+        """The row-identity cell the matrix above cannot reach, and the one that matters most.
+
+        `context_builder` blanks the default row's `name_template` on purpose — its title comes from
+        the global `row.name_template`, which is what the wizard and Settings edit. Asking the SPEC
+        whether it names a seed therefore answered "no" for the one row every new install starts
+        with, and the wizard offers "Because you watched {top_seed}" for exactly that row: it was
+        neither forced nightly nor rebuilt when its seed moved, while the editor hid the freshness
+        control and promised "every night".
+        """
+        ctx.config = replace(ctx.config, freshness=0.5, row_name_template="Because you watched {top_seed}")
+        policy = self._policy(ctx, make_profile("sarah", account_id=100))
+        default_row = RowSpec(slug="picked", name_template="", size=5)
+
+        assert policy.effective_freshness(default_row) == 1.0
+
+    def test_a_per_user_template_that_names_a_seed_also_forces_nightly(self, ctx: EngineContext):
+        """Same precedence, middle rung: `resolve_row_template` is row -> user -> global, so a
+        per-user override naming a seed has to count as much as the row's own template."""
+        ctx.config = replace(ctx.config, freshness=0.5, row_name_template="Picked for You")
+        user = make_profile("sarah", account_id=100)
+        user.row_name_template = "Because you watched {top_seed}"
+        policy = self._policy(ctx, user)
+
+        assert policy.effective_freshness(RowSpec(slug="picked", name_template="", size=5)) == 1.0
+
     def test_two_cycling_rows_do_not_share_one_derivation(self, ctx: EngineContext):
         """The seed cache keys on (media, libraries, max_seeds) — which two cycling rows can match on
         exactly. Without the row's own offset in the key they share one entry and land on the SAME
