@@ -422,6 +422,21 @@ export function RowEditor({
         </p>
       )}
 
+      {/* Across the top, like the dashboard's Impact strip — not down in the sidebar.
+          It lived at the BOTTOM of the sticky sidebar, which has its own scroller, so "is this row
+          working?" was hidden inside a second scroll area most people never noticed: the page looked
+          finished while the numbers sat below the fold of a column they had no reason to scroll.
+          It is also the one thing here that is not a setting — it is the outcome the settings are
+          for — so it belongs above them rather than beside them.
+          Saved rows only: a row being created has no history, and a strip of dashes answers nothing. */}
+      {collection && (
+        <RowEffectivenessPanel
+          data={effectiveness.data}
+          isLoading={effectiveness.isLoading}
+          rowId={collection.id}
+        />
+      )}
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
         <div className="space-y-5">
           <SettingsGroup
@@ -987,28 +1002,20 @@ export function RowEditor({
         </div>
 
         {/* Sticky so it stays beside whichever setting is being changed — the point is watching the
-            outcome move as you touch things, which it cannot do if it scrolls off. */}
+            outcome move as you touch things, which it cannot do if it scrolls off.
+            The max-height + scroll is a safety valve for a very tall preview on a short window, not
+            a place to put content: anything parked below the fold here is effectively invisible,
+            which is exactly why the effectiveness panel moved to the top of the page. */}
         <aside className="lg:sticky lg:top-6 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pr-1">
-          <div className="space-y-4">
-            <RowPreview
-              input={input}
-              users={users}
-              libraries={libraries.data ?? []}
-              settings={settings.data}
-              followsAWatch={followsAWatch}
-              globalFreshness={freshnessGlobalValue(settings.data)}
-              globalWatchedPct={watchedPctGlobalValue(settings.data)}
-            />
-            {/* Only for a SAVED row. A row being created has no history, and a panel of dashes would
-                be a worse answer than no panel. */}
-            {collection && (
-              <RowEffectivenessPanel
-                data={effectiveness.data}
-                isLoading={effectiveness.isLoading}
-                rowId={collection.id}
-              />
-            )}
-          </div>
+          <RowPreview
+            input={input}
+            users={users}
+            libraries={libraries.data ?? []}
+            settings={settings.data}
+            followsAWatch={followsAWatch}
+            globalFreshness={freshnessGlobalValue(settings.data)}
+            globalWatchedPct={watchedPctGlobalValue(settings.data)}
+          />
         </aside>
       </div>
 

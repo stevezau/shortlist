@@ -88,7 +88,10 @@ export function RowEffectivenessPanel({
         </p>
       ) : data.matured === null ? (
         <>
-          <div className="grid grid-cols-2 gap-3">
+          {/* Same track count as the matured case below, so the tiles are the same size whichever
+              state the row is in — a strip that reflows when a cohort matures reads as a different
+              panel rather than the same one with more to say. */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile
               icon={Send}
               label="Delivered"
@@ -109,7 +112,9 @@ export function RowEffectivenessPanel({
         </>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          {/* `sm`, not `xl`: this is a full-width strip at the top of the page now, so four tiles
+              fit from tablet up. It was `xl` because it used to live in a 22rem sidebar. */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatTile
               icon={TrendingUp}
               label="Hit rate"
