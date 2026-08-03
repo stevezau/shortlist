@@ -211,5 +211,5 @@ removes those picks from every total that counts them, here and on each person's
 undone. Rows that still exist are never affected, whichever slug is named: Shortlist recomputes what is
 eligible on the server rather than trusting the request.
 
-**Watches per week** is deliberately the long view: always the last 16 weeks, whatever window is
+**Watches per week** is always the long view: the last 16 weeks, whatever window is
 selected.

@@ -46,7 +46,7 @@ covers, and a single watch is either a film or a show. Never both. So a row set 
 TV** with a budget of 1 seeds only one of them, and the other library's collection never builds.
 For a row covering both, use `2` (one of each), or set the row to Movies only or TV only.
 
-**Watches every source builds from** (1–100, default 30) is worth knowing about on its own: it
+**Watches every source builds from** (1–100, default 30) matters on its own: it
 decides how many watched titles every discovery source searches from. Fewer means a tighter, more
 coherent row about a couple of things; more means broader coverage of someone's taste. **Watches the
 AI web search looks up** is a slice off the front of that same list, and caps the AI web-search
@@ -137,7 +137,7 @@ match an existing collection back to its row — a `{top_seed}` row that produce
 row keeps its own Home flag for that run. It stays off the Recommended shelf, and it is only ever
 visible to the person it belongs to.
 
-**The one thing this can't do:** hide friends' rows from _your_ Recommended shelf while leaving them
+**What this can't do:** hide friends' rows from _your_ Recommended shelf while leaving them
 on theirs. Share filters are what hide a row from someone, and you own the server — there is no
 share with yourself to attach one to. So with **Everyone else → Recommended shelf** on, every friend's
 row is on your shelf too. Turn it off (leaving **Everyone else → Home screen** on) and each friend still

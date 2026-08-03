@@ -64,7 +64,7 @@ scheduled run, go to **Jobs → Sync history** — it re-reads every user's watc
 writes nothing to Plex, and updates what Shortlist knows (and the "N titles watched" count on the
 Users page). Any run after that leaves the title out.
 
-### Everything above is only the _default_ — rows override it
+### Any row can override all of this
 
 Settings → Finding titles sets what a row uses **unless the row says otherwise**. Open any row
 (Rows → Edit) and it defines its own recipe:
@@ -120,7 +120,7 @@ The natural place to do it is a run's **How we picked** page, on the seeds list,
 usually what you noticed in the first place. There's also a search box on a person's detail page
 (**Users → someone → Settings → Blocked seeds**) for a title you remember but can't find a run for.
 
-Blocks are personal. A **shared** row is public, so one person's block deliberately does _not_
+Blocks are personal. A **shared** row is public, so one person's block does _not_
 reshape what everyone else sees — otherwise an individual preference would become a server-wide edit
 nobody else can see or undo. Shared rows use their own server-wide list
 (`recommendations.blocked_shared_seeds`).

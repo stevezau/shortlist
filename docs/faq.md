@@ -103,9 +103,8 @@ provider's own search, or to no web search at all.
 No. Shortlist only ever touches collections carrying its own `shortlist_*` label. Kometa overlays
 and your own collections are detected and left alone.
 
-They also solve different problems — Kometa's collections are the same for everyone, Shortlist's are
-different for each person. See [how Shortlist relates to other Plex tools](comparison.md) for the full
-picture, including netplexflix, SuggestArr and Seerr.
+They also solve different problems. Kometa's collections are the same for everyone; Shortlist's are
+different for each person.
 
 ## What information is sent to the AI?
 

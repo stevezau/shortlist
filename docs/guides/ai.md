@@ -30,7 +30,7 @@ in code, with no AI and no per-token cost.
    here either** — the reasons are generated in code, so they cost nothing and read the same whether or
    not you use AI.
 
-### The one AI-powered source
+### The source that uses AI
 
 - **AI — web search** (the "AI web search" toggle): searches the live web for acclaimed, current
   "what to watch next" titles, then keeps the ones you own. In our own testing this was a strong extra
@@ -41,7 +41,7 @@ in code, with no AI and no per-token cost.
 searches ("what to watch if you liked X"), and hands the results to your model — which then picks
 from what was found. The model never browses; it reads.
 
-That ordering is the whole trick. Because **Shortlist** runs the search rather than the model, the
+That order is what makes it work. Because **Shortlist** runs the search rather than the model, the
 source works with **any** provider — including a local Ollama, llama.cpp or LM Studio server with no
 internet access of its own. A local model that could never search the web still gets to recommend
 from current web results.
@@ -54,7 +54,7 @@ You choose the search backend on the "AI web search" card:
 | [Exa](https://exa.ai) key      | **every provider, local included** | one extra free-tier signup                              |
 | **Auto** (default)             | both, combined when both are set up | widest coverage — they find noticeably different titles |
 
-**Why we suggest adding an Exa key**, even when your provider can already search:
+**Why an Exa key is worth adding**, even when your provider can already search:
 
 [Exa](https://exa.ai) is a search engine built for AI to read rather than for people to browse — it
 returns ranked results with the relevant text already pulled out, so the model spends its effort
@@ -100,7 +100,7 @@ levers:
 
 5. **Use a local model.** An Ollama or LM Studio server on your own hardware costs nothing per run.
    This needs an Exa key, since a local model can't search the web itself — see
-   [the backend comparison above](#the-one-ai-powered-source).
+   [the backend table above](#the-source-that-uses-ai).
 
 **Seeing where the tokens go.** Every run records its AI cost so there's no guessing. Open a run
 (Runs → click a run) and you'll see the **total AI tokens** for the run, then per person a breakdown

@@ -123,9 +123,6 @@ each person and keep it private, inside Plex. It's designed to sit alongside wha
 - **Plex-only.** The privacy model depends on Plex's label-based share filters (PMS 1.43.2+), so
   there's no Jellyfin or Emby equivalent to port to.
 
-For what netplexflix, SuggestArr, Seerr, Kometa and Tautulli are each built for — and when Shortlist
-is the wrong choice — see [Other Plex tools](docs/comparison.md).
-
 Curious how the per-user privacy actually works?
 See [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md).
 
@@ -171,7 +168,6 @@ Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-starte
 | [Guides](docs/guides.md)                     | Rows, schedules, requests, AI cost, troubleshooting                                 |
 | [Reference](docs/reference.md)               | Settings, API, env vars                                                             |
 | [FAQ](docs/faq.md)                           | Privacy model, Kometa, uninstall                                                    |
-| [Other Plex tools](docs/comparison.md)     | How Shortlist relates to netplexflix, SuggestArr, Seerr, Kometa — and when it's the wrong choice |
 
 **Background:** [How to make a Plex collection visible to only one user](docs/plex-per-user-collections.md)
 — the label + share-filter mechanism this is built on, and the ordering mistake that leaks.

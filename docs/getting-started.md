@@ -78,8 +78,8 @@ The wizard has **7 steps**, and the progress bar counts them the same way this l
 
 ## Trying it safely
 
-Shortlist is new and modifies real Plex share permissions, so it's fair to want to watch it before
-trusting it. Two ways to de-risk your first run:
+Shortlist is new and it changes real Plex sharing settings, so you may well want to watch it work
+before you trust it. Two ways to do that:
 
 - **Safe mode** — start the container with `-e SHORTLIST_DRY_RUN=1`. Every run then logs exactly what
   it _would_ change and writes **nothing** to Plex. Walk the whole flow, read the run activity, and
@@ -96,7 +96,7 @@ filters are snapshotted before the first change, so **Uninstall** (Settings → 
 back exactly as they were. This hiding relies on Plex Media Server ≥ 1.43.2.10687 — older builds
 ignore the label exclusion, which is why the wizard surfaces your version before you begin.
 
-## The one honest caveat
+## One thing you should know
 
 You're in the user list too, so you can give yourself a row like anyone else — on a one-person
 server that's the whole point.

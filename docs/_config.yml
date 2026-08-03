@@ -65,9 +65,6 @@ nav:
   - title: FAQ
     url: /faq/
     blurb: Privacy, Kometa, uninstall
-  - title: Other Plex tools
-    url: /comparison/
-    blurb: How Shortlist relates to netplexflix, SuggestArr, Seerr, Kometa
   - title: Per-user Plex collections
     url: /plex-per-user-collections/
     blurb: The label + share-filter mechanism

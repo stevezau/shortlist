@@ -57,7 +57,7 @@ For a single collection shared with a single person:
 
 That's it. Alice sees the collection; nobody else does.
 
-### Two things that will bite you
+### Two things to watch out for
 
 **The server owner can't be restricted.** Plex doesn't apply share filters to the admin account —
 there's no share to filter. If you're the owner, you will see every labelled collection on the
@@ -69,7 +69,7 @@ have a private row of films _and_ one of shows, that's two collections with the 
 collection holding the wrong type for its library matches neither restriction — which makes it
 impossible to hide from anyone.
 
-## The ordering mistake that leaks
+## Do it in the wrong order and it leaks
 
 This is the part people get wrong, and it's worth being blunt about it.
 
@@ -139,6 +139,5 @@ Set `-e SHORTLIST_DRY_RUN=1` to see every change it _would_ make to your server 
 ## Related
 
 - [FAQ — How is this private?](faq.md#how-is-this-private-plex-doesnt-have-per-user-collections)
-- [Other Plex tools](comparison.md) — what each project in this space is built for
 - [Getting started](getting-started.md) — install and the setup wizard
 - [Reference](reference.md) — settings, API, environment variables

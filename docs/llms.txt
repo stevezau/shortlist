@@ -47,7 +47,6 @@ first change and restored exactly on uninstall.
 - [Guides]({{ '/guides' | absolute_url }}): the web interface, rows, schedules, per-user overrides, troubleshooting, AI cost control
 - [Reference]({{ '/reference' | absolute_url }}): every configuration key, REST API endpoint, environment variable and default
 - [FAQ]({{ '/faq' | absolute_url }}): privacy model, what the owner can see, Kometa coexistence, uninstalling
-- [Other Plex tools]({{ '/comparison' | absolute_url }}): what netplexflix, SuggestArr, Seerr, Kometa and Tautulli are each built for, how Shortlist relates to them, and when Shortlist is the wrong choice
 - [How to make a Plex collection visible to only one user]({{ '/plex-per-user-collections' | absolute_url }}): the label + share-filter mechanism, the manual steps, and the ordering mistake that leaks
 
 ## Source

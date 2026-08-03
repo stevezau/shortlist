@@ -81,7 +81,7 @@ sent entry links straight to the title's page in Radarr or Sonarr, and a **Clear
 out of the log once you're done with them — Clear only hides the entry (the title stays in
 Radarr or Sonarr and is never re-requested), it never un-sends.
 
-It stays cautious on purpose. Missing titles are deduplicated across all your users — three people
+It is cautious by design. Missing titles are deduplicated across all your users — three people
 wanting the same one is a single entry, and multi-person demand ranks it higher and can push it over
 the auto-send bar. A title already in Radarr/Sonarr is skipped, never re-added, and a dry-run only
 logs what it _would_ ask for. Every request (and every skip) is recorded in the audit feed, and the
@@ -91,7 +91,7 @@ Requires Radarr v3+ / Sonarr v4+ reachable from the Shortlist container.
 
 ### Why is a title still waiting?
 
-The auto-send bar is deliberately higher than the bar to be requestable at all: a title is sent
+The bar for sending on its own is higher than the bar for being requestable at all: a title is sent
 without asking only if it clears **both** `requests.auto_min_demand` (default 3 distinct people) and
 `requests.auto_min_rating` (default 8.0). A 7.9 wanted by twenty people still waits. Beyond that:
 
