@@ -15,6 +15,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from itertools import pairwise
 
@@ -31,6 +32,24 @@ from shortlist.engine.models import MediaType, OwnedRow, WatchedItem
 
 # Label restrictions only apply on Home/Recommended/Related from this PMS build (PM-5174).
 MIN_PMS_VERSION = (1, 43, 2, 10687)
+
+
+@dataclass(frozen=True)
+class WatchedRead:
+    """One library's watched titles, and whether the read can be trusted to be COMPLETE for its window.
+
+    `covers_window` exists because absence has two very different meanings. When the walk provably
+    returned everything at or after the cutoff, a cached title missing from `items` was un-watched.
+    When the walk was truncated — a server that omits `totalSize` and caps the container, a sort that
+    was not honoured — the same absence means only "we did not read that far". Deleting on the second
+    is data loss, so the flag travels with the items rather than being assumed by the caller.
+
+    Always False for a complete (`since=None`) read: there is no window, and that path replaces the
+    section outright instead of reasoning about absence.
+    """
+
+    items: list[WatchedItem]
+    covers_window: bool
 
 
 class SectionNotShared(RuntimeError):
@@ -209,6 +228,11 @@ def _is_newest_first(entries: list) -> bool:
     Rows without the attribute are ignored rather than treated as 1970 — a data gap is not evidence
     that the sort broke, and treating it as such would throw away the incremental read for everyone.
     """
+    return all(a >= b for a, b in pairwise(_stamps(entries)))
+
+
+def _stamps(entries: list) -> list[int]:
+    """This page's parseable `lastViewedAt` values, in the order the server returned them."""
     stamps: list[int] = []
     for el in entries:
         raw = el.get("lastViewedAt")
@@ -218,7 +242,7 @@ def _is_newest_first(entries: list) -> bool:
             stamps.append(int(raw))
         except (TypeError, ValueError):
             continue
-    return all(a >= b for a, b in pairwise(stamps))
+    return stamps
 
 
 class PlexClient:
@@ -855,13 +879,26 @@ class PlexClient:
                 everything, unsorted, exactly as before.
 
         Returns:
-            One WatchedItem per distinct watched title, newest watch first is NOT guaranteed (callers
-            sort). Titles with no ``tmdb://`` GUID are dropped — they can never match a candidate.
+            A `WatchedRead`: one WatchedItem per distinct watched title (newest watch first is NOT
+            guaranteed — callers sort; titles with no ``tmdb://`` GUID are dropped, they can never
+            match a candidate), plus `covers_window`, which says whether this read can be trusted to
+            have returned EVERYTHING at or after ``since``. See `WatchedRead` — a caller that deletes
+            on absence must check it.
         """
         plex_type = 1 if media_type is MediaType.MOVIE else 2
         items: list[WatchedItem] = []
         start = 0
         reached_cutoff = False
+        read_whole_library = False
+        # Only ever set False. The cutoff stop is sound only while the server sorts newest-first, and
+        # the fallback below abandons the sort MID-WALK — the pages already read stay in whatever
+        # order they arrived, so one failure taints the whole read, not just the page that failed.
+        sort_honoured = True
+        # `_is_newest_first` is vacuously true on a page carrying fewer than two comparable stamps,
+        # so "the sort didn't visibly break" is not the same as "the sort was observed working". The
+        # cutoff stop trusts the ORDER, so it may only prove coverage once the order has actually
+        # been seen holding. Reaching a reported total needs no such evidence — it counts rows.
+        order_observed = False
         while True:
             root = self._read_watched_page(section_key, plex_type, token, start, since=since)
             entries = list(root)
@@ -878,6 +915,9 @@ class PlexClient:
                     section_key,
                 )
                 since = None
+                sort_honoured = False
+            elif since is not None and len(_stamps(entries)) >= 2:
+                order_observed = True
             for el in entries:
                 item = self._watched_item(el, media_type)
                 if item is None:
@@ -914,6 +954,10 @@ class PlexClient:
             #
             # An empty page always stops us, so a server ignoring the paging headers cannot loop.
             done = start >= total if total is not None else len(entries) < self._WATCHED_PAGE
+            if total is not None and done:
+                # The server told us a total and we reached it, so the library was read end to end.
+                # A short page WITHOUT a total proves nothing — see `covers_window` below.
+                read_whole_library = True
             if reached_cutoff or not entries or done:
                 break
             if total is None:
@@ -921,14 +965,35 @@ class PlexClient:
                     "PMS gave no totalSize for section {} — paging on short-page detection alone",
                     section_key,
                 )
+        # Did this read definitely return everything at or after `since`?
+        #
+        # This is the difference between an under-read and DELETED WATCH HISTORY. The cache drops
+        # cached titles the read did not return, so a caller that assumes coverage turns every
+        # truncated walk into "they un-watched all of it". Two ways to have earned the claim:
+        #
+        # * `reached_cutoff` + `order_observed` — we saw a real timestamp older than the cutoff, so
+        #   everything newer had already been emitted. Paired with `order_observed` because that stop
+        #   is only as good as the sort, and a page with fewer than two comparable stamps passes the
+        #   order check without demonstrating anything;
+        # * `read_whole_library` — the server gave a `totalSize` and we walked to it, so there was
+        #   nothing left to miss.
+        #
+        # Everything else is unproven, and the unproven cases are real: a server that omits
+        # `totalSize` AND caps the container below our page size ends the walk on a short page having
+        # read only part of the window. `sort_honoured` gates both, because the fallback drops the
+        # sort mid-walk and leaves the earlier pages in an order nothing verified.
+        covers_window = (
+            since is not None and sort_honoured and ((reached_cutoff and order_observed) or read_whole_library)
+        )
         logger.debug(
-            "watched read: section {} ({}) -> {} titles{}",
+            "watched read: section {} ({}) -> {} titles{}{}",
             section_key,
             media_type.value,
             len(items),
             f" since {since.isoformat()}" if since else "",
+            "" if since is None or covers_window else " (INCOMPLETE — window coverage unproven)",
         )
-        return items
+        return WatchedRead(items=items, covers_window=covers_window)
 
     def _read_watched_page(
         self,

@@ -67,13 +67,15 @@ DEFAULTS: dict[str, Any] = {
     # "what changed on whose share at 03:31" (plex-safety rule 10) is the one record an operator may
     # want long after the run detail around it is gone.
     "events.retention": 0,
-    # Read only what changed since the last sync (Plex's `lastViewedAt>=` filter) instead of every
-    # watched title, every night, per user, per library. An incremental read cannot see an un-watch
-    # or a deletion, so a COMPLETE read still runs every `sync.watch_full_days` regardless — this
-    # switch only decides whether the nights in between are cheap. Off = always read everything.
+    # Read only what changed since the last sync instead of every watched title, every night, per
+    # user, per library. An incremental read notices an un-watch inside the window it covered, but
+    # nothing further back and no deletion, so a COMPLETE read still runs every `sync.watch_full_days`
+    # regardless — this switch only decides whether the nights in between are cheap. Off = always
+    # read everything.
     "sync.watch_incremental": True,
     # How often the complete re-read happens, in days. It is the only thing that can notice a title
-    # being un-watched or removed, so it is not optional — only its frequency is.
+    # un-watched or removed longer ago than the nightly read reaches back, so it is not optional —
+    # only its frequency is.
     "sync.watch_full_days": 7,
     # (the schedulable crons are added below, derived from scheduler.DEFAULT_CRONS)
     "backup.max_keep": 10,  # how many backups to retain

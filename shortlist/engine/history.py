@@ -25,6 +25,15 @@ from shortlist.engine.models import MediaType, Seed, UserProfile, UserType, Watc
 RECENCY_HALF_LIFE_DAYS = 45.0
 
 
+class NoWatchToken(RuntimeError):
+    """No server token could be obtained to read a user's watched state with.
+
+    Distinct from "they have watched nothing", and the distinction is load-bearing: the watched-title
+    cache DELETES what a read does not return, so a token failure reported as an empty set wipes the
+    very history it was meant to refresh.
+    """
+
+
 class HistorySource(Protocol):
     def fetch(
         self, user: UserProfile, *, min_completion: float, since: datetime | None = None
@@ -96,10 +105,23 @@ class ShareTokenWatchSource:
         Raises rather than swallowing: the caller decides whether one unreadable library is fatal,
         and for the cache it must be — advancing a cursor past a read that failed would silently
         skip whatever it missed.
+
+        That includes a missing token, which used to return `[]` here in flat contradiction of the
+        line above. The cache treats what a read returns as the truth for the window it covers and
+        deletes the rest, so "plex.tv would not mint a token just now" arriving as "they have watched
+        nothing" wiped a person's cached history and stamped the sync a success.
+
+        Returns:
+            A `WatchedRead` — the titles PLUS whether the read provably covered its window. The
+            cache deletes cached titles the read did not return, so it needs to know the difference
+            between "not watched any more" and "we did not read that far".
+
+        Raises:
+            NoWatchToken: No server token could be obtained for this user.
         """
         token = self._token_for(user)
         if token is None:
-            return []
+            raise NoWatchToken(f"no server token for {user.username}")
         return self._plex.watched_titles(section.key, media_type, token, since=since)
 
     def fetch(self, user: UserProfile, *, min_completion: float, since: datetime | None = None) -> list[WatchedItem]:
@@ -121,7 +143,7 @@ class ShareTokenWatchSource:
         for section in self._plex.sections():
             media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
             try:
-                items.extend(self._plex.watched_titles(section.key, media_type, token, since=since))
+                items.extend(self._plex.watched_titles(section.key, media_type, token, since=since).items)
             except SectionNotShared:
                 # Not shared with them, so "nothing watched there" is the right answer, not a
                 # degraded one. DEBUG, not WARNING: `sections()` is the OWNER's library list, so

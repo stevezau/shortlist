@@ -6,7 +6,10 @@ from itertools import pairwise
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from shortlist.engine.history import ShareTokenWatchSource, derive_seeds, distinct_recent
+import pytest
+
+from shortlist.engine.clients.plex_pms import WatchedRead
+from shortlist.engine.history import NoWatchToken, ShareTokenWatchSource, derive_seeds, distinct_recent
 from shortlist.engine.models import MediaType, UserType
 from tests.conftest import make_profile, make_watched
 
@@ -14,6 +17,12 @@ from tests.conftest import make_profile, make_watched
 def _section(key: str, section_type: str) -> SimpleNamespace:
     """A stand-in for a plexapi library section — the source only reads `.key` and `.type`."""
     return SimpleNamespace(key=key, type=section_type)
+
+
+def _read(*items) -> WatchedRead:
+    """What the PMS client hands back. `covers_window` is False throughout: `fetch` always asks
+    for everything (`since=None`), so there is no window to have covered."""
+    return WatchedRead(items=list(items), covers_window=False)
 
 
 class TestShareTokenWatchSource:
@@ -26,7 +35,7 @@ class TestShareTokenWatchSource:
     def _source(self, mock_plex, mock_plextv, *, owner_token: str = "OWNER-TOK") -> ShareTokenWatchSource:
         # Two libraries, one of each type, so fetch() must iterate both and pick the media type per one.
         mock_plex._server.library.sections.return_value = [_section("1", "movie"), _section("2", "show")]
-        mock_plex.watched_titles = MagicMock(return_value=[])
+        mock_plex.watched_titles = MagicMock(return_value=_read())
         return ShareTokenWatchSource(mock_plex, mock_plextv, owner_token=owner_token)
 
     def test_owner_is_read_with_the_admin_token_never_the_shared_roster(self, mock_plex, mock_plextv):
@@ -86,13 +95,40 @@ class TestShareTokenWatchSource:
         assert result == []
         mock_plex.watched_titles.assert_not_called()
 
+    def test_a_missing_token_raises_from_fetch_section_rather_than_reading_as_empty(self, mock_plex, mock_plextv):
+        """`fetch` may fail soft; `fetch_section` must not. It feeds the watched-title CACHE, which
+        treats what a read returns as the truth for the window it covers and deletes the rest — so
+        "plex.tv would not mint a token just now" arriving as "they have watched nothing" wipes the
+        history it was meant to refresh and stamps the sync a success."""
+        source = self._source(mock_plex, mock_plextv)
+        mock_plextv.shared_server_tokens.return_value = {}
+        mock_plextv.canary_server_token.side_effect = PermissionError("PIN-protected")
+        profile = make_profile(username="pin", user_type=UserType.MANAGED, account_id=200)
+
+        with pytest.raises(NoWatchToken):
+            source.fetch_section(profile, _section("1", "movie"), MediaType.MOVIE)
+
+        mock_plex.watched_titles.assert_not_called()
+
+    def test_the_owner_still_reads_with_the_admin_token_rather_than_raising(self, mock_plex, mock_plextv):
+        """The OWNER row of the matrix is NOT vacuous here: `_token_for` returns the admin token
+        without consulting the roster, so it takes a different path to the raise above and must keep
+        reading normally. (SHARED-with-a-roster-miss collapses onto the MANAGED row — both fall
+        through to the same canary exchange and the same `token is None`.)"""
+        source = self._source(mock_plex, mock_plextv)
+        profile = make_profile(username="steve", user_type=UserType.OWNER, account_id=1)
+
+        source.fetch_section(profile, _section("1", "movie"), MediaType.MOVIE)
+
+        assert {call.args[2] for call in mock_plex.watched_titles.call_args_list} == {"OWNER-TOK"}
+
     def test_selects_the_media_type_per_library_and_aggregates_across_them(self, mock_plex, mock_plextv):
         source = self._source(mock_plex, mock_plextv)
         mock_plextv.shared_server_tokens.return_value = {100: "SARAH-TOK"}
         mock_plex.watched_titles.side_effect = lambda key, mt, tok, since=None: (
-            [make_watched("Heat", media_type=MediaType.MOVIE)]
+            _read(make_watched("Heat", media_type=MediaType.MOVIE))
             if mt is MediaType.MOVIE
-            else [make_watched("Suits", media_type=MediaType.SHOW)]
+            else _read(make_watched("Suits", media_type=MediaType.SHOW))
         )
 
         items = source.fetch(make_profile(account_id=100), min_completion=0.7)
@@ -117,7 +153,7 @@ class TestShareTokenWatchSource:
         def read(key, media_type, token, since=None):
             if media_type is MediaType.MOVIE:
                 raise RuntimeError("section unreadable")
-            return [make_watched("Suits", media_type=MediaType.SHOW)]
+            return _read(make_watched("Suits", media_type=MediaType.SHOW))
 
         mock_plex.watched_titles.side_effect = read
         items = source.fetch(make_profile(account_id=100), min_completion=0.7)
@@ -138,7 +174,7 @@ class TestShareTokenWatchSource:
         def read(key, media_type, token, since=None):
             if media_type is MediaType.SHOW:
                 raise SectionNotShared("section 12 is not shared with this user")
-            return [make_watched("Dune", media_type=MediaType.MOVIE)]
+            return _read(make_watched("Dune", media_type=MediaType.MOVIE))
 
         mock_plex.watched_titles.side_effect = read
         items = source.fetch(make_profile(account_id=100), min_completion=0.7)

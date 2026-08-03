@@ -37,9 +37,10 @@ class WatchSync:
     def _full_resync_due(self, store: SettingsStore) -> bool:
         """Is tonight the weekly complete re-read?
 
-        An incremental read cannot see an un-watch, a deleted title, or one whose `lastViewedAt`
-        never moved, so a full read has to happen on a schedule regardless of how well the cursor is
-        working. Never having done one counts as due.
+        An incremental read sees an un-watch only inside the window it covered — never one further
+        back, a deleted title, or one whose `lastViewedAt` never moved — so a full read has to happen
+        on a schedule regardless of how well the cursor is working. Never having done one counts as
+        due. It is also what gates the dead-library sweep in `refresh_watched`.
         """
         stamp = store.get("report.watch_full_at")
         if not isinstance(stamp, str) or not stamp:
@@ -89,8 +90,11 @@ class WatchSync:
         token_source = ctx.history_source
         outcomes = []
         failed: list[str] = []
+        # Read once and keep: this is also the authority for which libraries still EXIST, and asking
+        # twice risks sweeping against a different answer than the one just synced against.
+        sections = list(ctx.plex.sections())
         with self._sessions() as session:
-            for section in ctx.plex.sections():
+            for section in sections:
                 media_type = MediaType.MOVIE if section.type == "movie" else MediaType.SHOW
 
                 def read(since, _section=section, _media=media_type):
@@ -126,6 +130,18 @@ class WatchSync:
                     # one is the escape from a section that can never be topped up. Without this the
                     # cursor simply never advances and the cache silently goes stale for ever.
                     cache.force_full_next_time(session, user_id, str(section.key))
+            # A library REMOVED from the server is swept here and nowhere else: `sync_section` only
+            # ever replaces sections it read, so rows for one that is gone would otherwise be counted
+            # as watched for ever. A section that merely 403'd above is still in `sections`, so an
+            # unshared library is untouched — that history is still true.
+            #
+            # On the weekly pass only, not every sync. The sweep believes a single `/library/sections`
+            # response, and `PlexClient` caches that for the life of the client — so one short answer
+            # would be applied to every user in the sync. A dead library lingering a few days matches
+            # the latency the full read already has; running it hourly buys nothing and multiplies the
+            # exposure to a bad response by ~168.
+            if force_full:
+                cache.forget_dead_sections(session, user_id, {str(section.key) for section in sections})
             session.commit()
             history = cache.watched_set(session, user_id)
 
