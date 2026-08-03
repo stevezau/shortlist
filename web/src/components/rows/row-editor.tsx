@@ -433,12 +433,22 @@ export function RowEditor({
         <RowEffectivenessPanel
           data={effectiveness.data}
           isLoading={effectiveness.isLoading}
-          rowId={collection.id}
+          rowSlug={collection.slug}
         />
       )}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
         <div className="space-y-5">
+          {/* Names the left column, so the page reads as three labelled parts — how it is doing,
+              what you can change, what that will produce — instead of an unlabelled wall of cards
+              with a panel floating beside it. */}
+          <div>
+            <h2 className="text-base font-semibold">Row settings</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Everything that decides what this row picks, who gets it, and when
+              it rebuilds.
+            </p>
+          </div>
           <SettingsGroup
             title="The basics"
             description="What this row is called, who gets one, and how it's put together."

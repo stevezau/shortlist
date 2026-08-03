@@ -1997,3 +1997,54 @@ class TestRowEffectiveness:
 
     def test_an_unknown_row_is_a_404(self, client: TestClient):
         assert client.get("/api/collections/9999/effectiveness").status_code == 404
+
+    def test_the_runs_count_matches_the_run_list_the_tile_links_to(self, client: TestClient):
+        """The Runs tile is a LINK to `/api/runs?collection=<slug>`, so the number on it has to be
+        the length of that list. A tile reading 3 above a list of 1 is worse than no tile."""
+        self._picks(client, "picked", [(1, 40, True, "Movies")])
+        self._picks(client, "picked", [(2, 20, False, "Movies")])
+        self._picks(client, "someone_else", [(3, 10, False, "Movies")])
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+        listed = client.get("/api/runs", params={"collection": "picked"}).json()
+
+        assert body["runs"] == 2, "one run per _picks call, and the other row's run is not ours"
+        assert body["runs"] == len(listed), "the tile and the list it opens must agree"
+
+    def test_the_runs_count_drops_a_run_that_has_been_pruned(self, client: TestClient):
+        """`runs.retention` deletes old runs and leaves the picks behind with a null `run_id`
+        (migration 0040). Both the count and the list it links to then stop claiming that run —
+        the alternative is a tile that counts history nobody can open."""
+        from datetime import UTC, datetime, timedelta
+
+        from shortlist.server.db.models import Run
+        from shortlist.server.services.run_persistence import prune_runs
+
+        self._picks(client, "picked", [(1, 40, True, "Movies")])
+        self._picks(client, "picked", [(2, 20, False, "Movies")])
+        # Age the first run past retention and prune it the way the real job does, rather than
+        # deleting the row by hand — the behaviour under test is `prune_runs` nulling `run_id`.
+        with client.app.state.sessions() as session:
+            oldest = session.query(Run).order_by(Run.id).first()
+            oldest.started_at = datetime.now(UTC) - timedelta(days=400)
+            session.commit()
+            assert prune_runs(session, retention_months=1) == 1
+            session.commit()
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+        listed = client.get("/api/runs", params={"collection": "picked"}).json()
+
+        assert body["runs"] == 1 == len(listed)
+        assert body["delivered"] == 2, "the picks themselves outlive their run"
+
+    def test_last_delivered_at_is_the_most_recent_delivery(self, client: TestClient):
+        """`first_delivered_at` tells "never run" from "ran once"; this tells "ran last night" from
+        "ran in March and has been idle since", which is the one a stalled row shows up in."""
+        from datetime import UTC, datetime, timedelta
+
+        self._picks(client, "picked", [(1, 60, False, "Movies"), (2, 3, False, "Movies")])
+
+        body = client.get(f"/api/collections/{self._row_id(client)}/effectiveness").json()
+
+        assert body["first_delivered_at"] < body["last_delivered_at"]
+        assert body["last_delivered_at"].startswith((datetime.now(UTC) - timedelta(days=3)).strftime("%Y-%m-%d"))

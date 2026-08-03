@@ -1063,7 +1063,11 @@ class RowEffectivenessOut(PassthroughModel):
 
     delivered: int  # all time, distinct person+title
     watched: int
+    # Runs still on record that built this row — counted exactly as `/api/runs?collection=<slug>`
+    # selects them, since the panel's Runs tile links there. Pruned runs are in neither.
+    runs: int
     first_delivered_at: str | None  # None = this row has never delivered anything
+    last_delivered_at: str | None  # None = same; otherwise the most recent delivery
     matured_days: int
     matured: RowMaturedCohort | None  # None = nothing is old enough to judge yet
     per_library: list[RowLibraryEffectiveness]

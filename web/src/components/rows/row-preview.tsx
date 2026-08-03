@@ -194,7 +194,7 @@ export function RowPreview({
   return (
     <div className="space-y-4 rounded-lg border bg-card p-5">
       <div>
-        <h2 className="text-sm font-medium">What this row will do</h2>
+        <h2 className="text-base font-semibold">What this row will do</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Updates as you change things. Nothing is saved until you press save.
         </p>

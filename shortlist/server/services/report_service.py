@@ -514,6 +514,15 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
 
     delivered_all, watched_all = counts([])
     first = session.query(func.min(PickRow.created_at)).filter(*mine).scalar()
+    last = session.query(func.max(PickRow.created_at)).filter(*mine).scalar()
+
+    # Counted the SAME way `/api/runs?collection=<slug>` selects them, because the panel's Runs tile
+    # links straight to that list — a tile that says 40 above a list of 11 is worse than no tile.
+    # Both therefore count runs STILL ON RECORD: `runs.retention` prunes old runs and nulls the
+    # picks' run_id (migration 0040, so picks outlive their run), and neither side pretends the
+    # pruned ones are still there.
+    built_in = session.query(PickRow.run_id).filter(*mine).distinct()
+    runs = session.query(func.count(Run.id)).filter(Run.id.in_(built_in)).scalar() or 0
 
     matured_until = now - timedelta(days=HIT_WINDOW_DAYS)
     cohort = [PickRow.created_at < matured_until]
@@ -541,7 +550,9 @@ def row_effectiveness(session: Session, slug: str, now: datetime | None = None) 
     return {
         "delivered": delivered_all,
         "watched": watched_all,
+        "runs": runs,
         "first_delivered_at": iso_utc(first) if first else None,
+        "last_delivered_at": iso_utc(last) if last else None,
         "matured_days": HIT_WINDOW_DAYS,
         # None, not a zeroed dict: "no cohort yet" and "a cohort that landed nothing" are different
         # answers and the panel says different things about them.

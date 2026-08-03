@@ -3010,6 +3010,17 @@
             ],
             "title": "First Delivered At"
           },
+          "last_delivered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Delivered At"
+          },
           "matured": {
             "anyOf": [
               {
@@ -3031,6 +3042,10 @@
             "title": "Per Library",
             "type": "array"
           },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
           "watched": {
             "title": "Watched",
             "type": "integer"
@@ -3039,7 +3054,9 @@
         "required": [
           "delivered",
           "watched",
+          "runs",
           "first_delivered_at",
+          "last_delivered_at",
           "matured_days",
           "matured",
           "per_library"

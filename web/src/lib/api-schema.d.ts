@@ -2989,11 +2989,15 @@ export interface components {
             delivered: number;
             /** First Delivered At */
             first_delivered_at: string | null;
+            /** Last Delivered At */
+            last_delivered_at: string | null;
             matured: components["schemas"]["RowMaturedCohort"] | null;
             /** Matured Days */
             matured_days: number;
             /** Per Library */
             per_library: components["schemas"]["RowLibraryEffectiveness"][];
+            /** Runs */
+            runs: number;
             /** Watched */
             watched: number;
         } & {

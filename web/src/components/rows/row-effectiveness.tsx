@@ -1,5 +1,4 @@
-import { Clock, Eye, Send, TrendingUp } from "lucide-react";
-import { Link } from "react-router";
+import { CalendarClock, Eye, History, Send, TrendingUp } from "lucide-react";
 
 import { StatTile } from "@/components/stat-tile";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -69,15 +68,17 @@ function LibraryBar({
 export function RowEffectivenessPanel({
   data,
   isLoading,
-  rowId,
+  rowSlug,
 }: {
   data: RowEffectiveness | undefined;
   isLoading: boolean;
-  rowId: number;
+  /** The row's SLUG, not its id: `/runs?row=` filters on the slug picks are stamped with. */
+  rowSlug: string;
 }) {
+  const runsHref = `/runs?row=${encodeURIComponent(rowSlug)}`;
   return (
     <div className="space-y-4 rounded-lg border bg-card p-5">
-      <h2 className="text-sm font-medium">How this row is doing</h2>
+      <h2 className="text-base font-semibold">How this row is doing</h2>
 
       {isLoading || !data ? (
         <Skeleton className="h-24 w-full" />
@@ -104,6 +105,22 @@ export function RowEffectivenessPanel({
               value={data.watched}
               hint="so far"
             />
+            <StatTile
+              icon={History}
+              label="Runs"
+              value={data.runs}
+              hint="that built it"
+              to={runsHref}
+              title="Runs still on record that put something in this row. Older runs are cleared by the history retention setting."
+            />
+            <StatTile
+              icon={CalendarClock}
+              label="Last built"
+              value={
+                data.last_delivered_at ? shortDate(data.last_delivered_at) : "—"
+              }
+              hint="most recent delivery"
+            />
           </div>
           <p className="text-sm text-muted-foreground">
             Too early for a score. A pick counts as a hit if it’s watched within{" "}
@@ -129,17 +146,18 @@ export function RowEffectivenessPanel({
               hint={`within ${data.matured_days} days`}
             />
             <StatTile
-              icon={Clock}
-              label="Judged on"
-              value={data.matured.delivered}
-              hint="picks old enough"
-              title="Only picks that have had their full window count towards the rate. Newer ones are excluded so recency can't look like failure."
-            />
-            <StatTile
               icon={Send}
               label="Delivered"
               value={data.delivered}
               hint="all time"
+            />
+            <StatTile
+              icon={History}
+              label="Runs"
+              value={data.runs}
+              hint="that built it"
+              to={runsHref}
+              title="Runs still on record that put something in this row. Older runs are cleared by the history retention setting."
             />
           </div>
 
@@ -153,20 +171,13 @@ export function RowEffectivenessPanel({
           )}
 
           <p className="text-xs text-muted-foreground">
-            Counted over picks delivered before{" "}
+            Judged on {data.matured.delivered} picks — the ones delivered before{" "}
             {shortDate(data.matured.cohort_to)}, so every one has had its full{" "}
             {data.matured_days} days. Newer picks are in the all-time total but
             not the score.
           </p>
         </>
       )}
-
-      <Link
-        to={`/runs?row=${rowId}`}
-        className="inline-block text-sm text-primary underline-offset-4 hover:underline"
-      >
-        See this row’s runs
-      </Link>
     </div>
   );
 }
