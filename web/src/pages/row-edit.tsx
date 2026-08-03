@@ -58,8 +58,10 @@ export function RowEditPage() {
               onRename={(proposedName) =>
                 collection &&
                 navigate(`/rows/${collection.id}/rename`, {
-                  // Only the proposed name — deliberately NOT `oldTemplate`, which is what makes
-                  // that screen auto-start. Arriving from here still asks before touching Plex.
+                  // The proposed name is also the go-ahead: that screen starts the rename on
+                  // arrival. The button is only enabled once the name has actually changed, so the
+                  // click is the decision — asking again there made "Rename…" mean "open a page
+                  // with a Rename button on it".
                   state: { proposedName },
                 })
               }

@@ -128,12 +128,13 @@ def test_the_default_rows_name_can_be_edited_and_updates_the_global_template(pag
     name.fill("✨ {library_name} Not applied")
     expect(page.get_by_text("Not applied yet")).to_be_visible()
 
-    # Rename is the editor's, beside the name it changes — the Rows card no longer offers one.
-    # "Rename…" hands the proposed name to the rename screen, which still asks before touching Plex.
+    # Rename is the editor's, beside the name it changes — the Rows card no longer offers one. The
+    # button only enables once the name differs, and that click IS the go-ahead: the rename screen
+    # starts on arrival rather than asking a second time.
     name.fill("✨ {library_name} Handpicked")
     page.get_by_role("button", name="Rename…").click()
-    expect(page.get_by_role("button", name="Rename on Plex")).to_be_visible(timeout=LOAD)
-    page.get_by_role("button", name="Rename on Plex").click()
+    expect(page.get_by_role("heading", name=re.compile("^Renaming "))).to_be_visible(timeout=LOAD)
+    expect(page.get_by_role("button", name="Rename on Plex")).to_have_count(0)
 
     # The rename triggers an SSE stream page — wait for it to finish, then check the DB.
     expect(page.get_by_text("Done")).to_be_visible(timeout=LOAD)

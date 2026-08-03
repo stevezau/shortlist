@@ -473,7 +473,10 @@ export function RowEditor({
                       type="button"
                       variant={renamePending ? "default" : "outline"}
                       size="sm"
-                      disabled={!renameDraft.trim()}
+                      // Only once the name actually differs from the saved one. Enabled on an
+                      // unchanged name it offered to rewrite every collection on Plex, for every
+                      // person, to the name they already had — minutes of writes for no change.
+                      disabled={!renamePending || !renameDraft.trim()}
                       onClick={() => {
                         onClose();
                         onRename?.(renameDraft.trim());

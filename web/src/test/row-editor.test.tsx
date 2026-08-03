@@ -224,7 +224,23 @@ describe("RowEditor — the default row's name", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       /Not applied yet/i,
     );
-    expect(screen.getByRole("button", { name: /Rename/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Rename/ })).toBeEnabled();
+  });
+
+  it("keeps Rename disabled until the name actually changes", async () => {
+    // Enabled on an unchanged name it offered to rewrite every collection on Plex, for every
+    // person, to the name they already had — minutes of writes for no change at all.
+    renderEditor(defaultRow());
+    const input = screen.getByDisplayValue("✨ {library_name} Picked for You");
+
+    expect(screen.getByRole("button", { name: /Rename/ })).toBeDisabled();
+
+    await userEvent.type(input, "!");
+    expect(screen.getByRole("button", { name: /Rename/ })).toBeEnabled();
+
+    // Typed back to what it was: nothing to apply, so nothing to press.
+    await userEvent.type(input, "{backspace}");
+    expect(screen.getByRole("button", { name: /Rename/ })).toBeDisabled();
   });
 
   it("does NOT send the typed name when the page is saved", async () => {
