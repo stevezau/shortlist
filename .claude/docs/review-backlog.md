@@ -381,19 +381,26 @@ issue #61's "Wanted by" filter, in the same two files.
    section says "Send to Sonarr/Radarr" / "Sent to Sonarr/Radarr" where the page standardised on
    films-first. Both are docs-only and outside the two items this pass was scoped to.
 
-## Row editor: delete/rename/tiles (2026-08-03) — one item left open
+## Row editor: delete/rename/tiles (2026-08-03) — ALL RESOLVED
 
 The editor gained the destructive actions, an editable name, and dashboard-style stat tiles.
-Architecture Review found five issues, all fixed in the same commit except the one below.
+Architecture Review found five issues; all are fixed (`1b03ba5`, `d50e459`).
 
-**OPEN — renaming the DEFAULT row writes `name_template` to the row as well as the global.**
-`row-rename.tsx`'s submit sends both `name` and `name_template`. For the default row the backend
-routes `name` to the global `row.name_template` setting (`api/collections.py:565`), but
-`name_template` is also in `_PATCHABLE_COLUMNS`, so the row's own column is set too — and
-`services/report_service.py:179` prefers `c.name_template` over the global for `DEFAULT_SLUG`. They
-agree at write time and diverge only if Settings → Defaults later changes the global, after which
-reports show the stale name. Pre-existing, but making the editor's name box editable turns renaming
-the default row into the obvious path, so it is now much more reachable.
+**CLOSED — the DEFAULT row no longer carries its own `name_template`.** Fixed in three places,
+because one was not enough and the first two attempts each looked complete:
+
+1. `PATCH /collections/{id}` skips the column for that row.
+2. `POST /collections/{id}/rename` wrote it too, TWELVE LINES BELOW the new guard, in the same
+   flow — the rename screen PATCHes and then immediately POSTs, so a column cleared by the guard
+   came straight back one request later. The first test passed because it stopped at the PATCH.
+3. `_serialize` still SHIPPED the column, and the SPA reads `name_template || name` in three
+   places, so a database written before the guard showed a title Plex no longer used — and the
+   rename sent it as `old_template`, matched nothing (`collection_reconcile.py:527`), reported
+   "renamed 0 collections", and left the next run to build a second collection beside the old one.
+   Neutralising it in the API is what makes a migration unnecessary for existing databases.
+
+The lesson worth keeping: **a guard is only as good as the narrowest path that reaches the same
+write.** Grep for every writer of a field before believing one guard covers it.
 
 Two things worth keeping from this round, both invisible to a passing test suite:
 
