@@ -23,6 +23,8 @@ import asyncio
 import os
 import platform
 import secrets as pysecrets
+import threading
+import time
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -342,6 +344,63 @@ class LibraryOut(PassthroughModel):
     type: Literal["movie", "show"]
 
 
+#: How long a Plex library read is served from memory before going back to the PMS.
+#:
+#: These two endpoints are on the PAGE-LOAD path — `/libraries` backs every row card on the Rows
+#: page, the library picker, and the placement settings — and each call is a fresh PlexServer
+#: handshake plus a `/library/sections` read. That is fine against an idle PMS and ruinous against a
+#: busy one: Plex serialises against its own database, so while a job was deleting collections one
+#: DELETE took 15.8s and every page that wanted a library list waited behind it (SFLIX 2026-08-04).
+#: The list itself changes when someone adds a library — minutes of staleness costs nothing.
+_PLEX_READ_TTL_S = 120.0
+
+#: A far shorter timeout than a run's `plex.timeout_s` (default 45s). A run is right to wait out a
+#: slow PMS; a page is not — past a few seconds the tab looks broken, and the person retries, which
+#: is the last thing an overloaded server needs.
+_INTERACTIVE_TIMEOUT_S = 8
+
+
+def _cached_plex_read(state, key: str, read):
+    """Read from the PMS at most once per `_PLEX_READ_TTL_S` per key, and never twice at once.
+
+    Three behaviours, each earning its keep on a server that is busy rather than one that is idle:
+
+    * **TTL** — the common case never touches Plex at all.
+    * **Single-flight** — concurrent misses collapse into ONE read. Without it a slow PMS makes
+      things worse the more people look: ten page loads become ten enumerations of a server that is
+      already the bottleneck.
+    * **Serve-stale-on-failure** — if the refresh raises (a timeout on a busy server), the previous
+      value is returned rather than an error. A library list a couple of minutes old is a much better
+      answer than a broken page, and the next call retries. Nothing here is used to decide a write.
+
+    Only for READS whose staleness is harmless. Never cache something a mutation is about to act on.
+    """
+    cache = state.__dict__.setdefault("_plex_read_cache", {})
+    locks = state.__dict__.setdefault("_plex_read_locks", {})
+    lock = locks.setdefault(key, threading.Lock())
+
+    entry = cache.get(key)
+    if entry and entry[0] > time.monotonic():
+        return entry[1]
+
+    with lock:
+        # Re-checked with the lock held: whoever we queued behind has just refreshed it.
+        entry = cache.get(key)
+        if entry and entry[0] > time.monotonic():
+            return entry[1]
+        try:
+            value = read()
+        except HTTPException:
+            raise  # "Plex isn't connected" is an answer, not a failure to paper over
+        except Exception as e:
+            if entry is None:
+                raise
+            logger.warning("plex read {} failed ({}) — serving the cached copy", key, type(e).__name__)
+            return entry[1]
+        cache[key] = (time.monotonic() + _PLEX_READ_TTL_S, value)
+        return value
+
+
 @_authed.get("/libraries", response_model=list[LibraryOut])
 async def libraries(request: Request) -> list[dict]:
     """The server's movie/show libraries, so the Rows editor can offer them as delivery targets."""
@@ -356,9 +415,10 @@ async def libraries(request: Request) -> list[dict]:
             url, token = store.get("plex.url"), store.get("plex.token")
         if not url or not token:
             raise HTTPException(status_code=409, detail="Plex isn't connected yet")
-        return [{"key": str(s.key), "title": s.title, "type": s.type} for s in PlexClient(url, token).sections()]
+        client = PlexClient(url, token, timeout=_INTERACTIVE_TIMEOUT_S)
+        return [{"key": str(s.key), "title": s.title, "type": s.type} for s in client.sections()]
 
-    return await asyncio.get_running_loop().run_in_executor(None, read)
+    return await asyncio.get_running_loop().run_in_executor(None, lambda: _cached_plex_read(state, "libraries", read))
 
 
 class LibraryCollectionOut(PassthroughModel):
@@ -382,7 +442,8 @@ async def library_collections(key: str, request: Request) -> list[dict]:
             url, token = store.get("plex.url"), store.get("plex.token")
         if not url or not token:
             raise HTTPException(status_code=409, detail="Plex isn't connected yet")
-        section = next((s for s in PlexClient(url, token).sections() if str(s.key) == key), None)
+        client = PlexClient(url, token, timeout=_INTERACTIVE_TIMEOUT_S)
+        section = next((s for s in client.sections() if str(s.key) == key), None)
         if section is None:
             raise HTTPException(status_code=404, detail="library not found")
         ours = {
@@ -397,7 +458,9 @@ async def library_collections(key: str, request: Request) -> list[dict]:
                 titles.append(title)
         return [{"title": t} for t in titles]
 
-    return await asyncio.get_running_loop().run_in_executor(None, read)
+    return await asyncio.get_running_loop().run_in_executor(
+        None, lambda: _cached_plex_read(state, f"collections:{key}", read)
+    )
 
 
 class OwnedCollectionOut(PassthroughModel):
