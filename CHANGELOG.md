@@ -4,7 +4,7 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
-## [1.0.0] - unreleased
+## [1.0.0] - 2026-08-04
 
 First stable release. No breaking changes from `0.1.0-beta.9` — the version number is a statement
 about stability, not a rewrite. An existing install upgrades in place; the migrations run on boot
@@ -25,6 +25,9 @@ after taking a pre-migration backup.
   changes which titles a row holds, or how often it refreshes, which is still **Freshness**.
   "Newest" is now labelled **Newest released**, to keep it distinct from "Just added".
 - **A rebuilt documentation site**, split into eight task-shaped guides.
+- **The row editor leads with how the row is doing** — delivered, watched, runs and last built,
+  across the top. Runs links to that row's own history, and counts the runs that list actually
+  holds, so the number and the page behind it can never disagree.
 
 ### Fixed
 
@@ -40,6 +43,15 @@ after taking a pre-migration backup.
   390px screen; Rows put the Delete button out of reach entirely). Every route, the wizard, the nav
   drawer and every dialog now fit 390px, enforced by `tests/e2e/test_mobile_audit.py`.
 - **The drift check's off switch now turns it off.**
+- **Pages no longer wait on Plex.** The library list behind every row card was read live from the
+  server on each page load, so while a job was deleting collections — one DELETE took 15.8s inside
+  Plex's own write lock — every page queued behind it. It is cached now, concurrent misses collapse
+  into one read, and a failed refresh serves the last good answer instead of an error.
+- **Turning a row off asks first.** The next run takes that row off Plex for everyone who has it,
+  which a bare switch gave no hint of. Turning one back on is unchanged — it removes nothing.
+- **Rename only offers itself when the name has changed**, and now does the rename rather than
+  showing you another button to press. Pressed on an unchanged name it used to rewrite every
+  collection, for every person, to the name they already had.
 - Warnings look like warnings, small grey text is readable, and the settings are explained in words
   a first-time user already knows.
 
@@ -47,6 +59,7 @@ after taking a pre-migration backup.
 
 - The read-only Plex audit moved out of the Danger zone into Advanced — it changes nothing, and
   filing it under a destructive heading made the safest control on the page look like the riskiest.
+- Renaming moved off the Rows list and into the editor, beside the name it changes.
 
 ## [0.1.0-beta.9] - 2026-08-02
 

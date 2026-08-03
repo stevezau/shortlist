@@ -1,22 +1,21 @@
 # v1.0.0 — state of play and what is left
 
-**Status: `dev` is ready to release. Nothing is tagged and nothing is on `master`.** The owner is
-making one more change in another session first, then will say go.
+**Status: releasing now.** The owner gave the go-ahead on 2026-08-04. If a step below is already
+done, it is marked; if you are picking this up cold mid-release, read this file first.
 
-Written 2026-08-03. If you are picking this up cold, read this file before touching the release.
+Written 2026-08-03, updated 2026-08-04.
 
 ## What "ready" means here
 
-`dev` is at `3dbc238`, CI green, and deployed to the maintainer's server as `ghcr.io/stevezau/shortlist:dev`
-(image `efe47213`, migrated to head, health `ok`, no errors on boot).
+`dev` is 38 commits ahead of `master`, CI green on every one, and deployed to the maintainer's
+server as `ghcr.io/stevezau/shortlist:dev` (migrated to head, health `ok`, no errors on boot).
 
 Already done, do NOT redo:
 
 - `__version__ = "1.0.0"` (`shortlist/__init__.py`), OpenAPI snapshot regenerated to match.
 - Beta labels removed: the sidebar footer (`app-shell.tsx`), the README banner, `.claude/CLAUDE.md`
   ("Status: 1.0").
-- `CHANGELOG.md` has a `## [1.0.0] - unreleased` entry. **Change `unreleased` to the release date
-  when you tag.**
+- `CHANGELOG.md`'s `## [1.0.0]` entry is written and DATED 2026-08-04.
 - Mobile: every route, the wizard, the nav drawer and all four dialogs fit 390px, enforced by
   `tests/e2e/test_mobile_audit.py`.
 - A database seeded at revision `0001` is proven to reach head with its rows intact and no drift
@@ -25,11 +24,11 @@ Already done, do NOT redo:
 - Four review-backlog items closed; three more were already fixed and their entries were stale
   (verified, not re-fixed). See `review-backlog.md`.
 
-## To release (the owner has NOT authorised this yet — wait to be told)
+## To release (authorised 2026-08-04)
 
 Per `.claude/CLAUDE.md`'s branch model:
 
-1. Set the `CHANGELOG.md` date on the `[1.0.0]` heading.
+1. ~~Set the `CHANGELOG.md` date.~~ Done.
 2. Open a PR `dev` → `master`.
 3. **Run the Architecture Review agent on it.** Required for every `dev` → `master` release PR
    whatever it contains, and this one carries watch-history deletion (see below).
