@@ -74,7 +74,7 @@ export function RowDestructiveActions({
         onClick={() => setConfirmOpen(true)}
         aria-label={`Delete ${collection.name}`}
         title="Delete this row for good"
-        className="text-destructive hover:text-destructive"
+        className="text-destructive-text hover:text-destructive-text"
       >
         {!remove.isPending && <Trash2 aria-hidden="true" />}
         Delete
@@ -95,7 +95,7 @@ export function RowDestructiveActions({
               out there is invisible to a screen reader and buried under the overlay for everyone
               else. The failure would look like a button that simply did nothing. */}
           {remove.isError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-text">
               {apiErrorMessage(
                 remove.error,
                 "Couldn’t delete this row. Try again.",
@@ -162,7 +162,7 @@ export function RowDestructiveActions({
             </p>
           )}
           {(preview.isError || cleanup.isError) && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-text">
               {apiErrorMessage(
                 preview.error ?? cleanup.error,
                 "Couldn’t reach Plex. Try again.",

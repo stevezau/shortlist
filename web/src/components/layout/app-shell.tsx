@@ -252,7 +252,7 @@ export function AppShell() {
           ),
           success: <CircleCheck className="h-4 w-4 text-success" aria-hidden />,
           error: (
-            <CircleAlert className="h-4 w-4 text-destructive" aria-hidden />
+            <CircleAlert className="h-4 w-4 text-destructive-text" aria-hidden />
           ),
         }}
       />

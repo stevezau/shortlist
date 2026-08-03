@@ -235,6 +235,16 @@ class SettingsStore:
             return self._secrets.decrypt(value)
         return value
 
+    def has_row(self, key: str) -> bool:
+        """Whether this key has been WRITTEN, as opposed to falling back to its default.
+
+        `get` deliberately hides that distinction — a caller wants the effective value. For the
+        off-able crons it matters: an absent row means "run at the built-in default", a stored blank
+        means OFF, and both come back from `get` as "". Anything that must tell "never set" from
+        "set to empty" — the settings audit, for one — asks here.
+        """
+        return self._session.get(Setting, key) is not None
+
     def set(self, key: str, value: Any) -> None:
         self._require_box(key)
         if key in SECRET_KEYS and value:

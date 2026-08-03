@@ -48,7 +48,7 @@ export function UserRequestTag({ user }: { user: User }) {
           Leave blank for none.
         </p>
         {patchUser.isError && (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-destructive-text">
             {apiErrorMessage(
               patchUser.error,
               "Couldn’t save this tag. Try again.",

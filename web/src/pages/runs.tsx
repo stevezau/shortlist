@@ -157,7 +157,7 @@ function RunRow({ run }: { run: Run }) {
               </span>
             )}
             {run.stats.users_error > 0 && (
-              <span className="text-destructive">
+              <span className="text-destructive-text">
                 {" "}
                 · {run.stats.users_error} failed
               </span>

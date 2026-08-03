@@ -44,7 +44,7 @@ function StatusChip({
   }
   if (last.status === "failed") {
     return (
-      <span className="flex items-center gap-1.5 text-sm font-medium text-destructive">
+      <span className="flex items-center gap-1.5 text-sm font-medium text-destructive-text">
         <TriangleAlert aria-hidden="true" className="size-3.5 shrink-0" />
         Failed
       </span>
@@ -80,7 +80,7 @@ function EffectTag({
       className={cn(
         "shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium",
         tag.destructive
-          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          ? "border-destructive/40 bg-destructive/10 text-destructive-text"
           : "border-border bg-muted text-muted-foreground",
       )}
     >
@@ -237,7 +237,7 @@ export function JobRow({
 
           {/* The error wins over the detail line: a failure's reason is the point of looking. */}
           {last?.error ? (
-            <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-sm text-destructive">
+            <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2 text-sm text-destructive-text">
               {last.error}
             </p>
           ) : last?.detail ? (

@@ -32,8 +32,8 @@ const LEVEL_CLASS: Record<string, string> = {
   INFO: "text-foreground",
   SUCCESS: "text-success",
   WARNING: "text-warning",
-  ERROR: "text-destructive",
-  CRITICAL: "text-destructive",
+  ERROR: "text-destructive-text",
+  CRITICAL: "text-destructive-text",
 };
 
 function LogRow({ line }: { line: LogLine }) {

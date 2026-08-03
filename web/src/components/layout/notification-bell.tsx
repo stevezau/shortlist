@@ -10,7 +10,7 @@ import type { AppNotification } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const SEVERITY = {
-  error: { icon: CircleAlert, className: "text-destructive" },
+  error: { icon: CircleAlert, className: "text-destructive-text" },
   warning: { icon: TriangleAlert, className: "text-warning" },
   info: { icon: Info, className: "text-primary" },
 } as const;

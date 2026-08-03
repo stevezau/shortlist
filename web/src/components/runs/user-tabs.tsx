@@ -47,7 +47,7 @@ function UserRow({
         {result.display_name || result.username}
       </span>
       {failed ? (
-        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive">
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium text-destructive-text">
           <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
           Failed
         </span>
@@ -138,7 +138,7 @@ export function UserTabs({
             {pendingTotal > 0 && okTotal === 0 && failedTotal === 0 ? (
               `${pendingTotal} pending…`
             ) : failedTotal > 0 ? (
-              <span className="font-medium text-destructive">
+              <span className="font-medium text-destructive-text">
                 {failedTotal} failed
               </span>
             ) : okTotal === 0 && skippedTotal > 0 ? (

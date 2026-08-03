@@ -101,7 +101,7 @@ export function InlineKeyField({
         </Button>
       </div>
       {save.isError && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive-text">
           Couldn’t save. Try again.
         </p>
       )}

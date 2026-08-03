@@ -219,6 +219,21 @@ class TestSettingsChangeAudit:
         latest = self._changes(client)[0]["message"]["changed"]
         assert latest["requests.auto_min_rating"] == {"from": 8.0, "to": 7.1}
 
+    def test_switching_an_off_able_schedule_off_is_recorded_the_first_time(self, client: TestClient):
+        """Turning the drift check off must be auditable, and on a fresh install it was not.
+
+        `store.get` folds the DEFAULT in, so an absent `sync.check_cron` row and a stored blank both
+        read as "" — the first time an owner switched it off, "" -> "" looked like no change and
+        nothing was written. That is the one unattended job that writes corrections to Plex and can
+        delete a collection, so it is exactly the change rule 10 exists to capture.
+        """
+        before = len(self._changes(client))
+        assert client.put("/api/settings", json={"values": {"sync.check_cron": ""}}).status_code == 200
+
+        after = self._changes(client)
+        assert len(after) == before + 1, "switching the drift check off wrote no audit event"
+        assert "sync.check_cron" in after[0]["message"]["changed"]
+
     def test_an_unchanged_key_is_not_recorded(self, client: TestClient):
         """The form PUTs the whole object, so recording every key would bury the one that moved."""
         client.put("/api/settings", json={"values": {"row.size": 20, "requests.max_per_run": 5}})

@@ -27,6 +27,12 @@
     --accent-foreground: 43 92% 72%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 98%;
+    /* Red as TEXT, which `--destructive` cannot also be. That token fills solid buttons carrying
+       white `--destructive-foreground` at 4.80:1; as text on our surfaces it measures 3.51-4.02:1,
+       under AA. Lightening it to fix the text drops white-on-solid to 3.48 — strictly worse overall.
+       So text gets its own value: 4.84:1 on elevated, 5.21 on card, 5.53 on background. Use
+       `text-destructive-text` for words, `bg-destructive` for fills. */
+    --destructive-text: 0 72% 63%;
     --success: 152 55% 45%;
     --success-foreground: 150 80% 96%;
     --warning: 38 92% 52%;

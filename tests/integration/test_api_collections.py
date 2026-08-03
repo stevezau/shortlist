@@ -118,6 +118,63 @@ class TestCollectionsSeed:
 
             assert session.query(Collection).filter_by(slug="picked").one().name == "✨ Picked for You"
 
+    def test_default_row_never_stores_its_own_name_template(self, client: TestClient):
+        """The rename screen sends `name` AND `name_template` — right for every other row, wrong here.
+
+        The default row's title is the global `row.name_template`. The engine already forces this
+        column empty when it builds specs, so a stored value never reaches Plex — but the report
+        service used to prefer it, so a row carrying one showed a stale name for ever once Settings →
+        Defaults moved on. The guard is server-side rather than in the caller: any client sending the
+        field would otherwise put the row back into that state.
+        """
+        client.put("/api/settings", json={"values": {"row.name_template": "✨ {library_name} Picked for You"}})
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+
+        r = client.patch(
+            f"/api/collections/{picked['id']}",
+            json={"name": "✨ {library_name} Handpicked", "name_template": "✨ {library_name} Handpicked"},
+        )
+        assert r.status_code == 200
+
+        # The global moved; the row's own column did not.
+        assert client.get("/api/settings").json()["row.name_template"] == "✨ {library_name} Handpicked"
+        with client.app.state.sessions() as session:
+            from shortlist.server.db.models import Collection
+
+            assert session.query(Collection).filter_by(slug="picked").one().name_template == ""
+
+        # The rename SCREEN does not stop at the PATCH — it immediately POSTs /rename with the same
+        # template. Guarding only the PATCH left the column cleared for exactly one request.
+        client.post(
+            f"/api/collections/{picked['id']}/rename",
+            json={"name_template": "✨ {library_name} Handpicked", "old_template": ""},
+        )
+        with client.app.state.sessions() as session:
+            from shortlist.server.db.models import Collection
+
+            assert session.query(Collection).filter_by(slug="picked").one().name_template == ""
+
+    def test_default_row_never_serves_a_stale_name_template(self, client: TestClient):
+        """A database written before the guard still carries a value; the API must not ship it.
+
+        The SPA reads `name_template || name` in three places, so a stale column would show a title
+        Plex no longer uses — and the rename screen would send it as `old_template`, match nothing,
+        report "renamed 0 collections", and leave the next run to build a second collection beside
+        the old one.
+        """
+        from shortlist.server.db.models import Collection
+
+        client.put("/api/settings", json={"values": {"row.name_template": "✨ {library_name} Picked for You"}})
+        with client.app.state.sessions() as session:
+            session.query(Collection).filter_by(slug="picked").update({Collection.name_template: "✨ Stale Name"})
+            session.commit()
+
+        picked = next(c for c in client.get("/api/collections").json() if c["slug"] == "picked")
+        assert picked["name_template"] == ""
+        # `name` for this row IS the global template (delivery renders it per library), so the SPA's
+        # `name_template || name` now lands on the live value instead of the stale column.
+        assert picked["name"] == "✨ {library_name} Picked for You"
+
     def test_editing_the_default_rows_name_writes_the_global_template_and_reconciles(
         self, client: TestClient, monkeypatch
     ):

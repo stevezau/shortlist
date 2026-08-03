@@ -27,7 +27,7 @@ export function RestrictedNote({
       className={`flex gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm ${className ?? ""}`}
     >
       <ShieldAlert
-        className="mt-0.5 h-4 w-4 shrink-0 text-destructive"
+        className="mt-0.5 h-4 w-4 shrink-0 text-destructive-text"
         aria-hidden="true"
       />
       <div className="space-y-1">

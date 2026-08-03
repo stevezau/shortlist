@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { RequestCandidate } from "@/lib/types";
+import type { RequestCandidate, User } from "@/lib/types";
 import { RequestsPage } from "@/pages/requests";
 
 const {
@@ -15,8 +15,10 @@ const {
   restoreRequests,
   clearRequests,
   getSettings,
+  getUsers,
 } = vi.hoisted(() => ({
   listRequests: vi.fn(),
+  getUsers: vi.fn((): Promise<unknown[]> => Promise.resolve([])),
   sendRequests: vi.fn((_ids: number[], _dryRun?: boolean) =>
     Promise.resolve({ sent: 1, dry_run: false, outcomes: [] }),
   ),
@@ -44,8 +46,34 @@ vi.mock("@/lib/api", () => ({
     restoreRequests: (ids: number[]) => restoreRequests(ids),
     clearRequests: (ids: number[]) => clearRequests(ids),
     getSettings: () => getSettings(),
+    getUsers: () => getUsers(),
   },
 }));
+
+/** A users-list row, for the username → display-name resolution the inbox does client-side. */
+function person(username: string, displayName: string): User {
+  return {
+    id: username.length,
+    plex_account_id: 0,
+    username,
+    slug: username,
+    nickname: "",
+    friendly_name: "",
+    display_name: displayName,
+    avatar_url: "",
+    user_type: "shared",
+    restricted: false,
+    restriction_profile: "",
+    enabled: true,
+    cold_start: false,
+    request_tag: "",
+    prefs: {},
+    history_depth: 0,
+    last_run_at: null,
+    hit_rate: null,
+    preview_titles: [],
+  };
+}
 
 function candidate(
   overrides: Partial<RequestCandidate> = {},
@@ -95,6 +123,7 @@ describe("RequestsPage", () => {
     restoreRequests.mockClear();
     clearRequests.mockClear();
     getSettings.mockResolvedValue({ "requests.enabled": true });
+    getUsers.mockResolvedValue([]);
   });
 
   it("shows an empty state when nothing has ever been queued", async () => {
@@ -745,6 +774,64 @@ describe("RequestsPage", () => {
     renderPage();
     expect(await screen.findByText(/Wanted by Sarah, Mike/)).toBeTruthy();
     expect(screen.getByText(/Wanted by 3 people/)).toBeTruthy();
+  });
+
+  it("shows the display name for each wanter, and the username itself when nobody matches", async () => {
+    // `wanters` stores the bare Plex username; every other page shows `display_name || username`.
+    getUsers.mockResolvedValue([person("sarah_p89", "Sarah")]);
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        title: "Poor Things",
+        wanters: ["sarah_p89", "ghost_account"],
+        why: [
+          {
+            user: "sarah_p89",
+            row: "Comedy Classics",
+            seed: "Fawlty Towers",
+            source: "tmdb_similar",
+          },
+        ],
+      }),
+    ]);
+    renderPage();
+    // Known username -> the friendly name; unknown one -> itself, never a blank.
+    expect(
+      await screen.findByText(/Wanted by Sarah, ghost_account/),
+    ).toBeTruthy();
+    // The why-line carries the same usernames, so it resolves them the same way.
+    expect(screen.getByText("Sarah")).toBeTruthy();
+    expect(screen.queryByText(/sarah_p89/)).toBeNull();
+  });
+
+  it("labels the 'Wanted by' chips with display names but still filters on the username", async () => {
+    getUsers.mockResolvedValue([
+      person("sarah_p89", "Sarah"),
+      person("m_jones", "Mike"),
+    ]);
+    listRequests.mockResolvedValue([
+      candidate({
+        id: 1,
+        tmdb_id: 100,
+        title: "Sarah Pick",
+        wanters: ["sarah_p89"],
+      }),
+      candidate({
+        id: 2,
+        tmdb_id: 200,
+        title: "Mike Pick",
+        wanters: ["m_jones"],
+      }),
+    ]);
+    renderPage();
+    await screen.findByText("Sarah Pick");
+    // The chip reads as the person, not as their login...
+    const sarah = await screen.findByRole("button", { name: "Sarah (1)" });
+    expect(screen.queryByRole("button", { name: /sarah_p89/ })).toBeNull();
+    // ...and clicking it still narrows the list, because the filter is keyed on the username.
+    await userEvent.click(sarah);
+    expect(screen.getByText("Sarah Pick")).toBeTruthy();
+    expect(screen.queryByText("Mike Pick")).toBeNull();
   });
 
   it("truncates a long wanters list to three names plus a +N more count", async () => {

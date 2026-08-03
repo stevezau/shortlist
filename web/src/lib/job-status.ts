@@ -16,7 +16,7 @@ export function isActiveJob(job: Job): boolean {
 }
 
 export function jobStatusTone(status: Job["status"]): string {
-  if (status === "failed") return "text-destructive";
+  if (status === "failed") return "text-destructive-text";
   if (status === "done") return "text-muted-foreground";
   return "text-foreground";
 }

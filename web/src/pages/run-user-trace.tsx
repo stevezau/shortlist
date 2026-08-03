@@ -172,11 +172,11 @@ function ErrorBanner({ error }: { error: string }) {
   return (
     <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4">
       <AlertTriangle
-        className="mt-0.5 h-5 w-5 shrink-0 text-destructive"
+        className="mt-0.5 h-5 w-5 shrink-0 text-destructive-text"
         aria-hidden="true"
       />
       <div className="space-y-1">
-        <p className="text-sm font-medium text-destructive">
+        <p className="text-sm font-medium text-destructive-text">
           This run failed for this person
         </p>
         <p className="text-sm text-muted-foreground">
@@ -654,7 +654,7 @@ function SourceCard({
         <div className="min-w-0 space-y-1.5">
           <p className="text-sm font-medium">{sourceLabel(src.source)}</p>
           {failed ? (
-            <p className="text-xs text-destructive">
+            <p className="text-xs text-destructive-text">
               Couldn’t reach it{src.detail ? ` — ${src.detail}` : ""}
             </p>
           ) : (
@@ -947,7 +947,7 @@ function WebSourceCard({
       </div>
 
       {failed && source?.detail && (
-        <p className="border-t px-3 py-2 text-xs text-destructive">
+        <p className="border-t px-3 py-2 text-xs text-destructive-text">
           Couldn’t reach it — {source.detail}
         </p>
       )}

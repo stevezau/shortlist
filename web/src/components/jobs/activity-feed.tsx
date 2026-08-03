@@ -39,7 +39,7 @@ function ActivityRow({
         {job.status === "failed" && (
           <TriangleAlert
             aria-hidden="true"
-            className="size-4 shrink-0 text-destructive"
+            className="size-4 shrink-0 text-destructive-text"
           />
         )}
         {job.status === "running" && (

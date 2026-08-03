@@ -23,6 +23,9 @@ export default {
         destructive: {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
+          // `text-destructive-text` — the AA-safe red for WORDS. See index.css for why the fill
+          // colour cannot serve both jobs.
+          text: "hsl(var(--destructive-text))",
         },
         success: {
           DEFAULT: "hsl(var(--success))",

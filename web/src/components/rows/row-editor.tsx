@@ -946,7 +946,7 @@ export function RowEditor({
           </SettingsGroup>
 
           {save.isError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-text">
               {apiErrorMessage(
                 save.error,
                 "Couldn’t save this row. Try again.",

@@ -246,9 +246,8 @@ concurrent edit). Everything in **Fixed** is on `dev` as of this date; everythin
    one of the five hardcoded `JobRow`s in "Run now". Its counts _are_ in the page totals, so a failed
    prune shows "1 failed" in the header chip with **no row anywhere to click**. Needs a `JobRow` +
    a run mutation, which is a functional change, not copy.
-2. **`advanced-section.tsx:38` falls back to `runs.retention ?? 100`.** The server default is `3`
-   and the API bounds the field to 0–24 (`api/settings.py:160`), so 100 is both unreachable
-   (`all_public()` always returns the default) and out of range if it ever were reached.
+2. ~~**`advanced-section.tsx:38` falls back to `runs.retention ?? 100`.**~~ CLOSED 2026-08-03 — now
+   `?? 3`, matching `settings_store.DEFAULTS`. Fixed alongside the `events.retention` control below.
 3. **The Plex card's "Plex token" field has no "where do I get this" link**, unlike TMDB/MDBList/Exa.
    Normally filled by the wizard's PIN flow, so it only bites someone re-entering it by hand. Left
    alone rather than assert a support URL I could not verify.
@@ -274,7 +273,7 @@ issue #61's "Wanted by" filter, in the same two files.
 ### Fixed — factual errors (traced to the handler/engine)
 
 1. **"Number of people whose picks it appears in" was impossible.** `requests.min_demand`'s help
-   text described `demand` as a count of people whose *picks* held the title. A requestable title is
+   text described `demand` as a count of people whose _picks_ held the title. A requestable title is
    by definition absent from the library, and `filter_candidates` drops every non-library candidate
    before picks exist — so it can never be in anyone's picks. `demand` counts the people whose
    **candidate pool** surfaced it (`rows.py:_record_demand` → `requests.py:accumulate`). Now: "How
@@ -288,7 +287,7 @@ issue #61's "Wanted by" filter, in the same two files.
 3. **"per night" is not what `max_per_run` counts.** Two strings ("Most to auto-request per night",
    "requested for you each night", "so a night can never flood your downloads") assumed one run a
    night. The cap is applied once per run (`request_missing`, `cap = cfg.max_per_run`) and rows
-   carry their own schedules. Reworded to "in one run". The claim it *doesn't* cover — "titles you
+   carry their own schedules. Reworded to "in one run". The claim it _doesn't_ cover — "titles you
    approve by hand aren't capped" — is true: `request_titles` skips every floor and the cap.
 4. **"it'll drop off the list on the next run" is false on Sonarr v3.** The arr-presence prune keys
    shows off `report.arr_present`, which is built from Sonarr's own `tmdbId` — a v4-only field, so
@@ -302,7 +301,7 @@ issue #61's "Wanted by" filter, in the same two files.
    exclusion") so the owner can find the setting there.
 6. **"Never suggest or request these again" / "no run suggests or requests them"** over-claimed on
    the "suggest" half. A rejection only feeds `_handled_requests` (`context_builder.py:278`), which
-   is the engine's *request* skip set; nothing stops a rejected title being picked into a row if it
+   is the engine's _request_ skip set; nothing stops a rejected title being picked into a row if it
    later lands in the library. Now: "no run will ask Radarr or Sonarr for them again."
 7. **The Sent tab said "Nothing sent yet" while sent titles were merely filtered out**, and the
    Rejected tab rendered a blank list with an "Allow all again (0)" button. Only Waiting had a
@@ -341,31 +340,46 @@ issue #61's "Wanted by" filter, in the same two files.
 - **`Sonarr/Radarr` vs `Radarr/Sonarr`** was mixed within one page; standardised on films-first,
   matching the "Sent to Radarr & Sonarr" heading.
 
+### Fixed in the follow-up (2026-08-03) — ordering + names
+
+1. **The "Wanted by" names now read as people, resolved client-side.** No payload change was needed:
+   `wanters` and `why[].user` store `UserProfile.username`, which is exactly `User.username`
+   (`context_builder.py:518` → `rows.py:1266`), and `GET /api/users` already returns `username`
+   **and** `display_name` for every user in the table (`serializers.py:user_dict`, no filtering).
+   `lib/user-names.ts` builds the map; a username with no match resolves to itself, so a departed
+   sharer never renders blank. The **filter is still keyed on the username** — only the chip's label
+   changed — so two people sharing a display name can't be merged into one filter.
+2. **The Waiting toolbar leads with Send**, then a rule, then Delete and Reject. The separator is
+   what the earlier note said this wanted; the copy is unchanged.
+3. **`Send on its own, or ask me first` now sits ABOVE `Guardrails`,** and Guardrails gained a line
+   saying what it is ("the lowest bar a title must clear before Shortlist will ask for it at all").
+   `Most to send automatically in one run` moved into the auto-send fieldset and is hidden when
+   auto-send is off — `request_missing` only reaches the cap after the auto bars, so with the switch
+   off it can never apply to anything. `docs/guides.md` steps 4–5 were re-ordered to match (they
+   also still said "per night" and "minimum number of reviews").
+4. **The Waiting tab now says what it is waiting for**, above the toolbar: "Titles Shortlist wanted
+   for your people that your library doesn't have. Nothing here has been sent — send the ones you
+   want, or reject the rest." Both halves are traceable: `persist_request_queue` deletes a pending
+   row the library now holds, and no handler ever moves a row back from `sent` to `pending` (only
+   `rejected` → `pending`, via restore), so a pending row has never been sent.
+5. **The auto-bar warning was over-claiming and is now weaker.** It fires when _either_ auto bar is
+   below its guardrail (an `||`), but claimed "everything that gets past those minimums will be sent
+   without asking" — only true when both are. Now: a bar below its guardrail stops nothing.
+
 ### Open — not fixed, with the reason
 
 1. **The `MAX_INBOX = 500` cap is disclosed, not solved.** `list_requests` sorts by
    (status, −demand, −rating) and truncates to 500, so filtering — the new people filter included —
    narrows what was loaded, not the whole history. The page now says so, but only once `rows.length`
    actually reaches 500. A real fix is server-side filtering, which #61 explicitly scoped out.
-2. **Ordering: the Waiting toolbar puts Delete and Reject before Send.** Send is the primary action
-   and the reason the page exists, yet the destructive pair is read first. They are correctly
-   ordered by weight (ghost, ghost, primary) but the eye lands on "Delete" first. Left alone: it
-   would want a visual separator or a menu, not a copy change.
-3. **Ordering: `Guardrails` sits above `Send on its own, or ask me first`,** so the owner sets the
-   floors before learning that a second, higher set of floors exists and that the first set only
-   decides what *waits*. Reading it top-down, "Minimum rating 7" looks like the request threshold
-   until you reach "Send without asking when rated 8" two fieldsets later. The two cross-reference
-   each other now, but the sequence still teaches the concept backwards.
-4. **Ordering: the page never says what "Waiting" is waiting FOR** until you read a row's tooltip.
-   The tab strip (Waiting / Sent / Rejected) is the first thing on screen and the subtitle explains
-   the page, not the tabs.
-5. **`ARR_STATUS_LABELS` uses "Not monitored"**, Sonarr/Radarr's own word for a state that means
+2. **`ARR_STATUS_LABELS` uses "Not monitored"**, Sonarr/Radarr's own word for a state that means
    "it isn't even looking" (`_status_for`). Kept deliberately — matching the Arr's vocabulary is how
    the owner finds the toggle there — but it is jargon by the letter of the rule.
-6. **The "Wanted by" names are Plex usernames** (`user.username`, via `wanters`), not the display
-   names shown elsewhere in the app. On most servers these match; where they don't, the filter chips
-   and the "Wanted by …" line will read differently from the Users page. Fixing it means resolving
-   usernames to display names at the API boundary, which is a payload change, not copy.
+3. **`docs/guides.md` still carries two claims the UI stopped making.** "It drops off the list on
+   the next run" (the arr-presence badge) is the false-on-Sonarr-v3 claim fixed in the SPA in the
+   first pass — `show_present_tmdb` is empty on v3, so the pending row survives. And the inbox
+   section says "Send to Sonarr/Radarr" / "Sent to Sonarr/Radarr" where the page standardised on
+   films-first. Both are docs-only and outside the two items this pass was scoped to.
 
 ## Row editor: delete/rename/tiles (2026-08-03) — one item left open
 
@@ -393,3 +407,54 @@ Two things worth keeping from this round, both invisible to a passing test suite
    `expect(cleanupCollection.mock.calls).toEqual([[id, true], [id, false]])` is the assertion that
    holds both ends. This is the `.claude/rules/testing.md` "call count right, arguments wrong" shape,
    on a Plex write path.
+
+---
+
+## Jobs schedule control + `events.retention` (2026-08-03) — both closed
+
+Two copy-audit items that both turned out to be missing CONTROLS, not bad sentences.
+
+**1. "clear the box and it stays off" described a box that did not exist — and an off switch that
+did nothing until the next restart.** The claim lives in the backend job catalogue
+(`services/jobs.py`, `sync.check`), which is the copy every `web/` pass misses (item 7 of the
+2026-08-02 Jobs section). Three separate faults behind it:
+
+- **The off control was unreachable on a default install.** `SchedulePanel` rendered its ghost
+  "Turn this schedule off" button only when `settings[sync.check_cron] !== ""`. But the whole point
+  of `sync.check_cron` is that a STORED blank means off while an ABSENT row means "nightly at
+  05:45" (`scheduler._resolve_cron(blank_means_off=True)`), and `all_public()` folds the default in
+  — so both states read as `""` in `GET /api/settings`, and the one job the scheduler goes out of
+  its way to let you switch off had no off switch until some other frequency had been saved first.
+  The panel now reads the EFFECTIVE cron from `GET /api/schedule`, which is the only place that
+  distinction is resolved. (`scheduler.py:35` already said the UI must do this; the Jobs panel was
+  the one place that didn't.)
+- **`CronPicker`'s "Daily" chip WAS the off switch, mislabelled.** Its blank preset writes `""` —
+  "use the built-in default" for five jobs, "off" for this one. A chip labelled Daily that silently
+  switches off a job which writes corrections to Plex is the worst shape a control can have. The
+  blank preset's label is now a prop; optional schedules get **Off**, everyone else keeps Daily.
+- **`PUT /api/settings` only rebuilt the scheduler for a hardcoded four keys** —
+  `sync.watch_cron`, `sync.users_cron`, `backup.cron`, `backup.max_keep`. So editing
+  `sync.check_cron`, `privacy.sync_cron` or `maintenance.prune_cron` saved the setting and left the
+  live APScheduler trigger alone until the container restarted: turning the drift check off did not
+  turn it off that night. The trigger set is now derived from `DEFAULT_CRONS`, so a cron added there
+  can never be the next one whose edits wait for a restart.
+
+The copy moved too, to describe the control that now exists ("open this job and choose Off under
+Frequency"), plus `docs/guides.md` and `docs/reference.md`.
+
+Worth keeping: `test_every_schedulable_cron_takes_effect_on_save` asserts the LIVE trigger, not that
+`next_run` is non-null — a job left on its boot-time cron still reports a next run, so the obvious
+assertion passes whether or not the edit was applied. Both new tests were verified to fail against
+the old four-key set.
+
+**2. `events.retention` now has a control**, next to "Runs kept" in Settings → Advanced, named
+**"Change log kept"** and wired exactly like its sibling (same 0–24 bound the API validates, same
+Forever/3mo/6mo/12mo chips, 0 = for ever stated in the copy). It defaults to Forever, which is why
+it had no control: nothing forced the question. The copy says what the log holds (Plex writes,
+share-filter writes, settings changes) and admits there is no screen for it — it is read at
+`GET /api/events/log`, which no SPA page consumes.
+
+**Left open:** restoring the drift check's built-in 05:45 after switching it off means typing a cron
+(or plain English) into Custom — the picker has no chip for it, because the SPA is deliberately not
+allowed a second copy of `DEFAULT_CRONS` (`settings_store.py:144` records what that cost last time).
+Fixing it properly means adding the built-in default to `ScheduleJobOut`, which is an API change.

@@ -62,7 +62,7 @@ export function UserNickname({ user }: { user: User }) {
           privacy is unaffected.
         </p>
         {patchUser.isError && (
-          <p role="alert" className="text-sm text-destructive">
+          <p role="alert" className="text-sm text-destructive-text">
             {apiErrorMessage(
               patchUser.error,
               "Couldn’t save this nickname. Try again.",

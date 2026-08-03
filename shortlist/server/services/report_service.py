@@ -175,8 +175,14 @@ class _RowNamer:
         # The row's own template, the default row falling back to the global one (the per-user
         # override tier of engine `resolve_row_template` is dropped for this aggregate label, and a
         # custom row uses its stored name). Rendered per library below.
+        # The default row's template is the GLOBAL one, full stop — never its own column. The engine
+        # forces that column empty when it builds specs (`context_builder.py:604,698`), so reading it
+        # here made reports the one surface that could disagree with what Plex actually got: a
+        # database carrying a stale value (written before the API guarded it) shows the old name for
+        # ever, while delivery uses the global. Ignoring it makes this match delivery on both old and
+        # new databases, so no migration is needed to clean the column up.
         self._templates = {
-            c.slug: (c.name_template or (default_template if c.slug == DEFAULT_SLUG else c.name))
+            c.slug: (default_template if c.slug == DEFAULT_SLUG else (c.name_template or c.name))
             for c in session.query(Collection).all()
         }
 

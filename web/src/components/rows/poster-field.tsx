@@ -157,7 +157,7 @@ export function PosterField({
               A tall poster (2:3) looks best. JPG or PNG, up to 8&nbsp;MB.
             </p>
             {uploadError && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive-text">
                 {uploadError}
               </p>
             )}
@@ -234,7 +234,7 @@ export function PosterField({
             the style.
           </p>
           {previewError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-text">
               {previewError}
             </p>
           )}

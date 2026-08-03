@@ -115,7 +115,7 @@ function ProgressCard({
             title={detail}
             className={cn(
               "truncate text-sm",
-              stage === "error" ? "text-destructive" : "text-muted-foreground",
+              stage === "error" ? "text-destructive-text" : "text-muted-foreground",
             )}
           >
             {detail}
@@ -132,7 +132,7 @@ function ProgressCard({
         )}
         {stage === "error" && (
           <TriangleAlert
-            className="h-4 w-4 shrink-0 text-destructive"
+            className="h-4 w-4 shrink-0 text-destructive-text"
             aria-hidden="true"
           />
         )}
@@ -226,7 +226,7 @@ export function StepFirstRun({ complete }: StepProps) {
             </Button>
           </div>
           {run.isError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm text-destructive-text">
               {apiErrorMessage(
                 run.error,
                 "The run could not start. Check the server log and try again.",
@@ -317,7 +317,7 @@ export function StepFirstRun({ complete }: StepProps) {
           <p
             className={
               failed
-                ? "inline-flex items-center gap-2 text-lg font-semibold text-destructive"
+                ? "inline-flex items-center gap-2 text-lg font-semibold text-destructive-text"
                 : "inline-flex items-center gap-2 text-lg font-semibold text-success"
             }
           >
@@ -357,7 +357,7 @@ export function StepFirstRun({ complete }: StepProps) {
                 Something went wrong on this run — copy the details below when
                 reporting it:
               </p>
-              <p className="rounded-md bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive">
+              <p className="rounded-md bg-destructive/10 px-3 py-2 font-mono text-xs text-destructive-text">
                 {finishedError}
               </p>
             </div>

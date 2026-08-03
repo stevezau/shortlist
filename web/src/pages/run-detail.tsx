@@ -58,7 +58,7 @@ function RunFailureBanner({ run }: { run: RunDetail }) {
           showing one person’s row to someone else.
         </p>
       )}
-      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive">
+      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-background/60 p-2.5 font-mono text-xs text-destructive-text">
         {blockers.length > 0 ? blockers.join("\n") : run.error}
       </pre>
     </div>

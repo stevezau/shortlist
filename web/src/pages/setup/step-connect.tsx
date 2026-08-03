@@ -24,7 +24,7 @@ function CheckLine({ label, check }: { label: string; check: ProbeCheck }) {
         />
       ) : (
         <X
-          className="mt-0.5 h-4 w-4 shrink-0 text-destructive"
+          className="mt-0.5 h-4 w-4 shrink-0 text-destructive-text"
           aria-hidden="true"
         />
       )}
@@ -179,7 +179,7 @@ export function StepConnect({ data, update }: StepProps) {
 
         {servers.isError ? (
           <div className="space-y-3">
-            <p className="text-sm text-destructive" role="alert">
+            <p className="text-sm text-destructive-text" role="alert">
               {apiErrorMessage(servers.error, "Could not reach plex.tv.")} Sign
               in with Plex again to list your servers, or type the address
               yourself below.
@@ -332,7 +332,7 @@ export function StepConnect({ data, update }: StepProps) {
 
       {probe.isError ? (
         <div className="space-y-3">
-          <p className="text-sm text-destructive" role="alert">
+          <p className="text-sm text-destructive-text" role="alert">
             {probe.error instanceof ApiError
               ? probe.error.message
               : "That server did not answer."}
@@ -383,7 +383,7 @@ export function StepConnect({ data, update }: StepProps) {
                 .join(", ")}
             </p>
             {!requiredChecksPass ? (
-              <p className="text-sm text-destructive">
+              <p className="text-sm text-destructive-text">
                 Shortlist can&rsquo;t keep rows private on this server yet — fix
                 the failing check above, then run the checks again.
               </p>
@@ -393,7 +393,7 @@ export function StepConnect({ data, update }: StepProps) {
       ) : null}
 
       {link.isError ? (
-        <p className="text-sm text-destructive" role="alert">
+        <p className="text-sm text-destructive-text" role="alert">
           {apiErrorMessage(link.error, "Could not link that server.")}
         </p>
       ) : null}

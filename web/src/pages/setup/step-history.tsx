@@ -107,12 +107,12 @@ export function StepHistory({ data, update, next }: StepProps) {
       </div>
 
       {saveTmdb.isSuccess && !saveTmdb.data.ok && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive-text">
           {saveTmdb.data.message}
         </p>
       )}
       {saveTmdb.isError && (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-sm text-destructive-text">
           {apiErrorMessage(saveTmdb.error, "Could not save that TMDB key.")}
         </p>
       )}

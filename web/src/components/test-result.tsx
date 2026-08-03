@@ -33,7 +33,7 @@ export function TestResult({
         role={result.ok ? undefined : "alert"}
         className={cn(
           "flex items-center gap-1.5 text-sm",
-          result.ok ? "text-success" : "text-destructive",
+          result.ok ? "text-success" : "text-destructive-text",
           className,
         )}
       >
@@ -47,7 +47,7 @@ export function TestResult({
       <Tag
         role="alert"
         className={cn(
-          "flex items-center gap-1.5 text-sm text-destructive",
+          "flex items-center gap-1.5 text-sm text-destructive-text",
           className,
         )}
       >

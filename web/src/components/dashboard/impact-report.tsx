@@ -61,7 +61,7 @@ function WatchSyncLine({ sync }: { sync: EffectivenessReport["watch_sync"] }) {
       </span>
       <div className="flex items-center gap-2">
         {syncNow.isError && (
-          <span role="alert" className="text-destructive">
+          <span role="alert" className="text-destructive-text">
             Couldn’t start the sync.
           </span>
         )}
@@ -491,7 +491,7 @@ function DeletedRows({
         <Button
           variant="ghost"
           size="sm"
-          className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-destructive"
+          className="mt-1 h-7 px-2 text-xs text-muted-foreground hover:text-destructive-text"
           onClick={() => setConfirming(true)}
         >
           <Trash2 className="h-3 w-3" aria-hidden />

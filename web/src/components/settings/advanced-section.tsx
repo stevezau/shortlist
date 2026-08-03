@@ -12,8 +12,9 @@ import type { Settings } from "@/lib/types";
 const LEVELS = ["ERROR", "WARNING", "INFO", "DEBUG", "TRACE"] as const;
 type Level = (typeof LEVELS)[number];
 
-// Preset chips for the three number knobs; each also takes a "Custom…" value within the bounds the
-// API validates (run.concurrency 1–16, runs.retention 0–24 months, plex.timeout_s 5–300 — settings.py).
+// Preset chips for the four number knobs; each also takes a "Custom…" value within the bounds the
+// API validates (run.concurrency 1–16, runs.retention and events.retention 0–24 months,
+// plex.timeout_s 5–300 — settings.py VALIDATORS).
 const CONCURRENCY = [1, 2, 4, 8].map((n) => ({ value: n, label: String(n) }));
 const RETENTION = [0, 3, 6, 12].map((n) => ({
   value: n,
@@ -35,7 +36,12 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
       : "DEBUG"
   ) as Level;
   const concurrency = (settings["run.concurrency"] as number | undefined) ?? 4;
-  const retention = (settings["runs.retention"] as number | undefined) ?? 100;
+  // Fallbacks match settings_store.DEFAULTS. They are unreachable — `all_public()` always folds the
+  // default in — but a wrong one is a trap either way: this was `?? 100`, a value the API's 0–24
+  // bound would now reject outright.
+  const retention = (settings["runs.retention"] as number | undefined) ?? 3;
+  const eventRetention =
+    (settings["events.retention"] as number | undefined) ?? 0;
   const timeout = (settings["plex.timeout_s"] as number | undefined) ?? 45;
   const hideSharedFromDisabled = settingBool(
     settings,
@@ -147,6 +153,34 @@ export function AdvancedSection({ settings }: { settings: Settings }) {
             max={24}
             unit="months (0 = forever)"
             onChange={(value) => save({ "runs.retention": value })}
+          />
+          <div className="border-t pt-4">
+            <p className="font-medium">Change log kept</p>
+            {/* Kept apart from run history on purpose (`prune_events`): this is the record of what
+                changed on whose account, which an operator may want long after the run detail around
+                it has gone — so it defaults to Forever while runs default to three months. */}
+            <p className="text-sm text-muted-foreground">
+              How long to keep the log of what Shortlist has changed &mdash;
+              each write to a Plex collection or to someone&rsquo;s sharing
+              settings, and each change you make to these settings.
+              <br />
+              Cleared out by the same nightly tidy-up as run history.{" "}
+              <strong>Forever</strong> keeps every entry, and is the default:
+              it&rsquo;s the only lasting record of what changed on whose
+              account, so it outlives the runs it belongs to.
+              <br />
+              There is no screen for it yet &mdash; it&rsquo;s read through
+              Shortlist&rsquo;s API, at <code>/api/events/log</code>.
+            </p>
+          </div>
+          <NumberPresets
+            value={eventRetention}
+            ariaLabel="Change log retention"
+            presets={RETENTION}
+            min={0}
+            max={24}
+            unit="months (0 = forever)"
+            onChange={(value) => save({ "events.retention": value })}
           />
           <div className="flex items-start justify-between gap-4 border-t pt-4">
             <div className="space-y-0.5">

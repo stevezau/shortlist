@@ -85,6 +85,12 @@ heading: Guides
   dashboard metrics (delivered/watched/hit rate survive indefinitely), and doesn't affect Shortlist's
   ability to tidy up rows on Plex.
 
+  How long each of the two histories is kept is set in Settings → Advanced: **Runs kept** (three
+  months by default) for the browsable run detail, and **Change log kept** for the record of what
+  Shortlist changed on Plex and in these settings. The change log defaults to **Forever** — it is the
+  only lasting answer to "what changed on whose account", so it outlives the runs around it. Both are
+  applied by the nightly **Clear out old records** job.
+
 - **Settings** — one scrolling page, organised into a grouped sidebar sub-nav that jumps to each
   section and tracks where you are: **Connect** (Connections), **Rows** (Finding titles, Row
   defaults, Row placement), **Add-ons** (Requests), and **System** (Advanced, API access, Danger
@@ -94,11 +100,13 @@ heading: Guides
 
 ## Schedules
 
-**Jobs → Timeline** lists everything on a timer — rows and background jobs together, in the order they
-actually fire, each with its next run and an inline editor. Row schedules are edited on the Rows page
-(one place per setting), and jobs are edited in place.
+**The Jobs page** lists everything on a timer. Each job carries its own next run on its line, and
+opening one reveals its frequency picker; underneath, **Rows** lists the rows that build on a
+schedule, grouped by the cron they share — three rows on the same schedule are one trigger that
+builds all three, not three timers. That list is read-only: a row's schedule is edited in the row
+editor, so each setting has exactly one home.
 
-It sits with Jobs rather than in its own nav entry because "what background work exists" and "when
+It lives with Jobs rather than in its own nav entry because "what background work exists" and "when
 does it run" are two views of one thing — as separate pages, every job was listed twice and neither
 page could answer a whole question. `/schedule` still redirects here.
 
@@ -115,8 +123,9 @@ Two jobs are worth knowing about there:
   checks the state those actually left behind. Drift is the failure nobody notices: a row left on the
   wrong shelf stays there until somebody happens to look, so the thing that repairs it is on by
   default. It is also the **only** schedule you can switch off completely — it _writes corrections_
-  to Plex, so clearing its box means off, not "fall back to the default" the way every other blank
-  cron does.
+  to Plex, so its frequency picker offers **Off** where every other job offers **Daily**, and Off
+  means off rather than "fall back to the default" the way every other blank cron does. **Check now**
+  still works by hand with the schedule off.
 
 **Every row runs on its own schedule** — there is no single server-wide one. Open a row (Rows → edit)
 and set its **Schedule**: **Nightly** or **Weekly** presets (just pick a run time), **Custom** for
@@ -594,15 +603,18 @@ Set it up under **Settings → Requests**:
    General_), then click **Test connection**. Save.
 3. Once connected, pick a **Quality** profile and a **Save to** folder from the dropdowns — Shortlist
    reads these straight from the app, so there are no ids to look up.
-4. Tune the **Guardrails**: pick a **rating source** — TMDB (no extra setup), or IMDb / Rotten
-   Tomatoes / Metacritic / Trakt (these read scores from **MDBList**, so add a free MDBList API key
-   under Settings → Connections first). Then set a minimum rating and minimum number of reviews a
-   title must clear, the fewest people who must want it, an optional **release-year window** (_on or
-   after_ / _on or before_ — leave either blank for no bound; a show is judged by its first-air
-   year), and the most titles to auto-request per night (a hard cap across both apps).
-5. Set the **Auto-send vs. ask me** bar: titles wanted by enough people _and_ rated highly enough
-   are requested automatically each night; everything else that clears the guardrails waits in your
-   **Requests** inbox. Turn auto-send off for a fully manual queue.
+4. Choose **Send on its own, or ask me first**: titles wanted by enough people _and_ rated highly
+   enough go out as soon as a run finds them; everything else that clears the guardrails waits in
+   your **Requests** inbox. Turn it off for a fully manual queue. While it's on, also set **the most
+   to send automatically in one run** — a hard cap across both apps, so a single run can't flood
+   your downloads. Titles you approve by hand in the inbox aren't capped.
+5. Tune the **Guardrails** — the lowest bar a title must clear before Shortlist will ask for it at
+   all, whether it goes out on its own or waits for you. Pick a **rating source** — TMDB (no extra
+   setup), or IMDb / Rotten Tomatoes / Metacritic / Trakt (these read scores from **MDBList**, so
+   add a free MDBList API key under Settings → Connections first). Then set a minimum rating and
+   minimum number of votes a title must clear, the fewest people who must want it, and an optional
+   **release-year window** (_on or after_ / _on or before_ — leave either blank for no bound; a show
+   is judged by its first-air year).
 6. Optionally set a **tag** (default `shortlist`). Every title Shortlist requests gets this tag in
    Radarr/Sonarr — created there if it doesn't exist — so you can filter, find, or hang tag-based
    rules (quality/release/cleanup) on exactly what Shortlist added. Leave blank for no tag.

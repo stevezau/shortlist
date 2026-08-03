@@ -26,7 +26,12 @@ import { ProgressBar } from "@/components/ui/progress-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { queuedReason, useRunActive, useWritesPlex } from "@/lib/job-activity";
-import { queryKeys, useSettings, useSaveSettings } from "@/lib/queries";
+import {
+  queryKeys,
+  useSchedule,
+  useSettings,
+  useSaveSettings,
+} from "@/lib/queries";
 import { useSSE } from "@/lib/sse";
 import type {
   JobCatalogEntry,
@@ -129,36 +134,67 @@ function GroupHeading({
  * and not change it. Anything with a `schedule_setting` now gets this.
  */
 function SchedulePanel({ entry }: { entry: JobCatalogEntry }) {
+  const queryClient = useQueryClient();
   const settings = useSettings();
+  const schedule = useSchedule();
   const saveSettings = useSaveSettings();
   if (!entry.schedule_setting) return null;
+
+  const save = (cron: string) =>
+    saveSettings.mutate(
+      { [entry.schedule_setting]: cron },
+      {
+        onSuccess: () => {
+          // Both, and both matter: the panel reads the EFFECTIVE cron from /api/schedule, and the
+          // row's next-run comes from the catalogue. Without these a schedule you just changed goes
+          // on showing the old one until the catalogue's idle poll comes round.
+          queryClient.invalidateQueries({ queryKey: queryKeys.schedule });
+          queryClient.invalidateQueries({ queryKey: queryKeys.jobsCatalog });
+        },
+      },
+    );
+
+  // A schedule that can be switched OFF has to be edited against the cron it ACTUALLY runs on, not
+  // the stored setting: for those, a stored blank means off while an absent row means "the built-in
+  // default", and `GET /api/settings` folds the default in, so the two are the same "" there. Reading
+  // that made the off switch appear only once some other frequency had been saved — on a default
+  // install there was no off control at all, for the one job the code goes out of its way to let you
+  // switch off (scheduler._register_sync_check).
+  if (entry.schedule_optional) {
+    // A failed fetch is not a slow one. Treating them alike left a permanent skeleton where the off
+    // switch belongs — the only control on this page that could get stuck with no way back.
+    if (schedule.isError) {
+      return (
+        <p role="alert" className="text-sm text-destructive-text">
+          Couldn&rsquo;t load this schedule, so it can&rsquo;t be changed here
+          right now.{" "}
+          <button
+            type="button"
+            onClick={() => schedule.refetch()}
+            className="underline underline-offset-4"
+          >
+            Try again
+          </button>
+        </p>
+      );
+    }
+    if (!schedule.data) return <Skeleton className="h-8 w-72" />;
+    const job = schedule.data.jobs.find((j) => j.kind === entry.kind);
+    return (
+      <div className="space-y-2">
+        <CronPicker value={job?.cron ?? ""} onChange={save} blankLabel="Off" />
+        <p className="text-xs text-muted-foreground">
+          Off means it never runs on its own &mdash; the button on this row
+          still works whenever you press it.
+        </p>
+      </div>
+    );
+  }
 
   const stored =
     ((settings.data ?? {})[entry.schedule_setting] as string | undefined) ?? "";
 
-  return (
-    <div className="space-y-2">
-      <CronPicker
-        value={stored}
-        onChange={(cron) =>
-          saveSettings.mutate({ [entry.schedule_setting]: cron })
-        }
-      />
-      {/* Only offered where blank genuinely means OFF. Everywhere else a blank cron falls back to the
-          built-in default, so a "turn off" button there would be a lie. */}
-      {entry.schedule_optional && stored !== "" && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 px-2 text-xs text-muted-foreground"
-          disabled={saveSettings.isPending}
-          onClick={() => saveSettings.mutate({ [entry.schedule_setting]: "" })}
-        >
-          Turn this schedule off
-        </Button>
-      )}
-    </div>
-  );
+  return <CronPicker value={stored} onChange={save} />;
 }
 
 // --- live slots: what is happening, or just happened, because you pressed the button -------------
@@ -416,7 +452,7 @@ export function JobsPage() {
             </button>
           )}
           {totals.failed > 0 && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2.5 py-1 text-xs font-medium text-destructive-text">
               {totals.failed} failed
             </span>
           )}
@@ -555,7 +591,10 @@ export function JobsPage() {
                         />
                       )}
                       {!watchedRunning && watchedResult?.ok === false && (
-                        <p role="alert" className="text-sm text-destructive">
+                        <p
+                          role="alert"
+                          className="text-sm text-destructive-text"
+                        >
                           The sync couldn&rsquo;t finish
                           {watchedResult.error
                             ? ` (${watchedResult.error})`
@@ -786,7 +825,10 @@ export function JobsPage() {
                         </Succeeded>
                       )}
                       {pruneNow.data?.error && (
-                        <p role="alert" className="text-sm text-destructive">
+                        <p
+                          role="alert"
+                          className="text-sm text-destructive-text"
+                        >
                           {pruneNow.data.error}
                         </p>
                       )}

@@ -9,7 +9,7 @@ const TONE: Record<Tone, string> = {
   default: "text-primary",
   success: "text-success",
   warning: "text-warning",
-  destructive: "text-destructive",
+  destructive: "text-destructive-text",
 };
 
 /** One headline number with a label and an icon. Reads at a glance; a dense summary line does not. */

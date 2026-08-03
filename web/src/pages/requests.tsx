@@ -37,9 +37,11 @@ import {
   useRestoreRequests,
   useSendRequests,
   useSettings,
+  useUsers,
 } from "@/lib/queries";
 import { sourceShortLabel } from "@/lib/sources";
 import type { RequestCandidate } from "@/lib/types";
+import { type DisplayNameLookup, displayNameLookup } from "@/lib/user-names";
 import { cn } from "@/lib/utils";
 
 /** Everything this page sends the owner to Settings for lives in one card — "Fill in the gaps
@@ -112,9 +114,13 @@ function TypeBadge({
 }
 
 /** "Wanted by …" — the actual names when a run recorded them, up to three then "+N more"; falls
- *  back to the bare count for rows queued before who-wanted-it was tracked. */
-function wantedByLabel(item: RequestCandidate): string {
-  const names = item.wanters ?? [];
+ *  back to the bare count for rows queued before who-wanted-it was tracked. `wanters` holds bare
+ *  Plex usernames, so every name goes through the lookup to read the same as it does on Users. */
+function wantedByLabel(
+  item: RequestCandidate,
+  nameOf: DisplayNameLookup,
+): string {
+  const names = (item.wanters ?? []).map(nameOf);
   if (names.length === 0) {
     return `Wanted by ${item.demand} ${item.demand === 1 ? "person" : "people"}`;
   }
@@ -190,7 +196,13 @@ function ExternalLinks({
  * the seed ("because they watched …") or, for a seedless source, how it was suggested. This is the
  * answer to "where did this come from and why", not just a count.
  */
-function WhyBreakdown({ why }: { why: RequestCandidate["why"] }) {
+function WhyBreakdown({
+  why,
+  nameOf,
+}: {
+  why: RequestCandidate["why"];
+  nameOf: DisplayNameLookup;
+}) {
   const [expanded, setExpanded] = useState(false);
   if (!why || why.length === 0) return null;
   // A popular title can have dozens of wanters — showing every reason is a wall. Show a few, then
@@ -202,8 +214,10 @@ function WhyBreakdown({ why }: { why: RequestCandidate["why"] }) {
     <ul className="space-y-0.5 border-l-2 border-muted pl-3 text-xs text-muted-foreground">
       {shown.map((w, i) => (
         <li key={`${w.user}-${w.row}-${i}`}>
-          <span className="font-medium text-foreground/80">{w.user}</span> ·{" "}
-          <span>{w.row}</span>
+          <span className="font-medium text-foreground/80">
+            {nameOf(w.user)}
+          </span>{" "}
+          · <span>{w.row}</span>
           {w.seed ? (
             <span> · because they watched {w.seed}</span>
           ) : w.source ? (
@@ -234,9 +248,11 @@ function WhyBreakdown({ why }: { why: RequestCandidate["why"] }) {
 function TitleMeta({
   item,
   globalTag,
+  nameOf,
 }: {
   item: RequestCandidate;
   globalTag: string;
+  nameOf: DisplayNameLookup;
 }) {
   // The global tag is applied at send time and never stored on the candidate, so add it here to
   // show the full set of tags this title will actually get (deduped against the per-user/row tags).
@@ -268,10 +284,10 @@ function TitleMeta({
       </div>
       <p
         className="flex items-start gap-1.5 text-xs"
-        title={(item.wanters ?? []).join(", ") || undefined}
+        title={(item.wanters ?? []).map(nameOf).join(", ") || undefined}
       >
         <Users className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-        {wantedByLabel(item)}
+        {wantedByLabel(item, nameOf)}
       </p>
     </div>
   );
@@ -324,6 +340,7 @@ function PendingRow({
   globalTag,
   disabled,
   arrStatus,
+  nameOf,
 }: {
   item: RequestCandidate;
   checked: boolean;
@@ -332,6 +349,7 @@ function PendingRow({
   /** Requests are off — the row is still readable, but it cannot be selected for sending. */
   disabled: boolean;
   arrStatus?: string | null;
+  nameOf: DisplayNameLookup;
 }) {
   const app = item.media_type === "movie" ? "Radarr" : "Sonarr";
   return (
@@ -358,8 +376,8 @@ function PendingRow({
           <p className="text-base font-semibold leading-tight">{item.title}</p>
           <ArrStatusBadge status={arrStatus} />
         </div>
-        <TitleMeta item={item} globalTag={globalTag} />
-        <WhyBreakdown why={item.why} />
+        <TitleMeta item={item} globalTag={globalTag} nameOf={nameOf} />
+        <WhyBreakdown why={item.why} nameOf={nameOf} />
         <ExternalLinks item={item} />
         {/* Deliberately does NOT promise the row disappears next run: the tidy-up matches shows by
             the TMDB id Sonarr v4 reports, and Sonarr v3 doesn't report one at all (`_apply_arr_state`,
@@ -398,6 +416,7 @@ function SentRow({
   onClear,
   clearing,
   arrStatus,
+  nameOf,
 }: {
   item: RequestCandidate;
   radarrUrl: string;
@@ -405,6 +424,7 @@ function SentRow({
   onClear: (id: number) => void;
   clearing: boolean;
   arrStatus?: string | null;
+  nameOf: DisplayNameLookup;
 }) {
   const isMovie = item.media_type === "movie";
   const app = isMovie ? "Radarr" : "Sonarr";
@@ -461,7 +481,7 @@ function SentRow({
           ) : null}
           {item.detail ? <span>· {item.detail}</span> : null}
         </div>
-        <WhyBreakdown why={item.why} />
+        <WhyBreakdown why={item.why} nameOf={nameOf} />
         {/* The "Open in Sonarr/Radarr" link now sits with the TMDB/IMDb/Trakt look-ups, not up top. */}
         <ExternalLinks item={item} lead={lead} />
       </div>
@@ -476,17 +496,19 @@ function RejectedRow({
   item,
   onAllowAgain,
   disabled,
+  nameOf,
 }: {
   item: RequestCandidate;
   onAllowAgain: (id: number) => void;
   disabled: boolean;
+  nameOf: DisplayNameLookup;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2 text-sm">
       <div className="min-w-0">
         <span className="font-medium">{item.title}</span>{" "}
         <span className="text-muted-foreground">
-          {item.year ? `· ${item.year} ` : ""}· {wantedByLabel(item)}
+          {item.year ? `· ${item.year} ` : ""}· {wantedByLabel(item, nameOf)}
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -575,12 +597,17 @@ function FilterSelect<T extends string>({
   );
 }
 
-/** One person offered by the "Wanted by" filter, and how many titles on this tab they wanted. */
-type PersonOption = { name: string; count: number };
+/** One person offered by the "Wanted by" filter, and how many titles on this tab they wanted.
+ *  `name` is the Plex username stored in `wanters` — the key everything filters on, so two people
+ *  who happen to answer to the same display name stay separate; `label` is what the chip shows. */
+type PersonOption = { name: string; label: string; count: number };
 
 /** The names on a tab, most titles first, so the busiest people are the easiest to reach. Ties break
- *  alphabetically rather than by whatever order the payload arrived in. */
-function peopleOn(list: RequestCandidate[]): PersonOption[] {
+ *  alphabetically on the shown name rather than by whatever order the payload arrived in. */
+function peopleOn(
+  list: RequestCandidate[],
+  nameOf: DisplayNameLookup,
+): PersonOption[] {
   const counts = new Map<string, number>();
   for (const item of list) {
     for (const name of item.wanters ?? []) {
@@ -588,8 +615,8 @@ function peopleOn(list: RequestCandidate[]): PersonOption[] {
     }
   }
   return [...counts]
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    .map(([name, count]) => ({ name, label: nameOf(name), count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 /**
@@ -638,7 +665,7 @@ function PeopleFilter({
           aria-pressed={selected.has(person.name)}
           onClick={() => onToggle(person.name)}
         >
-          {person.name} ({person.count})
+          {person.label} ({person.count})
         </Button>
       ))}
       {hidden > 0 && (
@@ -695,6 +722,10 @@ export function RequestsPage() {
   const requestsQuery = useRequests();
   const settingsQuery = useSettings();
   const arrStatusQuery = useArrStatus();
+  // `wanters` and `why[].user` are bare Plex usernames; the users list is what turns them into the
+  // names the Users page shows. Nothing here waits on it — until it arrives (or if it fails) every
+  // name resolves to itself, which is exactly what this page showed before.
+  const usersQuery = useUsers();
   const send = useSendRequests();
   const reject = useRejectRequests();
   const del = useDeleteRequests();
@@ -741,6 +772,11 @@ export function RequestsPage() {
       return next;
     });
 
+  const nameOf = useMemo(
+    () => displayNameLookup(usersQuery.data),
+    [usersQuery.data],
+  );
+
   // `?? []` inline would be a fresh array every render, so both memos below would recompute on
   // every render (and eslint says so).
   const rows = useMemo(() => requestsQuery.data ?? [], [requestsQuery.data]);
@@ -764,7 +800,10 @@ export function RequestsPage() {
 
   // The people offered by the "Wanted by" filter come from the tab you're on, so the counts beside
   // each name describe the list in front of you.
-  const peopleOptions = useMemo(() => peopleOn(activeFull), [activeFull]);
+  const peopleOptions = useMemo(
+    () => peopleOn(activeFull, nameOf),
+    [activeFull, nameOf],
+  );
   // A name whose titles have all been sent since you ticked it is no longer offered — filtering on
   // it would empty the list with no visible chip to un-tick. Dropping it is the same self-healing
   // the stale media filter does below.
@@ -1031,6 +1070,17 @@ export function RequestsPage() {
                     {active === "waiting" &&
                       (pending.length > 0 ? (
                         <section className="space-y-3">
+                          {/* What the tab strip never said: the tabs are three STATES, and only this
+                              one is asking for a decision. Traceable — `persist_request_queue` drops
+                              a pending row the library now holds, and a title only leaves Waiting
+                              when it is sent, rejected or deleted. */}
+                          <p className="text-sm text-muted-foreground">
+                            Titles Shortlist wanted for your people that your
+                            library doesn&rsquo;t have. Nothing here has been
+                            sent &mdash; send the ones you want, or reject the
+                            rest.
+                          </p>
+
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
                               <input
@@ -1044,7 +1094,36 @@ export function RequestsPage() {
                                 ? `${selectedPending.length} selected`
                                 : `${pendingShown.length} waiting`}
                             </label>
+                            {/* Send first, and separated: it is the reason the page exists, and the
+                                eye used to land on "Delete". The rule (a plain border, not a
+                                Separator) keeps the two destructive actions visibly apart from it. */}
                             <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                loading={send.isPending}
+                                disabled={
+                                  !requestsEnabled ||
+                                  selectedPending.length === 0 ||
+                                  busy
+                                }
+                                onClick={() =>
+                                  act(() =>
+                                    send.mutate({ ids: selectedPending }),
+                                  )
+                                }
+                                title="Add the selected titles to Radarr or Sonarr and start searching for them now."
+                              >
+                                {!send.isPending && <Send aria-hidden="true" />}
+                                Send{" "}
+                                {selectedPending.length > 0
+                                  ? selectedPending.length
+                                  : ""}{" "}
+                                to Radarr/Sonarr
+                              </Button>
+                              <span
+                                aria-hidden="true"
+                                className="mx-1 h-5 w-px bg-border"
+                              />
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1077,28 +1156,6 @@ export function RequestsPage() {
                                 <X aria-hidden="true" />
                                 Reject
                               </Button>
-                              <Button
-                                size="sm"
-                                loading={send.isPending}
-                                disabled={
-                                  !requestsEnabled ||
-                                  selectedPending.length === 0 ||
-                                  busy
-                                }
-                                onClick={() =>
-                                  act(() =>
-                                    send.mutate({ ids: selectedPending }),
-                                  )
-                                }
-                                title="Add the selected titles to Radarr or Sonarr and start searching for them now."
-                              >
-                                {!send.isPending && <Send aria-hidden="true" />}
-                                Send{" "}
-                                {selectedPending.length > 0
-                                  ? selectedPending.length
-                                  : ""}{" "}
-                                to Radarr/Sonarr
-                              </Button>
                             </div>
                           </div>
 
@@ -1119,7 +1176,7 @@ export function RequestsPage() {
                           {(send.isError || reject.isError || del.isError) && (
                             <p
                               role="alert"
-                              className="text-sm text-destructive"
+                              className="text-sm text-destructive-text"
                             >
                               {apiErrorMessage(
                                 send.error ?? reject.error ?? del.error,
@@ -1139,6 +1196,7 @@ export function RequestsPage() {
                                   globalTag={globalTag}
                                   disabled={!requestsEnabled}
                                   arrStatus={arrStatusQuery.data?.[item.id]}
+                                  nameOf={nameOf}
                                 />
                               ))}
                             </div>
@@ -1180,7 +1238,7 @@ export function RequestsPage() {
                           )}
                         </div>
                         {clear.isError && (
-                          <p role="alert" className="text-sm text-destructive">
+                          <p role="alert" className="text-sm text-destructive-text">
                             {apiErrorMessage(
                               clear.error,
                               "That didn't go through. Check the server log and try again.",
@@ -1198,6 +1256,7 @@ export function RequestsPage() {
                                 onClear={(id) => clear.mutate([id])}
                                 clearing={clear.isPending}
                                 arrStatus={arrStatusQuery.data?.[item.id]}
+                                nameOf={nameOf}
                               />
                             ))}
                           </div>
@@ -1248,7 +1307,7 @@ export function RequestsPage() {
                           )}
                         </div>
                         {restore.isError && (
-                          <p role="alert" className="text-sm text-destructive">
+                          <p role="alert" className="text-sm text-destructive-text">
                             {apiErrorMessage(
                               restore.error,
                               "That didn't go through. Check the server log and try again.",
@@ -1263,6 +1322,7 @@ export function RequestsPage() {
                                 item={item}
                                 onAllowAgain={(id) => restore.mutate([id])}
                                 disabled={busy}
+                                nameOf={nameOf}
                               />
                             ))}
                           </div>

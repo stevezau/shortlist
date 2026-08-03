@@ -584,6 +584,71 @@ class TestScheduleApi:
         cleared = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
         assert cleared["cron"] == "", "cleared must mean off, not fall back to the default"
 
+    def test_switching_the_drift_check_off_removes_the_live_trigger(self, client: TestClient):
+        """Saving the setting is not enough — the running scheduler has to lose the job.
+
+        `PUT /api/settings` rebuilt the schedule for a hardcoded four-key set that covered the
+        watch/user/backup crons only. So the one schedule the UI offers to switch OFF saved its blank
+        and went on firing at 05:45 until the container restarted: an owner who turned off a job that
+        writes corrections to Plex got no such thing that night.
+        """
+        from shortlist.server.scheduler import SYNC_CHECK_JOB_ID
+
+        assert client.app.state.scheduler.get_job(SYNC_CHECK_JOB_ID), "ships on"
+
+        assert client.put("/api/settings", json={"values": {"sync.check_cron": ""}}).status_code == 200
+
+        assert client.app.state.scheduler.get_job(SYNC_CHECK_JOB_ID) is None, "off means off tonight, not next boot"
+        off = next(e for e in client.get("/api/schedule").json()["jobs"] if e["kind"] == "sync.check")
+        assert off["cron"] == "" and off["next_run"] is None
+
+    def test_every_schedulable_cron_takes_effect_on_save(self, client: TestClient):
+        """The trigger set is derived from DEFAULT_CRONS, so a cron added there can never be the next
+        one whose edits silently wait for a restart.
+
+        Asserts the LIVE trigger, not that a next_run exists: a job left on its boot-time cron still
+        reports a next run, so `next_run is not None` passes whether or not the edit was applied.
+        """
+        from shortlist.server.scheduler import DEFAULT_CRONS
+        from shortlist.server.services.jobs import CATALOG
+
+        for key in DEFAULT_CRONS:
+            assert client.put("/api/settings", json={"values": {key: "7 2 * * *"}}).status_code == 200
+
+        job_ids = {e.schedule_setting: e.schedule_job_id for e in CATALOG if e.schedule_setting}
+        assert set(job_ids) == set(DEFAULT_CRONS), "every schedulable cron must belong to a catalogue job"
+        for key, job_id in job_ids.items():
+            trigger = str(client.app.state.scheduler.get_job(job_id).trigger)
+            assert "hour='2'" in trigger and "minute='7'" in trigger, f"{key} still on its boot-time trigger"
+
+    def test_the_jobs_page_calls_a_cron_off_able_exactly_when_the_scheduler_does(self):
+        """Two sets, maintained apart, decide the same thing — so pin them together.
+
+        `schedule_optional` on the catalogue entry is what labels the picker's blank preset "Off"
+        instead of "Daily"; `scheduler._OFF_ABLE` is what makes a stored blank actually mean off. If
+        a job joins one and not the other, a chip labelled Off quietly means "run at the built-in
+        default" on a job that writes to Plex — the exact lie the label exists to stop.
+        """
+        from shortlist.server.scheduler import _OFF_ABLE
+        from shortlist.server.services.jobs import CATALOG
+
+        assert {e.schedule_setting for e in CATALOG if e.schedule_optional} == _OFF_ABLE
+
+    def test_backup_max_keep_reaches_the_live_job_without_a_restart(self, client: TestClient):
+        """`backup.max_keep` is the one member of the rebuild set that is NOT a cron.
+
+        It rides along in a union, so a tidy-up to `set(DEFAULT_CRONS)` would still pass every other
+        test here while the nightly backup kept pruning to the old count until the container
+        restarted — `_register_backup` bakes the value into the job payload at registration.
+        """
+        assert client.put("/api/settings", json={"values": {"backup.max_keep": 4}}).status_code == 200
+
+        # `_register_backup` closes over the value rather than passing it as an argument, so the
+        # closure cell is where a stale registration actually shows.
+        job = client.app.state.scheduler.get_job("db-backup")
+        captured = {cell.cell_contents for cell in (job.func.__closure__ or ()) if isinstance(cell.cell_contents, int)}
+        assert 4 in captured, f"scheduled backup still on the boot-time max_keep: {captured}"
+
     def test_rows_sharing_a_cron_are_one_entry_not_three(self, client: TestClient):
         """Three rows on `30 3 * * *` are ONE trigger that builds all three — listing them as three
         separate 03:30 entries would misrepresent what the server actually does."""

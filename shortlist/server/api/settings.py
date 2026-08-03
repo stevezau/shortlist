@@ -54,12 +54,20 @@ def _settings_diff(store: SettingsStore, values: dict[str, object]) -> dict[str,
 
     Must be called BEFORE the writes — afterwards the old value is gone.
     """
+    from shortlist.server.scheduler import DEFAULT_CRONS
+
     changed: dict[str, dict[str, object]] = {}
     for key, new in values.items():
         if key in SECRET_KEYS and new == REDACTED_PLACEHOLDER:
             continue  # the placeholder is not a new value; the write loop skips it too
         old = store.get(key)
-        if old == new:
+        # For an off-able cron, `store.get` folds the DEFAULT in, so an ABSENT row and a STORED
+        # blank both read as "" — switching the drift check off for the first time therefore looked
+        # like no change at all and audited nothing. That is the one unattended job that writes
+        # corrections to Plex and can delete a collection, so "who turned it off, and when" has to
+        # be answerable (plex-safety rule 10).
+        first_switch_off = key in DEFAULT_CRONS and new == "" and not store.has_row(key)
+        if old == new and not first_switch_off:
             continue
         changed[key] = {"from": _audit_value(key, old), "to": _audit_value(key, new)}
     return changed
@@ -338,7 +346,14 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
             from shortlist.logging_config import configure_logging
 
             configure_logging(str(update.values["log.level"]))
-        if set(update.values) & {"sync.watch_cron", "sync.users_cron", "backup.cron", "backup.max_keep"}:
+        # Derived from DEFAULT_CRONS, never a hand-written list: a hardcoded four-key set covered the
+        # watch/user/backup crons only, so editing `privacy.sync_cron`, `sync.check_cron` or
+        # `maintenance.prune_cron` saved the setting and left the live trigger alone until the next
+        # container restart — and the drift check is the one schedule the UI offers to switch OFF,
+        # so its off switch silently did nothing for the rest of the night.
+        from shortlist.server.scheduler import DEFAULT_CRONS
+
+        if set(update.values) & (set(DEFAULT_CRONS) | {"backup.max_keep"}):
             from shortlist.server.scheduler import rebuild_schedule
 
             rebuild_schedule(request.app)

@@ -233,7 +233,7 @@ export function ConnectionCard({
                   </Button>
                 </div>
                 {save.isError && (
-                  <p className="text-xs text-destructive">
+                  <p className="text-xs text-destructive-text">
                     {apiErrorMessage(save.error, "Remove failed.")}
                   </p>
                 )}
@@ -258,7 +258,7 @@ export function ConnectionCard({
                     variant="ghost"
                     size="icon"
                     aria-label={`Remove ${title} connection`}
-                    className="text-muted-foreground hover:text-destructive"
+                    className="text-muted-foreground hover:text-destructive-text"
                     onClick={() => setConfirmRemove(true)}
                   >
                     <Trash2 aria-hidden="true" />
@@ -352,7 +352,7 @@ export function ConnectionCard({
               );
             })}
             {save.isError && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive-text">
                 {apiErrorMessage(
                   save.error,
                   "Saving failed. Check the server log and try again.",
@@ -374,7 +374,7 @@ export function ConnectionCard({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="ml-auto text-destructive hover:text-destructive"
+                  className="ml-auto text-destructive-text hover:text-destructive-text"
                   onClick={clear}
                   disabled={save.isPending}
                 >

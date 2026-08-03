@@ -187,7 +187,7 @@ export function UninstallPage() {
             )}
 
             {uninstall.isError && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive-text">
                 {apiErrorMessage(
                   uninstall.error,
                   "Uninstall failed — nothing was left half-done. See the server log, then try again.",

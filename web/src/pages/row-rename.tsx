@@ -215,7 +215,7 @@ export function RowRenamePage() {
       )}
 
       {error && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive-text">
           {error}
         </div>
       )}

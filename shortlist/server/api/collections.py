@@ -333,7 +333,14 @@ def _serialize(session, collection: Collection) -> dict:
         "size": collection.size,
         "media": collection.media,
         "sort_order": collection.sort_order,
-        "name_template": collection.name_template,
+        # Never ship the DEFAULT row's own column: its title is the global `row.name_template`,
+        # already rendered into `name` above. A database written before the API guarded that column
+        # still carries a stale value, and the SPA reads `name_template || name` in three places —
+        # so the editor would show a title Plex no longer uses, and the rename screen would send it
+        # as `old_template`, match nothing (`collection_reconcile.py:527`), report "renamed 0
+        # collections", and leave the next run to build a second collection beside the old one.
+        # Neutralising it here rather than in a migration keeps one place responsible for the rule.
+        "name_template": "" if collection.slug == DEFAULT_SLUG else collection.name_template,
         "min_watchers": collection.min_watchers,
         "request_tag": collection.request_tag or "",
         "candidate_sources": list(collection.candidate_sources or []),
@@ -580,6 +587,16 @@ async def update_collection(collection_id: int, body: CollectionIn, request: Req
         )
         for column in _PATCHABLE_COLUMNS:
             if column in sent:
+                # The DEFAULT row must never carry its own `name_template`: its title IS the global
+                # `row.name_template`, written just above. The engine already knows this and forces
+                # the field empty for this row when it builds specs (`context_builder.py:604,698`),
+                # so a stored value never reaches delivery — but `report_service.py` PREFERS it over
+                # the global, so a row that has one shows a stale name in reports the moment
+                # Settings → Defaults changes. The rename screen sends `name` and `name_template`
+                # together, which is right for every other row, so the guard belongs here rather
+                # than in one caller: any client sending the field would otherwise reintroduce it.
+                if column == "name_template" and is_default:
+                    continue
                 setattr(collection, column, getattr(body, column))
         if "schedule" in sent:
             collection.schedule = body.schedule.strip()  # a whitespace-only cron means "no schedule"
@@ -784,9 +801,14 @@ async def rename_collection_stream(collection_id: int, body: RenameRequest, requ
         # If called from the dialog flow, the PATCH already saved it — this is idempotent.
         new_template = body.name_template.strip()
         if new_template:
-            collection.name_template = new_template
+            # Same rule as the PATCH handler: the DEFAULT row's title IS the global setting, and its
+            # own column must stay empty. Writing it here would undo that guard within the same
+            # flow — the rename screen PATCHes and then immediately POSTs to this endpoint, so a
+            # column cleared one request ago came straight back.
             if slug == DEFAULT_SLUG:
                 SettingsStore(session).set("row.name_template", new_template)
+            else:
+                collection.name_template = new_template
             session.commit()
         else:
             # No template in the body — read the current one from the DB (already saved by PATCH).

@@ -147,7 +147,7 @@ function ArrCard({
             </Button>
           </div>
         ) : options.isError ? (
-          <p className="text-sm text-destructive">
+          <p className="text-sm text-destructive-text">
             Couldn&rsquo;t reach {title} to load its quality profiles and
             folders. Check its address and API key on the {title} card in
             Connections, and press Test there.
@@ -355,8 +355,129 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
               </p>
             </div>
 
+            {/* Deliberately BEFORE Guardrails. Read the other way round, "Minimum rating 7" looked
+                like the bar for requesting at all, and the owner only met the second, higher bar two
+                fieldsets later. The big choice — sent on its own, or waits for you — comes first;
+                the floor underneath both comes after it. */}
+            <fieldset className="space-y-4 rounded-lg border p-4">
+              <legend className="px-1 text-sm font-medium">
+                Send on its own, or ask me first
+              </legend>
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">
+                    Send the strongest titles without asking
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Titles that clear the higher bars here go out as soon as a
+                    run finds them. Everything else that clears your guardrails
+                    waits in your Requests inbox. Turn this off to look at every
+                    title yourself.
+                  </p>
+                </div>
+                <Switch
+                  checked={form.autoSend}
+                  onCheckedChange={(autoSend) => set({ autoSend })}
+                  aria-label="Send the strongest titles without asking"
+                />
+              </div>
+
+              {form.autoSend && (
+                <>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor={autoDemandId}>
+                        Send without asking when wanted by
+                      </Label>
+                      <Input
+                        id={autoDemandId}
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={form.autoMinDemand}
+                        onChange={(e) =>
+                          set({
+                            autoMinDemand: Math.max(1, Number(e.target.value)),
+                          })
+                        }
+                        className="w-28"
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        At least this many people. Wanted by fewer than this? It
+                        waits in the inbox.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={autoRatingId}>
+                        Send without asking when rated
+                      </Label>
+                      <Input
+                        id={autoRatingId}
+                        type="number"
+                        min={0}
+                        max={10}
+                        step={0.1}
+                        value={form.autoMinRating}
+                        onChange={(e) =>
+                          set({ autoMinRating: Number(e.target.value) })
+                        }
+                        className="w-28"
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        At least this {ratingLabel} score. Anything lower waits
+                        for your OK.
+                      </p>
+                    </div>
+                    {/* Weaker than "everything will be sent", on purpose: this fires when EITHER bar
+                        is below its guardrail, and one low bar only means that bar never holds a
+                        title back. */}
+                    {(form.autoMinDemand < form.minDemand ||
+                      form.autoMinRating < form.minRating) && (
+                      <p
+                        role="alert"
+                        className="text-sm text-warning sm:col-span-2"
+                      >
+                        A bar lower than the matching guardrail below stops
+                        nothing &mdash; anything that gets past the guardrails
+                        already clears it. Raise it above the guardrail to keep
+                        a queue to review.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {/* Lives here, not in Guardrails: the cap is only ever applied to automatic
+                        sends (`request_missing` checks it after the auto bars), and with this
+                        switch off it is never reached at all. */}
+                    <Segmented
+                      legend="Most to send automatically in one run"
+                      value={String(form.maxPerRun)}
+                      options={MAX_PER_RUN.map((n) => ({
+                        value: String(n),
+                        label: String(n),
+                      }))}
+                      onChange={(v) => set({ maxPerRun: Number(v) })}
+                    />
+                    {/* "per run", not "per night": `max_per_run` is counted once per run, and rows
+                        carry their own schedules, so a server can run more than once a night. */}
+                    <p className="text-sm text-muted-foreground">
+                      A hard cap on the titles a single run sends on its own,
+                      across both apps, so one run can never flood your
+                      downloads. Titles you approve by hand in the Requests
+                      inbox aren&rsquo;t capped.
+                    </p>
+                  </div>
+                </>
+              )}
+            </fieldset>
+
             <fieldset className="space-y-4 rounded-lg border p-4">
               <legend className="px-1 text-sm font-medium">Guardrails</legend>
+              <p className="text-sm text-muted-foreground">
+                The lowest bar a title must clear before Shortlist will ask for
+                it at all &mdash; whether it goes out on its own or waits in
+                your inbox.
+              </p>
 
               <div className="space-y-2">
                 <Segmented
@@ -513,116 +634,13 @@ export function RequestsSettings({ settings }: { settings: Settings }) {
                   {form.minYear > 0 &&
                     form.maxYear > 0 &&
                     form.maxYear < form.minYear && (
-                      <p className="text-sm text-destructive">
-                        The latest year is before the earliest &mdash; no
-                        titles can match this range.
+                      <p className="text-sm text-destructive-text">
+                        The latest year is before the earliest &mdash; no titles
+                        can match this range.
                       </p>
                     )}
                 </div>
               </div>
-
-              <div className="space-y-2">
-                {/* "per run", not "per night": `max_per_run` is counted once per run, and rows
-                    carry their own schedules, so a server can run more than once a night. */}
-                <Segmented
-                  legend="Most to send automatically in one run"
-                  value={String(form.maxPerRun)}
-                  options={MAX_PER_RUN.map((n) => ({
-                    value: String(n),
-                    label: String(n),
-                  }))}
-                  onChange={(v) => set({ maxPerRun: Number(v) })}
-                />
-                <p className="text-sm text-muted-foreground">
-                  A hard cap on the titles a single run sends on its own, across
-                  both apps, so one run can never flood your downloads. Titles
-                  you approve by hand in the Requests inbox aren&rsquo;t capped.
-                </p>
-              </div>
-            </fieldset>
-
-            <fieldset className="space-y-4 rounded-lg border p-4">
-              <legend className="px-1 text-sm font-medium">
-                Send on its own, or ask me first
-              </legend>
-              <div className="flex items-start justify-between gap-4">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">
-                    Send the strongest titles without asking
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    Titles clearing the higher bar below go out as soon as a run
-                    finds them. Everything else that gets past the rules above
-                    waits in your Requests inbox. Turn this off to look at every
-                    title yourself.
-                  </p>
-                </div>
-                <Switch
-                  checked={form.autoSend}
-                  onCheckedChange={(autoSend) => set({ autoSend })}
-                  aria-label="Send the strongest titles without asking"
-                />
-              </div>
-
-              {form.autoSend && (
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor={autoDemandId}>
-                      Send without asking when wanted by
-                    </Label>
-                    <Input
-                      id={autoDemandId}
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={form.autoMinDemand}
-                      onChange={(e) =>
-                        set({
-                          autoMinDemand: Math.max(1, Number(e.target.value)),
-                        })
-                      }
-                      className="w-28"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      At least this many people. Wanted by fewer than this? It
-                      waits in the inbox.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor={autoRatingId}>
-                      Send without asking when rated
-                    </Label>
-                    <Input
-                      id={autoRatingId}
-                      type="number"
-                      min={0}
-                      max={10}
-                      step={0.1}
-                      value={form.autoMinRating}
-                      onChange={(e) =>
-                        set({ autoMinRating: Number(e.target.value) })
-                      }
-                      className="w-28"
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      At least this {ratingLabel} score. Anything lower waits
-                      for your OK.
-                    </p>
-                  </div>
-                  {(form.autoMinDemand < form.minDemand ||
-                    form.autoMinRating < form.minRating) && (
-                    <p
-                      role="alert"
-                      className="text-sm text-warning sm:col-span-2"
-                    >
-                      These bars are lower than the minimums above, so
-                      everything that gets past those minimums will be sent
-                      without asking, up to the per-run cap. Raise these above
-                      the minimums to keep a queue to review.
-                    </p>
-                  )}
-                </div>
-              )}
             </fieldset>
           </div>
         )}

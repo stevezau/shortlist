@@ -15,7 +15,7 @@ export function DangerZoneSection({ settings }: { settings: Settings }) {
     <section aria-labelledby="danger-heading" className="space-y-3">
       <h2
         id="danger-heading"
-        className="text-lg font-semibold text-destructive"
+        className="text-lg font-semibold text-destructive-text"
       >
         Danger zone
       </h2>

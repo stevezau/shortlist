@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,8 @@ const {
   runJob,
   getSchedule,
   getRuns,
+  getSettings,
+  putSettings,
 } = vi.hoisted(() => ({
   syncWatched: vi.fn(),
   syncUsers: vi.fn(),
@@ -23,6 +25,8 @@ const {
   runJob: vi.fn(),
   getSchedule: vi.fn(),
   getRuns: vi.fn(),
+  getSettings: vi.fn(),
+  putSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -37,6 +41,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       runJob,
       getSchedule,
       getRuns,
+      getSettings,
+      putSettings,
     },
   };
 });
@@ -67,10 +73,15 @@ const CATALOG = [
     label: "Check and fix rows on Plex",
     description:
       "Looks at every collection Shortlist has put on your Plex server and puts back the ones that ended up in the wrong place.\n\nRows fall out of step when a run doesn't finish, when the container restarts mid-write, or when someone was paused or disabled while their row was already live.",
+    schedule_setting: "sync.check_cron",
+    schedule_optional: true,
   }),
   entry("privacy.sync", { label: "Privacy sync" }),
   entry("backup.take", { label: "Back up the database" }),
-  entry("maintenance.prune", { label: "Clear out old records" }),
+  entry("maintenance.prune", {
+    label: "Clear out old records",
+    schedule_setting: "maintenance.prune_cron",
+  }),
   entry("user.cleanup", {
     label: "Remove a disabled person's rows",
     manual: false,
@@ -769,5 +780,115 @@ describe("JobsPage — one place for everything on a timer", () => {
 
     // Falls back to the Jobs list rather than rendering an empty view.
     expect(await screen.findByText(/Picked for You/)).toBeInTheDocument();
+  });
+});
+
+describe("JobsPage — the schedule panel for a job you can switch off", () => {
+  /** The drift check as /api/schedule reports it: `cron` is the EFFECTIVE one, defaults resolved. */
+  function scheduleWithCheck(cron: string) {
+    return {
+      jobs: [
+        {
+          type: "job",
+          kind: "sync.check",
+          label: "Check and fix rows on Plex",
+          description: "",
+          setting: "sync.check_cron",
+          cron,
+          using_default: cron !== "",
+          optional: true,
+          writes_plex: true,
+          next_run: cron ? "2026-08-01T05:45:00Z" : null,
+        },
+      ],
+      rows: [],
+    };
+  }
+
+  beforeEach(() => {
+    getJobs.mockReset();
+    getJobs.mockResolvedValue([]);
+    getJobCatalog.mockReset();
+    getJobCatalog.mockResolvedValue(CATALOG);
+    getRuns.mockReset();
+    getRuns.mockResolvedValue([]);
+    getSettings.mockReset();
+    // A DEFAULT install: nothing stored, so the settings response is the folded-in blank. This is
+    // exactly the state in which the off switch used to be unreachable.
+    getSettings.mockResolvedValue({});
+    putSettings.mockReset();
+    putSettings.mockResolvedValue({});
+    getSchedule.mockReset();
+    getSchedule.mockResolvedValue(scheduleWithCheck("45 5 * * *"));
+    FakeEventSource.latest = null;
+    vi.stubGlobal("EventSource", FakeEventSource);
+  });
+
+  async function openDriftCheck() {
+    const row = await screen.findByTestId("job-sync.check");
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Check and fix rows on Plex" }),
+    );
+    return row;
+  }
+
+  it("offers Off on a default install, where nothing is stored yet", async () => {
+    renderPage();
+    const row = await openDriftCheck();
+
+    // The whole point: no cron is stored, so the old panel showed no off control at all — while the
+    // job ran nightly at 05:45. "Daily" must NOT be offered here: for this one job a blank cron is
+    // the off switch, so a chip labelled Daily would switch a Plex-writing job off.
+    expect(
+      await within(row).findByRole("button", { name: "Off" }),
+    ).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Daily" })).toBeNull();
+  });
+
+  it("shows the cron it actually runs on, not the blank that is stored", async () => {
+    renderPage();
+    const row = await openDriftCheck();
+
+    // 05:45 is no preset, so it lands in the custom box — the effective cron from /api/schedule,
+    // which is the only place the built-in default is resolved.
+    const input = await within(row).findByPlaceholderText("every 4 hours");
+    expect((input as HTMLInputElement).value).toBe("45 5 * * *");
+  });
+
+  it("saves a blank cron when Off is chosen — the value the scheduler reads as off", async () => {
+    renderPage();
+    const row = await openDriftCheck();
+
+    await userEvent.click(
+      await within(row).findByRole("button", { name: "Off" }),
+    );
+
+    await waitFor(() =>
+      expect(putSettings).toHaveBeenCalledWith({ "sync.check_cron": "" }),
+    );
+  });
+
+  it("selects Off once the schedule really is off", async () => {
+    getSchedule.mockResolvedValue(scheduleWithCheck(""));
+    renderPage();
+    const row = await openDriftCheck();
+
+    const off = await within(row).findByRole("button", { name: "Off" });
+    expect(off.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("still calls a blank cron Daily for a job that cannot be switched off", async () => {
+    renderPage();
+    const row = await screen.findByTestId("job-maintenance.prune");
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Clear out old records" }),
+    );
+
+    // For every other job a blank cron means "use the built-in default", which is daily — so the
+    // chip means what it says, and there is no off state to offer.
+    expect(
+      within(row).getByRole("button", { name: "Daily" }),
+    ).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Off" })).toBeNull();
   });
 });

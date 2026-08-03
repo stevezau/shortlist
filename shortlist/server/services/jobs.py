@@ -151,8 +151,9 @@ CATALOG: tuple[JobKind, ...] = (
             "run only updates the people in that run, so everyone else keeps whatever they last had."
             "\n\nRuns nightly at 05:45 by default — after the rows build and after the privacy pass, "
             "so it checks the state those actually left behind. Because it writes corrections to "
-            "Plex unattended, it is the one schedule you can switch off completely: clear the box and "
-            "it stays off rather than falling back to the default."
+            "Plex unattended, it is the one schedule you can switch off completely: open this job and "
+            "choose Off under Frequency. It then stays off rather than falling back to 05:45, and "
+            "Check now still works whenever you press it."
         ),
         manual=True,
         schedule_job_id="sync-check",
@@ -206,8 +207,9 @@ CATALOG: tuple[JobKind, ...] = (
             "database."
             "\n\nWhat it never deletes: the figures on your dashboard, and the record of which "
             "collection belongs to whom, so clearing history can't strand a row on somebody's server. "
-            "It can also trim the log of what Shortlist changed on Plex, but only if you have set a "
-            "limit for that — by default the log is kept for ever."
+            "It also trims the log of what Shortlist has changed, to the “Change log kept” limit in "
+            "the same place — which is set to Forever by default, so nothing there is deleted until "
+            "you choose a limit."
             "\n\nRuns nightly at 06:15 by default, last of the night, once everything else has "
             "finished writing."
         ),
