@@ -13,6 +13,24 @@ layout works whether or not pretty permalinks are on.
   {%- if page.url == item.url or page.url == slashed -%}{%- assign idx = forloop.index0 -%}{%- endif -%}
 {%- endfor -%}
 
+{%- comment -%}
+Guides has child pages, so a page can sit at either level. Work out whether this is
+one of them, and which parent it belongs to, so prev/next walks the section rather
+than skipping over it.
+{%- endcomment -%}
+{%- assign child_idx = -1 -%}
+{%- assign parent_idx = -1 -%}
+{%- for item in nav -%}
+  {%- if item.children -%}
+    {%- for child in item.children -%}
+      {%- if page.url == child.url -%}
+        {%- assign child_idx = forloop.index0 -%}
+        {%- assign parent_idx = forloop.parentloop.index0 -%}
+      {%- endif -%}
+    {%- endfor -%}
+  {%- endif -%}
+{%- endfor -%}
+
 <div class="docs">
   <aside class="sidebar" id="sidebar" aria-label="Documentation">
     <h4>Documentation</h4>
@@ -22,6 +40,20 @@ layout works whether or not pretty permalinks are on.
         <li>
           <a href="{{ item.url | relative_url }}"
              {% if page.url == item.url or page.url == slashed %}aria-current="page"{% endif %}>{{ item.title }}</a>
+          {%- comment -%}
+          Children are only expanded while you are inside that section. Showing all eight guide
+          pages from every page in the site would bury the six top-level entries.
+          {%- endcomment -%}
+          {%- if item.children and page.url contains item.url -%}
+            <ul class="sidebar__children">
+              {%- for child in item.children -%}
+                <li>
+                  <a href="{{ child.url | relative_url }}"
+                     {% if page.url == child.url %}aria-current="page"{% endif %}>{{ child.title }}</a>
+                </li>
+              {%- endfor -%}
+            </ul>
+          {%- endif -%}
         </li>
       {%- endfor -%}
     </ul>
@@ -50,9 +82,34 @@ layout works whether or not pretty permalinks are on.
       Edit this page on GitHub
     </a>
 
-    {%- if idx >= 0 -%}
+    {%- if child_idx >= 0 -%}
+      {%- comment -%} A guide sub-page: walk its siblings, then out to the next section. {%- endcomment -%}
+      {%- assign parent = nav[parent_idx] -%}
+      {%- assign kids = parent.children -%}
+      {%- assign p = child_idx | minus: 1 -%}
+      {%- assign n = child_idx | plus: 1 -%}
+      <nav class="pager" aria-label="Page navigation">
+        {%- if child_idx > 0 -%}
+          {%- assign prev = kids[p] -%}
+          <a href="{{ prev.url | relative_url }}"><small>Previous</small><strong>{{ prev.title }}</strong></a>
+        {%- else -%}
+          <a href="{{ parent.url | relative_url }}"><small>Previous</small><strong>{{ parent.title }}</strong></a>
+        {%- endif -%}
+        {%- if n < kids.size -%}
+          {%- assign next = kids[n] -%}
+          <a class="is-next" href="{{ next.url | relative_url }}"><small>Next</small><strong>{{ next.title }}</strong></a>
+        {%- else -%}
+          {%- assign after = parent_idx | plus: 1 -%}
+          {%- if after < nav.size -%}
+            {%- assign next = nav[after] -%}
+            <a class="is-next" href="{{ next.url | relative_url }}"><small>Next</small><strong>{{ next.title }}</strong></a>
+          {%- endif -%}
+        {%- endif -%}
+      </nav>
+    {%- elsif idx >= 0 -%}
       {%- assign prev_idx = idx | minus: 1 -%}
       {%- assign next_idx = idx | plus: 1 -%}
+      {%- assign here = nav[idx] -%}
       <nav class="pager" aria-label="Page navigation">
         {%- if idx > 0 -%}
           {%- assign prev = nav[prev_idx] -%}
@@ -60,7 +117,11 @@ layout works whether or not pretty permalinks are on.
         {%- else -%}
           <a href="{{ '/' | relative_url }}"><small>Previous</small><strong>Home</strong></a>
         {%- endif -%}
-        {%- if next_idx < nav.size -%}
+        {%- comment -%} A section with children leads into its own first page, not past it. {%- endcomment -%}
+        {%- if here.children -%}
+          {%- assign next = here.children[0] -%}
+          <a class="is-next" href="{{ next.url | relative_url }}"><small>Next</small><strong>{{ next.title }}</strong></a>
+        {%- elsif next_idx < nav.size -%}
           {%- assign next = nav[next_idx] -%}
           <a class="is-next" href="{{ next.url | relative_url }}"><small>Next</small><strong>{{ next.title }}</strong></a>
         {%- endif -%}

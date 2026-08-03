@@ -16,7 +16,7 @@ fight over the `/` URL.
 | Guide                                                     | What's in it                                                       |
 | --------------------------------------------------------- | ------------------------------------------------------------------ |
 | [Getting started](getting-started.md)                     | Docker install, first login, the setup wizard, your first run      |
-| [Guides](guides.md)                                       | The web interface, schedules, per-user overrides, troubleshooting  |
+| [Guides](guides.md)                                       | Rows, schedules, requests, AI cost, troubleshooting                |
 | [Reference](reference.md)                                 | Configuration keys, API endpoints, environment variables, defaults |
 | [FAQ](faq.md)                                             | Privacy model, Plex requirements, Kometa coexistence, uninstalling |
 | [Other Plex tools](comparison.md)                         | How Shortlist relates to netplexflix, SuggestArr, Seerr, Kometa     |

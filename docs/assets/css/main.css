@@ -1298,6 +1298,20 @@ figcaption {
   background: var(--surface-2);
 }
 
+/* Guide sub-pages, shown only while you're inside that section. Scoped under
+   .sidebar so it outweighs the `.sidebar ul` margin reset above it. */
+.sidebar .sidebar__children {
+  margin: 0.2rem 0 0.5rem 0.85rem;
+  padding-left: 0.7rem;
+  border-left: 1px solid var(--border);
+  gap: 0;
+}
+
+.sidebar__children a {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+}
+
 .sidebar a[aria-current="page"] {
   color: var(--accent-text);
   background: var(--accent-quiet);

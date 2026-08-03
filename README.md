@@ -62,7 +62,7 @@ account is told to hide that label, so only its owner ever sees it.
 - 🔎 **Web search that works with _any_ model, even offline ones** — Shortlist runs the search
   itself, so your model never needs internet access. Works with a local Ollama box just as well as
   with Claude — via your provider's own web search, an [Exa](https://exa.ai) key, or both at once.
-  [How it works →](docs/guides.md#the-one-ai-powered-source)
+  [How it works →](docs/guides/ai.md#the-one-ai-powered-source)
 - 💬 **Explains itself** — every pick says "Because you watched X".
 - 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, and it looks
   back through your full history so both movies and TV shape the picks.
@@ -168,7 +168,7 @@ Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-starte
 |                                              |                                                                                     |
 | -------------------------------------------- | ----------------------------------------------------------------------------------- |
 | [Getting started](docs/getting-started.md)   | Install, wizard, first run                                                          |
-| [Guides](docs/guides.md)                     | UI tour, schedules, troubleshooting                                                 |
+| [Guides](docs/guides.md)                     | Rows, schedules, requests, AI cost, troubleshooting                                 |
 | [Reference](docs/reference.md)               | Settings, API, env vars                                                             |
 | [FAQ](docs/faq.md)                           | Privacy model, Kometa, uninstall                                                    |
 | [Other Plex tools](docs/comparison.md)     | How Shortlist relates to netplexflix, SuggestArr, Seerr, Kometa — and when it's the wrong choice |

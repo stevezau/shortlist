@@ -41,7 +41,24 @@ nav:
     blurb: Install, wizard, first run
   - title: Guides
     url: /guides/
-    blurb: UI tour, schedules, troubleshooting
+    blurb: How to do the things people actually want to do
+    children:
+      - title: The web interface
+        url: /guides/interface/
+      - title: Rows and templates
+        url: /guides/rows/
+      - title: What goes in a row
+        url: /guides/picks/
+      - title: Schedules and runs
+        url: /guides/schedules/
+      - title: AI and cost
+        url: /guides/ai/
+      - title: Requests
+        url: /guides/requests/
+      - title: Troubleshooting
+        url: /guides/troubleshooting/
+      - title: On the internet
+        url: /guides/security/
   - title: Reference
     url: /reference/
     blurb: Settings, API, env vars

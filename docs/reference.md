@@ -83,10 +83,20 @@ set `SHORTLIST_ENABLE_DOCS=1` to expose `/api/docs` and `/api/openapi.json` for 
 server). Highlights:
 
 ```
+```
+
+### Sign-in and setup
+
+```
 POST /api/auth/pin · GET /api/auth/pin/{id} · GET /api/auth/session · POST /api/auth/logout
      Sign-in is owner-only in BOTH states. Once claimed, the Plex account must match the linked server's owner (403 otherwise). Before it is claimed there is no owner to compare against, so plex.tv is asked directly: an account that owns no Plex server is refused (403) rather than handed a session — someone who merely has a share on your server can never sign in. If plex.tv can't be reached — or answers with something that isn't a resources list — the sign-in fails closed with 503, never open. **Known gap:** on an unclaimed instance the test is "owns *a* Plex server", not "owns *this* one", so someone running their own PMS can still claim an instance that has credentials seeded from the environment but no server linked yet. Link your server as step 1 and the window closes
 POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
      `/link` verifies with plex.tv that `machine_id` is a server the caller's account OWNS (403 otherwise). The body's `owner_account_id` is only the caller vouching for themselves — `/servers` lists shared servers alongside owned ones, so without the plex.tv check a friend with a share could link your PMS and become this instance's owner. The wizard shows shared servers but won't let you select one
+```
+
+### Users
+
+```
 GET  /api/users · PATCH /api/users/{id} {enabled?, request_tag?, prefs?} · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
 POST /api/users/set-enabled {enabled} (bulk enable/disable every user at once)
 GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, recent_count?} (per-person, per-row: `recent_count` (1–25) overrides how many recent watches the `llm_web` source searches for this person on this row; null on any field clears it back to the row's own setting)
@@ -96,6 +106,11 @@ POST /api/users/{id}/blocked-seeds {tmdb_id, title?, media_type?, year?} · DELE
      Titles that must never SEED this person's recommendations — the watch stays in their history, it just stops shaping their picks.
      Stored on `users.prefs`; an install that predates the richer shape holds bare TMDB ids and keeps working unchanged.
 GET  /api/users/{id}/history (recent watches; each item carries `title`, `media_type`, `year`, plus `season`/`episode`/`episode_title` for TV)
+```
+
+### Rows
+
+```
 GET/POST /api/collections · PATCH/DELETE /api/collections/{id} (incl. `request_tag`, `candidate_sources`, `library_keys`, `max_seeds` — how many watched titles the row is built from (1–100; null inherits the engine default of 30), `seed_window` — how many recent watches a one-title row cycles between, one per run (1–20, default 1 = always their most recent; no global to inherit), `pick_order` — how the delivered collection is ordered (`best` | `rating` | `newest` | `shuffle`, default `best`), `hub_anchor` — per-row shelf-placement override, and `poster` — custom row artwork {mode: ""|upload|generate, title, subtitle, style})
 GET  /api/collections/{id}/effectiveness -> {delivered, watched, first_delivered_at, matured_days, matured, per_library} (has this row actually landed? `matured` is null until picks are old enough to judge — a pick counts as a hit only if watched within 30 days, so a newer row is reported as "too early" rather than scored 0%)
      `rewatch` (bool, default false) makes a REWATCH row: already-finished titles are ordered FIRST and unwatched ones only fill what is left.
@@ -110,6 +125,11 @@ GET  /api/collections/{id}/effectiveness -> {delivered, watched, first_delivered
      not just the fields sent, so neither invalid pair can be reached one field at a time.
 POST /api/collections/{id}/cleanup {dry_run?} (remove this row's Plex collections for everyone; dry-run previews)
 POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/collections/{id}/poster/image (serve/remove uploaded artwork) · POST /api/collections/{id}/poster/preview {title,subtitle,style} -> generated sample image
+```
+
+### System, jobs and libraries
+
+```
 GET  /api/system/image-provider -> {capable, provider, reason} (can the AI provider generate poster images — drives the row editor's Generate gate)
 GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files, redacted, as a zip)
 GET  /api/system/libraries -> [{key, title, type}] (the server's Plex libraries, for the row editor)
@@ -119,13 +139,38 @@ GET  /api/system/jobs/catalog -> [{kind, label, description, manual, trigger, sc
 POST /api/system/jobs {kind, payload?, background?} -> the job after an inline drain, or as soon as it is queued when `background` is set (the Jobs page uses that and polls, so a slow job can't end in a proxy timeout that reads as a failure). Only `sync.users`, `sync.history`, `sync.check`, `privacy.sync`, `backup.take` and `maintenance.prune` (retention trim of old runs, picks, log lines and expired caches — touches Plex not at all) may be triggered by hand — all of them converge-to-desired-state passes that take no target. The rest are queued by the mutation that knows their target and are rejected here with 422: `user.cleanup` (someone turned off), `user.hide`/`user.restore` (paused/un-paused), `row.reconcile` (a row deleted, switched off, narrowed to fewer libraries, or with someone dropped from its audience). Queued work waits for any run in progress, is retried with backoff, survives a restart, and raises a notification if it gives up
 GET  /api/system/libraries/{key}/collections -> [{title}] (a library's managed collections — anchor choices for row placement, excludes Shortlist's own)
 GET  /api/system/owned-collections -> {collections:[{library,title,label,rating_key,kind,slug,orphan}], total, orphans} (cleanup audit: every shortlist-labelled collection ON PLEX, drift-flagged, DB-independent)
+```
+
+### Runs
+
+```
 GET  /api/runs?limit=&collection=&before_id= (newest first; `before_id` pages backwards) · GET /api/runs/summary · GET /api/runs/{id} (each user carries `status`, `error`, `reason` — why a `skipped` user built nothing — and `has_trace`) · GET /api/runs/{id}/users/{user_id}/trace -> {username, display_name, status, error, reason, trace, breakdown} (the full per-user pipeline trace — history (with true distinct-title watched totals per library, split by media type) / seeds with each seed's weight ingredients, each source's queries+returns tagged with their fate (kept / already_watched / not_in_your_libraries / excluded_genre / lost_ranking_cutoff), the web-search/RAG prompts, resolved vs. hallucinated titles (the AI's resolved proposals carry the same fate so the UI marks each kept vs. dropped), plus `error`/`reason` for a failed or skipped person and `breakdown` (the delivered picks per library); a cold-start user carries a trace too (their thin history + a synthetic `cold_start` source), so `has_trace` is set and the "How we picked" page renders for them; fetched on demand, `trace: {}` on runs predating the feature) · GET /api/runs/{id}/log?after_seq=&format=json|text (the run's activity feed, kept in `run_log_lines` so an older run still has one; `after_seq` returns only what is new, `format=text` is the download) · POST /api/runs {user_ids?, collection_ids?, dry_run?} · POST /api/runs/{id}/cancel · DELETE /api/runs (clear all run history; changes nothing on Plex, and no longer disarms the row reconciles — they address collections by label + rendered title, not by run history)
+```
+
+### Requests
+
+```
 GET  /api/requests?wanted_by=&wanted_by= (the inbox, pending first then sent then rejected, capped at 500 rows; `wanted_by` repeats one `wanters` username per value and keeps a title any of them wanted — applied BEFORE the cap, so picking a name searches the whole history rather than the 500 the page loaded; omitted = everyone) · GET /api/requests/status -> {request_id: "downloaded"|"downloading"|"queued"|"unmonitored"|null} (live Sonarr/Radarr status for WAITING and SENT items — rejected are skipped; null = neither app tracks it; fetched separately so the list itself makes no Arr calls, and read from whole-library maps so the cost doesn't scale with inbox size) · POST /api/requests/send {ids, dry_run?} · POST /api/requests/reject {ids} (permanent) · POST /api/requests/restore {ids} (un-reject → back to Waiting) · POST /api/requests/delete {ids} (removable; can re-surface) · POST /api/requests/clear {ids} (hide SENT items from the log without un-sending — the tombstone stays so the title isn't re-requested)
+```
+
+### Events and notifications
+
+```
 GET  /api/events (SSE) · GET /api/events/log?scope=&limit=&before_id= (audit feed; `before_id` pages backwards — a cursor rather than an offset, since events are appended while you read)
 GET  /api/notifications -> {items[]} · POST /api/notifications/dismiss {id} (dismiss one alert)
+```
+
+### Settings and connections
+
+```
 GET/PUT /api/settings · POST /api/settings/test/{plex|tautulli|tmdb|llm|radarr|sonarr|mdblist|trakt|exa} (a PUT that changes anything also writes a `settings.change` audit event carrying `{key: {from, to}}` for the changed keys only — secrets record `<redacted>` on both sides, and long object values are summarised; read it back with `/api/events/log?scope=settings.change` to see which thresholds a past run actually used)
 GET  /api/settings/arr/{radarr|sonarr}/options -> {quality_profiles, root_folders}
 POST /api/settings/curator/models {provider?, api_key?, ollama_url?} -> {provider, models[]} (models the provider offers; the body lets the picker list the provider being edited before it is saved — blank fields fall back to saved settings, a redacted key means "use the saved key"; [] = free-text fallback)
+```
+
+### Reports and the dashboard
+
+```
 GET  /api/report?window=7|30|90|all -> {window, since, first_pick, overall, trend[], per_user[], per_row[], recent[], watch_sync, coverage, runs, requests, top_titles} (what got watched, from picks.watched_at)
      Windowed, default 30 days, with each headline figure carried alongside its previous equal period so the UI can show a change.
      `requests.watched_after_sent` compares a watch against `request_candidates.sent_at`, stamped once when the status flips
@@ -146,6 +191,11 @@ DELETE /api/report/deleted-rows?slug= -> {cleared, picks, slugs[]} (permanently 
      Only `picks` rows are removed. `deliveries` is deliberately untouched — it is the ledger of which Plex collection is
      which row, and clearing it would strand a real collection with nothing left to clean it up. Audited as
      `report.clear_deleted_rows` with a per-slug count.
+```
+
+### Health, tokens and onboarding
+
+```
 GET  /api/system/health -> {status} (the ONE unauthenticated endpoint — liveness only, for Docker's HEALTHCHECK; the version lives on the owner-gated /system/version)
 GET  /api/system/api-token -> {enabled, created_at, token} (owner-gated; token revealable) · POST /api/system/api-token -> {token, created_at} (generate/replace) · DELETE /api/system/api-token (revoke)
 GET  /api/setup/servers (Plex server picker during onboarding) · GET /api/setup/state

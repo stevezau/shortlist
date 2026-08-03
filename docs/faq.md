@@ -65,8 +65,7 @@ and the final choosing and ranking is ordinary code with no per-title cost.
 The AI has exactly one paid job: an optional **web search** for what to watch next, which finds
 well-reviewed titles TMDB simply doesn't return. It's off by default.
 
-See [How Shortlist uses AI](guides.md#how-shortlist-uses-ai-and-how-to-control-the-cost) for the
-full breakdown and cost controls.
+See [AI and cost](guides/ai.md) for the full breakdown and cost controls.
 
 ## What is Exa, and should I use it?
 
