@@ -413,6 +413,12 @@ def _cached_plex_read(state, key: str, read):
             raise
         except Exception as e:
             if entry is None:
+                # Same reasoning as the HTTPException arm: nothing was cached, so this key leaves no
+                # entry behind and its lock must go with it. The failure that actually grows the dict
+                # lands HERE rather than there — a bogus library key while the PMS is timing out
+                # raises a plexapi error, not an HTTPException.
+                if key not in cache:
+                    locks.pop(key, None)
                 raise
             logger.warning("plex read {} failed ({}) — serving the cached copy", key, type(e).__name__)
             return entry[1]

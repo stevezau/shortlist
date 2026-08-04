@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from shortlist.server.api.settings import REDACTED_PLACEHOLDER
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.settings_store import SettingsStore
 
@@ -413,6 +414,63 @@ class TestSystemResponseShapes:
         saved = client.put("/api/settings", json={"values": {"plex.url": "http://pms-new:32400"}})
         assert saved.status_code == 200, saved.text
         assert client.get("/api/system/libraries").json()[0]["title"] == "Films"
+
+        # A REAL token change re-points the same way a URL does.
+        current["title"] = "Cinema"
+        saved = client.put("/api/settings", json={"values": {"plex.token": "rotated-token"}})
+        assert saved.status_code == 200, saved.text
+        assert client.get("/api/system/libraries").json()[0]["title"] == "Cinema"
+
+        # ...but the placeholder the UI round-trips for a secret it never received is NOT a change —
+        # the write loop skips it, so the cache must survive it for the same reason `row.size` does.
+        # Otherwise saving the Settings page at all puts Plex back on the next page load.
+        current["title"] = "Pictures"
+        saved = client.put("/api/settings", json={"values": {"plex.token": REDACTED_PLACEHOLDER}})
+        assert saved.status_code == 200, saved.text
+        assert client.get("/api/system/libraries").json()[0]["title"] == "Cinema"
+
+    def test_the_cache_drop_lands_after_the_new_connection_commits(self, client: TestClient, monkeypatch):
+        """Dropping the cache BEFORE the write commits re-caches the server you just left.
+
+        `/libraries` runs its read on an executor thread, so it genuinely interleaves with a
+        `put_settings` that has not committed yet: the read repopulates the entry from the OLD
+        url/token and pins it for the whole TTL — the exact staleness the drop exists to prevent.
+
+        Asserting the ORDER is what gives this teeth. "The cache ends up empty" passes just as
+        happily with the drop back on the wrong side of the commit.
+        """
+        from types import SimpleNamespace
+
+        import shortlist.server.api.system as system_module
+
+        self._connect_plex(client)
+
+        class FakePlex:
+            machine_id = "m1"
+
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                return [SimpleNamespace(key=1, title="Movies", type="movie")]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+
+        seen: dict[str, object] = {}
+        real = system_module.invalidate_plex_reads
+
+        def spy(state):
+            # What a concurrent reader would find in the DB at the instant the cache is dropped.
+            with client.app.state.sessions() as session:
+                seen["url"] = SettingsStore(session, client.app.state.secrets).get("plex.url")
+            return real(state)
+
+        # `put_settings` imports this inside the function, so patching the source module is what lands.
+        monkeypatch.setattr(system_module, "invalidate_plex_reads", spy)
+
+        saved = client.put("/api/settings", json={"values": {"plex.url": "http://pms-new:32400"}})
+        assert saved.status_code == 200, saved.text
+        assert seen["url"] == "http://pms-new:32400"
 
     def test_a_plex_that_fails_with_nothing_cached_still_errors(self, client: TestClient, monkeypatch):
         """Serving stale is a kindness, not a cover-up: with no previous answer there is nothing
