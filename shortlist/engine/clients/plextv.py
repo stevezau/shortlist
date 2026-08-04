@@ -72,6 +72,15 @@ class PlexTvClient:
     _SLOW_TO = 1.0  # the first 429 jumps the pace to at least this (the old conservative rate)
     _MAX_PACE = 30.0  # never space writes further apart than this, even after repeated 429s
 
+    # `list_users()` gets a longer ladder than every other read (DEFAULT_ATTEMPTS = 3, ~3s of waiting).
+    # It is the one read whose failure aborts the WHOLE run — the pipeline cannot promise a filter
+    # covers a row it can't enumerate the audience for, so it writes nothing and promotes nothing,
+    # server-wide. Three seconds is not enough to survive a container that starts before its network
+    # does: a user's first run died on `ConnectError: [Errno -3] Temporary failure in name resolution`
+    # and the identical manual re-run seconds later succeeded. Six attempts spans ~30s of backoff,
+    # which covers a DNS/link that is merely late rather than absent.
+    _ROSTER_ATTEMPTS = 6
+
     def __init__(
         self,
         token: str,
@@ -122,9 +131,15 @@ class PlexTvClient:
 
         A rate-limited or timed-out READ that raised would abort the privacy sync, and the accounts
         we hadn't reached yet would keep seeing rows that aren't theirs until some later run got
-        luckier (rule 6) — so it retries transient failures (429, 5xx, timeouts).
+        luckier (rule 6) — so it retries transient failures (429, 5xx, timeouts) on the extended
+        `_ROSTER_ATTEMPTS` ladder rather than the default three.
         """
-        r = http_retry.get(f"{PLEXTV}/api/users", headers=self._headers(), timeout=self._timeout)
+        r = http_retry.get(
+            f"{PLEXTV}/api/users",
+            attempts=self._ROSTER_ATTEMPTS,
+            headers=self._headers(),
+            timeout=self._timeout,
+        )
         r.raise_for_status()
         users = []
         for el in ET.fromstring(r.text):
