@@ -1161,7 +1161,7 @@ class TestMutingNeverDeletesADifferentRow:
         plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append(c.title)
         return plex, [section], deleted
 
-    def _remove(self, plex, sections, template):
+    def _remove(self, plex, sections, template, delivered_keys=None):
         from shortlist.engine.delivery import remove_row
         from shortlist.engine.models import CollectionDiff, EngineConfig, RowSpec, UserProfile, UserType
 
@@ -1174,6 +1174,7 @@ class TestMutingNeverDeletesADifferentRow:
             dry_run=False,
             diff=diff,
             sections=sections,
+            delivered_keys=delivered_keys,
         )
         return diff
 
@@ -1219,3 +1220,115 @@ class TestMutingNeverDeletesADifferentRow:
         self._remove(plex, sections, "Hidden Gems")
 
         assert deleted == ["Hidden Gems" + row_marker(100)]
+
+
+class TestTheLedgerRemovesAnUnrenderableRow:
+    """The delivery ledger's ratingKey is the ONLY handle on a `{top_seed}` row — its title was
+    different every run, so nothing computed from config can find it.
+
+    Without this a row set to skip a cold start (issue #66), or a muted `{top_seed}` row, could never
+    actually be removed: the title guard above correctly refuses to match, and there was nothing else
+    to match ON. Identity is still scoped to the user's own label, so it narrows the search rather
+    than widening ownership.
+    """
+
+    def _plex(self, collections):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        deleted: list[str] = []
+        section = SimpleNamespace(title="Movies", key="1", type="movie")
+        plex = MagicMock()
+        plex.sections_by_type.return_value = {"movie": section}
+        plex.find_owned_collections.return_value = collections
+        plex.delete_owned_collection.side_effect = lambda c, prefix: deleted.append(c.title)
+        return plex, [section], deleted
+
+    def _collection(self, title: str, rating_key: int):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(title=title, ratingKey=rating_key)
+
+    def _remove(self, plex, sections, template, delivered_keys):
+        from shortlist.engine.delivery import remove_row
+        from shortlist.engine.models import CollectionDiff, EngineConfig, RowSpec, UserProfile, UserType
+
+        diff = CollectionDiff()
+        remove_row(
+            plex,
+            UserProfile(username="sarah", plex_account_id=100, user_type=UserType.SHARED, slug="sarah"),
+            EngineConfig(),
+            RowSpec(slug="because", name_template=template, size=5),
+            dry_run=False,
+            diff=diff,
+            sections=sections,
+            delivered_keys=delivered_keys,
+        )
+        return diff
+
+    def test_a_top_seed_row_is_removed_by_its_ledger_key(self):
+        from shortlist.engine.delivery import row_marker
+
+        target = self._collection("Because you watched The Bear" + row_marker(100), 4242)
+        plex, sections, deleted = self._plex([target])
+
+        diff = self._remove(plex, sections, "Because you watched {top_seed}", {"1": 4242})
+
+        assert deleted == ["Because you watched The Bear" + row_marker(100)]
+        # The COLLECTION's own title, not the computed one — the computed name is the bare default
+        # here, and reporting that would name a row the owner never had.
+        assert diff.deleted == ["Because you watched The Bear"]
+
+    def test_a_ledger_key_never_reaches_a_different_row(self):
+        """Identity must select ONE object. The user's live default row shares this label and is the
+        exact collection the title guard exists to protect."""
+        from shortlist.engine.delivery import DEFAULT_ROW_NAME, row_marker
+
+        other = self._collection(DEFAULT_ROW_NAME + row_marker(100), 999)
+        target = self._collection("Because you watched The Bear" + row_marker(100), 4242)
+        plex, sections, deleted = self._plex([other, target])
+
+        self._remove(plex, sections, "Because you watched {top_seed}", {"1": 4242})
+
+        assert deleted == ["Because you watched The Bear" + row_marker(100)]
+
+    def test_a_zero_ledger_key_matches_nothing(self):
+        """0 means "the PMS never gave us one" — a dry run records it, and `_rating_key` also returns 0
+        for a collection carrying no key. Treating it as a match would delete every keyless collection
+        under this label."""
+        from shortlist.engine.delivery import DEFAULT_ROW_NAME, row_marker
+
+        keyless = self._collection(DEFAULT_ROW_NAME + row_marker(100), 0)
+        plex, sections, deleted = self._plex([keyless])
+
+        self._remove(plex, sections, "Because you watched {top_seed}", {"1": 0})
+
+        assert deleted == []
+
+    def test_a_stale_key_never_reaches_a_row_whose_title_renders(self):
+        """The ledger is the fallback for an uncomputable title, NOT a second matcher.
+
+        ratingKeys are rowids Plex reuses and no delete path prunes the ledger, so a stale key can
+        name a live object — and scoped to this label, that object is one of this user's OTHER rows.
+        Matching a static-titled row by key as well as by title deleted the user's live default row
+        and logged it as an ordinary removal.
+        """
+        from shortlist.engine.delivery import DEFAULT_ROW_NAME, row_marker
+
+        live_default = self._collection(DEFAULT_ROW_NAME + row_marker(100), 4242)
+        plex, sections, deleted = self._plex([live_default])
+
+        # A static-titled row being removed, carrying a stale key that now names the default row.
+        self._remove(plex, sections, "Hidden Gems", {"1": 4242})
+
+        assert deleted == [], "a stale ledger key deleted a different row that titles perfectly well"
+
+    def test_a_key_for_another_library_does_not_reach_this_one(self):
+        """Keys are per section. A row's copy in Movies must not be matched by the key of its copy in
+        TV, or narrowing a row to one library would delete the wrong side of it."""
+        target = self._collection("Because you watched The Bear", 4242)
+        plex, sections, deleted = self._plex([target])
+
+        self._remove(plex, sections, "Because you watched {top_seed}", {"77": 4242})
+
+        assert deleted == []

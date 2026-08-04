@@ -303,6 +303,16 @@ class RowSpec:
     # actually watched, which is what a `{top_seed}` ("Because you watched X") title claims; the default
     # blends the whole recent history. None -> inherit EngineConfig.max_seeds.
     max_seeds: int | None = None
+    # What this row does for someone with too little history to recommend from ("popular" = the
+    # cold-start fallback of top-rated titles, "skip" = don't build it for them at all).
+    # None -> inherit EngineConfig.cold_start.
+    #
+    # Per ROW, not just global, because the right answer differs row to row: a `{top_seed}`
+    # ("Because you watched X") row has no seed for a cold user and degrades to the bare default
+    # title, so skipping it is usually right — while a plain "Picked for You" row is perfectly happy
+    # holding popular titles. Deliberately NOT a per-person override: it answers "what is this row
+    # for", like `pick_order`, not "how does this person want it".
+    cold_start: str | None = None
     # How many of this person's most recent watches this row may be built from, of which ONE (per media
     # type) is chosen each run — the row cycles a step a day rather than sitting on their newest watch
     # for ever. 1 (the default) is the original behaviour: always the most recent.
@@ -584,6 +594,12 @@ class EngineConfig:
     # public "Popular on this server" rows — so disabling someone removes them from Shortlist entirely.
     hide_shared_from_disabled: bool = True
     min_history: int = 10  # below this -> cold-start row
+    # What a cold-start user gets, server-wide: "popular" (a row of the server's top-rated titles) or
+    # "skip" (no row built at all, and any row they already have is REMOVED — skipping has to mean
+    # gone, or last month's row sits on their Home going stale for ever). Row-overridable via
+    # RowSpec.cold_start. Defaults to "popular": the pre-existing behaviour, so an upgrade never
+    # silently takes rows away.
+    cold_start: str = "popular"
     min_completion: float = 0.7  # history completion threshold for "meaningful" watch
     # How many watched titles seed a row (the most recently watched win, balanced across media types).
     # Row-overridable via RowSpec.max_seeds.
@@ -732,6 +748,15 @@ class UserRunReport:
     picks: list[Pick] = field(default_factory=list)
     counts: StageCounts = field(default_factory=StageCounts)
     diff: CollectionDiff | None = None
+    # {"row_slug", "library_key"} for every collection this run DELETED in-run (a muted/retired row, or
+    # one a cold start skips). The adapter forgets these ledger entries on persist, the same way the
+    # on-demand reconciles call `_forget_deliveries`.
+    #
+    # Without it the ledger keeps a ratingKey whose collection is gone, and these paths RE-RUN: a cold
+    # user is skipped again every night, re-presenting the same dead key for as long as they stay cold.
+    # Plex reuses `metadata_items.id`, so that key can come to name a different collection under this
+    # same label — and `promote_user_rows` reads the ledger too, so it is not only removals at stake.
+    removed_deliveries: list[dict] = field(default_factory=list)
     # Each delivered collection TITLE mapped to the slug of the row that produced it, so the promote
     # phase applies the right row's placement/pin. Recorded per library because a {top_seed} title
     # differs library to library. Transient (not persisted); populated during delivery.

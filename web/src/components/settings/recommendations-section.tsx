@@ -12,6 +12,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import type { ColdStart } from "@/lib/cold-start";
+import {
+  asColdStart,
+  COLD_START_HINTS,
+  COLD_START_LABELS,
+  COLD_STARTS,
+} from "@/lib/cold-start";
 import type { RatingSource } from "@/lib/rating-sources";
 import {
   asRatingSource,
@@ -90,6 +97,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   const [searchBackend, setSearchBackend] = useState<string>(() =>
     webSearchProvider(settings),
   );
+  const [minHistory, setMinHistory] = useState<number>(() => {
+    const value = Number(settings["recommendations.min_history"]);
+    return Number.isFinite(value) ? Math.min(100, Math.max(1, value)) : 10;
+  });
+  const [coldStart, setColdStart] = useState<ColdStart>(() =>
+    asColdStart(settings["recommendations.cold_start"]),
+  );
 
   const toggle = (id: string) =>
     setEnabled((current) =>
@@ -107,9 +121,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       maxSeeds,
       searchBackend,
       ratingSource,
+      minHistory,
+      coldStart,
     },
     () => ({
       "candidates.sources": enabled,
+      "recommendations.min_history": minHistory,
+      "recommendations.cold_start": coldStart,
       "recommendations.watched_pct": watchedPct / 100,
       "recommendations.freshness": freshness / 100,
       "recommendations.recent_count": recentCount,
@@ -314,7 +332,64 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 <span className="text-sm text-muted-foreground">watches</span>
               </div>
             </div>
-            <div className="space-y-1.5">
+            {/* Threshold and consequence together: the number is meaningless without knowing what
+                happens below it, and the choice is meaningless without knowing where the line is. */}
+            <div className="space-y-2 border-t pt-4">
+              <Label htmlFor="min-history">Enough watch history</Label>
+              <p className="text-sm text-muted-foreground">
+                How many titles someone needs watched before Shortlist
+                recommends from <strong>their</strong> taste. Below this there
+                isn&rsquo;t enough to work from, so they get whatever you choose
+                next. New people cross it on their own; nothing here needs
+                revisiting.
+              </p>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="min-history"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={minHistory}
+                  onChange={(e) =>
+                    setMinHistory(
+                      Math.max(1, Math.min(100, Number(e.target.value) || 1)),
+                    )
+                  }
+                  className="w-24"
+                />
+                <span className="text-sm text-muted-foreground">
+                  watched titles
+                </span>
+              </div>
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              <Label htmlFor="cold-start">
+                When someone hasn&rsquo;t watched enough
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                The default every row inherits; any row can choose its own. A
+                row named after one title (
+                <span className="font-mono">{"{top_seed}"}</span>) is the one
+                worth skipping &mdash; it has no favourite to name itself after,
+                so it falls back to a plain title.
+              </p>
+              <select
+                id="cold-start"
+                value={coldStart}
+                onChange={(e) => setColdStart(asColdStart(e.target.value))}
+                className="h-9 w-full max-w-md rounded-md border bg-background px-3 text-sm"
+              >
+                {COLD_STARTS.map((choice) => (
+                  <option key={choice} value={choice}>
+                    {COLD_START_LABELS[choice]}
+                  </option>
+                ))}
+              </select>
+              <p className="text-sm text-muted-foreground">
+                {COLD_START_HINTS[coldStart]}
+              </p>
+            </div>
+            <div className="space-y-1.5 border-t pt-4">
               <Label htmlFor="rating-source">Rate titles using</Label>
               <p className="text-sm text-muted-foreground">
                 Which score a row set to <strong>Highest rated</strong> sorts

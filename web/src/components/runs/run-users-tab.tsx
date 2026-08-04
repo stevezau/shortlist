@@ -116,9 +116,10 @@ export function RunUsersTab({
               </Badge>
             </CardTitle>
             {/* Wraps: the duration line plus the "How we picked" link needed 192px beside a title
-                that already fills a narrow screen. */}
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="text-sm text-muted-foreground">
+                that already fills a narrow screen. Right-aligned so the wrapped button lands under
+                the duration line at the card's edge, not stranded mid-header under the status badge. */}
+            <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-2">
+              <p className="text-right text-sm text-muted-foreground">
                 {formatDuration(selected.duration_ms)}
                 {selected.llm_tokens > 0
                   ? ` · ${selected.llm_tokens.toLocaleString()} AI tokens${tokenStepSummary(
@@ -132,7 +133,7 @@ export function RunUsersTab({
                   asChild
                   variant="secondary"
                   size="sm"
-                  className="gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                  className="shrink-0 gap-1.5 border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
                 >
                   <Link to={`/runs/${run.id}/trace/${userId}`}>
                     <Telescope className="h-3.5 w-3.5" aria-hidden="true" />

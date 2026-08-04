@@ -112,6 +112,15 @@ DEFAULTS: dict[str, Any] = {
     # already on every candidate; the rest come from MDBList (one cached lookup per title, shared by
     # every row and user) and need `requests.mdblist.apikey` — without it, ordering falls back to TMDB.
     "recommendations.rating_source": "tmdb",
+    # How many watched titles someone needs before Shortlist recommends FROM their taste rather than
+    # falling back to the server's top-rated titles. Was welded to the engine default (10) and
+    # unreachable; owners of small or new servers legitimately want it lower.
+    "recommendations.min_history": 10,
+    # What someone below that threshold gets: "popular" (a row of the server's highest-rated titles)
+    # or "skip" (no row at all, and any row they already have is removed). Row-overridable — a
+    # `{top_seed}` row is the one most worth skipping, since it has no seed to name itself after.
+    # Default "popular" is the pre-1.1 behaviour, so upgrading never silently removes a row.
+    "recommendations.cold_start": "popular",
     # TMDB ids that must never seed a SHARED row. Separate from each person's own blocked seeds on
     # purpose: a shared row is public, so letting one person's block reshape what everyone sees would
     # make an individual preference into a server-wide edit nobody else can see or undo.

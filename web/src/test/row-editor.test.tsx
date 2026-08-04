@@ -56,6 +56,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     recent_count: null,
     max_seeds: null,
+    cold_start: null,
     seed_window: 1,
     pick_order: "best",
     placement: "both",
@@ -443,6 +444,25 @@ describe("RowEditor — placement", () => {
     ).toBeInTheDocument();
   });
 
+  it("warns that the Collections tab shows every person's row, whatever the switches say", async () => {
+    // The question this answers came in cold from a v1 user: "why do I see everyone else's lists
+    // too?" The shelf note below it only appears while Everyone else → Recommended shelf is on, so
+    // an owner who found the rows in Plex's Collections tab had nothing on this page explaining it.
+    renderEditor(row({ placement: "off", placement_friends: "off" }));
+    expect(screen.getByText(/one row there per person/i)).toBeInTheDocument();
+
+    // Still there with every switch on — it is not a consequence of any of them.
+    cleanup();
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
+    expect(screen.getByText(/one row there per person/i)).toBeInTheDocument();
+  });
+
+  it("does not claim a per-person Collections tab for a shared row", () => {
+    // A shared row is ONE collection everybody gets, so "one row per person" would be a lie.
+    renderEditor(row({ build: "shared", placement: "both" }));
+    expect(screen.queryByText(/one row there per person/i)).toBeNull();
+  });
+
   it("names the owner account behind 'Just me', and counts everyone else", () => {
     renderEditor(row({ placement: "both", placement_friends: "both" }), [
       user({ id: 1, user_type: "owner", display_name: "stevezau" }),
@@ -673,6 +693,41 @@ describe("RowEditor — watches every source builds from", () => {
     expect(
       (updateCollection.mock.calls.at(0)?.[1] as Collection).max_seeds,
     ).toBe(1);
+  });
+
+  it("round-trips a per-row cold_start into the PATCH body", async () => {
+    renderEditor(row({ cold_start: null }));
+
+    await userEvent.click(
+      screen.getByRole("switch", {
+        name: /global setting for people without enough watch history/i,
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    // "skip", not the global's value: the only reason to reach for this control is to differ from
+    // the global, and it is one flip away again.
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).cold_start,
+    ).toBe("skip");
+  });
+
+  it("a row that inherits sends no cold_start override at all", async () => {
+    // The regression that would pin every row to today's global: an editor that materialises
+    // "popular" the moment it renders, so opening and saving a row silently ends its inheritance.
+    renderEditor(row({ cold_start: null }));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).cold_start,
+    ).toBeNull();
   });
 
   it("opens at 2, not 1, for a row covering movies AND TV", async () => {

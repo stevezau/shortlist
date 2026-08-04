@@ -148,12 +148,14 @@ export function TraceView({
         {data.error && <ErrorBanner error={data.error} />}
         {data.reason && !data.error && <SkipBanner reason={data.reason} />}
 
-        {libraries.length === 0 ? (
+        {/* The banner above already says why there is nothing here. Blaming a legacy run for a
+            deliberate skip would be a second, wrong explanation stacked on the right one. */}
+        {libraries.length === 0 && !data.reason ? (
           <EmptyState
             title="No per-library detail for this run"
             hint="We recorded an outcome but not the per-library flow — this run predates library-level tracing."
           />
-        ) : (
+        ) : libraries.length === 0 ? null : (
           <>
             <LibraryTabs
               libraries={libraries}

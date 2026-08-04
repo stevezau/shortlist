@@ -141,4 +141,35 @@ describe("RecommendationsSection", () => {
     expect(body?.["recommendations.watched_pct"]).toBe(0.55);
     expect(body).toHaveProperty("candidates.sources");
   });
+
+  it("saves the cold-start choice, and says what it will actually do", async () => {
+    renderSection({ "recommendations.cold_start": "popular" });
+    const select = screen.getByLabelText(/hasn’t watched enough/i);
+    expect(select).toHaveValue("popular");
+
+    fireEvent.change(select, { target: { value: "skip" } });
+
+    // The consequence updates with the choice — this is the line that tells an owner the setting
+    // REMOVES a row, which the option label alone never says.
+    expect(
+      screen.getByText(/any row they already have is removed/i),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(
+      putSettings.mock.calls.at(-1)?.[0]?.["recommendations.cold_start"],
+    ).toBe("skip");
+  });
+
+  it("saves the history threshold the cold-start choice hangs off", async () => {
+    renderSection({ "recommendations.min_history": 10 });
+    const input = screen.getByLabelText(/Enough watch history/i);
+    expect(input).toHaveValue(10);
+
+    fireEvent.change(input, { target: { value: "4" } });
+
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(
+      putSettings.mock.calls.at(-1)?.[0]?.["recommendations.min_history"],
+    ).toBe(4);
+  });
 });

@@ -43,6 +43,7 @@ COLLECTION_KEYS = {
     "freshness",
     "recent_count",
     "max_seeds",
+    "cold_start",
     "seed_window",
     "pick_order",
     "placement",
@@ -344,6 +345,55 @@ class TestCollectionsSeed:
         from shortlist.server.settings_store import DEFAULTS
 
         assert DEFAULTS["recommendations.max_seeds"] == EngineConfig().max_seeds
+
+    def test_cold_start_settings_are_bounded_and_default_to_todays_behaviour(self, client: TestClient):
+        """The global half of issue #66. Defaults must match the engine's, so upgrading an existing
+        install changes nothing until the owner says so — this setting can REMOVE somebody's row."""
+        from shortlist.engine.models import EngineConfig
+        from shortlist.server.settings_store import DEFAULTS
+
+        assert client.put("/api/settings", json={"values": {"recommendations.cold_start": "skip"}}).status_code == 200
+        assert client.get("/api/settings").json()["recommendations.cold_start"] == "skip"
+        assert client.put("/api/settings", json={"values": {"recommendations.cold_start": "off"}}).status_code == 422
+
+        # Floored at 1: at 0 nobody is ever cold, which silently disables the whole path.
+        assert client.put("/api/settings", json={"values": {"recommendations.min_history": 0}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.min_history": 101}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.min_history": 4}}).status_code == 200
+        assert client.get("/api/settings").json()["recommendations.min_history"] == 4
+
+        assert DEFAULTS["recommendations.cold_start"] == EngineConfig().cold_start
+        assert DEFAULTS["recommendations.min_history"] == EngineConfig().min_history
+
+    def test_per_row_cold_start_round_trips_and_reaches_the_spec(self, client: TestClient):
+        """The per-row half. `null` must stay null all the way to the spec — that is what "inherit"
+        IS, and a column that quietly materialised "popular" would pin every row to today's global."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Because Row", "cold_start": "skip"})
+        assert created.status_code == 201
+        assert created.json()["cold_start"] == "skip"
+        assert client.post("/api/collections", json={"name": "X", "cold_start": "bogus"}).status_code == 422
+
+        inherits = client.post("/api/collections", json={"name": "Plain Row"})
+        assert inherits.json()["cold_start"] is None
+
+        # And a PATCH can hand it back to the global. (`name` rides along because CollectionIn
+        # requires it on every request — the same shape the max_seeds patch test uses.)
+        patched = client.patch(
+            f"/api/collections/{created.json()['id']}", json={"name": "Because Row", "cold_start": None}
+        )
+        assert patched.status_code == 200 and patched.json()["cold_start"] is None
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            from shortlist.server.settings_store import SettingsStore
+
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        by_slug = {s.slug: s for s in specs}
+        assert by_slug[inherits.json()["slug"]].cold_start is None
+        assert by_slug[created.json()["slug"]].cold_start is None  # the PATCH above handed it back
 
     def test_per_row_placement_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder

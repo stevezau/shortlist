@@ -4,6 +4,50 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-08-05
+
+A minor release: one new setting, four fixes reported by v1 users, and no breaking changes. An
+existing install upgrades in place and behaves exactly as it did until you change the new setting.
+
+### Added
+
+- **You can now choose what someone with too little watch history gets** ([#66](https://github.com/stevezau/shortlist/issues/66)).
+  Until now they always got a row of the server's highest-rated titles. That is still the default,
+  but **Settings → Finding titles → When someone hasn't watched enough** can now be set to
+  **Don't build their row** instead — no row is created, and any row they already have is removed,
+  so "skip" means gone rather than left to go stale. It comes back on its own the night they cross
+  the threshold.
+
+  **Any row can override this in its editor**, which is the point of having it per row. A
+  `{top_seed}` row ("Because you watched X") is the one worth skipping: it has no favourite to name
+  itself after, so for these people it quietly falls back to a plain title. A general "Picked for
+  you" row is perfectly happy holding popular titles in the meantime.
+
+- **Where that line sits is now yours to set.** **Enough watch history** (default 10 titles) was
+  fixed in the engine and unreachable; owners of small or new servers can lower it.
+
+### Fixed
+
+- **A run in progress no longer disagrees with itself about when it started**
+  ([#67](https://github.com/stevezau/shortlist/issues/67)). "Started 8m ago" sat beside a duration
+  of "10m 54s" — the two cells read the same timestamp against the same clock, but were evaluated at
+  different moments. They now share one.
+- **A first run no longer dies because the container started before its network did.** The one
+  plex.tv read whose failure aborts a whole run had about three seconds of retry, which is not
+  enough to outlast a slow network stack; it now gets about thirty. Every other read is unchanged,
+  and a run still fails loudly when plex.tv is genuinely gone.
+- **The Rows page now says why the admin's Collections tab lists everyone's rows.** The answer
+  existed but only covered the Recommended shelf, and only while that setting was on — an owner who
+  found the rows in Plex's Collections tab had nothing in front of them.
+- **The "How we picked" button no longer strands mid-header** on a person whose display name is long
+  enough to wrap the run card's header.
+
+### Changed
+
+- A muted row whose title depends on its picks (a `{top_seed}` row) is now genuinely removed from
+  Plex. It could not be matched by title, so it survived every run — private, but never actually
+  gone. Muting has always meant "gone"; now it is.
+
 ## [1.0.0] - 2026-08-04
 
 First stable release. No breaking changes from `0.1.0-beta.9` — the version number is a statement

@@ -89,7 +89,9 @@ each proposed title kept or dropped, or struck through when it resolved to no re
 hallucination). Long lists of returned titles expand in place.
 
 A **cold-start** user, with too little history to search from, gets the same page, showing the
-highest-rated titles pulled from the server as their fallback.
+highest-rated titles pulled from the server as their fallback — or, when their rows are set to skip
+instead (see [Rows → People without enough watch history](rows.md#people-without-enough-watch-history)),
+the reason no row was built and how many titles they have watched so far.
 
 ## Logs
 

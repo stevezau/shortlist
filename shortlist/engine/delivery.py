@@ -411,23 +411,41 @@ def remove_row(
     dry_run: bool,
     diff: CollectionDiff,
     sections: list | None = None,
-) -> None:
-    """Delete a user's collection for a row they've muted, in every targeted library.
+    delivered_keys: dict[str, int] | None = None,
+) -> list[str]:
+    """Delete a user's collection for a row they've muted or that a cold start skips, in every library.
 
     Muting means "you don't get this row" — but a row delivered BEFORE the mute still exists on the
-    server, so it must be removed, not merely skipped on the next run. Deleting only makes the server
+    server, so it must be removed, not merely skipped on the next run. The same is true of a row whose
+    `cold_start` is "skip" for someone whose history has thinned out. Deleting only makes the server
     strictly more private (the row's `shortlist_<slug>` label keeps it excluded on every other share
-    until it's gone), so this is always safe. A row whose title depends on its picks (a `{top_seed}`
-    template) can't be reconstructed without them, so it's left for a later sweep; static-titled rows
-    — the default row and most custom rows — match exactly and are removed here.
+    until it's gone), so this is always safe.
 
-    "Left for a later sweep" has to mean left ALONE. A `{top_seed}` (or blank) template renders to the
-    bare `DEFAULT_ROW_NAME` with no picks — and per-person rows share one label, told apart only by
-    title, so matching on that would find and DELETE whatever else is titled that: the user's live
-    default row, or a cold-start row, in every library, every run. `_retired_rows` guards the identical
-    collision for DISABLED rows (`context_builder._retired_rows`) and its docstring claims the mute
-    path already did the same. It did not.
+    Static-titled rows — the default row and most custom rows — match on their rendered title. A row
+    whose title depends on its picks (a `{top_seed}` template) renders to the bare `DEFAULT_ROW_NAME`
+    with no picks, and per-person rows share one label and are told apart by title ONLY, so matching on
+    that would find and DELETE whatever else is titled that: the user's live default row, or a
+    cold-start row, in every library, every run. `_retired_rows` guards the identical collision for
+    DISABLED rows (`context_builder._retired_rows`).
+
+    ``delivered_keys`` ({section key -> ratingKey}, from the delivery ledger) is how such a row is
+    removed anyway: Plex IDENTITY, not a computed title, which is the only handle on a row whose title
+    was different every run. Same mechanism `remove_row_collections` uses, and still scoped to
+    ``wanted_label``, so identity narrows the search and never widens ownership. Without it an
+    unrenderable row is left for a later sweep — which has to mean left ALONE.
+
+    It is used ONLY for an unrenderable title, never as a second matcher for a row that titles fine.
+    ratingKeys are rowids that Plex reuses, and no delete path here prunes the ledger, so a stale key
+    can name a live object; scoped to this label that object would be one of this user's OTHER rows.
+    Restricting the key to the case that has no other handle bounds that to rows whose title genuinely
+    cannot be computed, where doing nothing is the only alternative. `context_builder._delivered_keys`
+    additionally drops any ratingKey two rows both claim, so an ambiguous key selects nothing at all.
+
+    Returns the section keys a collection was actually deleted in, so the caller can have those ledger
+    entries forgotten — a key whose collection is gone must not be re-presented on the next run.
+    Empty in a dry run: nothing was deleted, so nothing may be forgotten.
     """
+    removed_in: list[str] = []
     wanted_label = spec.label or f"{LABEL_PREFIX}_{profile.slug}"
     marker = row_marker(0) if spec.shared else row_marker(profile.plex_account_id)
     template = resolve_row_template(spec, profile, config)
@@ -439,7 +457,12 @@ def remove_row(
         # Render the title with THIS library's name so a {library_name} row matches its own per-library
         # collection (delivery wrote "✨ Movies Picked for You" in Movies, "✨ TV Shows …" in TV).
         display = render_row_name(template, profile, [], library_name=getattr(section, "title", "") or "")
-        if display == DEFAULT_ROW_NAME and template != DEFAULT_ROW_NAME:
+        # `or None`: a ledger key of 0 means "the PMS never gave us one" (a dry run records 0), and
+        # `_rating_key` also returns 0 for a collection carrying no key — so a 0 would match every
+        # keyless collection under this label. Only a real key may ever select an object for deletion.
+        ledger_key = (delivered_keys or {}).get(str(section.key)) or None
+        unrenderable = display == DEFAULT_ROW_NAME and template != DEFAULT_ROW_NAME
+        if unrenderable and ledger_key is None:
             # The title collapsed to the bare default because it could not be rendered — a `{top_seed}`
             # template with no picks, or a blank one. Per-person rows share one label and are told apart
             # by title ONLY, so matching on that would find and DELETE whatever else is titled that: the
@@ -449,8 +472,8 @@ def remove_row(
             # default only when there is no library name, and here there always is — so a legitimate
             # "✨ Movies Picked for You" removal still happens.
             logger.debug(
-                "{}: muted row '{}' has no renderable title in '{}' — left for a sweep rather than "
-                "matched, which would delete a different row",
+                "{}: row '{}' has no renderable title in '{}' and no ledger key — left for a sweep "
+                "rather than matched, which would delete a different row",
                 profile.username,
                 spec.slug,
                 section.title,
@@ -458,16 +481,31 @@ def remove_row(
             continue
         title = display + marker
         for collection in plex.find_owned_collections(section, wanted_label):
-            if collection.title != title:
+            # EITHER/OR, never both. The ledger is the fallback for a title that cannot be computed —
+            # it is not a second chance at a row whose title renders fine. Letting a key match those
+            # too would mean a STALE key (ratingKeys are rowids and Plex reuses them) could select a
+            # sibling collection under this same label — the user's live default row — and delete it,
+            # logged as an ordinary removal. `removed_in` below is what keeps a key from GOING stale.
+            if unrenderable:
+                if _rating_key(collection) != ledger_key:
+                    continue
+            elif collection.title != title:
                 continue
+            # The collection's OWN title, not the computed one — for a `{top_seed}` row matched by
+            # identity the computed name is the bare default, which would misreport what was deleted.
+            removed_title = strip_marker(collection.title)
             if dry_run:
                 logger.info(
-                    "[dry-run] {}: would remove muted row '{}' in '{}'", profile.username, display, section.title
+                    "[dry-run] {}: would remove row '{}' in '{}'", profile.username, removed_title, section.title
                 )
             else:
                 plex.delete_owned_collection(collection, LABEL_PREFIX)
-                logger.info("{}: removed muted row '{}' in '{}'", profile.username, display, section.title)
-            diff.deleted.append(display)
+                logger.info("{}: removed row '{}' in '{}'", profile.username, removed_title, section.title)
+                # Only on a REAL delete: a dry run leaves the collection there, so its ledger entry
+                # is still the truth and forgetting it would blind the next real reconcile.
+                removed_in.append(str(section.key))
+            diff.deleted.append(removed_title)
+    return removed_in
 
 
 def remove_row_collections(

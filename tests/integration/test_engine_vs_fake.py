@@ -932,6 +932,101 @@ def test_a_stranded_row_is_removed_even_from_a_user_who_produces_no_picks(fakes,
     assert stranded.rating_key not in {collection_id_from_hub(h) for h in plex.user_hubs("server-201")}
 
 
+def test_a_cold_user_set_to_skip_loses_the_row_they_already_have(fakes, tmp_path):
+    """Issue #66, against a real (fake) server: "skip" has to mean GONE, not "not refreshed".
+
+    The dangerous case is not the new user with no row — it is the one who WAS warm. Their row was
+    built from taste they no longer clear the bar for (a quiet month, a history-source outage), and
+    an engine that merely declines to rebuild leaves it on their Home for ever, going stale, with
+    nothing that ever cleans it up. Two real runs, because the row has to be genuinely delivered by
+    the real delivery path before the removal means anything.
+    """
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    rows = [RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=12)]
+
+    def context(**overrides) -> EngineContext:
+        return EngineContext(
+            config=EngineConfig(
+                row_size=12,
+                candidates_pre_rank=40,
+                max_seeds=12,
+                rows=rows,
+                rows_defined=True,
+                **overrides,
+            ),
+            plex=plex,
+            plextv=plextv,
+            tmdb=TmdbClient("test-key"),
+            history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+            curator=NullCurator(),
+            snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        )
+
+    sarah = next(
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in plextv.list_users()
+        if u.username == "sarah"
+    )
+
+    warm = engine_run(context(min_history=5), [sarah])
+    assert warm.users[0].picks, "the row was never built, so its removal proves nothing"
+    delivered_keys = set(plex.owned_collections()["sarah"].rating_keys)
+    assert delivered_keys
+
+    # Same server, same row — but nobody clears the threshold now, and the row says skip.
+    cold = engine_run(context(min_history=999, cold_start="skip"), [sarah])
+
+    assert cold.users[0].status == "cold_start"  # not "skipped": the Users page reads this flag
+    assert cold.users[0].picks == []
+    assert "sarah" not in plex.owned_collections(), "the stale row survived a run that skipped it"
+    assert not (delivered_keys & set(state.collections)), "the collection is still on the server"
+    # Every library, not just one: the row is removed wherever it landed, and the audit trail names
+    # each copy. A per-library title (`{library_name}`) makes them distinct rows to Plex.
+    assert sorted(cold.users[0].diff.deleted) == ["✨ Movies Picked for You", "✨ TV Shows Picked for You"]
+
+
+def test_a_cold_user_set_to_skip_still_gets_the_popular_row_from_a_row_that_wants_it(fakes, tmp_path):
+    """Per-row beats global, on a real server: one row skips, its sibling still delivers popular
+    titles. Global-only could not express this, which is half the point of the issue."""
+    state, pms_url, _tmdb_app = fakes
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    ctx = EngineContext(
+        config=EngineConfig(
+            row_size=6,
+            min_history=999,  # everybody is cold
+            candidates_pre_rank=40,
+            max_seeds=12,
+            cold_start="skip",  # ...and the server-wide answer is "build nothing"
+            rows=[
+                RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=6),
+                # ...which THIS row overrides.
+                RowSpec(slug="popular", name_template="🔥 Popular Right Now", size=6, cold_start="popular"),
+            ],
+            rows_defined=True,
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    )
+    sarah = next(
+        UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+        for u in plextv.list_users()
+        if u.username == "sarah"
+    )
+
+    report = engine_run(ctx, [sarah])
+
+    assert {p.collection_slug for p in report.users[0].picks} == {"popular"}
+    titles = {_strip_marker(state.collections[k].title) for k in plex.owned_collections()["sarah"].rating_keys}
+    assert titles == {"🔥 Popular Right Now"}
+
+
 def test_a_stranded_row_is_removed_even_when_tmdb_errors_out(fakes, tmp_path):
     """The failure mode that actually happens: TMDB 429s, and the whole user RAISES.
 
@@ -1571,10 +1666,12 @@ def test_a_scoped_run_never_rebuilds_another_row_as_itself(fakes, tmp_path):
 def test_a_muted_unrenderable_row_is_not_taken_over_by_another_row(fakes, tmp_path):
     """The other door into the same incident, and the one the first fix left open.
 
-    A muted row is skipped for delivery, but `remove_row` deliberately CANNOT remove one whose title is
-    unrenderable — a `{top_seed}` template has no title without picks — so its collection is still on
-    the server. Counting only un-muted rows therefore said "this user has one row" while two
-    collections sat under the label, and the live row's build renamed the muted orphan into itself.
+    A muted row is skipped for delivery, and `remove_row` can only remove one whose title is
+    unrenderable — a `{top_seed}` template has no title without picks — when the delivery ledger holds
+    a ratingKey for it. Without one (delivered before the ledger existed, or an entry two rows both
+    claim, which is dropped as ambiguous) its collection is still on the server. Counting only un-muted
+    rows therefore said "this user has one row" while two collections sat under the label, and the live
+    row's build renamed the muted orphan into itself.
 
     Two rows would then claim one ratingKey in the ledger, and deleting the muted row later would take
     the live one with it.

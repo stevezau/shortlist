@@ -28,8 +28,11 @@ function statusLine(user: User, activeStage: string | null): string {
     return `Running: ${STAGE_LABELS[activeStage] ?? activeStage}…`;
   if (!user.enabled)
     return "Off — their Shortlist rows were removed from Plex, and none are built until you turn them back on.";
+  // Deliberately does NOT say what they get: that depends on the cold-start setting, globally and
+  // per row, so a card claiming "the popular-titles fallback row" is simply wrong for anyone whose
+  // rows are set to skip — and it is the person with no row who most needs this to be accurate.
   if (user.cold_start)
-    return "Thin history — getting the popular-titles fallback row.";
+    return "Not enough watch history yet — see Settings → Finding titles for what they get.";
   if (user.last_run_at) return `Row refreshed ${timeAgo(user.last_run_at)}.`;
   return "Never run yet.";
 }

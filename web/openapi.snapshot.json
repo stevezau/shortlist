@@ -454,6 +454,23 @@
             "title": "Candidate Sources",
             "type": "array"
           },
+          "cold_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What this row does for someone with too little watch history; null inherits the global setting.",
+            "enum": [
+              "popular",
+              "skip",
+              null
+            ],
+            "title": "Cold Start"
+          },
           "defer_rename": {
             "default": false,
             "title": "Defer Rename",
@@ -688,6 +705,23 @@
             "title": "Candidate Sources",
             "type": "array"
           },
+          "cold_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "What this row does for someone with too little watch history; null inherits the global setting.",
+            "enum": [
+              "popular",
+              "skip",
+              null
+            ],
+            "title": "Cold Start"
+          },
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
@@ -885,6 +919,7 @@
           "freshness",
           "recent_count",
           "max_seeds",
+          "cold_start",
           "seed_window",
           "pick_order",
           "placement",
@@ -5429,7 +5464,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { RunDuration } from "@/pages/runs";
+import { RunDuration, RunStarted } from "@/pages/runs";
 import type { Run } from "@/lib/types";
 
 function makeRun(overrides: Partial<Run> = {}): Run {
@@ -58,5 +58,60 @@ describe("RunDuration", () => {
 
     unmount();
     expect(clearSpy).toHaveBeenCalled();
+  });
+});
+
+describe("RunStarted", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps pace with the duration beside it while a run is running", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T03:38:00Z")); // 8m after start
+
+    render(<RunStarted run={makeRun({ finished_at: null })} />);
+    expect(screen.getByText("8m ago")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3 * 60_000);
+    });
+    expect(screen.getByText("11m ago")).toBeInTheDocument();
+  });
+
+  it("does not tick per-second once the run has finished", () => {
+    // What `active` is actually for: a finished run must not hold a one-second timer. It still
+    // ticks, just slowly — the next test is why "inactive" must not mean frozen.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T03:38:00Z"));
+
+    render(
+      <RunStarted run={makeRun({ finished_at: "2026-07-19T03:33:00Z" })} />,
+    );
+    expect(screen.getByText("8m ago")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(screen.getByText("8m ago")).toBeInTheDocument();
+  });
+
+  it("a finished run's 'started N ago' still moves on with the clock", () => {
+    // Slow must not mean never. This assertion used to read "still 8m ago" and passed for the wrong
+    // reason: the clock was pinned to its mount value, so every finished run on a tab left open went
+    // on claiming it started whenever the page happened to load.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T03:38:00Z"));
+
+    render(
+      <RunStarted run={makeRun({ finished_at: "2026-07-19T03:33:00Z" })} />,
+    );
+    expect(screen.getByText("8m ago")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(60 * 60_000);
+    });
+
+    expect(screen.queryByText("8m ago")).toBeNull();
   });
 });

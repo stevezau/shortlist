@@ -61,6 +61,45 @@ class TestPlexTvClient:
         assert users[1].home is True
 
     @respx.mock
+    def test_the_roster_read_outlasts_a_container_whose_network_is_merely_late(self, monkeypatch):
+        """The default three attempts (~3s of backoff) are not enough for the one read whose failure
+        aborts the entire run. A user's first run died on `ConnectError: [Errno -3] Temporary failure
+        in name resolution` — the container had started before its DNS had — and the identical manual
+        re-run seconds later succeeded. Four straight connect failures must still resolve to a roster,
+        not to a server-wide "nothing written, nothing promoted"."""
+        monkeypatch.setattr(plextv_mod.http_retry.time, "sleep", lambda _: None)
+        calls = {"n": 0}
+
+        def dns_is_not_up_yet(_request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] <= 4:
+                raise httpx.ConnectError("[Errno -3] Temporary failure in name resolution")
+            return httpx.Response(200, text=USERS_XML)
+
+        route = respx.get("https://plex.tv/api/users").mock(side_effect=dns_is_not_up_yet)
+        respx.get("https://plex.tv/api/home/users").mock(return_value=httpx.Response(500))
+
+        users = self._client().list_users()
+
+        assert [u.id for u in users] == [555000100, 555000200, 555000300]
+        assert route.call_count == 5, "the 4th retry is past the default ladder — that is the point"
+
+    @respx.mock
+    def test_a_roster_read_that_never_recovers_still_raises(self, monkeypatch):
+        """The longer ladder must not become an infinite one. When plex.tv is genuinely unreachable the
+        run has to fail loudly — the pipeline's abort is what stops it promoting rows it cannot prove
+        are hidden (rule 1)."""
+        monkeypatch.setattr(plextv_mod.http_retry.time, "sleep", lambda _: None)
+        route = respx.get("https://plex.tv/api/users").mock(side_effect=httpx.ConnectError("no DNS, ever"))
+
+        with pytest.raises(httpx.ConnectError):
+            self._client().list_users()
+
+        # The literal, not the constant: `== _ROSTER_ATTEMPTS` passes for ANY value including 50, so
+        # the one test named for keeping the ladder bounded could never fail on it.
+        assert route.call_count == 6
+
+    @respx.mock
     def test_only_user_elements_become_users(self):
         """Any other child of the container — a `<Server>` block, an error node — used to become an
         account with `id=0` and no filters. That matters beyond a junk row: the user sync compares its

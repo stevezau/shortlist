@@ -1,9 +1,10 @@
-/** "6h ago" style relative time for ISO timestamps; plain English on edge cases. */
-export function timeAgo(iso: string | null): string {
+/** "6h ago" style relative time for ISO timestamps; plain English on edge cases. `now` lets a caller
+ *  that already ticks a clock (a live run's row) share it, so its labels can't disagree. */
+export function timeAgo(iso: string | null, now: number = Date.now()): string {
   if (!iso) return "never";
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return "unknown";
-  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  const seconds = Math.max(0, Math.floor((now - then) / 1000));
   if (seconds < 60) return "just now";
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;

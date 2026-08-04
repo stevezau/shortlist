@@ -59,6 +59,25 @@ def _record_deliveries(session: Session, user_slug: str, breakdown: list[dict]) 
         row.updated_at = datetime.now(UTC)
 
 
+def _forget_removed_deliveries(session: Session, user_slug: str, removed: list[dict]) -> None:
+    """Drop the ledger rows for collections this run DELETED in-run (a muted/retired row, or one a
+    cold start skipped), so the ledger stays a record of what IS on the server.
+
+    The on-demand reconciles already do this via `collection_reconcile._forget_deliveries`; an in-run
+    removal had no equivalent, so its ratingKey survived its collection. That matters because these
+    paths REPEAT — a cold-skipped user is skipped again every night — and Plex reuses
+    `metadata_items.id`, so a kept key can come to name a different collection. `promote_user_rows`
+    reads this ledger too, so it is not only removals that a stale key would misdirect.
+    """
+    for entry in removed or []:
+        slug, library_key = entry.get("row_slug") or "", str(entry.get("library_key") or "")
+        if not slug or not library_key:
+            continue
+        row = session.get(Delivery, (slug, user_slug, library_key))
+        if row is not None:
+            session.delete(row)
+
+
 def _why_json(why) -> list[dict]:
     """Serialize a missing title's provenance for storage + the API: [{user, row, seed, source}]."""
     return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source} for w in why]
@@ -360,6 +379,9 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
         )
     )
     if not dry_run:
+        # Forget BEFORE recording: a row removed and then re-delivered in the same run (a retitle that
+        # went through delete+create) must end up with the entry the delivery just wrote, not without one.
+        _forget_removed_deliveries(session, user.slug, user_report.removed_deliveries)
         _record_deliveries(session, user.slug, user_report.breakdown)
         for pick in user_report.picks:
             session.add(

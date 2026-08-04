@@ -32,6 +32,12 @@ import {
 import { SeedWindowField } from "@/components/seed-window-field";
 import { RowSizeField } from "@/components/row-size-field";
 import { apiErrorMessage } from "@/lib/api";
+import {
+  asColdStart,
+  COLD_START_HINTS,
+  COLD_START_LABELS,
+  COLD_STARTS,
+} from "@/lib/cold-start";
 import { blankInput, toInput } from "@/lib/collections";
 import {
   useCollectionEffectiveness,
@@ -42,6 +48,7 @@ import {
 } from "@/lib/queries";
 import type { RowTemplate } from "@/lib/row-templates";
 import {
+  coldStartGlobal,
   freshnessGlobal,
   freshnessGlobalValue,
   freshnessSeed,
@@ -801,6 +808,58 @@ export function RowEditor({
                   )
                 }
               />
+            </InheritableField>
+
+            <InheritableField
+              label="When someone hasn’t watched enough"
+              labelFor="row-cold-start"
+              description={
+                <>
+                  Some people have too little watch history to recommend from
+                  &mdash; someone new, or someone who barely watches. This row
+                  can still show them the server&rsquo;s highest-rated titles,
+                  or not appear for them at all until they&rsquo;ve watched
+                  enough. Set where the line is in Settings &rarr; Finding
+                  titles.
+                </>
+              }
+              ariaLabel="Use the global setting for people without enough watch history"
+              inheriting={input.cold_start === null}
+              globalValue={coldStartGlobal(settings.data)}
+              // Turning the toggle OFF seeds "skip", not the global: the only reason to reach for
+              // this control is to differ from the global, and the global is one flip away again.
+              onToggle={(on) => set({ cold_start: on ? null : "skip" })}
+              // A row named after one watch is the case this exists for — it has no favourite to
+              // name itself after, so it silently renders as the plain default title instead.
+              before={
+                namesASeed &&
+                input.cold_start !== "skip" && (
+                  <p className="rounded-md bg-muted/60 p-3 text-sm text-muted-foreground">
+                    This row is named after a title they watched. With too
+                    little history there is no such title, so the row falls back
+                    to a plain name — worth skipping it for those people
+                    instead.
+                  </p>
+                )
+              }
+            >
+              <select
+                id="row-cold-start"
+                value={input.cold_start ?? "popular"}
+                onChange={(e) =>
+                  set({ cold_start: asColdStart(e.target.value) })
+                }
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+              >
+                {COLD_STARTS.map((choice) => (
+                  <option key={choice} value={choice}>
+                    {COLD_START_LABELS[choice]}
+                  </option>
+                ))}
+              </select>
+              <p className="text-sm text-muted-foreground">
+                {COLD_START_HINTS[asColdStart(input.cold_start)]}
+              </p>
             </InheritableField>
 
             {/* Only for a row that builds from one or two watches. Above that it is blending a whole

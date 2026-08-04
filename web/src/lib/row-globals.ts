@@ -1,3 +1,4 @@
+import { asColdStart, COLD_START_LABELS } from "@/lib/cold-start";
 import { FRESHNESS_DEFAULT, WATCHED_PCT_DEFAULT } from "@/lib/constants";
 import type { Settings } from "@/lib/types";
 
@@ -74,6 +75,14 @@ export function maxSeedsGlobal(settings: Settings | undefined): string | null {
   const count = num(settings, "recommendations.max_seeds");
   if (count === null) return null;
   return `${count} ${count === 1 ? "watch" : "watches"}`;
+}
+
+/** The global cold-start choice, phrased for the caption under a row's inherit toggle. */
+export function coldStartGlobal(settings: Settings | undefined): string | null {
+  if (!settings) return null;
+  const raw = settings["recommendations.cold_start"];
+  if (typeof raw !== "string") return null;
+  return COLD_START_LABELS[asColdStart(raw)];
 }
 
 /** The value a toggle should drop to when someone turns "use the global" OFF: the global itself,

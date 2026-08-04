@@ -260,6 +260,12 @@ export function UserPanel({
     // Still running (this user hasn’t finished) or a legacy run with no breakdown.
     if (result.picks.length > 0)
       return <PickList picks={result.picks} className="mt-1" />;
+    // A cold-start person whose rows are set to skip has no picks and no breakdown, but something
+    // DID happen — their row was not built, and any earlier one was removed. Saying "no changes"
+    // there is wrong on the one screen whose job is "what changed at 03:31".
+    if (result.status === "cold_start" && result.reason) {
+      return <p className="text-sm text-muted-foreground">{result.reason}</p>;
+    }
     if (result.status === "ok" || result.status === "cold_start") {
       return (
         <p className="text-sm text-muted-foreground">
