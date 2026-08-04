@@ -71,6 +71,17 @@ def effective_max_seeds(spec: RowSpec, cfg: EngineConfig) -> int:
     return spec.max_seeds if spec.max_seeds is not None else cfg.max_seeds
 
 
+def effective_cold_start(spec: RowSpec, cfg: EngineConfig) -> str:
+    """What this row does for a cold-start user: ``"popular"`` (top-rated fallback) or ``"skip"``.
+
+    Row first, then the run's default — the same direction every other inheritable row setting
+    resolves in. Anything unrecognised reads as ``"popular"``, so a bad value can only ever leave the
+    pre-existing behaviour in place; it can never silently delete somebody's row.
+    """
+    value = spec.cold_start if spec.cold_start is not None else cfg.cold_start
+    return "skip" if value == "skip" else "popular"
+
+
 def effective_seed_window(spec: RowSpec) -> int:
     """How many recent watches this row may cycle between. 1 = always the most recent.
 
@@ -896,7 +907,105 @@ def _why_no_rows(user: UserProfile, cfg: EngineConfig) -> str:
     return "None of this person's rows were due to rebuild in this run."
 
 
-def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, diff: CollectionDiff) -> None:
+def _why_cold_skipped(user: UserProfile, cfg: EngineConfig, specs: list[RowSpec], removed: int) -> str:
+    """Plain-English reason a cold-start user got no row, for the same reason `_why_no_rows` exists:
+    a bare status word reads as a failure, and this one is a deliberate setting.
+
+    Args:
+        user: The person, for their history count.
+        cfg: The run's config, for the threshold they fell short of.
+        specs: The rows this run was going to build for them — not every row they are in.
+        removed: How many COLLECTIONS this skip deleted — a delta measured across it, never a total,
+            since the muted/retired sweep appends to the same diff earlier in the run. A row lives in
+            one collection per library, so this counts copies, and it is 0 for a row that was left
+            alone (unrenderable title, no ledger key) or that had nothing on Plex to begin with.
+    """
+    # Scoped to THIS run's rows, not "every row they're in": each row has its own cron, so a
+    # scheduled run usually carries one, and their other rows build on their own schedules.
+    one_row = len(specs) == 1
+    removal = ""
+    if removed:
+        copies = "copy" if removed == 1 else "copies"
+        was = "was" if removed == 1 else "were"
+        removal = f", so {removed} {copies} of {'it' if one_row else 'them'} already on Plex {was} removed"
+    return (
+        f"Not enough watch history yet — {len(user.history)} of {cfg.min_history} titles. "
+        f"The {'row' if one_row else f'{len(specs)} rows'} due in this run "
+        f"{'is' if one_row else 'are'} set to build nothing until then{removal}. "
+        f"{'It comes back on its own' if one_row else 'They come back on their own'} "
+        "once this person crosses the threshold."
+    )
+
+
+def _ledger_keys(ctx: EngineContext, user: UserProfile, spec: RowSpec) -> dict[str, int]:
+    """{section key -> ratingKey} for THIS user's copy of THIS row, from the delivery ledger.
+
+    The only handle on a `{top_seed}` row, whose title was different every run and so matches nothing
+    computed from config. See `remove_row` for why identity is safe here.
+    """
+    return {
+        section_key: key
+        for (slug, row_slug, section_key), key in ctx.delivered_keys.items()
+        if slug == user.slug and row_slug == spec.slug
+    }
+
+
+def _drop_cold_skipped_rows(
+    ctx: EngineContext,
+    user: UserProfile,
+    cfg: EngineConfig,
+    specs: list[RowSpec],
+    report: UserRunReport,
+) -> list[RowSpec]:
+    """Drop the rows this cold-start user's config says not to build, removing any copy already on Plex.
+
+    "Skip" has to mean GONE, not merely "not refreshed". Someone warm last month already has this row
+    on their Home, and a history that thins out (or a Tautulli outage) would otherwise strand it there
+    for ever, going stale, with nothing that ever cleans it up — the row would outlive the taste it was
+    built from. Removal only ever makes the server more private, so it is safe wherever it lands.
+
+    Returns the rows that should still be built.
+    """
+    keep: list[RowSpec] = []
+    for spec in specs:
+        if effective_cold_start(spec, cfg) != "skip":
+            keep.append(spec)
+            continue
+        logger.info(
+            "{}: row '{}' not built — {} watched titles, below the minimum of {}",
+            user.username,
+            spec.slug,
+            len(user.history),
+            cfg.min_history,
+        )
+        # write_lock: same as the muted/retired sweep — every Plex mutation is serialized when users
+        # run concurrently. Scans EVERY library, not the run's delivery sections, so a copy left in a
+        # library the row no longer targets goes too.
+        with ctx.write_lock:
+            removed_in = remove_row(
+                ctx.plex,
+                user,
+                cfg,
+                spec,
+                dry_run=cfg.dry_run,
+                diff=report.diff if report.diff is not None else CollectionDiff(),
+                sections=ctx.plex.sections(),
+                delivered_keys=_ledger_keys(ctx, user, spec),
+            )
+        _forget(report, spec, removed_in)
+    return keep
+
+
+def _forget(report: UserRunReport, spec: RowSpec, removed_in: list[str]) -> None:
+    """Note the ledger entries a removal made dead, for the adapter to prune on persist.
+
+    Matters most on the paths that REPEAT: a cold-skipped user is skipped again every night, so a key
+    left behind here is re-presented for as long as they stay cold, and Plex reuses ratingKeys.
+    """
+    report.removed_deliveries.extend({"row_slug": spec.slug, "library_key": key} for key in removed_in)
+
+
+def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: EngineConfig, report: UserRunReport) -> None:
     """Remove this user's rows that were muted or disabled since the last run.
 
     A row muted or switched off in the UI is gone from ``cfg.rows``, but its collection still sits on
@@ -905,6 +1014,7 @@ def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: Engine
     whose every row was switched off is still cleaned up, and only ever makes the server MORE private,
     so it happens regardless of whether the user has any row this time.
     """
+    diff = report.diff if report.diff is not None else CollectionDiff()
     muted = [s for s in cfg.per_person_rows() if _in_audience(user, s) and _is_muted(user, s)]
     retired = [s for s in cfg.retired_rows if not s.shared and _in_audience(user, s)]
     for spec in (*muted, *retired):
@@ -914,7 +1024,20 @@ def _remove_muted_and_retired(ctx: EngineContext, user: UserProfile, cfg: Engine
             # Scan EVERY library, not the run's (now targeting-scoped) delivery_sections: a muted row
             # whose library_keys later dropped a library can still have a stale copy there, and a
             # muted row must leave them all. plex.sections() is cached, so this is cheap.
-            remove_row(ctx.plex, user, cfg, spec, dry_run=cfg.dry_run, diff=diff, sections=ctx.plex.sections())
+            removed_in = remove_row(
+                ctx.plex,
+                user,
+                cfg,
+                spec,
+                dry_run=cfg.dry_run,
+                diff=diff,
+                sections=ctx.plex.sections(),
+                # Closes the gap this function's caller documents: a muted `{top_seed}` row could not
+                # be title-matched, so it survived every run — private, but never actually gone. The
+                # ledger identifies it without guessing at a title.
+                delivered_keys=_ledger_keys(ctx, user, spec),
+            )
+        _forget(report, spec, removed_in)
 
 
 # A row's candidate pool, as `_candidate_pool` returns it: (pool, in_library, ranked).
@@ -1562,7 +1685,7 @@ def _run_user(
     cfg = ctx.config
 
     user_report.diff = CollectionDiff()
-    _remove_muted_and_retired(ctx, user, cfg, user_report.diff)
+    _remove_muted_and_retired(ctx, user, cfg, user_report)
 
     # Every row that could still have a COLLECTION under this user's label — the predicate `sole_row`
     # actually needs, since it licenses delivery to treat a title mismatch as an in-place rename and
@@ -1573,10 +1696,11 @@ def _run_user(
     #     made row A's 3am cron claim "this user has one row", find row B's collection alone in that
     #     library (all their rows share one label; only the title tells them apart) and rebuild it as
     #     row A. Row B destroyed nightly, reported as an ordinary delivery.
-    #   * mute — `_remove_muted_and_retired` runs just above, but it CANNOT remove a muted row whose
-    #     title is unrenderable (`{top_seed}`): `remove_row` leaves those alone by design. So a muted
-    #     row's collection is still on the server, and excluding it re-opens the same takeover through
-    #     a different door.
+    #   * mute — `_remove_muted_and_retired` runs just above and now reaches even a `{top_seed}` row,
+    #     via its delivery-ledger ratingKey. But only when the ledger HAS one: a row delivered before
+    #     the ledger existed, or one whose entry two rows both claim (dropped as ambiguous), is still
+    #     left alone by design. Its collection is then still on the server, and excluding it here
+    #     re-opens the same takeover through a different door.
     owned = [spec for spec in cfg.per_person_rows() if _in_audience(user, spec)]
     specs = [s for s in owned if not _is_muted(user, s) and cfg.should_build(s)]
     if not specs:
@@ -1593,6 +1717,26 @@ def _run_user(
     user.history = user.history or ctx.history_source.fetch(user, min_completion=cfg.min_completion)
     user_report.counts.history = len(user.history)
 
+    # Decided BEFORE the policy is built, because a row set to skip a cold start is not this person's
+    # row tonight at all: it must not seed a pool, size `base_cold`, or appear in the trace.
+    cold = len(user.history) < cfg.min_history
+    if cold:
+        due = specs
+        # A DELTA, not a total: `_remove_muted_and_retired` above appends to this same diff, so a
+        # total would credit the skip with a muted row's deletion and tell the owner the skip removed
+        # something when it removed nothing.
+        deleted_before = len(user_report.diff.deleted) if user_report.diff else 0
+        specs = _drop_cold_skipped_rows(ctx, user, cfg, specs, user_report)
+        if not specs:
+            # Every row they have skips a cold start. Their status stays `cold_start`, NOT "skipped":
+            # the reason there is no row is that their history is thin, and `user.cold_start` (which
+            # run_persistence derives from exactly this status) is what the Users page reads to say so.
+            # Reporting "skipped" would clear that flag and leave the UI unable to explain the absence.
+            user_report.status = "cold_start"
+            deleted_now = len(user_report.diff.deleted) if user_report.diff else 0
+            user_report.reason = _why_cold_skipped(user, cfg, due, deleted_now - deleted_before)
+            return False
+
     policy = RowPolicy(
         ctx=ctx,
         user=user,
@@ -1605,7 +1749,6 @@ def _run_user(
     policy.load_watched_breakdown()
     library_of_watch, library_of_seed = _library_resolvers(ctx)
 
-    cold = len(user.history) < cfg.min_history
     base_cold: list[Pick] = []
     if cold:
         base_cold = _cold_start(policy, library_of_watch, library_of_seed)

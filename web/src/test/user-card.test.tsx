@@ -67,11 +67,18 @@ describe("UserCard", () => {
     expect(screen.queryByText(/hit rate/)).not.toBeInTheDocument();
   });
 
-  it("flags cold-start users and explains the fallback row", () => {
+  it("flags cold-start users without claiming which fallback they get", () => {
     renderCard({ user: makeUser({ cold_start: true }) });
 
     expect(screen.getByText("New viewer")).toBeInTheDocument();
-    expect(screen.getByText(/thin history/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/not enough watch history yet/i),
+    ).toBeInTheDocument();
+    // What they actually get is the cold-start setting — popular titles, or no row at all — so a
+    // card that names one is simply wrong for anyone whose rows are set to skip.
+    expect(
+      screen.queryByText(/popular-titles fallback/i),
+    ).not.toBeInTheDocument();
   });
 
   it('shows "never run yet" when the user has no runs', () => {

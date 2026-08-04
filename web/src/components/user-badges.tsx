@@ -40,8 +40,6 @@ export function UserTypeBadge({ user }: { user: User }) {
   );
 }
 
-
-
 /**
  * Only for an account Plex genuinely hides everything from — one with a parental PRESET.
  *
@@ -71,7 +69,7 @@ export function ColdStartBadge({ user }: { user: User }) {
   return (
     <Badge
       variant="warning"
-      title="Not enough watch history yet — their row is built from popular titles until there is."
+      title="Not enough watch history yet. What they get until then — popular titles, or no row at all — is the cold-start setting in Settings → Finding titles."
     >
       New viewer
     </Badge>

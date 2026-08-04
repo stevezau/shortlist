@@ -171,6 +171,10 @@ class Collection(Base):
     # How many watched titles SEED this row — what every source searches from, not just the web one.
     # NULL -> inherit the engine default (30).
     max_seeds: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    # What this row does for someone with too little watch history: "popular" (the server's top-rated
+    # titles) or "skip" (don't build it for them; remove any copy they already have).
+    # NULL -> inherit the global recommendations.cold_start.
+    cold_start: Mapped[str | None] = mapped_column(String(16), nullable=True, default=None)
     # How many of a person's most recent watches this row may be built from, of which ONE is chosen per
     # run so the row advances instead of sitting on their newest watch for ever. 1 = always the most
     # recent (the original behaviour). Not nullable and not inheritable, like pick_order: whether a row

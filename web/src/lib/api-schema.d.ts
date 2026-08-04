@@ -1841,6 +1841,12 @@ export interface components {
             /** Candidate Sources */
             candidate_sources?: string[];
             /**
+             * Cold Start
+             * @description What this row does for someone with too little watch history; null inherits the global setting.
+             * @enum {unknown}
+             */
+            cold_start?: "popular" | "skip" | null;
+            /**
              * Defer Rename
              * @default false
              */
@@ -1967,6 +1973,12 @@ export interface components {
             build: "per_person" | "shared";
             /** Candidate Sources */
             candidate_sources: string[];
+            /**
+             * Cold Start
+             * @description What this row does for someone with too little watch history; null inherits the global setting.
+             * @enum {unknown}
+             */
+            cold_start: "popular" | "skip" | null;
             /** Enabled */
             enabled: boolean;
             /** Freshness */

@@ -277,14 +277,16 @@ describe("RunDetailPage — grouped by library", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "Heat",
-            reason: "crime",
-            seed_title: "",
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "Heat",
+              reason: "crime",
+              seed_title: "",
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
         {
           row_slug: "picked",
@@ -296,14 +298,16 @@ describe("RunDetailPage — grouped by library", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "Fargo",
-            reason: "crime",
-            seed_title: "",
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "Fargo",
+              reason: "crime",
+              seed_title: "",
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
       ]),
     );
@@ -335,14 +339,16 @@ describe("RunDetailPage — grouped by library", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "A",
-            reason: "a",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "A",
+              reason: "a",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
         {
           row_slug: "hidden_gems",
@@ -354,14 +360,16 @@ describe("RunDetailPage — grouped by library", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "B",
-            reason: "b",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "B",
+              reason: "b",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
       ]),
     );
@@ -503,14 +511,16 @@ describe("RunDetailPage — grouped by library", () => {
           exa_searches: 0,
           has_trace: false,
           diff: {},
-          picks: [{
-            rank: 1,
-            title: "Old Title",
-            reason: "legacy",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "Old Title",
+              reason: "legacy",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
           breakdown: [],
         },
       ],
@@ -658,6 +668,35 @@ describe("RunDetail — a skipped person is not a success", () => {
     expect(
       await screen.findByText(/no per-person rows to build/i),
     ).toBeInTheDocument();
+  });
+
+  it("does not report 'no changes' for a cold-start person whose row was skipped", async () => {
+    // A cold-skipped person is status `cold_start` with no picks and no breakdown — which read as
+    // "No changes — this person's rows were already up to date" on the one screen whose job is
+    // "what changed at 03:31", on a run that had just DELETED their collection.
+    const r = run([]);
+    r.stats = {
+      users_ok: 1,
+      users_error: 0,
+      users_skipped: 0,
+      titles_requested: 0,
+    };
+    r.users = [
+      {
+        ...skippedUser("canary", 1),
+        status: "cold_start",
+        reason:
+          "Not enough watch history yet — 0 of 10 titles. The row due in this run is set to build nothing until then, so 1 already on Plex was removed.",
+      },
+    ] as unknown as RunDetail["users"];
+    getRun.mockResolvedValue(r);
+
+    renderDetail("?tab=users");
+
+    expect(
+      await screen.findByText(/not enough watch history yet/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/already up to date/i)).toBeNull();
   });
 });
 

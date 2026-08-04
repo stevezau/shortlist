@@ -591,6 +591,180 @@ class TestRun:
             "detail": "",
         }
 
+    def _make_cold(self, ctx: EngineContext, mock_plextv) -> object:
+        """One user, one watch (below min_history), one top-rated title to fall back to."""
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.history_source.fetch.return_value = [make_watched("Only One")]
+        ctx.history_source.fetch.side_effect = None
+        ctx.plex.top_rated.return_value = [(50, fake_media_item(1, "Top Rated", tmdb_id=50))]
+        return sarah
+
+    def test_cold_start_skip_builds_no_row_at_all(self, ctx: EngineContext, mock_plextv):
+        """The whole point of issue #66: 'skip' means no row, not a row of popular titles."""
+        sarah = self._make_cold(ctx, mock_plextv)
+        ctx.config.cold_start = "skip"
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        user_report = report.users[0]
+        assert user_report.picks == []
+        ctx.plex.create_collection.assert_not_called()
+        # Popular titles are never even LOOKED UP — skipping must not pay for the fallback it declines.
+        ctx.plex.top_rated.assert_not_called()
+
+    def test_cold_start_skip_keeps_the_user_flagged_cold_not_skipped(self, ctx: EngineContext, mock_plextv):
+        """`run_persistence` derives `user.cold_start` from this status, and the Users page reads that
+        flag to explain the missing row. Reporting "skipped" would clear it and leave the UI silent."""
+        sarah = self._make_cold(ctx, mock_plextv)
+        ctx.config.cold_start = "skip"
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        user_report = report.users[0]
+        assert user_report.status == "cold_start"
+        assert "1 of 3 titles" in user_report.reason  # engine_config sets min_history=3
+
+    def test_cold_start_skip_removes_a_row_they_already_have(self, ctx: EngineContext, mock_plextv):
+        """Someone warm last month already has this row on their Home. Skipping has to mean GONE —
+        otherwise it sits there going stale for ever with nothing that ever cleans it up."""
+        sarah = self._make_cold(ctx, mock_plextv)
+        ctx.config.cold_start = "skip"
+        existing = fake_media_item(4242, "✨ Movies Picked for You" + row_marker(100))
+        ctx.plex.find_owned_collections.return_value = [existing]
+
+        pipeline_mod.run(ctx, [sarah])
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is existing
+
+    def test_cold_start_skip_leaves_a_warm_user_alone(self, ctx: EngineContext, mock_plextv):
+        """The setting is scoped to thin history — it must not touch anyone above the threshold."""
+        sarah = make_profile("sarah", account_id=100)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.config.cold_start = "skip"
+        ctx.config.min_history = 1  # their 4 watches are plenty
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert report.users[0].status == "ok"
+        assert report.users[0].picks
+        ctx.plex.delete_owned_collection.assert_not_called()
+
+    def test_cold_start_skip_removes_a_top_seed_row_via_the_delivery_ledger(self, ctx: EngineContext, mock_plextv):
+        """The headline capability, end to end through `_ledger_keys`.
+
+        A `{top_seed}` row's title was different every run, so nothing computed from config can find
+        it — `remove_row` correctly refuses to title-match it. The delivery ledger is the ONLY handle,
+        so without this wiring a skipped (or muted) `{top_seed}` row could never actually be removed
+        and the feature would be silently dead for exactly the row it matters most for.
+        """
+        sarah = self._make_cold(ctx, mock_plextv)
+        ctx.config.cold_start = "skip"
+        ctx.config.rows = [RowSpec(slug="because", name_template="Because you watched {top_seed}", size=5)]
+        ctx.config.rows_defined = True
+        existing = fake_media_item(4242, "Because you watched The Bear" + row_marker(100))
+        ctx.plex.find_owned_collections.return_value = [existing]
+        # The ledger is keyed by SECTION key, so the fixture's section needs a real one.
+        section_key = str(ctx.plex.sections.return_value[0].key)
+        # Another user's entry rides along so the `slug == user.slug` filter has something to exclude.
+        ctx.delivered_keys = {
+            ("sarah", "because", section_key): 4242,
+            ("mike", "because", section_key): 9999,
+        }
+
+        pipeline_mod.run(ctx, [sarah])
+
+        ctx.plex.delete_owned_collection.assert_called_once()
+        assert ctx.plex.delete_owned_collection.call_args.args[0] is existing
+
+    def test_cold_start_skip_forgets_the_ledger_entry_it_just_deleted(self, ctx: EngineContext, mock_plextv):
+        """A key whose collection is gone must not survive to the next run.
+
+        This path REPEATS — a cold user is skipped again every night — so a kept key is re-presented
+        for as long as they stay cold, and Plex reuses `metadata_items.id`. The adapter prunes these
+        on persist, the way the on-demand reconciles already call `_forget_deliveries`.
+        """
+        sarah = self._make_cold(ctx, mock_plextv)
+        ctx.config.cold_start = "skip"
+        section_key = str(ctx.plex.sections.return_value[0].key)
+        ctx.plex.find_owned_collections.return_value = [
+            fake_media_item(4242, "✨ Movies Picked for You" + row_marker(100))
+        ]
+        ctx.delivered_keys = {("sarah", "picked", section_key): 4242}
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert report.users[0].removed_deliveries == [{"row_slug": "picked", "library_key": section_key}]
+
+    def test_a_dry_run_forgets_no_ledger_entries(self, ctx: EngineContext, mock_plextv):
+        """Nothing was deleted, so the ledger is still the truth — forgetting would blind the next
+        REAL reconcile of a `{top_seed}` row, whose entry is the only thing that can address it."""
+        sarah = self._make_cold(ctx, mock_plextv)
+        ctx.config.cold_start = "skip"
+        ctx.config.dry_run = True
+        ctx.plex.find_owned_collections.return_value = [
+            fake_media_item(4242, "✨ Movies Picked for You" + row_marker(100))
+        ]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert report.users[0].removed_deliveries == []
+
+    def test_the_skip_reason_does_not_claim_a_muted_rows_deletion_as_its_own(self, ctx: EngineContext, mock_plextv):
+        """`_remove_muted_and_retired` appends to the SAME diff earlier in the run, so a total (rather
+        than a delta) told the owner the skip removed a collection when it removed nothing."""
+        sarah = make_profile("sarah", account_id=100, row_overrides={"gems": RowOverride(muted=True)})
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        ctx.history_source.fetch.return_value = [make_watched("Only One")]
+        ctx.history_source.fetch.side_effect = None
+        ctx.plex.top_rated.return_value = [(50, fake_media_item(1, "Top Rated", tmdb_id=50))]
+        ctx.config.cold_start = "skip"
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=5),
+            RowSpec(slug="gems", name_template="Hidden Gems", size=5),
+        ]
+        ctx.config.rows_defined = True
+        # ONE collection on the server, titled for the MUTED row. The cold-skipped row's own title
+        # ("✨ Movies Picked for You") matches nothing here, so the skip removes nothing — while the
+        # mute removes this one and appends it to the very diff the reason used to count.
+        ctx.plex.find_owned_collections.return_value = [fake_media_item(7777, "Hidden Gems" + row_marker(100))]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        reason = report.users[0].reason
+        assert "removed" not in reason, f"the skip claimed a removal it never made: {reason!r}"
+
+    def test_cold_start_skip_writes_nothing_in_a_dry_run(self, ctx: EngineContext, mock_plextv):
+        """Rule 8 covers a DELETE here, and the general dry-run test uses warm users."""
+        sarah = self._make_cold(ctx, mock_plextv)
+        ctx.config.cold_start = "skip"
+        ctx.config.dry_run = True
+        ctx.plex.find_owned_collections.return_value = [
+            fake_media_item(4242, "✨ Movies Picked for You" + row_marker(100))
+        ]
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        ctx.plex.delete_owned_collection.assert_not_called()
+        # ...but it still REPORTS the would-be removal, or a dry run could never be used to preview this.
+        assert report.users[0].diff.deleted == ["✨ Movies Picked for You"]
+
+    def test_a_rows_own_cold_start_beats_the_global(self, ctx: EngineContext, mock_plextv):
+        """Two rows, opposite settings: the `{top_seed}` one skips, the plain one still gets popular
+        titles. This is the case the per-row override exists for."""
+        sarah = self._make_cold(ctx, mock_plextv)
+        ctx.config.cold_start = "popular"
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=5),
+            RowSpec(slug="because", name_template="Because you watched {top_seed}", size=5, cold_start="skip"),
+        ]
+        ctx.config.rows_defined = True
+
+        report = pipeline_mod.run(ctx, [sarah])
+
+        assert {p.collection_slug for p in report.users[0].picks} == {"picked"}
+
     def test_dry_run_makes_zero_plex_writes(self, ctx: EngineContext, mock_plextv):
         ctx.config.dry_run = True
         sarah, mike = make_profile("sarah", account_id=100), make_profile("mike", account_id=200)
@@ -2827,7 +3001,7 @@ class TestLibraryScoping:
         """A muted row whose stale copy lives in a de-targeted library is still removed — cleanup scans
         EVERY library, not the run's (targeting-scoped) delivery_sections."""
         from shortlist.engine.delivery import row_marker
-        from shortlist.engine.models import CollectionDiff, RowOverride, RowSpec
+        from shortlist.engine.models import CollectionDiff, RowOverride, RowSpec, UserRunReport
         from shortlist.engine.rows import _remove_muted_and_retired
 
         movies = MagicMock(type="movie", key="1", title="Movies")
@@ -2843,9 +3017,13 @@ class TestLibraryScoping:
         stale = MagicMock(title="Hidden Gems" + row_marker(100))
         ctx.plex.find_owned_collections.side_effect = lambda s, label: [stale] if s is old_lib else []
 
-        _remove_muted_and_retired(ctx, sarah, ctx.config, CollectionDiff())
+        report = UserRunReport(username="sarah", slug="sarah", diff=CollectionDiff())
+        _remove_muted_and_retired(ctx, sarah, ctx.config, report)
 
         ctx.plex.delete_owned_collection.assert_called_once()  # removed from 4K Movies despite the scope
+        # ...and the ledger entry for the collection just deleted is marked for forgetting, or the
+        # dead ratingKey would be re-presented on every later run.
+        assert report.removed_deliveries == [{"row_slug": "gems", "library_key": "2"}]
 
 
 class TestLibraryIndexCache:

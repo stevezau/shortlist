@@ -51,6 +51,9 @@ MEDIA = {"movie", "show", "both"}
 PLACEMENTS = {"both", "home", "library", "off"}
 #: How a row's picks are ordered in the delivered collection. Mirrors `engine.rows.ROW_ORDERS`.
 ORDERS = {"best", "rating", "newest", "shuffle", "new_first", "rotate"}
+#: What a row does for someone below the watch-history threshold. null -> inherit the global
+#: `recommendations.cold_start`. Mirrors `engine.rows.effective_cold_start`.
+COLD_STARTS = {"popular", "skip"}
 # "" (Plex default), "upload", "text" (built-in Pillow), "ai" (image model). "generate" is the
 # pre-text-engine name for "ai", accepted for backward compatibility.
 POSTER_MODES = {"", "upload", "text", "ai", "generate"}
@@ -129,6 +132,13 @@ class CollectionIn(BaseModel):
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
+    # "popular" | "skip" | None -> inherit the global recommendations.cold_start. Enforced in
+    # `_validate`, like every other closed set here.
+    cold_start: str | None = Field(
+        default=None,
+        json_schema_extra={"enum": [*sorted(COLD_STARTS), None]},
+        description="What this row does for someone with too little watch history; null inherits the global setting.",
+    )
     # How many recent watches the row cycles between, one per run. 1 = always the most recent.
     # Capped at 20: past that the "recent" the row's title claims stops being true, and the cycle takes
     # three weeks to come round — indistinguishable from the stuck row this exists to fix.
@@ -190,6 +200,10 @@ class CollectionOut(PassthroughModel):
     freshness: float | None
     recent_count: int | None
     max_seeds: int | None
+    cold_start: str | None = Field(
+        json_schema_extra={"enum": [*sorted(COLD_STARTS), None]},
+        description="What this row does for someone with too little watch history; null inherits the global setting.",
+    )
     seed_window: int
     pick_order: str = _closed_set_out(ORDERS, "How the delivered collection is ordered.")
     placement: str = _closed_set_out(PLACEMENTS, "Where the OWNER's own collection appears.")
@@ -227,6 +241,8 @@ def _validate(body: CollectionIn) -> None:
         )
     if body.pick_order not in ORDERS:
         raise HTTPException(status_code=422, detail=f"pick_order must be one of {sorted(ORDERS)}")
+    if body.cold_start is not None and body.cold_start not in COLD_STARTS:
+        raise HTTPException(status_code=422, detail=f"cold_start must be null or one of {sorted(COLD_STARTS)}")
     if body.placement not in PLACEMENTS:
         raise HTTPException(status_code=422, detail=f"placement must be one of {sorted(PLACEMENTS)}")
     if body.placement_friends not in PLACEMENTS:
@@ -350,6 +366,7 @@ def _serialize(session, collection: Collection) -> dict:
         "freshness": collection.freshness,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
+        "cold_start": collection.cold_start,
         "seed_window": int(collection.seed_window or 1),
         "pick_order": collection.pick_order or "best",
         "placement": collection.placement or "both",
@@ -435,6 +452,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             freshness=body.freshness,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
+            cold_start=body.cold_start,
             seed_window=body.seed_window,
             pick_order=body.pick_order,
             placement=body.placement,
@@ -473,6 +491,7 @@ _PATCHABLE_COLUMNS = (
     "freshness",
     "recent_count",
     "max_seeds",
+    "cold_start",
     "seed_window",
     "pick_order",
     "placement",

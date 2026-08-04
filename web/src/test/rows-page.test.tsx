@@ -50,6 +50,7 @@ const SUBSET_ROW: Collection = {
   freshness: null,
   recent_count: null,
   max_seeds: null,
+  cold_start: null,
   seed_window: 1,
   pick_order: "best",
   placement: "both",

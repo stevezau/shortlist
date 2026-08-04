@@ -422,4 +422,30 @@ describe("TraceView", () => {
     ).toBeTruthy();
     expect(within(searched).getByText(/queued for your approval/)).toBeTruthy();
   });
+
+  it("a skipped person sees the reason, not a 'predates tracing' excuse", () => {
+    // A cold-start person whose rows are set to skip has a reason and no per-library stages. The
+    // EmptyState below the banner blamed a legacy run for what was a deliberate skip — two
+    // explanations for one absence, one of them wrong.
+    const data = okTrace({
+      status: "cold_start",
+      reason: "Not enough watch history yet — 0 of 10 titles.",
+      trace: {},
+    }) as RunUserTraceResponse;
+
+    render(<TraceView data={data} />);
+
+    expect(screen.getByText(/not enough watch history yet/i)).toBeTruthy();
+    expect(screen.queryByText(/predates library-level tracing/i)).toBeNull();
+  });
+
+  it("still renders the library tabs when a reason coexists with stages", () => {
+    // The other half of the same ternary: suppressing the EmptyState must not suppress the tabs.
+    const data = okTrace({ reason: "Heads up about this run" });
+
+    render(<TraceView data={data} />);
+
+    expect(screen.getByText(/heads up about this run/i)).toBeTruthy();
+    expect(screen.getByText(/Where we searched/)).toBeTruthy();
+  });
 });

@@ -168,6 +168,8 @@ class ContextBuilder:
                 recent_count=int(store.get("recommendations.recent_count") or 10),
                 max_seeds=int(store.get("recommendations.max_seeds") or 30),
                 rating_source=store.get("recommendations.rating_source") or "tmdb",
+                min_history=int(store.get("recommendations.min_history") or 10),
+                cold_start=store.get("recommendations.cold_start") or "popular",
                 hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
                 dry_run=dry_run,
                 rows=self._build_rows(session, store),
@@ -615,6 +617,7 @@ class ContextBuilder:
                     freshness=collection.freshness,  # None -> inherit the global freshness
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
+                    cold_start=collection.cold_start,  # None -> inherit the global recommendations.cold_start
                     seed_window=int(collection.seed_window or 1),  # 1 -> always their most recent watch
                     pick_order=collection.pick_order or "best",
                     placement=collection.placement or "both",

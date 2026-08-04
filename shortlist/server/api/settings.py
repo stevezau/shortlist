@@ -206,6 +206,10 @@ VALIDATORS = {
     "recommendations.recent_count": _bounded_int(1, 25),
     "recommendations.max_seeds": _bounded_int(5, 100),
     "recommendations.rating_source": _one_of("tmdb", "imdb", "trakt", "tomatoes", "metacritic"),
+    # Floor of 1, not 0: at 0 nobody is ever cold, which silently disables the whole cold-start path
+    # (and with it the "skip" setting below) in a way no owner would connect to this number.
+    "recommendations.min_history": _bounded_int(1, 100),
+    "recommendations.cold_start": _one_of("popular", "skip"),
     "recommendations.blocked_shared_seeds": _int_list,
     # Above 1 only affects READ-ONLY jobs — Plex writers stay exclusive whatever this says.
     "jobs.max_parallel_readonly": _bounded_int(1, 8),

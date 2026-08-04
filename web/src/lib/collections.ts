@@ -34,6 +34,7 @@ export function blankInput(): CollectionInput {
     freshness: null,
     recent_count: null,
     max_seeds: null,
+    cold_start: null,
     seed_window: 1,
     pick_order: "best",
     placement: "both",
@@ -68,6 +69,7 @@ export function toInput(collection: Collection): CollectionInput {
     freshness: collection.freshness ?? null,
     recent_count: collection.recent_count ?? null,
     max_seeds: collection.max_seeds ?? null,
+    cold_start: collection.cold_start ?? null,
     seed_window: collection.seed_window ?? 1,
     pick_order: collection.pick_order ?? "best",
     placement: collection.placement ?? "both",
@@ -185,6 +187,12 @@ export function rowOverrides(
     parts.push(
       `Built from ${collection.max_seeds} ${collection.max_seeds === 1 ? "watch" : "watches"}`,
     );
+  }
+
+  // null inherits the global cold-start behaviour, so only badge a row that overrides it — and only
+  // "skip" is worth a badge: it is the one that makes a row silently absent for someone.
+  if (collection.cold_start === "skip") {
+    parts.push("Skipped without watch history");
   }
 
   // 1 = always their most recent watch (the default), so only badge a row that actually cycles —

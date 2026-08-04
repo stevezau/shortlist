@@ -56,6 +56,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     freshness: null,
     recent_count: null,
     max_seeds: null,
+    cold_start: null,
     seed_window: 1,
     pick_order: "best",
     placement: "both",
@@ -692,6 +693,41 @@ describe("RowEditor — watches every source builds from", () => {
     expect(
       (updateCollection.mock.calls.at(0)?.[1] as Collection).max_seeds,
     ).toBe(1);
+  });
+
+  it("round-trips a per-row cold_start into the PATCH body", async () => {
+    renderEditor(row({ cold_start: null }));
+
+    await userEvent.click(
+      screen.getByRole("switch", {
+        name: /global setting for people without enough watch history/i,
+      }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    // "skip", not the global's value: the only reason to reach for this control is to differ from
+    // the global, and it is one flip away again.
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).cold_start,
+    ).toBe("skip");
+  });
+
+  it("a row that inherits sends no cold_start override at all", async () => {
+    // The regression that would pin every row to today's global: an editor that materialises
+    // "popular" the moment it renders, so opening and saving a row silently ends its inheritance.
+    renderEditor(row({ cold_start: null }));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).cold_start,
+    ).toBeNull();
   });
 
   it("opens at 2, not 1, for a row covering movies AND TV", async () => {

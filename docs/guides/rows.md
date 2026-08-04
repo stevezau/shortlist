@@ -31,9 +31,10 @@ the row is built:
   becomes "Because you watched The Bear".
 
 If a `{top_seed}` row is built for someone with too little history to have a favourite, it falls
-back to a clean default ("✨ Picked for You") rather than a half-finished sentence. You can rename
-any row at any time in the **Row editor**, and the collection on Plex is renamed in place, so its
-place in the shelf and its privacy are preserved.
+back to a clean default ("✨ Picked for You") rather than a half-finished sentence — or you can have
+the row not appear for them at all; see [People without enough watch history](#people-without-enough-watch-history)
+below. You can rename any row at any time in the **Row editor**, and the collection on Plex is
+renamed in place, so its place in the shelf and its privacy are preserved.
 
 **A `{top_seed}` row needs one more setting to be honest.** By default every row is built from a
 person's 30 most recent watches blended together, so a row titled "Because you watched The Bear" is
@@ -85,6 +86,31 @@ changes". On the nights it hasn't changed the row still swaps its weakest third 
 it writes to Plex most nights, per person, per library, where an ordinary row on the default pace
 writes about weekly. It does not cost any extra AI usage: candidates are gathered once per run
 however often a row refreshes, so how often a row refreshes has no bearing on it.
+
+## People without enough watch history
+
+Someone new to the server, or someone who barely watches, has too little history for Shortlist to
+recommend from. **Settings → Finding titles → Enough watch history** is where that line sits
+(10 watched titles by default), and the setting beneath it decides what those people get:
+
+| Choice                                     | What lands on their Plex                                                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| **Show the server's highest-rated titles** | They still get the row, filled with what rates highest on this server. The default, and how Shortlist has always behaved. |
+| **Don't build their row**                  | No row is created — and any row they already have is **removed**, so "skip" means gone rather than left to go stale.      |
+
+Either way it resolves itself: the row appears (or returns) on its own the night they cross the
+threshold. Nothing needs setting back.
+
+**Any row can override this in the Row editor**, which is the point of having it per row rather than
+only server-wide. A `{top_seed}` row is the one worth skipping — it has no favourite to name itself
+after, so for a cold-start person it silently falls back to the plain default title. A general
+"Picked for You" row is perfectly happy holding popular titles in the meantime. Leave a row on **Use
+the global setting** and it follows Settings.
+
+The person still appears on the Users page, flagged as needing more watch history — a row that is
+missing on purpose is never left looking like a failure. The run's entry for them says how many
+titles they have watched so far and what was skipped. Shared rows are unaffected: this only governs
+the per-person ones.
 
 ## The order titles appear in
 
