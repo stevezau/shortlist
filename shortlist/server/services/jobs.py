@@ -125,8 +125,10 @@ CATALOG: tuple[JobKind, ...] = (
             "put in front of someone was actually watched — the numbers on your dashboard come from "
             "it. Reads only: nothing on Plex changes and nobody's rows move."
             "\n\nRuns at 04:17 by default. Normally it reads only what changed since the last pass, "
-            "with one complete re-read a week — that full pass is the only thing that can notice a "
-            "title being un-watched or removed from the library."
+            "with one complete re-read a week. On servers that report a full result count the nightly "
+            "pass spots a title un-watched recently; "
+            "that weekly one is what notices an un-watch further back than it reaches, or a title "
+            "removed from the library."
         ),
         manual=True,
         writes_plex=False,  # "Reads only — nothing on Plex changes", as the description says

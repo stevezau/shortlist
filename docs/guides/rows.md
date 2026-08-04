@@ -113,9 +113,11 @@ quota is spent, the row falls back to TMDB for its _whole_ ordering rather than 
 on one scale and half on another.
 
 **Shuffled** and **Taking turns** are the two with a cost worth knowing about. The other four are
-applied while the row is being written anyway, so they are free; these two rewrite the collection on
-Plex every day, including days when nothing about the row has changed. On a server with many people
-that is real write volume, so neither is on by default.
+applied while the row is being written anyway, so they are free; these two reorder the row on Plex
+every day, including days when nothing about the row has changed. It is the front of the row that
+moves — the first 15 titles, which is what shows on the Home shelf before "see all" — so the cost is
+bounded per row, but it is one Plex write per title moved, per person, per night. On a server with
+many people that is real write volume, so neither is on by default.
 
 Both are stable within a day. Re-running a row the same night reproduces the same order, and two
 people's copies of one row shuffle differently.

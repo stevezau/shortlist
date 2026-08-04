@@ -360,6 +360,18 @@ _PLEX_READ_TTL_S = 120.0
 _INTERACTIVE_TIMEOUT_S = 8
 
 
+def invalidate_plex_reads(state) -> None:
+    """Forget every cached Plex read. Called when the connected server may have changed.
+
+    The cache key is the READ, not the server — so after re-pointing Shortlist at a different PMS the
+    old server's library list would have been served for up to the TTL. Harmless (both endpoints are
+    owner-only and read the owner's own server, and nothing cached decides a write) but confusing:
+    the picker offers libraries the new server does not have.
+    """
+    state.__dict__.pop("_plex_read_cache", None)
+    state.__dict__.pop("_plex_read_locks", None)
+
+
 def _cached_plex_read(state, key: str, read):
     """Read from the PMS at most once per `_PLEX_READ_TTL_S` per key, and never twice at once.
 
@@ -391,9 +403,22 @@ def _cached_plex_read(state, key: str, read):
         try:
             value = read()
         except HTTPException:
-            raise  # "Plex isn't connected" is an answer, not a failure to paper over
+            # "Plex isn't connected" / "no such library" is an answer, not a failure to paper over.
+            # The lock goes with it: `key` carries a caller-supplied path segment, so keeping one per
+            # value ever asked for would grow this dict for as long as the process lives. Anyone
+            # already waiting holds their own reference, so dropping it here is safe — the worst case
+            # is one extra concurrent read of a key that just 404'd.
+            if key not in cache:
+                locks.pop(key, None)
+            raise
         except Exception as e:
             if entry is None:
+                # Same reasoning as the HTTPException arm: nothing was cached, so this key leaves no
+                # entry behind and its lock must go with it. The failure that actually grows the dict
+                # lands HERE rather than there — a bogus library key while the PMS is timing out
+                # raises a plexapi error, not an HTTPException.
+                if key not in cache:
+                    locks.pop(key, None)
                 raise
             logger.warning("plex read {} failed ({}) — serving the cached copy", key, type(e).__name__)
             return entry[1]

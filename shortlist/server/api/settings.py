@@ -82,6 +82,22 @@ class SettingsUpdate(BaseModel):
     values: dict[str, object]
 
 
+def _re_points_plex(values: dict[str, object]) -> bool:
+    """Whether this write actually changes which Plex server we talk to.
+
+    Mirrors the write loop's own skip: a redacted token round-tripped from the UI is not a new value,
+    so it must not count. Treating it as a re-point would throw the cached library list away every
+    time anyone saved the Settings page, putting Plex back on the next page load for no reason.
+    """
+    for key in ("plex.url", "plex.token"):
+        if key not in values:
+            continue
+        if key in SECRET_KEYS and values[key] == REDACTED_PLACEHOLDER:
+            continue
+        return True
+    return False
+
+
 class CuratorModelsRequest(BaseModel):
     """Optional live overrides from the settings form so the model picker can list the provider being
     edited BEFORE it's saved. Any blank field falls back to the saved setting; a redacted api key
@@ -326,6 +342,7 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     _validate_values(update.values)
     _reject_blocked_urls(update.values)
     await _reject_a_different_server(request.app.state, update.values)
+    from shortlist.server.api.system import invalidate_plex_reads
     from shortlist.server.scheduler import DEFAULT_CRONS
 
     with request.app.state.sessions() as session:
@@ -372,6 +389,17 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
         now_hiding = bool(store.get("privacy.hide_shared_from_disabled"))
         new_row_name = (store.get("row.name_template") or "") if "row.name_template" in update.values else old_row_name
         result = store.all_public()
+
+    # A new URL or token may point at a different server, and the library list is cached by READ
+    # rather than by server — so without this the picker would offer the previous server's libraries
+    # for up to the cache TTL. Cheap, and only on a settings write.
+    #
+    # AFTER the write commits, never before it: `/libraries` runs its read on an executor thread, so
+    # it genuinely interleaves with this handler. A read landing between an early drop and the commit
+    # re-populates the cache from the OLD url/token and pins it for the whole TTL — precisely the
+    # staleness this exists to prevent.
+    if _re_points_plex(update.values):
+        invalidate_plex_reads(request.app.state)
 
     # Both of these change what is on somebody's Plex server, so they act NOW rather than waiting for
     # a run. Outside the session block: each queues a job that opens its own.

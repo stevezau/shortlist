@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from shortlist.server.api.settings import REDACTED_PLACEHOLDER
 from shortlist.server.auth import SESSION_COOKIE
 from shortlist.server.settings_store import SettingsStore
 
@@ -300,12 +301,15 @@ class TestSystemResponseShapes:
         page wanting a library list queued behind it. The list changes when someone adds a library."""
         from types import SimpleNamespace
 
+        import shortlist.server.api.system as system_api
+
         self._connect_plex(client)
         reads = {"n": 0}
+        built: list[dict] = []
 
         class FakePlex:
             def __init__(self, *a, **k):
-                pass
+                built.append(k)
 
             def sections(self):
                 reads["n"] += 1
@@ -318,6 +322,9 @@ class TestSystemResponseShapes:
 
         assert first == again
         assert reads["n"] == 1, "the second page load must not go back to Plex"
+        # The timeout is what bounds how long the single-flight lock is held. At the 20s default,
+        # one page load could hold it for four retries plus backoff while everyone else waits.
+        assert built[0]["timeout"] == system_api._INTERACTIVE_TIMEOUT_S
 
     def test_a_plex_that_fails_after_a_good_read_serves_the_cached_copy(self, client: TestClient, monkeypatch):
         """A library list two minutes old is a far better answer than a broken page, and it is used
@@ -348,6 +355,122 @@ class TestSystemResponseShapes:
 
         assert client.get("/api/system/libraries").json() == good
         assert system_api._PLEX_READ_TTL_S > 0  # the knob this behaviour hangs off still exists
+
+    def test_an_unknown_library_leaves_no_lock_behind(self, client: TestClient, monkeypatch):
+        """`key` is a caller-supplied path segment, so a lock kept per value ever asked for would
+        grow for as long as the process lives. Owner-authed, so this is hygiene rather than a DoS —
+        but an unbounded dict keyed on request input is worth not having."""
+        from types import SimpleNamespace
+
+        self._connect_plex(client)
+
+        class FakePlex:
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                return [SimpleNamespace(key=1, title="Movies", type="movie")]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+
+        for bogus in ("999", "998", "997"):
+            assert client.get(f"/api/system/libraries/{bogus}/collections").status_code == 404
+
+        locks = client.app.state.__dict__.get("_plex_read_locks", {})
+        assert not [k for k in locks if k.startswith("collections:99")], f"locks accumulated: {locks}"
+
+    def test_re_pointing_plex_drops_the_cached_library_list(self, client: TestClient, monkeypatch):
+        """The cache is keyed by the READ, not by the server, so a connection change has to clear it.
+
+        Note what is NOT the risk here: pointing at a DIFFERENT machine is refused outright (409 —
+        switching servers is a re-link, not a settings edit), so the cache can never straddle two
+        servers. What this covers is the reachable case — the same server at a new address or with a
+        rotated token — plus any future path that writes those keys.
+        """
+        from types import SimpleNamespace
+
+        self._connect_plex(client)
+        current = {"title": "Movies"}
+
+        class FakePlex:
+            # Matches the linked server in the fixture, so re-pointing is allowed rather than 409'd.
+            machine_id = "m1"
+
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                return [SimpleNamespace(key=1, title=current["title"], type="movie")]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+        assert client.get("/api/system/libraries").json()[0]["title"] == "Movies"
+
+        current["title"] = "Films"
+        # An unrelated setting must NOT throw the cache away — that would put Plex back on every page
+        # load for anyone who touches Settings.
+        assert client.put("/api/settings", json={"values": {"row.size": 12}}).status_code == 200
+        assert client.get("/api/system/libraries").json()[0]["title"] == "Movies"
+
+        saved = client.put("/api/settings", json={"values": {"plex.url": "http://pms-new:32400"}})
+        assert saved.status_code == 200, saved.text
+        assert client.get("/api/system/libraries").json()[0]["title"] == "Films"
+
+        # A REAL token change re-points the same way a URL does.
+        current["title"] = "Cinema"
+        saved = client.put("/api/settings", json={"values": {"plex.token": "rotated-token"}})
+        assert saved.status_code == 200, saved.text
+        assert client.get("/api/system/libraries").json()[0]["title"] == "Cinema"
+
+        # ...but the placeholder the UI round-trips for a secret it never received is NOT a change —
+        # the write loop skips it, so the cache must survive it for the same reason `row.size` does.
+        # Otherwise saving the Settings page at all puts Plex back on the next page load.
+        current["title"] = "Pictures"
+        saved = client.put("/api/settings", json={"values": {"plex.token": REDACTED_PLACEHOLDER}})
+        assert saved.status_code == 200, saved.text
+        assert client.get("/api/system/libraries").json()[0]["title"] == "Cinema"
+
+    def test_the_cache_drop_lands_after_the_new_connection_commits(self, client: TestClient, monkeypatch):
+        """Dropping the cache BEFORE the write commits re-caches the server you just left.
+
+        `/libraries` runs its read on an executor thread, so it genuinely interleaves with a
+        `put_settings` that has not committed yet: the read repopulates the entry from the OLD
+        url/token and pins it for the whole TTL — the exact staleness the drop exists to prevent.
+
+        Asserting the ORDER is what gives this teeth. "The cache ends up empty" passes just as
+        happily with the drop back on the wrong side of the commit.
+        """
+        from types import SimpleNamespace
+
+        import shortlist.server.api.system as system_module
+
+        self._connect_plex(client)
+
+        class FakePlex:
+            machine_id = "m1"
+
+            def __init__(self, *a, **k):
+                pass
+
+            def sections(self):
+                return [SimpleNamespace(key=1, title="Movies", type="movie")]
+
+        monkeypatch.setattr("shortlist.engine.clients.plex_pms.PlexClient", FakePlex)
+
+        seen: dict[str, object] = {}
+        real = system_module.invalidate_plex_reads
+
+        def spy(state):
+            # What a concurrent reader would find in the DB at the instant the cache is dropped.
+            with client.app.state.sessions() as session:
+                seen["url"] = SettingsStore(session, client.app.state.secrets).get("plex.url")
+            return real(state)
+
+        # `put_settings` imports this inside the function, so patching the source module is what lands.
+        monkeypatch.setattr(system_module, "invalidate_plex_reads", spy)
+
+        saved = client.put("/api/settings", json={"values": {"plex.url": "http://pms-new:32400"}})
+        assert saved.status_code == 200, saved.text
+        assert seen["url"] == "http://pms-new:32400"
 
     def test_a_plex_that_fails_with_nothing_cached_still_errors(self, client: TestClient, monkeypatch):
         """Serving stale is a kindness, not a cover-up: with no previous answer there is nothing
