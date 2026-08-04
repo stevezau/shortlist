@@ -443,6 +443,25 @@ describe("RowEditor — placement", () => {
     ).toBeInTheDocument();
   });
 
+  it("warns that the Collections tab shows every person's row, whatever the switches say", async () => {
+    // The question this answers came in cold from a v1 user: "why do I see everyone else's lists
+    // too?" The shelf note below it only appears while Everyone else → Recommended shelf is on, so
+    // an owner who found the rows in Plex's Collections tab had nothing on this page explaining it.
+    renderEditor(row({ placement: "off", placement_friends: "off" }));
+    expect(screen.getByText(/one row there per person/i)).toBeInTheDocument();
+
+    // Still there with every switch on — it is not a consequence of any of them.
+    cleanup();
+    renderEditor(row({ placement: "both", placement_friends: "both" }));
+    expect(screen.getByText(/one row there per person/i)).toBeInTheDocument();
+  });
+
+  it("does not claim a per-person Collections tab for a shared row", () => {
+    // A shared row is ONE collection everybody gets, so "one row per person" would be a lie.
+    renderEditor(row({ build: "shared", placement: "both" }));
+    expect(screen.queryByText(/one row there per person/i)).toBeNull();
+  });
+
   it("names the owner account behind 'Just me', and counts everyone else", () => {
     renderEditor(row({ placement: "both", placement_friends: "both" }), [
       user({ id: 1, user_type: "owner", display_name: "stevezau" }),
