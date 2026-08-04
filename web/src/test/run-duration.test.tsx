@@ -1,7 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { RunDuration } from "@/pages/runs";
+import { RunDuration, RunStarted } from "@/pages/runs";
 import type { Run } from "@/lib/types";
 
 function makeRun(overrides: Partial<Run> = {}): Run {
@@ -58,5 +58,39 @@ describe("RunDuration", () => {
 
     unmount();
     expect(clearSpy).toHaveBeenCalled();
+  });
+});
+
+describe("RunStarted", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("keeps pace with the duration beside it while a run is running", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T03:38:00Z")); // 8m after start
+
+    render(<RunStarted run={makeRun({ finished_at: null })} />);
+    expect(screen.getByText("8m ago")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3 * 60_000);
+    });
+    expect(screen.getByText("11m ago")).toBeInTheDocument();
+  });
+
+  it("stops re-reading the clock once the run has finished", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T03:38:00Z"));
+
+    render(
+      <RunStarted run={makeRun({ finished_at: "2026-07-19T03:33:00Z" })} />,
+    );
+    expect(screen.getByText("8m ago")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3 * 60_000);
+    });
+    expect(screen.getByText("8m ago")).toBeInTheDocument();
   });
 });

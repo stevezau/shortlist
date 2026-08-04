@@ -7,7 +7,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { MutationAlert } from "@/components/mutation-alert";
@@ -53,6 +53,7 @@ import {
   useStartRun,
 } from "@/lib/queries";
 import type { Run, RunsSummary } from "@/lib/types";
+import { useLiveClock } from "@/lib/use-live-clock";
 
 function RunsSkeleton() {
   return (
@@ -64,15 +65,18 @@ function RunsSkeleton() {
   );
 }
 
+/** When a run started, as relative time. A live run re-reads the clock on the same second-by-second
+ *  tick as its duration — computed once at render, "8m ago" sat frozen next to a duration reading
+ *  "10m 54s" until something else re-rendered the row (#67). */
+export function RunStarted({ run }: { run: Run }) {
+  const now = useLiveClock(!run.finished_at);
+  return <>{timeAgo(run.started_at, now)}</>;
+}
+
 /** How long a run took. A finished run shows its fixed duration; a live one ticks up each second. */
 export function RunDuration({ run }: { run: Run }) {
-  const [now, setNow] = useState(() => Date.now());
   const running = !run.finished_at;
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [running]);
+  const now = useLiveClock(running);
 
   if (running) {
     const started = Date.parse(run.started_at ?? "");
@@ -110,7 +114,7 @@ function RunRow({ run }: { run: Run }) {
         className="text-muted-foreground"
         title={formatDate(run.started_at)}
       >
-        {timeAgo(run.started_at)}
+        <RunStarted run={run} />
       </TableCell>
       <TableCell className="text-muted-foreground">
         <RunDuration run={run} />
