@@ -95,7 +95,9 @@ class TestPlexTvClient:
         with pytest.raises(httpx.ConnectError):
             self._client().list_users()
 
-        assert route.call_count == PlexTvClient._ROSTER_ATTEMPTS
+        # The literal, not the constant: `== _ROSTER_ATTEMPTS` passes for ANY value including 50, so
+        # the one test named for keeping the ladder bounded could never fail on it.
+        assert route.call_count == 6
 
     @respx.mock
     def test_only_user_elements_become_users(self):

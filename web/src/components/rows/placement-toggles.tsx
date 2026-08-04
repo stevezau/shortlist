@@ -250,7 +250,7 @@ export function PlacementToggles({
           <strong className="text-foreground">Collections tab</strong> lists
           every collection on the server, so from your admin account
           you&rsquo;ll see one row there per person. Everyone else sees only
-          their own row &mdash; on their Home screen, their shelf and their
+          their own row, wherever you&rsquo;ve placed it, plus their own
           Collections tab.
         </p>
       )}
