@@ -326,7 +326,14 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     _validate_values(update.values)
     _reject_blocked_urls(update.values)
     await _reject_a_different_server(request.app.state, update.values)
+    from shortlist.server.api.system import invalidate_plex_reads
     from shortlist.server.scheduler import DEFAULT_CRONS
+
+    # A new URL or token may point at a different server, and the library list is cached by READ
+    # rather than by server — so without this the picker would offer the previous server's libraries
+    # for up to the cache TTL. Cheap, and only on a settings write.
+    if {"plex.url", "plex.token"} & set(update.values):
+        invalidate_plex_reads(request.app.state)
 
     with request.app.state.sessions() as session:
         store = SettingsStore(session, request.app.state.secrets)
