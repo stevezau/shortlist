@@ -121,9 +121,20 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   by tagging `vX.Y.Z` on `master` (CI builds `:latest` + `:X.Y.Z` + `:dev`). Publishing is gated on
   lint+tests+e2e green.
 - **Branch protection.** Force-pushes and deletions are blocked on both branches. `master` also
-  requires `lint`/`test-python`/`test-web`/`e2e`, so it only advances via a green PR. `dev` has no
-  required checks on purpose — they would block the direct pushes that are how you work on it.
-  `enforce_admins` is off on both, leaving an override for a genuine emergency.
+  requires `lint`/`test-python`/`test-web`/`e2e`. `dev` has no required checks on purpose — they
+  would block the direct pushes that are how you work on it. `enforce_admins` is off on both,
+  leaving an override for a genuine emergency.
+
+  Required checks alone do **not** require a pull request, and this file used to claim they did
+  ("only advances via a green PR"). They don't: `v1.0.0` was committed straight to `master` on
+  2026-08-04 under exactly that config. Commit the release on `dev` and promote it — a commit that
+  lands on `master` alone diverges the branches for real, and the next `dev` → `master` PR reverts
+  it silently, because `dev` never had it.
+
+  Ignore GitHub's "`master` is N commits ahead of `dev`". Every PR merge mints a merge commit that
+  lives only on the base branch, so that counter can never read 0 and is not drift. The real check
+  is content: `git fetch origin && git diff --quiet origin/master origin/dev`.
+
 - **Conventional Commits** (`feat:`, `fix:`, `docs:`, `test:`, `chore:`)
 - **Architecture Review — by risk, not by habit.** The agent
   (`.claude/agents/architecture-review.md`) costs ~100k tokens a run, so spend it where bugs are
