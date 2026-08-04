@@ -6,6 +6,10 @@ heading: Getting started
 
 ## Requirements
 
+- **Somewhere to run a Docker container.** Shortlist ships as a Docker image and is installed by
+  running that container — on Windows, macOS, Linux, a NAS (Synology, QNAP, unRAID), or anything
+  else that runs Docker. It does **not** have to be the same machine as Plex; it only needs to be
+  able to reach your Plex server over the network.
 - **Plex Media Server 1.43.2.10687 or newer** — this is the version where Plex started honouring
   the setting that hides each row. On anything older, a private row could show up for other people.
   The wizard checks your version before you begin, so you'll know straight away.
