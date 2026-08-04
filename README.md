@@ -129,6 +129,11 @@ See [How to make a Plex collection visible to only one user](docs/plex-per-user-
 
 ## Quick start
 
+**You'll need:** somewhere to run a **Docker container** (it does not have to be the same machine as
+Plex, just able to reach it) · Plex Media Server ≥ 1.43.2.10687 · Plex Pass on the admin account · a
+free TMDB key. Optional: Tautulli, an LLM key. Shortlist ships as a container only — there is no
+standalone Windows/macOS/Linux installer. Details in [Getting started](docs/getting-started.md).
+
 **With Docker Compose:**
 
 ```bash
@@ -155,10 +160,6 @@ picks your server, and walks you to your first rows (about 10 minutes).
 
 > 💡 Want to try it without touching your server first? Add `-e SHORTLIST_DRY_RUN=1` — Shortlist
 > will show you exactly what it _would_ do and write nothing to Plex.
-
-Requirements: somewhere to run a Docker container (it does not have to be the same machine as Plex,
-just able to reach it) · Plex Media Server ≥ 1.43.2.10687 · Plex Pass on the admin account · a free
-TMDB key. Optional: Tautulli, an LLM key. Details in [Getting started](docs/getting-started.md).
 
 ## Documentation
 
