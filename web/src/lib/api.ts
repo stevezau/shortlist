@@ -42,6 +42,7 @@ import type {
   SupportLibraries,
   SupportPerson,
   SupportResult,
+  SupportSuggestions,
   SupportRows,
   SupportStatus,
   SupportTitleLookup,
@@ -722,6 +723,15 @@ export const api = {
     request("/api/support/database"),
 
   supportConfig: (): Promise<SupportResult> => request("/api/support/config"),
+
+  supportErrors: (): Promise<SupportResult> => request("/api/support/errors"),
+
+  supportRecentRuns: (): Promise<SupportResult> => request("/api/support/runs"),
+
+  /** People and titles for the type-ahead on checks that take a name. DB-only, so it still populates
+   *  when Plex is unreachable — which is exactly when these checks get used. */
+  supportSuggestions: (): Promise<SupportSuggestions> =>
+    request("/api/support/suggestions"),
 
   /** The whole report as text, for the clipboard. Not `request()` — the response is text/plain, and
    *  `request()` would fail trying to parse it as JSON. */

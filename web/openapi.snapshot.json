@@ -7927,6 +7927,30 @@
         ]
       }
     },
+    "/api/support/errors": {
+      "get": {
+        "description": "Recent WARNING and ERROR log lines \u2014 the part of a bug report nobody remembers to attach.\n\nEverything here is already redacted by `log_reader.scrub` (an alias for `http_retry.redact`),\nwhich covers more credential shapes than this module's own `_scrub`: query params, header forms,\nBearer credentials. Over-redaction is fine; a leaked token is not (rule 9).\n\nCapped hard, because this rides along in a report someone pastes into a chat window. When the tail\nis not enough, the full redacted log zip is a separate download (`/api/system/logs/download`) and\nthe block says so.",
+        "operationId": "errors_api_support_errors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Errors Api Support Errors Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Errors",
+        "tags": [
+          "support"
+        ]
+      }
+    },
     "/api/support/funnel": {
       "get": {
         "description": "Counts at each stage from TMDB pool to delivered row \u2014 \"why is my row short\", answered.\n\nA short row has one cause per stage, and they need completely different fixes: a thin library, an\nover-tight watched cap, a genre filter, or the AI declining. Only the counts distinguish them.",
@@ -8316,6 +8340,30 @@
         ]
       }
     },
+    "/api/support/runs": {
+      "get": {
+        "description": "The last few runs, and WHO failed in each \u2014 the other thing a report always needs.\n\nThe timeline says a run finished with a status. This says which people it could not build and why,\nwhich is the difference between \"a run failed\" and something actionable.",
+        "operationId": "recent_runs_api_support_runs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recent Runs Api Support Runs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Recent Runs",
+        "tags": [
+          "support"
+        ]
+      }
+    },
     "/api/support/settings-history": {
       "get": {
         "description": "Settings changes, newest first \u2014 turning \"but I set it to 0%\" into a timestamp.\n\nPaired with the row schedule: a change made after a row's last rebuild has not reached that row\nyet, which is the commonest reason a correct setting appears to do nothing.",
@@ -8381,6 +8429,30 @@
           }
         },
         "summary": "Status",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/suggestions": {
+      "get": {
+        "description": "People and titles to offer as you type, for the checks that take a name.\n\nExists because a username typed from memory is the commonest way one of these checks comes back\nempty \u2014 and an empty result is indistinguishable from \"nothing is wrong\", which is the worst\nanswer a diagnostic can give. The person operating the page may not know that Plex usernames are\nnot display names, or how a title is spelled in the library.\n\nDeliberately DB-only and unconditional: no Plex call, so it still populates when the server is\nunreachable, which is exactly when these checks are being used.",
+        "operationId": "suggestions_api_support_suggestions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Suggestions Api Support Suggestions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Suggestions",
         "tags": [
           "support"
         ]

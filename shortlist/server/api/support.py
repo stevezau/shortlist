@@ -76,6 +76,10 @@ _WIDTH = 76
 #: struggling. Reaching it is reported, never silent.
 _MATCH_CAP = 2000
 
+#: How many WARNING+ log lines ride along in a report. Enough to show a repeating failure, few enough
+#: that the whole thing still pastes into a chat window. The full log zip is a separate download.
+_ERROR_LINES = 40
+
 #: The label prefix every Shortlist exclusion carries, lowercased. Plex title-cases new labels, so
 #: comparisons are always case-insensitive.
 _LABEL_PREFIX = "shortlist_"
@@ -860,6 +864,10 @@ async def bundle(request: Request) -> str:
         "config": config,
         "settings history": settings_history,
         "timeline": timeline,
+        # Last, and the two most often missing from a bug report: what actually went wrong, and which
+        # people a run could not build.
+        "recent runs": recent_runs,
+        "recent warnings and errors": errors,
     }
     for name, tool in tools.items():
         try:
@@ -972,13 +980,17 @@ async def jobs(request: Request) -> dict:
 
     failed = [r for r in rows if r["status"] == "failed"]
     block = _stamp(_Block("jobs"))
-    block.kv("counts", ", ".join(f"{k}={v}" for k, v in sorted(by_status.items())) or "no jobs")
+    block.kv("counts", ", ".join(f"{k}={v}" for k, v in sorted(by_status.items())) or "none")
     block.rule()
-    block.table(
-        ["id", "kind", "status", "tries", "detail"],
-        [[str(r["id"]), r["kind"], r["status"], str(r["attempts"]), r["detail"]] for r in rows[:15]],
-        [5, 20, 9, 6, 26],
-    )
+    if rows:
+        block.table(
+            ["id", "kind", "status", "tries", "detail"],
+            [[str(r["id"]), r["kind"], r["status"], str(r["attempts"]), r["detail"]] for r in rows[:15]],
+            [5, 20, 9, 6, 26],
+        )
+    else:
+        # An empty table with only a header reads as a broken tool rather than as good news.
+        block.line("No background work has run yet — nothing queued, nothing failed.")
     for job in failed[:5]:
         block.line(f"FAILED #{job['id']} {job['kind']}: {job['error']}")
     return {"jobs": rows, "counts": by_status, "failed": len(failed), "text": block.render()}
@@ -1135,6 +1147,19 @@ def _keys_with_values(session) -> set[str]:
 # --------------------------------------------------------------------------------------------
 # explainers: why is this here / missing, the funnel, the AI's call
 # --------------------------------------------------------------------------------------------
+
+
+def _event_summary(event) -> str:
+    """One readable line for an audited event.
+
+    `str(message)` is a Python dict repr — `{'tool': 'config'}` — which is noise in a timeline meant
+    to be skim-read by someone who has never seen this app's internals. Pulls out the keys that
+    actually say what happened and falls back to the repr for a shape not seen before.
+    """
+    payload = event.message if isinstance(event.message, dict) else {}
+    interesting = [f"{k}={payload[k]}" for k in ("user", "slug", "row", "collection", "kind") if payload.get(k)]
+    detail = " ".join(interesting) or str(payload)[:48]
+    return f"{event.scope} {detail}".rstrip()
 
 
 def _user_or_404(session, slug: str) -> User:
@@ -1362,12 +1387,17 @@ async def timeline(request: Request, user: str = "") -> dict:
             )
         for job in session.query(Job).order_by(Job.id.desc()).limit(15).all():
             entries.append({"at": job.created_at, "kind": "job", "what": f"{job.kind} {job.status}"})
-        events = session.query(Event).order_by(Event.id.desc()).limit(40)
+        # `support.read` EXCLUDED. Every check writes one, so within a single support session they
+        # outnumber everything else and the tool that answers "what has been happening" showed
+        # nothing but the fact that someone had been looking. The audit rows still exist in `events`
+        # — they are just not what this question is asking. `support.enable`/`disable` stay: those
+        # are state changes, and rare.
+        events = session.query(Event).filter(Event.scope != "support.read").order_by(Event.id.desc()).limit(40).all()
         for event in events:
-            text = str(event.message)[:60]
+            text = _event_summary(event)
             if user and user not in text and user not in event.scope:
                 continue
-            entries.append({"at": event.ts, "kind": "event", "what": f"{event.scope} {text}"})
+            entries.append({"at": event.ts, "kind": "event", "what": text})
         _audit(session, "timeline", {"user": user})
 
     entries = [e for e in entries if e["at"] is not None]
@@ -1829,6 +1859,127 @@ async def drift(request: Request) -> dict:
         "error": error,
         "text": block.render(),
     }
+
+
+@_tool.get("/support/suggestions")
+async def suggestions(request: Request) -> dict:
+    """People and titles to offer as you type, for the checks that take a name.
+
+    Exists because a username typed from memory is the commonest way one of these checks comes back
+    empty — and an empty result is indistinguishable from "nothing is wrong", which is the worst
+    answer a diagnostic can give. The person operating the page may not know that Plex usernames are
+    not display names, or how a title is spelled in the library.
+
+    Deliberately DB-only and unconditional: no Plex call, so it still populates when the server is
+    unreachable, which is exactly when these checks are being used.
+    """
+    with request.app.state.sessions() as session:
+        people = [
+            {"slug": u.slug, "display_name": u.display_name, "enabled": bool(u.enabled)}
+            for u in session.query(User).order_by(User.enabled.desc(), User.slug).all()
+        ]
+        # Titles worth asking about: what has been recommended, plus what has been watched. Delivered
+        # first — a question is far more often about something that turned up than about something in
+        # a watch history — then capped, because a datalist of 13,000 entries helps nobody.
+        delivered = [t for (t,) in session.query(PickRow.title).filter(PickRow.title != "").distinct().limit(400).all()]
+        watched = [
+            t for (t,) in session.query(WatchedTitle.title).filter(WatchedTitle.title != "").distinct().limit(600).all()
+        ]
+        titles = sorted(dict.fromkeys([*delivered, *watched]))
+    return {"people": people, "titles": titles}
+
+
+@_tool.get("/support/errors")
+async def errors(request: Request) -> dict:
+    """Recent WARNING and ERROR log lines — the part of a bug report nobody remembers to attach.
+
+    Everything here is already redacted by `log_reader.scrub` (an alias for `http_retry.redact`),
+    which covers more credential shapes than this module's own `_scrub`: query params, header forms,
+    Bearer credentials. Over-redaction is fine; a leaked token is not (rule 9).
+
+    Capped hard, because this rides along in a report someone pastes into a chat window. When the tail
+    is not enough, the full redacted log zip is a separate download (`/api/system/logs/download`) and
+    the block says so.
+    """
+    from shortlist.server.services import log_reader
+
+    config_dir = request.app.state.config_dir
+    try:
+        found = log_reader.read_lines(config_dir, level="WARNING", limit=_ERROR_LINES)
+    except Exception as e:
+        found = {"lines": [], "total_matched": 0, "truncated": False, "file": None, "error": _fail(e)}
+    lines = found.get("lines", [])
+    with request.app.state.sessions() as session:
+        _audit(session, "errors", {"lines": len(lines)})
+
+    block = _stamp(_Block("recent warnings and errors"))
+    block.kv("log file", str(found.get("file") or "none found"))
+    block.kv("matched", f"{found.get('total_matched', 0)} at WARNING or above")
+    block.rule()
+    if found.get("error"):
+        block.line(f"COULD NOT READ THE LOG: {found['error']}")
+    elif not lines:
+        block.line("No warnings or errors in the current log file.")
+    for entry in lines:
+        stamp = (entry.get("ts") or "")[:19].replace("T", " ")
+        block.line(f"{stamp} {entry.get('level', '')[:4]:<5}{entry.get('source', '')}")
+        block.line(f"    {entry.get('message', '')}")
+    if found.get("total_matched", 0) > len(lines):
+        block.rule()
+        block.line(f"Only the newest {len(lines)} are here. For the rest, attach the log zip from Logs.")
+    return {
+        "lines": lines,
+        "total_matched": found.get("total_matched", 0),
+        "log_file": found.get("file"),
+        "text": block.render(),
+    }
+
+
+@_tool.get("/support/runs")
+async def recent_runs(request: Request) -> dict:
+    """The last few runs, and WHO failed in each — the other thing a report always needs.
+
+    The timeline says a run finished with a status. This says which people it could not build and why,
+    which is the difference between "a run failed" and something actionable.
+    """
+    with request.app.state.sessions() as session:
+        users = {u.id: u.slug for u in session.query(User).all()}
+        out: list[dict] = []
+        for run in session.query(Run).order_by(Run.id.desc()).limit(5).all():
+            per_user = session.query(RunUser).filter(RunUser.run_id == run.id).all()
+            failed = [
+                {"user": users.get(ru.user_id, str(ru.user_id)), "error": _scrub((ru.error or "")[:200])}
+                for ru in per_user
+                if ru.status not in ("ok", "skipped", "cold_start")
+            ]
+            out.append(
+                {
+                    "id": run.id,
+                    "status": run.status,
+                    "trigger": run.trigger,
+                    "dry_run": bool(run.dry_run),
+                    "started_at": run.started_at.isoformat() if run.started_at else None,
+                    "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                    "stats": dict(run.stats or {}),
+                    "people": len(per_user),
+                    "failed": failed,
+                }
+            )
+        _audit(session, "runs", {"runs": len(out)})
+
+    block = _stamp(_Block("recent runs"))
+    block.rule()
+    if not out:
+        block.line("No runs yet. Nothing has been built for anyone.")
+    for run in out:
+        when = (run["started_at"] or "")[:16].replace("T", " ")
+        block.line(f"#{run['id']} {run['status']} ({run['trigger']}) {when} — {run['people']} people")
+        stats = run["stats"]
+        if stats:
+            block.line(f"    {', '.join(f'{k}={v}' for k, v in list(stats.items())[:6])}")
+        for failure in run["failed"][:5]:
+            block.line(f"    FAILED {failure['user']}: {failure['error'] or '(no message)'}")
+    return {"runs": out, "text": block.render()}
 
 
 #: Assembled last, on purpose — see the module docstring. `_mode` carries owner auth only; `_tool`

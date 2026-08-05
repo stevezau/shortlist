@@ -803,3 +803,9 @@ export interface SupportResult {
   text: string;
   [key: string]: unknown;
 }
+
+/** Type-ahead data for the "Have an issue?" checks that take a person or a title. */
+export interface SupportSuggestions {
+  people: { slug: string; display_name: string; enabled: boolean }[];
+  titles: string[];
+}

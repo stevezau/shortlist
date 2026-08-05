@@ -16,7 +16,7 @@
  * here, so the format is decided and unit-tested in one place.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -184,6 +184,20 @@ const CHECKS: Check[] = [
     run: () => api.supportSettingsHistory(),
   },
   {
+    id: "errors",
+    label: "What errors has it logged?",
+    blurb: "Recent warnings and errors, already stripped of anything secret.",
+    needs: "nothing",
+    run: () => api.supportErrors(),
+  },
+  {
+    id: "runs",
+    label: "How did the last few runs go?",
+    blurb: "Per run: who it could not build for, and the error it hit.",
+    needs: "nothing",
+    run: () => api.supportRecentRuns(),
+  },
+  {
     id: "jobs",
     label: "Is background work stuck?",
     blurb: "Queued, running and failed jobs, with the last error.",
@@ -243,6 +257,11 @@ const PROBLEMS: { title: string; blurb: string; check: string }[] = [
     check: "funnel",
   },
   {
+    title: "Something went wrong and I don't know what",
+    blurb: "Shows the recent errors, and which people the last runs failed on.",
+    check: "errors",
+  },
+  {
     title: "Rows aren't updating at all",
     blurb: "Checks the queue, the schedule and the clocks.",
     check: "jobs",
@@ -253,8 +272,18 @@ const PROBLEMS: { title: string; blurb: string; check: string }[] = [
 
 export function IssuePage() {
   const queryClient = useQueryClient();
+  // WHERE it was opened from, not just which check. The panel renders directly below the list that
+  // was clicked: opening one from the full list used to render it above that list, off-screen
+  // upward, so the click looked like it had done nothing at all.
+  const [openFrom, setOpenFrom] = useState<"problems" | "all" | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+
+  const pick = (id: string, from: "problems" | "all") => {
+    const same = openId === id;
+    setOpenId(same ? null : id);
+    setOpenFrom(same ? null : from);
+  };
 
   const status = useQuery({
     queryKey: ["support", "status"],
@@ -326,11 +355,7 @@ export function IssuePage() {
                 <button
                   key={problem.check}
                   type="button"
-                  onClick={() =>
-                    setOpenId((current) =>
-                      current === problem.check ? null : problem.check,
-                    )
-                  }
+                  onClick={() => pick(problem.check, "problems")}
                   aria-expanded={openId === problem.check}
                   className={cn(
                     "flex flex-col gap-1 rounded-lg border p-4 text-left transition-colors",
@@ -348,7 +373,9 @@ export function IssuePage() {
             </div>
           </section>
 
-          {open ? <CheckPanel key={open.id} check={open} /> : null}
+          {open && openFrom === "problems" ? (
+            <CheckPanel key={open.id} check={open} />
+          ) : null}
 
           <section className="flex flex-col gap-3">
             <button
@@ -372,9 +399,7 @@ export function IssuePage() {
                   <button
                     key={check.id}
                     type="button"
-                    onClick={() =>
-                      setOpenId((c) => (c === check.id ? null : check.id))
-                    }
+                    onClick={() => pick(check.id, "all")}
                     aria-expanded={openId === check.id}
                     className={cn(
                       "flex flex-col gap-0.5 rounded-md border p-3 text-left transition-colors",
@@ -392,6 +417,13 @@ export function IssuePage() {
               </div>
             ) : null}
           </section>
+
+          {/* The second slot. A check opened from the full list renders HERE, below that list —
+              rendering it in the slot above meant the click scrolled nothing into view and looked
+              like it had failed. */}
+          {open && openFrom === "all" ? (
+            <CheckPanel key={open.id} check={open} />
+          ) : null}
 
           <ReportSection />
         </>
@@ -637,10 +669,38 @@ function verdictFor(
  * is precisely what gets sent, so there is nothing to be surprised by after pasting.
  */
 function CheckPanel({ check }: { check: Check }) {
+  const panel = useRef<HTMLElement | null>(null);
   const [title, setTitle] = useState("");
   const [person, setPerson] = useState("");
   const [endpoint, setEndpoint] = useState("libraries");
   const [section, setSection] = useState("");
+
+  // Belt to the two-slot braces: on a short window the panel can still open below the fold, and a
+  // check that needs typing is useless if its input is off-screen. `block: "nearest"` scrolls only
+  // when it actually has to, so an already-visible panel doesn't jump under the cursor. Keyed on
+  // `check.id`, so switching checks re-runs it.
+  useEffect(() => {
+    // Deferred a frame. Called straight from the effect it did nothing at all (verified in a real
+    // browser: the panel stayed 1688px down the page with scrollY still 0) — the panel has only just
+    // been committed, and `block: "nearest"` on a not-yet-laid-out box decides no scroll is needed.
+    // One frame later the geometry is real.
+    //
+    // `matchMedia` and `scrollIntoView` are both feature-detected rather than assumed: neither exists
+    // in jsdom, and scrolling is a convenience — nothing about the check depends on it.
+    const frame = requestAnimationFrame(() => {
+      const reduced =
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      // `start`, not `nearest`. Nearest scrolls the minimum, which left the panel's input sitting on
+      // the very bottom edge of the viewport — technically visible, useless to type into. Start puts
+      // the heading and the form together at the top, with `scroll-mt-6` for breathing room.
+      panel.current?.scrollIntoView?.({
+        block: "start",
+        behavior: reduced ? "auto" : "smooth",
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [check.id]);
   const [args, setArgs] = useState<CheckArgs | null>(
     check.needs === "nothing"
       ? { title: "", person: "", endpoint: "", section: "" }
@@ -663,10 +723,43 @@ function CheckPanel({ check }: { check: Check }) {
     check.needs === "read-as";
   const ready =
     (!needsTitle || title.trim().length > 0) &&
-    (!needsPerson || person.trim().length > 0);
+    (!needsPerson || person.trim().length > 0) &&
+    // The server refuses a watched-* read with no library (400), so don't let the click happen.
+    (check.needs !== "read-as" ||
+      !endpoint.startsWith("watched-") ||
+      section.length > 0);
+
+  // Shared across every panel by react-query's cache, so opening ten checks fetches this once.
+  const hints = useQuery({
+    queryKey: ["support", "suggestions"],
+    queryFn: api.supportSuggestions,
+    enabled: needsPerson || needsTitle,
+    staleTime: 5 * 60_000,
+  });
+  const people = hints.data?.people ?? [];
+  const titles = hints.data?.titles ?? [];
+  // Caught before the request, and only once the roster is actually known — warning on an empty list
+  // would flag every name while the fetch was still in flight.
+  const unknownPerson =
+    people.length > 0 &&
+    person.trim().length > 0 &&
+    !people.some((u) => u.slug.toLowerCase() === person.trim().toLowerCase());
+
+  // The library picker for "read as a user". Its own query so a broken Plex connection costs this
+  // control and not the panel — the field falls back to free text below.
+  const libraries = useQuery({
+    queryKey: ["support", "libraries"],
+    queryFn: api.supportLibraries,
+    enabled: check.needs === "read-as",
+    staleTime: 5 * 60_000,
+  });
+  const sections = libraries.data?.libraries ?? [];
 
   return (
-    <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
+    <section
+      ref={panel}
+      className="flex scroll-mt-6 flex-col gap-3 rounded-lg border border-border bg-card p-4"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">{check.label}</h2>
         {typeof data?.text === "string" ? (
@@ -688,25 +781,57 @@ function CheckPanel({ check }: { check: Check }) {
           }}
         >
           {needsPerson ? (
-            <div className="flex min-w-44 flex-1 flex-col gap-1.5">
+            <div className="flex min-w-52 flex-1 flex-col gap-1.5">
               <Label htmlFor={`${check.id}-person`}>Plex username</Label>
+              {/* A real `<datalist>`, not a bespoke dropdown: typing a couple of characters filters
+                  it, the keyboard works, and there is no "did I spell it right" step. A username
+                  typed from memory is the commonest way one of these checks returns nothing. */}
               <Input
                 id={`${check.id}-person`}
+                list={`${check.id}-person-options`}
                 value={person}
-                placeholder="e.g. chris35352"
+                autoComplete="off"
+                placeholder={
+                  people[0] ? `e.g. ${people[0].slug}` : "start typing a name"
+                }
                 onChange={(event) => setPerson(event.target.value)}
               />
+              <datalist id={`${check.id}-person-options`}>
+                {people.map((u) => (
+                  <option key={u.slug} value={u.slug}>
+                    {u.display_name && u.display_name !== u.slug
+                      ? `${u.display_name} — ${u.slug}`
+                      : u.slug}
+                  </option>
+                ))}
+              </datalist>
+              {unknownPerson ? (
+                <p className="text-xs text-warning">
+                  No one on this server is called “{person.trim()}”. Pick from
+                  the list — it's their Plex username, not their display name.
+                </p>
+              ) : null}
             </div>
           ) : null}
           {needsTitle ? (
-            <div className="flex min-w-44 flex-1 flex-col gap-1.5">
+            <div className="flex min-w-52 flex-1 flex-col gap-1.5">
               <Label htmlFor={`${check.id}-title`}>Title</Label>
+              {/* Suggestions come from what has actually been recommended or watched, so the list is
+                  the titles a question could plausibly be about. Still free text — the lookup is a
+                  substring match, and a title nobody has touched yet is a legitimate thing to ask. */}
               <Input
                 id={`${check.id}-title`}
+                list={`${check.id}-title-options`}
                 value={title}
-                placeholder="e.g. Teacup"
+                autoComplete="off"
+                placeholder="type a few letters"
                 onChange={(event) => setTitle(event.target.value)}
               />
+              <datalist id={`${check.id}-title-options`}>
+                {titles.map((t) => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
             </div>
           ) : null}
           {check.needs === "read-as" ? (
@@ -726,14 +851,40 @@ function CheckPanel({ check }: { check: Check }) {
                 </select>
               </div>
               {endpoint.startsWith("watched-") ? (
-                <div className="flex min-w-28 flex-col gap-1.5">
-                  <Label htmlFor={`${check.id}-section`}>Library key</Label>
-                  <Input
-                    id={`${check.id}-section`}
-                    value={section}
-                    placeholder="e.g. 1"
-                    onChange={(event) => setSection(event.target.value)}
-                  />
+                <div className="flex min-w-44 flex-col gap-1.5">
+                  <Label htmlFor={`${check.id}-section`}>Library</Label>
+                  {/* Named libraries, not a key. Asking for "e.g. 1" required knowing a Plex section
+                      key, which nobody does — and the server rejects a wrong one, so the field was a
+                      guessing game. Filtered to the right KIND for the question too: asking for
+                      watched films in a TV library returns an empty answer that reads like a finding. */}
+                  {sections.length > 0 ? (
+                    <select
+                      id={`${check.id}-section`}
+                      value={section}
+                      onChange={(event) => setSection(event.target.value)}
+                      className="h-9 rounded-md border border-input bg-elevated px-3 text-sm"
+                    >
+                      <option value="">Choose a library…</option>
+                      {sections
+                        .filter((lib) =>
+                          endpoint === "watched-movies"
+                            ? lib.type === "movie"
+                            : lib.type === "show",
+                        )
+                        .map((lib) => (
+                          <option key={lib.key} value={lib.key}>
+                            {lib.title}
+                          </option>
+                        ))}
+                    </select>
+                  ) : (
+                    <Input
+                      id={`${check.id}-section`}
+                      value={section}
+                      placeholder="library key, e.g. 1"
+                      onChange={(event) => setSection(event.target.value)}
+                    />
+                  )}
                 </div>
               ) : null}
             </>

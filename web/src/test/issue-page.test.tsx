@@ -32,6 +32,7 @@ const {
   supportLibraries,
   supportPerson,
   getSupportBundle,
+  supportSuggestions,
 } = vi.hoisted(() => ({
   supportStatus: vi.fn(),
   enableSupport: vi.fn(),
@@ -42,6 +43,7 @@ const {
   supportLibraries: vi.fn(),
   supportPerson: vi.fn(),
   getSupportBundle: vi.fn(),
+  supportSuggestions: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -59,6 +61,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       supportPerson: (slug: string) => supportPerson(slug),
       supportBundleUrl: () => "/api/support/bundle.txt",
       getSupportBundle: () => getSupportBundle(),
+      supportSuggestions: () => supportSuggestions(),
     },
   };
 });
@@ -132,6 +135,13 @@ beforeEach(() => {
   } satisfies SupportRows);
   supportLibraries.mockResolvedValue({ libraries: [], error: null, text: "l" });
   supportTitle.mockResolvedValue(TEACUP_BUG);
+  supportSuggestions.mockResolvedValue({
+    people: [
+      { slug: "chris35352", display_name: "Chris", enabled: true },
+      { slug: "svoiss", display_name: "svoiss", enabled: false },
+    ],
+    titles: ["Teacup", "Severance"],
+  });
 });
 
 describe("IssuePage — the mode", () => {
@@ -296,7 +306,7 @@ describe("IssuePage — every check is reachable", () => {
     // The six problem cards are the front door; the rest still have to be reachable, or building
     // them was pointless.
     renderPage();
-    const toggle = await screen.findByRole("button", { name: /show all 19 checks/i });
+    const toggle = await screen.findByRole("button", { name: /show all 21 checks/i });
     await userEvent.click(toggle);
 
     expect(
@@ -409,5 +419,151 @@ describe("IssuePage — the report copy can fail two ways", () => {
     );
 
     expect(await screen.findByText(/use the download instead/i)).toBeTruthy();
+  });
+});
+
+describe("IssuePage — the inputs help you get them right", () => {
+  it("offers the real roster as you type, instead of asking you to remember a username", async () => {
+    // A username typed from memory is the commonest way one of these checks comes back empty — and
+    // empty is indistinguishable from "nothing is wrong", which is the worst answer a diagnostic
+    // can give. Display name is shown as the option LABEL, but the value is the slug, because the
+    // slug is what the API takes.
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /one person's recommendations look wrong/i,
+      }),
+    );
+
+    const input = await screen.findByLabelText(/plex username/i);
+    const listId = input.getAttribute("list");
+    expect(listId).toBeTruthy();
+
+    await waitFor(() =>
+      expect(document.querySelectorAll(`#${listId} option`).length).toBe(2),
+    );
+    const options = [...document.querySelectorAll(`#${listId} option`)];
+    expect(options.map((o) => o.getAttribute("value"))).toEqual([
+      "chris35352",
+      "svoiss",
+    ]);
+    expect(options[0]!.textContent).toContain("Chris");
+  });
+
+  it("warns before you submit when the name isn't anyone on the server", async () => {
+    // Cheaper than a round trip that comes back empty and reads like a finding.
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /one person's recommendations look wrong/i,
+      }),
+    );
+    await userEvent.type(
+      await screen.findByLabelText(/plex username/i),
+      "Chris",
+    );
+
+    // "Chris" is a display name, not the slug — the exact mistake this catches.
+    expect(await screen.findByText(/no one on this server is called/i)).toBeTruthy();
+    expect(supportPerson).not.toHaveBeenCalled();
+  });
+
+  it("does not warn while the roster is still loading", async () => {
+    // Flagging every name during the fetch would train people to ignore the warning.
+    supportSuggestions.mockReturnValue(new Promise(() => {}));
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /one person's recommendations look wrong/i,
+      }),
+    );
+    await userEvent.type(
+      await screen.findByLabelText(/plex username/i),
+      "anyone",
+    );
+
+    expect(screen.queryByText(/no one on this server is called/i)).toBeNull();
+  });
+
+  it("offers titles as you type too", async () => {
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /keep seeing something/i }),
+    );
+
+    const input = await screen.findByLabelText(/title/i);
+    const listId = input.getAttribute("list");
+    await waitFor(() =>
+      expect(document.querySelectorAll(`#${listId} option`).length).toBe(2),
+    );
+  });
+});
+
+describe("IssuePage — an opened check appears where you clicked", () => {
+  it("renders below the full list when opened from the full list", async () => {
+    // Reported 2026-08-05: clicking a check in "Show all 19 checks" rendered its panel in the slot
+    // ABOVE that list — off-screen upward — so the click looked like it had done nothing at all.
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /show all 21 checks/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /what did the ai do/i }),
+    );
+
+    const panel = await screen.findByRole("heading", {
+      name: /what did the ai do/i,
+      level: 2,
+    });
+    const grid = screen.getByRole("button", {
+      name: /^hide all 21 checks$/i,
+    });
+    // DOCUMENT_POSITION_FOLLOWING: the panel comes after the disclosure in document order.
+    expect(
+      grid.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("renders directly below the shortcuts when opened from a shortcut", async () => {
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /keep seeing something/i }),
+    );
+
+    const panel = await screen.findByRole("heading", {
+      name: /is this title counted as watched/i,
+      level: 2,
+    });
+    const disclosure = screen.getByRole("button", {
+      name: /show all 21 checks/i,
+    });
+    // The panel sits BEFORE the "show all" disclosure — i.e. next to the cards it was opened from.
+    expect(
+      disclosure.compareDocumentPosition(panel) &
+        Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
+  });
+
+  it("closes when the same check is clicked again", async () => {
+    renderPage();
+    const card = await screen.findByRole("button", {
+      name: /keep seeing something/i,
+    });
+    await userEvent.click(card);
+    expect(
+      await screen.findByRole("heading", {
+        name: /is this title counted as watched/i,
+        level: 2,
+      }),
+    ).toBeTruthy();
+
+    await userEvent.click(card);
+
+    expect(
+      screen.queryByRole("heading", {
+        name: /is this title counted as watched/i,
+        level: 2,
+      }),
+    ).toBeNull();
   });
 });

@@ -1147,3 +1147,135 @@ class TestTitleGroupingEdgeCases:
         assert sorted(r["title"] for r in rows) == ["Mystery One", "Mystery Two"]
         # And an absent id is reported as absent, not as TMDB id 0.
         assert all(r["tmdb_id"] is None for r in rows)
+
+
+class TestTimelineShowsSignalNotItsOwnFootprints:
+    def test_the_diagnostics_own_read_events_are_excluded(self, client):
+        """Found by exercising the tools by hand (2026-08-05).
+
+        Every check writes a `support.read` audit row, so within one support session they outnumbered
+        everything else and the tool that answers "what has been happening" showed nothing but the
+        fact that someone had been looking. The audit rows still exist — they are just not what this
+        question is asking.
+        """
+        _enable(client)
+        for path in ("/api/support/health", "/api/support/rows", "/api/support/jobs"):
+            client.get(path)
+
+        body = client.get("/api/support/timeline").json()
+
+        assert body["entries"], "the timeline came back empty"
+        assert all("support.read" not in e["what"] for e in body["entries"]), body["entries"]
+        # Switching the mode IS a state change, and rare — it stays.
+        assert any("support.enable" in e["what"] for e in body["entries"])
+
+    def test_an_event_reads_as_words_not_a_python_dict(self, client):
+        """`str(message)` renders `{'user': 'sarah'}`, which is noise to someone who has never seen
+        this app's internals."""
+        with client.app.state.sessions() as session:
+            session.add(Event(scope="privacy.sync", level="info", message={"user": "sarah", "added": 3}))
+            session.commit()
+        _enable(client)
+
+        entries = client.get("/api/support/timeline").json()["entries"]
+
+        privacy = next(e for e in entries if "privacy.sync" in e["what"])
+        assert privacy["what"] == "privacy.sync user=sarah", privacy["what"]
+
+
+class TestSuggestions:
+    """Type-ahead for the checks that take a name. A username typed from memory is the commonest way
+    a check comes back empty — and empty is indistinguishable from "nothing is wrong"."""
+
+    def test_offers_every_person_and_the_titles_worth_asking_about(self, client):
+        _seed_teacup(client.app, viewed=2, total=8, delivered=True)
+        _enable(client)
+
+        body = client.get("/api/support/suggestions").json()
+
+        assert "sarah" in [p["slug"] for p in body["people"]]
+        assert "Teacup" in body["titles"]
+
+    def test_disabled_people_are_offered_too_but_ranked_after_the_enabled_ones(self, client):
+        """A disabled person is a legitimate thing to ask about — "why did their row vanish" — so
+        excluding them would hide the answer. Enabled first, because that is the common case."""
+        _enable(client)
+
+        people = client.get("/api/support/suggestions").json()["people"]
+
+        assert {p["slug"] for p in people} >= {"sarah", "mike"}
+        assert people[0]["enabled"] is True
+        assert any(p["enabled"] is False for p in people), "mike ships disabled in the fixture"
+
+    def test_it_needs_no_plex_connection(self, client, monkeypatch):
+        """It populates the inputs of the checks used WHEN PLEX IS DOWN, so it must not need Plex."""
+        import shortlist.server.api.support as support
+
+        def explode(_store):
+            raise RuntimeError("PMS unreachable")
+
+        monkeypatch.setattr(support, "_plex_client", explode)
+        _enable(client)
+
+        assert client.get("/api/support/suggestions").status_code == 200
+
+
+class TestTheReportCarriesWhatABugReportActuallyNeeds:
+    """The question that prompted these: does the downloadable report let someone else troubleshoot?
+
+    It used to be a configuration-and-state snapshot with NO log lines and no run detail — so the two
+    things a maintainer asks for first ("what's the error?", "which run failed?") were exactly what it
+    left out.
+    """
+
+    def test_the_bundle_includes_recent_errors_and_recent_runs(self, client):
+        _enable(client)
+
+        text = client.get("/api/support/bundle.txt").text
+
+        assert "=== Shortlist support · recent warnings and errors ===" in text
+        assert "=== Shortlist support · recent runs ===" in text
+        assert "THIS SECTION FAILED" not in text
+
+    def test_a_logged_error_reaches_the_report(self, client, tmp_path):
+        """Read through `log_reader`, which redacts with `http_retry.redact` — a wider net than this
+        module's own scrubber."""
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text(
+            "2026-08-05 10:00:00.000 | ERROR    | shortlist.engine.pipeline:run:1 - "
+            "boom talking to http://pms:32400/x?X-Plex-Token=SEKRIT\n"
+        )
+        _enable(client)
+
+        body = client.get("/api/support/errors").json()
+
+        assert body["total_matched"] >= 1
+        assert "boom talking to" in body["text"]
+        assert "SEKRIT" not in body["text"], "the log reader must have redacted this"
+
+    def test_a_failed_run_names_the_person_and_the_error(self, client):
+        """ "A run failed" is not actionable; "it failed for sarah, with this error" is."""
+        from shortlist.server.db.models import Run, RunUser
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter(User.slug == "sarah").one()
+            run = Run(trigger="schedule", status="error")
+            session.add(run)
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=user.id, status="error", error="no token for sarah"))
+            session.commit()
+        _enable(client)
+
+        body = client.get("/api/support/runs").json()
+
+        assert body["runs"][0]["failed"] == [{"user": "sarah", "error": "no token for sarah"}]
+        assert "FAILED sarah: no token for sarah" in body["text"]
+
+    def test_a_missing_log_directory_degrades_instead_of_500ing(self, client):
+        """A fresh install has no log file yet, and this must not be the thing that breaks."""
+        _enable(client)
+
+        body = client.get("/api/support/errors").json()
+
+        assert body["text"].rstrip().endswith("=== end ===")

@@ -1180,6 +1180,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/support/errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Errors
+         * @description Recent WARNING and ERROR log lines — the part of a bug report nobody remembers to attach.
+         *
+         *     Everything here is already redacted by `log_reader.scrub` (an alias for `http_retry.redact`),
+         *     which covers more credential shapes than this module's own `_scrub`: query params, header forms,
+         *     Bearer credentials. Over-redaction is fine; a leaked token is not (rule 9).
+         *
+         *     Capped hard, because this rides along in a report someone pastes into a chat window. When the tail
+         *     is not enough, the full redacted log zip is a separate download (`/api/system/logs/download`) and
+         *     the block says so.
+         */
+        get: operations["errors_api_support_errors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/support/funnel": {
         parameters: {
             query?: never;
@@ -1403,6 +1431,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/support/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent Runs
+         * @description The last few runs, and WHO failed in each — the other thing a report always needs.
+         *
+         *     The timeline says a run finished with a status. This says which people it could not build and why,
+         *     which is the difference between "a run failed" and something actionable.
+         */
+        get: operations["recent_runs_api_support_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/support/settings-history": {
         parameters: {
             query?: never;
@@ -1462,6 +1513,34 @@ export interface paths {
          * @description Whether the diagnostic tools are currently usable, and for how much longer.
          */
         get: operations["status_api_support_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggestions
+         * @description People and titles to offer as you type, for the checks that take a name.
+         *
+         *     Exists because a username typed from memory is the commonest way one of these checks comes back
+         *     empty — and an empty result is indistinguishable from "nothing is wrong", which is the worst
+         *     answer a diagnostic can give. The person operating the page may not know that Plex usernames are
+         *     not display names, or how a title is spelled in the library.
+         *
+         *     Deliberately DB-only and unconditional: no Plex call, so it still populates when the server is
+         *     unreachable, which is exactly when these checks are being used.
+         */
+        get: operations["suggestions_api_support_suggestions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6346,6 +6425,28 @@ export interface operations {
             };
         };
     };
+    errors_api_support_errors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     funnel_api_support_funnel_get: {
         parameters: {
             query: {
@@ -6625,6 +6726,28 @@ export interface operations {
             };
         };
     };
+    recent_runs_api_support_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     settings_history_api_support_settings_history_get: {
         parameters: {
             query?: never;
@@ -6685,6 +6808,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+        };
+    };
+    suggestions_api_support_suggestions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
