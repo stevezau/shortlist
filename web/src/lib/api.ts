@@ -108,6 +108,14 @@ export function apiUrl(path: string): string {
   return `${apiBase}${path}`;
 }
 
+/** What a reverse proxy's status actually means, in the terms the person can act on. */
+function proxyErrorMessage(status: number): string {
+  if (status === 502 || status === 503 || status === 504) {
+    return "Shortlist didn't answer — it may have been restarting, or the request took too long. Wait a moment and try again.";
+  }
+  return `Something between your browser and Shortlist returned ${status}. Try again, and check your reverse proxy if it keeps happening.`;
+}
+
 async function errorMessageFrom(response: Response): Promise<string> {
   try {
     const body: unknown = await response.clone().json();
@@ -120,6 +128,13 @@ async function errorMessageFrom(response: Response): Promise<string> {
   }
   try {
     const text = await response.text();
+    // An HTML body is never ours — it is a reverse proxy's own error page, and dumping it put an
+    // Apache banner and the server's HOSTNAME on screen where a diagnostic report was expected
+    // (seen for real: a 502 during a container restart rendered
+    // "Apache/2.4.66 (Ubuntu) Server at <host> Port 443" into the panel). Someone screenshotting
+    // that into a public issue publishes their hostname, so the body is dropped and the status
+    // explained instead.
+    if (/^\s*(<!doctype|<html)/i.test(text)) return proxyErrorMessage(response.status);
     if (text.length > 0 && text.length <= 500) return text;
   } catch {
     // Unreadable body — fall through to the status line.

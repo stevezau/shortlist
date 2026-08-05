@@ -175,3 +175,63 @@ describe("api", () => {
     });
   });
 });
+
+describe("api — a reverse proxy's own error page", () => {
+  let fetchMock: Mock;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    configureApiBase("");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const APACHE_502 = `<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">
+<html><head><title>502 Proxy Error</title></head><body><h1>Proxy Error</h1>
+<p>The proxy server received an invalid response from an upstream server.</p>
+<hr><address>Apache/2.4.66 (Ubuntu) Server at shortlist.example.com Port 443</address>
+</body></html>`;
+
+  it("never shows the proxy's HTML, which carries the server's hostname", async () => {
+    // Seen for real: a 502 during a container restart rendered the Apache banner — including the
+    // hostname — into the diagnostics panel. Someone screenshotting that into a public issue
+    // publishes their hostname, which is the thing the whole report is careful about.
+    fetchMock.mockResolvedValue(
+      new Response(APACHE_502, {
+        status: 502,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+
+    await expect(api.getUsers()).rejects.toThrow(
+      /didn't answer.*restarting/i,
+    );
+    await expect(api.getUsers()).rejects.not.toThrow(/Apache/);
+  });
+
+  it("says what the person can do about it, not the status code alone", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("<html><body>504</body></html>", {
+        status: 504,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+
+    await expect(api.getUsers()).rejects.toThrow(/try again/i);
+  });
+
+  it("still surfaces a real JSON detail from our own API", async () => {
+    // The HTML guard must not swallow the messages that ARE ours.
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ detail: "Support mode is off." }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(api.getUsers()).rejects.toThrow("Support mode is off.");
+  });
+});
