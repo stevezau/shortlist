@@ -27,7 +27,7 @@ import textwrap
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from loguru import logger
 from sqlalchemy import func
@@ -845,8 +845,8 @@ async def bundle(request: Request) -> str:
     header.kv("python", platform.python_version())
     parts.append(header.render())
     # Every server-wide tool, in the order a maintainer reads them: is it healthy, what is it
-    # configured as, what is on Plex, what has been happening. The per-person tools are excluded —
-    # they need a name, and a bundle that asked for one would stop being a single button.
+    # configured as, what is on Plex, what has been happening. The per-person tools follow, for the
+    # people the checks above actually flagged — see `_people_worth_including`.
     #
     # Each is awaited INSIDE the loop so one failing tool costs its own section and not the file:
     # the bundle is most wanted when something is broken, which is exactly when a tool may raise.
@@ -869,15 +869,57 @@ async def bundle(request: Request) -> str:
         "recent runs": recent_runs,
         "recent warnings and errors": errors,
     }
+    findings: dict[str, dict] = {}
     for name, tool in tools.items():
         try:
             result = await tool(request)
-            parts.append(result["text"] if isinstance(result, dict) else str(result))
+            if isinstance(result, dict):
+                findings[name] = result
+                parts.append(result["text"])
+            else:
+                parts.append(str(result))
         except Exception as e:
             failed = _stamp(_Block(name))
             failed.line(f"THIS SECTION FAILED: {_fail(e)}")
             parts.append(failed.render())
+
+    # Per-person detail, for the people the checks above flagged — nobody else.
+    #
+    # The per-person tools need a name, and a report that asked for one would stop being a single
+    # button. But "here is the server, now go and ask me about each of 46 people" is a round trip, and
+    # a round trip with a non-technical reporter costs a day. So the report answers the follow-up it
+    # has just invited: whoever the connection check could not read, whoever a run failed on, whoever
+    # can see a row that is not theirs.
+    for slug in _people_worth_including(findings):
+        try:
+            parts.append((await person(request, slug))["text"])
+        except Exception as e:
+            failed = _stamp(_Block(f"person {slug}"))
+            failed.line(f"THIS SECTION FAILED: {_fail(e)}")
+            parts.append(failed.render())
     return "\n\n".join(parts)
+
+
+#: How many flagged people get their own section. A cap, because a server where every share token is
+#: broken would otherwise append 46 of them and stop being pasteable — and by then the first three
+#: have made the point.
+_PEOPLE_IN_REPORT = 5
+
+
+def _people_worth_including(findings: dict[str, dict]) -> list[str]:
+    """Whose per-person detail belongs in the report, drawn from what the other checks flagged.
+
+    Ordered by how likely each signal is to BE the problem: a run that failed on someone names them
+    outright; a person we cannot fully read explains an empty watched set; a missing share exclusion is
+    a privacy fault. De-duplicated, capped, and empty on a healthy server — which is the point, so a
+    clean report stays short.
+    """
+    ordered: list[str] = []
+    for run in findings.get("recent runs", {}).get("runs", []) or []:
+        ordered.extend(str(f["user"]) for f in run.get("failed", []) or [])
+    ordered.extend(str(s) for s in findings.get("connection", {}).get("problems", []) or [])
+    ordered.extend(str(s) for s in findings.get("sharing", {}).get("missing_excludes_for", []) or [])
+    return list(dict.fromkeys(ordered))[:_PEOPLE_IN_REPORT]
 
 
 # --------------------------------------------------------------------------------------------
@@ -1980,6 +2022,44 @@ async def recent_runs(request: Request) -> dict:
         for failure in run["failed"][:5]:
             block.line(f"    FAILED {failure['user']}: {failure['error'] or '(no message)'}")
     return {"runs": out, "text": block.render()}
+
+
+@_tool.get("/support/report.zip")
+async def report_zip(request: Request) -> Response:
+    """The whole report AND every redacted log file, as one attachment.
+
+    The text report is deliberately capped so it can be pasted into a chat window — newest 40
+    warnings, five runs. That is enough to name most problems and not enough for one that needs
+    history, and asking someone to then find the Logs page and export separately is a step that does
+    not happen. This is the one button for "give them everything".
+
+    Log files are redacted by `log_reader.build_zip`, file by file, because an export is the single
+    most likely thing to end up in a public issue tracker.
+    """
+    import io
+    import zipfile
+
+    from shortlist.server.services import log_reader
+
+    text = await bundle(request)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("shortlist-report.txt", text)
+        # Nested rather than merged: `build_zip` owns the redaction and the vanished-under-rotation
+        # handling, and duplicating either here is how one of them drifts.
+        try:
+            with zipfile.ZipFile(io.BytesIO(log_reader.build_zip(request.app.state.config_dir))) as logs:
+                for name in logs.namelist():
+                    archive.writestr(name, logs.read(name))
+        except Exception as e:
+            archive.writestr("logs/UNAVAILABLE.txt", f"Logs could not be read: {_fail(e)}")
+    with request.app.state.sessions() as session:
+        _audit(session, "report.zip", {})
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="shortlist-report.zip"'},
+    )
 
 
 #: Assembled last, on purpose — see the module docstring. `_mode` carries owner auth only; `_tool`

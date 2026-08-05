@@ -1030,15 +1030,20 @@ function ReportSection() {
           </span>
         </Button>
         <Button asChild variant="outline">
-          <a href={api.supportBundleUrl()} download="shortlist-report.txt">
+          <a
+            href={api.supportReportZipUrl()}
+            download="shortlist-report.zip"
+          >
             <Download className="mr-2 h-4 w-4" aria-hidden="true" />
-            Download it as a file
+            Download everything (with logs)
           </a>
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        The report contains no passwords, tokens or API keys. Chat apps cut off
-        long messages — if a paste looks truncated, attach the file instead.
+        Nothing here contains passwords, tokens or API keys — the logs are
+        stripped of them before the file is made. Copying gives you the summary,
+        which fits in a chat message; the download adds the full logs, which is
+        what to attach if the summary isn&rsquo;t enough.
       </p>
     </section>
   );

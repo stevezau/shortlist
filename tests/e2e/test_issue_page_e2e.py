@@ -114,7 +114,7 @@ class TestFilingTheReport:
         report = page.get_by_role("link", name=re.compile("report a bug on github", re.IGNORECASE))
         expect(report).to_have_attribute("href", re.compile(r"github\.com.*issues/new"))
         expect(page.get_by_role("button", name=re.compile("copy the full report", re.IGNORECASE))).to_be_visible()
-        expect(page.get_by_text(re.compile("no passwords, tokens or api keys", re.IGNORECASE))).to_be_visible()
+        expect(page.get_by_text(re.compile("contains passwords, tokens or api keys", re.IGNORECASE))).to_be_visible()
 
     def test_the_downloadable_report_is_real_text_and_carries_no_secrets(self, page: Page, app: ShortlistApp):
         """Fetched through the API rather than clicked, because what matters is the CONTENT: someone

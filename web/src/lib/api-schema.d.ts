@@ -1383,6 +1383,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/support/report.zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Report Zip
+         * @description The whole report AND every redacted log file, as one attachment.
+         *
+         *     The text report is deliberately capped so it can be pasted into a chat window — newest 40
+         *     warnings, five runs. That is enough to name most problems and not enough for one that needs
+         *     history, and asking someone to then find the Logs page and export separately is a step that does
+         *     not happen. This is the one button for "give them everything".
+         *
+         *     Log files are redacted by `log_reader.build_zip`, file by file, because an export is the single
+         *     most likely thing to end up in a public issue tracker.
+         */
+        get: operations["report_zip_api_support_report_zip_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/support/row-schedule": {
         parameters: {
             query?: never;
@@ -6678,6 +6706,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_zip_api_support_report_zip_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };

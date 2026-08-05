@@ -1279,3 +1279,99 @@ class TestTheReportCarriesWhatABugReportActuallyNeeds:
         body = client.get("/api/support/errors").json()
 
         assert body["text"].rstrip().endswith("=== end ===")
+
+
+class TestTheDownloadCarriesTheLogsToo:
+    """The text report is capped so it can be pasted; the download is for when that is not enough.
+
+    Asking someone to then find the Logs page and export separately is a step that does not happen,
+    so the one button gives them everything.
+    """
+
+    def test_the_zip_holds_the_report_and_the_log_files(self, client):
+        import io
+        import zipfile
+
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text("2026-08-05 10:00:00.000 | INFO | a:b:1 - hello\n")
+        _enable(client)
+
+        response = client.get("/api/support/report.zip")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert "shortlist-report.zip" in response.headers["content-disposition"]
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            assert "shortlist-report.txt" in names
+            assert any(n.startswith("logs/") for n in names), names
+            report = archive.read("shortlist-report.txt").decode()
+            assert report.startswith("=== Shortlist support")
+
+    def test_the_logs_in_the_zip_are_redacted(self, client):
+        """An export is the single most likely thing to end up in a public issue tracker."""
+        import io
+        import zipfile
+
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text(
+            "2026-08-05 10:00:00.000 | ERROR | a:b:1 - GET /x?X-Plex-Token=SUPERSECRET failed\n"
+        )
+        _enable(client)
+
+        with zipfile.ZipFile(io.BytesIO(client.get("/api/support/report.zip").content)) as archive:
+            blob = b"".join(archive.read(n) for n in archive.namelist())
+
+        assert b"SUPERSECRET" not in blob
+
+    def test_an_unreadable_log_directory_still_produces_a_zip(self, client, monkeypatch):
+        """The download is most wanted when something is broken; the logs failing must cost the logs
+        and not the report."""
+        import io
+        import zipfile
+
+        from shortlist.server.services import log_reader
+
+        monkeypatch.setattr(log_reader, "build_zip", lambda _dir: (_ for _ in ()).throw(OSError("disk gone")))
+        _enable(client)
+
+        with zipfile.ZipFile(io.BytesIO(client.get("/api/support/report.zip").content)) as archive:
+            assert "shortlist-report.txt" in archive.namelist()
+            assert "logs/UNAVAILABLE.txt" in archive.namelist()
+            assert b"disk gone" in archive.read("logs/UNAVAILABLE.txt")
+
+    def test_the_report_includes_detail_for_the_people_it_flagged(self, client):
+        """The report answers the follow-up it has just invited. Without this, "here is the server, now
+        ask me about each of 46 people" is a round trip — and a round trip with a non-technical
+        reporter costs a day."""
+        from shortlist.server.db.models import Run, RunUser
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter(User.slug == "sarah").one()
+            run = Run(trigger="schedule", status="error")
+            session.add(run)
+            session.flush()
+            session.add(RunUser(run_id=run.id, user_id=user.id, status="error", error="no token"))
+            session.commit()
+        _enable(client)
+
+        text = client.get("/api/support/bundle.txt").text
+
+        assert "=== Shortlist support · person ===" in text
+        assert "person        sarah" in text
+
+    def test_a_healthy_server_gets_no_per_person_sections(self, client, monkeypatch):
+        """A clean report stays short — otherwise the flagged sections stop meaning anything."""
+        import shortlist.server.api.support as support
+
+        async def clean(_request):
+            return {"users": [], "problems": [], "error": None, "text": "=== Shortlist support · x ===\n=== end ==="}
+
+        monkeypatch.setattr(support, "connection", clean)
+        _enable(client)
+
+        text = client.get("/api/support/bundle.txt").text
+
+        assert "=== Shortlist support · person ===" not in text

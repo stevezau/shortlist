@@ -60,6 +60,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       supportLibraries: () => supportLibraries(),
       supportPerson: (slug: string) => supportPerson(slug),
       supportBundleUrl: () => "/api/support/bundle.txt",
+      supportReportZipUrl: () => "/api/support/report.zip",
       getSupportBundle: () => getSupportBundle(),
       supportSuggestions: () => supportSuggestions(),
     },
@@ -294,10 +295,10 @@ describe("IssuePage — sending a long report", () => {
   it("offers the full file as a download for when a paste gets truncated", async () => {
     renderPage();
     const link = await screen.findByRole("link", {
-      name: /download it as a file/i,
+      name: /download everything \(with logs\)/i,
     });
-    expect(link.getAttribute("href")).toBe("/api/support/bundle.txt");
-    expect(link.getAttribute("download")).toBe("shortlist-report.txt");
+    expect(link.getAttribute("href")).toBe("/api/support/report.zip");
+    expect(link.getAttribute("download")).toBe("shortlist-report.zip");
   });
 });
 
@@ -359,14 +360,14 @@ describe("IssuePage — filing the report", () => {
     const link = await screen.findByRole("link", { name: /report a bug on github/i });
     expect(link.getAttribute("href")).toContain("github.com");
     expect(screen.getByRole("button", { name: /copy the full report/i })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /download it as a file/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /download everything \(with logs\)/i })).toBeTruthy();
   });
 
   it("says outright that the report carries no secrets", async () => {
     // Someone is about to paste this into a public GitHub issue.
     renderPage();
     expect(
-      await screen.findByText(/no passwords, tokens or api keys/i),
+      await screen.findByText(/contains passwords, tokens or api keys/i),
     ).toBeTruthy();
   });
 });

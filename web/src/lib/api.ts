@@ -745,8 +745,12 @@ export const api = {
     return response.text();
   },
 
-  /** A plain link — the session cookie authenticates it, so no fetch/blob dance. Used when a paste
-   *  would be truncated by Discord or Reddit and an attachment is the right answer instead. */
+  /** Plain links — the session cookie authenticates them, so no fetch/blob dance.
+   *
+   *  `supportReportZipUrl` is the one to offer: the text report PLUS every redacted log file. The
+   *  `.txt` remains for anyone who wants only the pasteable part. */
+  supportReportZipUrl: (): string => apiUrl("/api/support/report.zip"),
+
   supportBundleUrl: (): string => apiUrl("/api/support/bundle.txt"),
 };
 
