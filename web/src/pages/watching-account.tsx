@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Check, Eye, Loader2, UserPlus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { BackLink } from "@/components/back-link";
 import { PageHeader } from "@/components/page-header";
@@ -255,6 +255,20 @@ export function WatchingAccountPage() {
  *  library filters on it. "I've made it" simply re-reads the Home roster.
  */
 function TransferSteps() {
+  // "Set it up" mounts this section below the fold, so without moving the viewport the button reads
+  // as having done nothing. Scrolled on mount rather than in the click handler: the section does not
+  // exist yet at click time. `prefers-reduced-motion` gets a jump instead of a glide.
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const reduced = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    ref.current?.scrollIntoView({
+      behavior: reduced ? "auto" : "smooth",
+      block: "start",
+    });
+  }, []);
+
   const candidates = useHomeUserCandidates();
   const users = useUsers();
   const [target, setTarget] = useState<number | null>(null);
@@ -278,7 +292,8 @@ function TransferSteps() {
   };
 
   return (
-    <Step n={3} title="Set up the watching account">
+    <div ref={ref} className="scroll-mt-6">
+      <Step n={3} title="Set up the watching account">
       <div className="space-y-2">
         <p className="text-sm text-muted-foreground">
           Create the account in Plex &mdash;{" "}
@@ -369,16 +384,19 @@ function TransferSteps() {
         />
         <span>
           <span className="font-medium">
-            Also mark these titles watched in Plex
+            Also carry your watched status across in Plex
           </span>
           <span className="block text-xs text-muted-foreground">
-            Gives the new account its watched checkmarks and keeps them out of
-            Continue Watching. It is one write per title, and{" "}
+            Leave this off and Shortlist knows what you&rsquo;ve seen but Plex
+            doesn&rsquo;t &mdash; the new account starts with everything
+            unwatched, no ticks, and half-finished shows missing from Continue
+            Watching. Turn it on and each title is marked watched on the new
+            account, one write apiece.{" "}
             <strong className="text-foreground">
               Plex records them all as watched today
             </strong>{" "}
             &mdash; it has no way to store the original dates. Shortlist keeps
-            the real dates itself either way, so your recommendations are
+            the real ones itself either way, so your recommendations are
             unaffected.
           </span>
         </span>
@@ -399,7 +417,7 @@ function TransferSteps() {
           disabled={target === null || transfer.isPending}
           onClick={() => run(false)}
         >
-          Copy my watch history
+          Move my history across
         </Button>
       </div>
 
@@ -408,7 +426,7 @@ function TransferSteps() {
           Would copy <strong>{preview.copied}</strong> titles
           {preview.already_present > 0 &&
             `, leaving ${preview.already_present} they've already watched alone`}
-          {scrobble && `, and mark ${preview.scrobbled} of them played in Plex`}
+          {scrobble && `, and mark ${preview.scrobbled} of them watched in Plex`}
           . Nothing has been changed yet.
         </p>
       )}
@@ -422,7 +440,7 @@ function TransferSteps() {
           <span>
             Copied <strong>{transfer.data.copied}</strong> titles
             {transfer.data.scrobbled > 0 &&
-              ` and marked ${transfer.data.scrobbled} played in Plex`}
+              ` and marked ${transfer.data.scrobbled} watched in Plex`}
             . Switch to that account in your Plex app and watch there from now
             on &mdash; its row fills in on the next run.
           </span>
@@ -431,13 +449,14 @@ function TransferSteps() {
 
       {transfer.isError && (
         <p className="text-sm text-destructive">
-          Couldn&rsquo;t copy the history:{" "}
+          Couldn&rsquo;t move the history:{" "}
           {apiErrorMessage(
             transfer.error,
             "something went wrong talking to Plex.",
           )}
         </p>
       )}
-    </Step>
+      </Step>
+    </div>
   );
 }

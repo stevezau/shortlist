@@ -188,6 +188,20 @@ describe("WatchingAccountPage", () => {
     expect(screen.getByText(/already done/i)).toBeInTheDocument();
   });
 
+  it("scrolls the transfer step into view when it appears", async () => {
+    // It mounts below the fold, so without this "Set it up" reads as having done nothing.
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: /set it up/i }));
+
+    expect(
+      await screen.findByRole("heading", { name: /set up the watching account/i }),
+    ).toBeInTheDocument();
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
   it("dismisses the notification by its id", async () => {
     renderPage();
 

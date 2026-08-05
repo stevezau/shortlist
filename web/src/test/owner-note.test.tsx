@@ -16,8 +16,21 @@ describe("OwnerNote", () => {
     renderIn(<OwnerNote />);
 
     expect(
-      screen.getByRole("link", { name: /see your options/i }),
+      screen.getByRole("link", { name: /see the options/i }),
     ).toHaveAttribute("href", "/watching-account");
+  });
+
+  it("leads with the notice, not with the reassurance", () => {
+    // Ordering is the point of this component. An earlier version opened with "your Home screen
+    // shows only your own row" — true, but it buried the one thing an owner needs to know.
+    renderIn(<OwnerNote />);
+
+    const heading = screen.getByText(/you.ll see everyone else.s rows/i);
+    const reassurance = screen.getByText(/Not your Home screen/i);
+    expect(
+      heading.compareDocumentPosition(reassurance) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("still says the owner's own Home is safe", () => {
@@ -26,7 +39,17 @@ describe("OwnerNote", () => {
     // opposite for a while — this pins the true claim to a test.
     renderIn(<OwnerNote />);
 
-    expect(screen.getByText(/your Home screen is safe/i)).toBeInTheDocument();
+    expect(screen.getByText(/Not your Home screen/i)).toBeInTheDocument();
+  });
+
+  it("names the recommended fix, and does not promise Shortlist creates the Plex account", () => {
+    // Shortlist deliberately has no create-a-Home-user endpoint (plex-safety rule 11), so the copy
+    // must say the owner adds it in Plex. "We can do this for you" would be a promise the API
+    // cannot keep.
+    renderIn(<OwnerNote />);
+
+    expect(screen.getByText(/What we suggest:/i)).toBeInTheDocument();
+    expect(screen.getByText(/You add the account in Plex/i)).toBeInTheDocument();
   });
 });
 
