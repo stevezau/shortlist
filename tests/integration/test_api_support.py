@@ -1022,6 +1022,30 @@ class TestSharingCountsLabelsNotClauses:
         assert any("Kids" in c for c in row["other_conditions"]), row["other_conditions"]
         assert any("contentRating" in c for c in row["other_conditions"])
 
+    def test_a_healthy_server_gets_a_summary_not_a_line_per_account(self, client, monkeypatch):
+        """Measured on a real 50-user server: printing every account made this section 446 lines of a
+        779-line report — 57% of it, saying "fine" fifty times. That pushed the report past what a
+        chat message holds and buried the two lines that mattered."""
+        self._accounts(
+            monkeypatch,
+            {name: {"filterMovies": "label!=shortlist_other"} for name in ("a", "b", "c", "d", "e")},
+        )
+        with client.app.state.sessions() as session:
+            # Exactly one person has a row, and every account hides it — so nothing is missing and
+            # the block has nothing per-account to say.
+            for existing in session.query(User).all():
+                existing.enabled = False
+            session.add(User(plex_account_id=99, username="other", slug="other", enabled=True))
+            session.commit()
+        _enable(client)
+
+        body = client.get("/api/support/sharing").json()
+
+        assert body["missing_excludes_for"] == []
+        assert "5 of 5 accounts hide every row that is not theirs." in body["text"]
+        # No per-account detail when there is nothing to say about any of them.
+        assert len(body["text"].splitlines()) < 12, body["text"]
+
     def test_a_person_missing_an_exclusion_is_named_along_with_the_row_they_can_see(self, client, monkeypatch):
         """The question the tool exists for, and it must name the ROW, not just count.
 

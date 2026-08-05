@@ -1086,9 +1086,10 @@ function ReportSection() {
         <code className="font-mono">http://&lt;host&gt;</code>. It{" "}
         <strong className="font-medium text-foreground">does</strong> include
         your library names, the titles involved, and — unless you leave the box
-        above ticked — the Plex usernames of people on your server. Copying
-        gives you the summary, which fits in a chat message; the download adds
-        the full logs.
+        above ticked — the Plex usernames of people on your server. On a busy
+        server the summary runs to tens of kilobytes, which is more than a chat
+        message holds — attach it as a file if the paste gets cut off, and use
+        the download when you want the logs as well.
       </p>
     </section>
   );

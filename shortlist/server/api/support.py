@@ -1686,21 +1686,25 @@ async def connection(request: Request) -> dict:
     if token_error:
         block.kv("plex.tv", token_error)
     block.rule()
-    block.table(
-        ["person", "type", "token", "libraries read", "never read"],
-        [
-            [
-                r["user"],
-                r["user_type"],
-                "yes" if r["has_token"] else "NO",
-                ",".join(r["libraries_read"]) or "-",
-                ",".join(r["never_read"]) or "-",
-            ]
-            for r in rows
-        ],
-        [14, 8, 6, 16, 12],
-    )
+    # Same reasoning as `sharing`: only the people with a problem get a row. On a healthy 50-user
+    # server the table was fifty lines of "yes, yes, yes", which buries the one line that matters.
+    block.line(f"{len(rows) - len(bad)} of {len(rows)} people can be read in full.")
     if bad:
+        block.rule()
+        block.table(
+            ["person", "type", "token", "libraries read", "never read"],
+            [
+                [
+                    r["user"],
+                    r["user_type"],
+                    "yes" if r["has_token"] else "NO",
+                    ",".join(r["libraries_read"]) or "-",
+                    ",".join(r["never_read"]) or "-",
+                ]
+                for r in bad
+            ],
+            [14, 8, 6, 16, 12],
+        )
         block.rule()
         block.line(f"PROBLEM: {len(bad)} person/people cannot be fully read: {', '.join(r['user'] for r in bad)}")
     return {"users": rows, "problems": [r["user"] for r in bad], "error": token_error, "text": block.render()}
@@ -1894,23 +1898,30 @@ async def sharing(request: Request) -> dict:
                 error = _fail(e)
         _audit(session, "sharing", {"accounts": len(rows)})
 
+    short = [r["user"] for r in rows if r["missing"]]
+
+    # Only the accounts with something WRONG get detail; the rest are a count.
+    #
+    # Measured on a real 50-user server: printing every account made this section 446 lines of a
+    # 779-line report — 57% of the whole thing, saying "fine" fifty times. That is not a formatting
+    # preference: it pushed the report past what a chat message holds and buried the two lines that
+    # mattered. A healthy server should produce a short report.
     block = _stamp(_Block("sharing and privacy"))
     block.rule()
     if error:
         block.line(f"COULD NOT READ: {error}")
-    for row in rows:
-        block.line(f"{row['user']} (#{row['account_id']})")
-        block.line(f"  hides {len(row['shortlist_excludes'])} of {len(row['should_hide'])} other rows")
-        for label in row["shortlist_excludes"][:6]:
-            block.line(f"    {label}")
-        if len(row["shortlist_excludes"]) > 6:
-            block.line(f"    …and {len(row['shortlist_excludes']) - 6} more")
-        if row["missing"]:
+    elif not rows:
+        block.line("No accounts came back from plex.tv.")
+    else:
+        healthy = len(rows) - len(short)
+        block.line(f"{healthy} of {len(rows)} accounts hide every row that is not theirs.")
+        for row in (r for r in rows if r["missing"]):
+            block.line(f"{row['user']} (#{row['account_id']})")
+            block.line(f"  hides {len(row['shortlist_excludes'])} of {len(row['should_hide'])} other rows")
             # Named, not counted: "which row can this person see" is the actual question.
             block.line(f"  NOT HIDDEN: {', '.join(row['missing'][:6])}")
-        if row["other_conditions"]:
-            block.line(f"  plus {len(row['other_conditions'])} condition(s) of their own — untouched")
-    short = [r["user"] for r in rows if r["missing"]]
+            if len(row["missing"]) > 6:
+                block.line(f"    …and {len(row['missing']) - 6} more")
     if short and not error:
         block.rule()
         block.line(f"PROBLEM: these people can see a row that is not theirs: {', '.join(short[:8])}")
