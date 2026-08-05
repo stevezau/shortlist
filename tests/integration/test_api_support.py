@@ -185,16 +185,44 @@ class TestTitleLookup:
         # The text is what the reporter pastes back, so the finding must survive into it.
         assert "PROBLEM: delivered but not counted as watched: sarah" in body["text"]
 
-    def test_a_part_watched_show_under_the_threshold_reads_as_not_counted(self, client):
-        """Two episodes of eight: Plex calls that watched, the engine does not. The tool has to show
-        BOTH numbers, because the gap between them is the entire explanation."""
+    def test_a_part_watched_show_answers_with_the_rule_that_actually_applied(self, client):
+        """Two episodes of eight, answered per the ROW's cap — the seam between this release's halves.
+
+        Since 1.2 there are two rules: at cap 0 a started show counts as watched, above 0 only a
+        finished one does. Answering with the finished rule everywhere was the pre-1.2 answer, and it
+        got the diagnosis backwards — "I'm two episodes in and it's still in my row" would read as the
+        bug 1.2 just fixed, rather than the row not having rebuilt since. (Found by architecture
+        review 2026-08-05; the previous version of this test asserted the old behaviour.)
+
+        The tool still shows BOTH numbers either way, because the gap between them is the explanation.
+        """
         _seed_teacup(client.app, viewed=2, total=8, delivered=True)
+        _enable(client)
+
+        _set_row_cap(client.app, 0.0)
+        row = client.get("/api/support/title", params={"q": "Teacup"}).json()["rows"][0]
+        assert (row["viewed_leaf_count"], row["leaf_count"]) == (2, 8)
+        assert row["watched_record"] is True
+        assert row["counts_as_watched"] is True, "at 0% a started show IS watched"
+        assert row["problem"] is False, "counted as watched, so its delivery is not the reported bug"
+
+        _set_row_cap(client.app, 0.4)
+        row = client.get("/api/support/title", params={"q": "Teacup"}).json()["rows"][0]
+        assert row["counts_as_watched"] is False, "above 0% only a FINISHED show counts"
+
+    def test_a_rewatch_row_keeps_the_finished_rule_even_at_zero(self, client):
+        """A rewatch row is built FROM watched titles, so it never takes the 0% exclusion — and the
+        tool must not claim otherwise."""
+        _seed_teacup(client.app, viewed=2, total=8, delivered=True)
+        with client.app.state.sessions() as session:
+            row = session.query(Collection).filter(Collection.slug == "picked").one()
+            row.watched_pct, row.rewatch = 0.0, True
+            session.commit()
         _enable(client)
 
         row = client.get("/api/support/title", params={"q": "Teacup"}).json()["rows"][0]
 
-        assert (row["viewed_leaf_count"], row["leaf_count"]) == (2, 8)
-        assert row["watched_record"] is True
+        assert row["rewatch"] is True
         assert row["counts_as_watched"] is False
 
     def test_a_finished_show_counts_and_is_not_flagged(self, client):
@@ -1511,3 +1539,101 @@ class TestNoDisplayNameReachesTheReport:
         for name in ("Zaphod", "Beeblebrox"):
             assert name not in plain, f"{name} reached the report — add it to _anonymiser or stop rendering it"
             assert name not in hidden, f"{name} survived anonymisation"
+
+
+class TestTheFindingsFromTheFifthReviewPass:
+    """Five defects an architecture review found that four earlier passes — including my own by-hand
+    checks — did not. Each is pinned here with the scenario that produced it."""
+
+    def test_the_server_address_never_reaches_the_report_via_an_exception(self, client, monkeypatch):
+        """HIGH. `config` shaped the settings it printed, and the test only checked `config` — but the
+        same address arrives in every quoted exception. "My Plex is unreachable" is the single most
+        likely line in a support report, and it printed `host='172.16.10.240', port=32400` verbatim.
+        """
+        import shortlist.server.api.support as support
+
+        def explode(_store):
+            raise RuntimeError(
+                "HTTPConnectionPool(host='172.16.10.240', port=32400): "
+                "Max retries exceeded with url: https://192-168-1-5.abc123def456abc123def456abc12345.plex.direct:32400/x"
+            )
+
+        monkeypatch.setattr(support, "_plex_client", explode)
+        _enable(client)
+
+        text = client.get("/api/support/bundle.txt").text
+
+        assert "172.16.10.240" not in text
+        assert "192-168-1-5" not in text
+        assert "abc123def456abc123def456abc12345" not in text, "a plex.direct name embeds the machine id"
+        assert "<host>" in text
+
+    def test_a_machine_id_in_a_plextv_path_is_hidden(self):
+        """The other form: `plex.tv/api/servers/<32-hex>/shared_servers`."""
+        from shortlist.server.api.support import _scrub
+
+        out = _scrub("HTTPError: 500 for https://plex.tv/api/servers/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6/shared_servers")
+
+        assert "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6" not in out
+        assert "<machine-id>" in out
+
+    def test_the_scheme_and_port_survive_because_they_are_diagnostic(self):
+        from shortlist.server.api.support import _scrub
+
+        assert _scrub("GET https://pms.example:32400/library") == "GET https://<host>:32400/library"
+
+    def test_a_plextv_account_we_have_never_synced_is_still_anonymised(self, client, monkeypatch):
+        """HIGH. `_anonymiser` was built from the `users` table, but `sharing` prints usernames from
+        the LIVE plex.tv roster. A share added since the last user sync is absent from the table — and
+        is GUARANTEED to be named, because with no excludes yet it is always flagged."""
+        from types import SimpleNamespace
+
+        import shortlist.server.api.support as support
+
+        roster = [SimpleNamespace(username="NewFriendBob", id=987654, filters={"filterMovies": ""})]
+        monkeypatch.setattr(support, "_plextv_client", lambda _s, _m: SimpleNamespace(list_users=lambda: roster))
+        monkeypatch.setattr(support, "_machine_id", lambda _s: "m1")
+        _enable(client)
+
+        hidden = client.get("/api/support/bundle.txt", params={"anonymise": "true"}).text
+
+        assert "NewFriendBob" not in hidden, "the banner promises everyone is hidden"
+        assert "person" in hidden
+
+    def test_a_privacy_fault_yields_a_person_section_when_username_differs_from_slug(self, client, monkeypatch):
+        """HIGH. `sharing` returned usernames; `person()` keys on slugs, and `slugify` lowercases and
+        replaces punctuation — so they differ for essentially every real Plex account. The per-person
+        detail 404'd for exactly the people with a privacy fault."""
+        from types import SimpleNamespace
+
+        import shortlist.server.api.support as support
+
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter(User.slug == "sarah").one()
+            user.username, user.plex_account_id, user.enabled = "Sarah_Plex", 4242, True
+            for other in session.query(User).filter(User.slug != "sarah").all():
+                other.enabled = False
+            session.add(User(plex_account_id=99, username="Other", slug="other", enabled=True))
+            session.commit()
+
+        roster = [SimpleNamespace(username="Sarah_Plex", id=4242, filters={"filterMovies": ""})]
+        monkeypatch.setattr(support, "_plextv_client", lambda _s, _m: SimpleNamespace(list_users=lambda: roster))
+        monkeypatch.setattr(support, "_machine_id", lambda _s: "m1")
+        _enable(client)
+
+        sharing_body = client.get("/api/support/sharing").json()
+        text = client.get("/api/support/bundle.txt").text
+
+        assert sharing_body["missing_excludes_for"] == ["Sarah_Plex"], "the block shows the username"
+        assert sharing_body["missing_excludes_slugs"] == ["sarah"], "the machine-readable field is a slug"
+        assert "THIS SECTION FAILED" not in text, text[-600:]
+        assert "person        sarah" in text, "the per-person section must actually render"
+
+    def test_the_zip_is_built_off_the_event_loop(self, client):
+        """LOW. Tens of megabytes of unzip + regex + rezip inline stalled the SSE stream, the UI and
+        Docker's HEALTHCHECK — on the page for a server that is already struggling."""
+        import inspect
+
+        import shortlist.server.api.support as support
+
+        assert "run_in_threadpool" in inspect.getsource(support.report_zip)

@@ -206,7 +206,7 @@ def _scrub(s: str) -> str:
     (so every error string that reaches the JSON is too). The JSON matters as much as the block —
     `issue.tsx` prints `checks[].detail` and `error` on screen verbatim.
     """
-    return _SECRET_PATTERN.sub(r"\1<redacted>", s)
+    return _shape_hosts(_SECRET_PATTERN.sub(r"\1<redacted>", s))
 
 
 #: Setting keys whose VALUE is a network location. Reported as a shape, never verbatim: a report is
@@ -237,6 +237,37 @@ def _location_shape(value: str) -> str:
         return f"{parts.scheme}://<host>{port}"
     except ValueError:
         return "<set>"
+
+
+#: Hosts and machine ids, in the forms an exception or a log line actually carries them:
+#:   https://172.16.10.240:32400/x            a bare URL
+#:   host='172.16.10.240', port=32400         httpx/urllib3's connection-pool errors
+#:   https://192-168-1-5.<32hex>.plex.direct  a plex.direct name, which EMBEDS the machine id
+#:   https://plex.tv/api/servers/<32hex>/…    the machine id in a path
+_HOST_IN_URL = re.compile(r"\b([a-z][a-z0-9+.-]*)://([^/\s'\"]+)", re.IGNORECASE)
+_HOST_KWARG = re.compile(r"\bhost\s*=\s*(['\"]?)([A-Za-z0-9._-]+)\1")
+_MACHINE_ID = re.compile(r"\b[0-9a-f]{32,40}\b", re.IGNORECASE)
+
+
+def _shape_hosts(s: str) -> str:
+    """Replace addresses with `<host>`, keeping scheme and port.
+
+    `config` shapes the settings it prints, but that was only ever half of it: the same address
+    arrives in every QUOTED EXCEPTION and every log line — "my Plex is unreachable" is the single most
+    likely thing in a support report, and it prints `host='172.16.10.240', port=32400` verbatim. A
+    `plex.direct` hostname is worse: it embeds the server's machine id, which is the identifier the
+    whole privacy system keys on.
+
+    Scheme and port survive because they carry the diagnostic value ("is it https", "is it the
+    standard port"); the host itself never does.
+    """
+
+    def _url(m: re.Match[str]) -> str:
+        netloc = m.group(2)
+        port = netloc.rsplit(":", 1)[-1] if ":" in netloc and netloc.rsplit(":", 1)[-1].isdigit() else ""
+        return f"{m.group(1)}://<host>" + (f":{port}" if port else "")
+
+    return _MACHINE_ID.sub("<machine-id>", _HOST_KWARG.sub(r"host=\1<host>\1", _HOST_IN_URL.sub(_url, s)))
 
 
 def _fail(e: BaseException) -> str:
@@ -321,19 +352,33 @@ def _plex_client(store: SettingsStore):
     return PlexClient(url, token, timeout=_PROBE_TIMEOUT_S)
 
 
-def _counts_as_watched(viewed: int | None, total: int | None, media_type: str, show_pct: float) -> bool:
-    """Whether Shortlist treats this title as already-watched.
+def _counts_as_watched(
+    viewed: int | None, total: int | None, media_type: str, show_pct: float, *, cap: float, rewatch: bool = False
+) -> bool:
+    """Whether the row this title was delivered into treats it as already-watched.
 
-    Delegates to the ENGINE's own `_watched_titles` rather than restating the rule. A support tool
-    that reimplements the threshold will eventually disagree with the engine, and a diagnostic that
-    confidently contradicts the code is worse than no diagnostic at all.
+    Delegates to the ENGINE's own predicates rather than restating them. But it must delegate to the
+    RIGHT one, and since 1.2 there are two, split by the cap:
+
+    * cap 0 (and not a rewatch row) — `zero_pct_exclusions`: anything TOUCHED, started included;
+    * cap above 0 — `_watched_titles`: only FINISHED, because a percentage of the row needs a
+      definite line to mean anything.
+
+    Answering with the finished rule at cap 0 was the pre-1.2 answer, and got the diagnosis exactly
+    backwards: someone reports "I'm two episodes into Teacup and it's still in my row", the tool says
+    `counts: no` at `cap 0%`, and a maintainer reads that as the bug 1.2 just fixed — instead of the
+    real cause, which is that the row has not rebuilt since. It is also the only way to check the 1.2
+    change took effect for a person, so it reporting the old rule made it useless for that too.
     """
     from shortlist.engine.models import MediaType
-    from shortlist.engine.rows import _watched_titles
+    from shortlist.engine.rows import _started_shows, _watched_titles
 
     if media_type == "movie":
         return True  # a watched movie is finished by definition — there is no fraction to apply
-    finished = _watched_titles(set(), {1: (viewed or 0, total)}, show_pct)
+    shows = {1: (viewed or 0, total)}
+    finished = _watched_titles(set(), shows, show_pct)
+    if cap == 0 and not rewatch:
+        finished = finished | _started_shows(shows)
     return (1, MediaType.SHOW) in finished
 
 
@@ -557,12 +602,16 @@ async def title_lookup(request: Request, q: str = Query(min_length=1, max_length
             delivered = found["picks"]
             # Every pick in this group is the same title by construction, so any of them names the
             # row whose cap applies.
-            cap, cap_from = global_pct, "global"
+            cap, cap_from, rewatch = global_pct, "global", False
             if delivered:
                 collection = collections.get(delivered[0].collection_slug)
                 if collection is not None:
                     cap, cap_from = _effective_cap(collection, global_pct)
-            counts = bool(w) and _counts_as_watched(w.viewed_leaf_count, w.leaf_count, w.media_type, show_pct)
+                    rewatch = bool(collection.rewatch)
+            # The row's OWN cap decides which rule applies — see `_counts_as_watched`.
+            counts = bool(w) and _counts_as_watched(
+                w.viewed_leaf_count, w.leaf_count, w.media_type, show_pct, cap=cap, rewatch=rewatch
+            )
             rows.append(
                 {
                     "user": user.slug,
@@ -577,6 +626,7 @@ async def title_lookup(request: Request, q: str = Query(min_length=1, max_length
                     "counts_as_watched": counts,
                     "cap_pct": cap,
                     "cap_source": cap_from,
+                    "rewatch": rewatch,
                     "delivered": [{"row": p.collection_slug, "rank": p.rank, "library": p.library} for p in delivered],
                     # The finding, stated by the tool rather than left for the reader to infer from
                     # a table they cannot interpret.
@@ -862,7 +912,7 @@ async def rows(request: Request) -> dict:
 # --------------------------------------------------------------------------------------------
 
 
-def _anonymiser(session) -> dict[str, str]:
+def _anonymiser(session, extra_names: set[str] | None = None) -> dict[str, str]:
     """`{plex_username: "person1"}` for every account, longest name first.
 
     Longest first matters: replacing "sam" before "samantha" would leave "person3antha" behind.
@@ -872,6 +922,16 @@ def _anonymiser(session) -> dict[str, str]:
     people = session.query(User).order_by(User.id).all()
     mapping = {u.username: f"person{i}" for i, u in enumerate(people, start=1)}
     mapping.update({u.slug: mapping[u.username] for u in people if u.slug and u.slug != u.username})
+    # Names the report can print that our own roster does not know.
+    #
+    # `sharing` renders `account.username` straight from the LIVE plex.tv roster, so a share added
+    # since the last user sync appears in the report while being absent here — and such an account is
+    # GUARANTEED to be named, because with no `shortlist_*` excludes yet it is always flagged. A
+    # DB-derived mapping cannot be correct for a tool whose whole point is reading live plex.tv, so
+    # the renderer hands over the names it actually printed.
+    for name in sorted(extra_names or (), key=lambda n: -len(n)):
+        if name and name not in mapping:
+            mapping[name] = f"person{len(set(mapping.values())) + 1}"
     # Usernames and slugs ONLY — deliberately not nicknames or friendly names.
     #
     # Those are free text an owner types, so they are routinely ordinary words ("Dad", "Home", "TV").
@@ -976,7 +1036,7 @@ async def bundle(request: Request, anonymise: bool = False) -> str:
         # its own way (a table cell, a log line, a `shortlist_<slug>` label), and a per-section pass
         # would have to know each of them.
         with request.app.state.sessions() as session:
-            mapping = _anonymiser(session)
+            mapping = _anonymiser(session, _names_rendered(findings))
         header = _stamp(_Block("names hidden"))
         header.line("Everyone is shown as person1, person2 and so on.")
         header.line("The same label every time, in the logs too, so this still hangs together.")
@@ -984,6 +1044,18 @@ async def bundle(request: Request, anonymise: bool = False) -> str:
         header.line("Library names and title names are NOT hidden.")
         text = _anonymise(text, mapping) + "\n\n" + header.render()
     return text
+
+
+def _names_rendered(findings: dict[str, dict]) -> set[str]:
+    """Account names the report printed that may not be in our `users` table.
+
+    Only `sharing` reads the live plex.tv roster, so only it can name someone we have never synced.
+    """
+    return {
+        str(account.get("user", ""))
+        for account in findings.get("sharing", {}).get("accounts", []) or []
+        if account.get("user")
+    }
 
 
 #: How many flagged people get their own section. A cap, because a server where every share token is
@@ -1004,7 +1076,8 @@ def _people_worth_including(findings: dict[str, dict]) -> list[str]:
     for run in findings.get("recent runs", {}).get("runs", []) or []:
         ordered.extend(str(f["user"]) for f in run.get("failed", []) or [])
     ordered.extend(str(s) for s in findings.get("connection", {}).get("problems", []) or [])
-    ordered.extend(str(s) for s in findings.get("sharing", {}).get("missing_excludes_for", []) or [])
+    # SLUGS, not the usernames the sharing block prints — see `sharing` for why they differ.
+    ordered.extend(str(s) for s in findings.get("sharing", {}).get("missing_excludes_slugs", []) or [])
     return list(dict.fromkeys(ordered))[:_PEOPLE_IN_REPORT]
 
 
@@ -1842,11 +1915,14 @@ async def sharing(request: Request) -> dict:
         # undercounts and reports a correctly-configured server as short; and a DISABLED user is in
         # the roster with no row, so it also overcounts. On the tool whose whole job is "is every row
         # hidden from this person", either would be crying wolf.
-        labelled = {
-            u.plex_account_id: f"{_LABEL_PREFIX}{u.slug}".lower()
-            for u in session.query(User).filter(User.enabled.is_(True)).all()
-        }
+        enabled_users = session.query(User).filter(User.enabled.is_(True)).all()
+        labelled = {u.plex_account_id: f"{_LABEL_PREFIX}{u.slug}".lower() for u in enabled_users}
         all_labels = set(labelled.values())
+        # plex.tv gives us a USERNAME; `person()` and every other tool key on a SLUG, and `slugify`
+        # lowercases and replaces punctuation — so they differ for essentially every real account
+        # ("MooHouse" -> "moohouse", "Chris Smith" -> "chris_smith"). Passing a username on as if it
+        # were a slug made the per-person section 404 for exactly the people with a privacy fault.
+        slug_of = {u.plex_account_id: u.slug for u in session.query(User).all()}
 
         rows: list[dict] = []
         error = None
@@ -1882,6 +1958,7 @@ async def sharing(request: Request) -> dict:
                     rows.append(
                         {
                             "user": account.username,
+                            "slug": slug_of.get(account.id, ""),
                             "account_id": account.id,
                             # LABELS, not clauses. `merge_label_excludes` unions every shortlist label
                             # into ONE `label!=` condition, so counting clauses reported "2
@@ -1907,6 +1984,10 @@ async def sharing(request: Request) -> dict:
         _audit(session, "sharing", {"accounts": len(rows)})
 
     short = [r["user"] for r in rows if r["missing"]]
+    # Slugs for the machine-readable field, usernames for the human-readable block. `person()` takes
+    # a slug; an account plex.tv knows but our roster does not has none, and is dropped rather than
+    # sent on to 404.
+    short_slugs = [r["slug"] for r in rows if r["missing"] and r["slug"]]
 
     # Only the accounts with something WRONG get detail; the rest are a count.
     #
@@ -1935,7 +2016,10 @@ async def sharing(request: Request) -> dict:
         block.line(f"PROBLEM: these people can see a row that is not theirs: {', '.join(short[:8])}")
     return {
         "accounts": rows,
+        # Usernames — what the block shows, and what a human reads.
         "missing_excludes_for": short if not error else [],
+        # Slugs — what `_people_worth_including` feeds to `person()`.
+        "missing_excludes_slugs": short_slugs if not error else [],
         "error": error,
         "text": block.render(),
     }
@@ -2142,33 +2226,53 @@ async def report_zip(request: Request, anonymise: bool = False) -> Response:
     import io
     import zipfile
 
+    from fastapi.concurrency import run_in_threadpool
+
     from shortlist.server.services import log_reader
 
     text = await bundle(request, anonymise=anonymise)
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("shortlist-report.txt", text)
-        # Nested rather than merged: `build_zip` owns the redaction and the vanished-under-rotation
-        # handling, and duplicating either here is how one of them drifts.
-        try:
-            with zipfile.ZipFile(io.BytesIO(log_reader.build_zip(request.app.state.config_dir))) as logs:
-                mapping = {}
-                if anonymise:
-                    with request.app.state.sessions() as session:
-                        mapping = _anonymiser(session)
-                for name in logs.namelist():
-                    body = logs.read(name)
-                    if mapping:
-                        # The logs name people constantly ("watch cache: chris35352 ..."), so hiding
-                        # names in the report and not in the logs beside it would achieve nothing.
-                        body = _anonymise(body.decode("utf-8", "replace"), mapping).encode()
-                    archive.writestr(name, body)
-        except Exception as e:
-            archive.writestr("logs/UNAVAILABLE.txt", f"Logs could not be read: {_fail(e)}")
+    config_dir = request.app.state.config_dir
+    mapping: dict[str, str] = {}
+    if anonymise:
+        with request.app.state.sessions() as session:
+            mapping = _anonymiser(session)
+
+    def _build() -> bytes:
+        """Decompress, rewrite and recompress the log set OFF the event loop.
+
+        Logs rotate at 10 MB a file, so on a busy install this is tens of megabytes of unzip + regex +
+        rezip. Done inline it stalls the SSE run-progress stream, the UI, and `/api/system/health` —
+        which is Docker's HEALTHCHECK — on the page whose whole premise is that the server may already
+        be struggling.
+        """
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("shortlist-report.txt", text)
+            # Nested rather than merged: `build_zip` owns the redaction and the
+            # vanished-under-rotation handling, and duplicating either here is how one of them drifts.
+            try:
+                with zipfile.ZipFile(io.BytesIO(log_reader.build_zip(config_dir))) as logs:
+                    for name in logs.namelist():
+                        body = logs.read(name).decode("utf-8", "replace")
+                        # `build_zip` strips credentials but not ADDRESSES, and a log file is dense
+                        # with them — every PMS call it ever made. Shaped here so the zip carries the
+                        # same guarantee the report body does.
+                        body = _shape_hosts(body)
+                        if mapping:
+                            # The logs name people constantly ("watch cache: chris35352 ..."), so
+                            # hiding names in the report but not in the logs beside it achieves
+                            # nothing.
+                            body = _anonymise(body, mapping)
+                        archive.writestr(name, body.encode())
+            except Exception as e:
+                archive.writestr("logs/UNAVAILABLE.txt", f"Logs could not be read: {_fail(e)}")
+        return buffer.getvalue()
+
+    content = await run_in_threadpool(_build)
     with request.app.state.sessions() as session:
         _audit(session, "report.zip", {})
     return Response(
-        content=buffer.getvalue(),
+        content=content,
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="shortlist-report.zip"'},
     )
