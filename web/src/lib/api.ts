@@ -38,6 +38,13 @@ import type {
   ScheduleResponse,
   RunUserTraceResponse,
   RowOverridePatch,
+  SupportHealth,
+  SupportLibraries,
+  SupportPerson,
+  SupportResult,
+  SupportRows,
+  SupportStatus,
+  SupportTitleLookup,
   Session,
   Settings,
   SetupState,
@@ -638,6 +645,99 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+
+  // --- Support Mode ---
+  // The tools 403 until the mode is on; `supportStatus` is what the page uses to tell the two
+  // states apart rather than rendering a wall of permission errors.
+  supportStatus: (): Promise<SupportStatus> => request("/api/support/status"),
+
+  enableSupport: (): Promise<SupportStatus> =>
+    request("/api/support/enable", { method: "POST" }),
+
+  disableSupport: (): Promise<SupportStatus> =>
+    request("/api/support/disable", { method: "POST" }),
+
+  supportHealth: (): Promise<SupportHealth> => request("/api/support/health"),
+
+  supportTitle: (q: string): Promise<SupportTitleLookup> =>
+    request(`/api/support/title?q=${encodeURIComponent(q)}`),
+
+  supportPerson: (slug: string): Promise<SupportPerson> =>
+    request(`/api/support/person/${encodeURIComponent(slug)}`),
+
+  supportLibraries: (): Promise<SupportLibraries> =>
+    request("/api/support/libraries"),
+
+  supportRows: (): Promise<SupportRows> => request("/api/support/rows"),
+
+  // The remaining checks return their own shapes plus a `text` block. The page reads them through
+  // one generic panel, so they are typed as open records rather than nineteen near-identical
+  // interfaces — the one field every caller actually touches is `text`, which is always present.
+  supportRowSchedule: (): Promise<SupportResult> =>
+    request("/api/support/row-schedule"),
+
+  supportConnection: (): Promise<SupportResult> =>
+    request("/api/support/connection"),
+
+  supportReadAs: (
+    user: string,
+    endpoint: string,
+    section: string,
+  ): Promise<SupportResult> =>
+    request(
+      `/api/support/read-as?user=${encodeURIComponent(user)}&endpoint=${encodeURIComponent(endpoint)}&section=${encodeURIComponent(section)}`,
+    ),
+
+  supportSharing: (): Promise<SupportResult> => request("/api/support/sharing"),
+
+  supportDrift: (): Promise<SupportResult> => request("/api/support/drift"),
+
+  supportPick: (user: string, title: string): Promise<SupportResult> =>
+    request(
+      `/api/support/pick?user=${encodeURIComponent(user)}&title=${encodeURIComponent(title)}`,
+    ),
+
+  supportMissing: (user: string, title: string): Promise<SupportResult> =>
+    request(
+      `/api/support/missing?user=${encodeURIComponent(user)}&title=${encodeURIComponent(title)}`,
+    ),
+
+  supportFunnel: (user: string): Promise<SupportResult> =>
+    request(`/api/support/funnel?user=${encodeURIComponent(user)}`),
+
+  supportAi: (user: string): Promise<SupportResult> =>
+    request(`/api/support/ai?user=${encodeURIComponent(user)}`),
+
+  supportTimeline: (user: string): Promise<SupportResult> =>
+    request(`/api/support/timeline?user=${encodeURIComponent(user)}`),
+
+  supportSettingsHistory: (): Promise<SupportResult> =>
+    request("/api/support/settings-history"),
+
+  supportJobs: (): Promise<SupportResult> => request("/api/support/jobs"),
+
+  supportClocks: (): Promise<SupportResult> => request("/api/support/clocks"),
+
+  supportDatabase: (): Promise<SupportResult> =>
+    request("/api/support/database"),
+
+  supportConfig: (): Promise<SupportResult> => request("/api/support/config"),
+
+  /** The whole report as text, for the clipboard. Not `request()` — the response is text/plain, and
+   *  `request()` would fail trying to parse it as JSON. */
+  getSupportBundle: async (): Promise<string> => {
+    const response = await fetch(apiUrl("/api/support/bundle.txt"), {
+      headers: { Accept: "text/plain" },
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await errorMessageFrom(response));
+    }
+    return response.text();
+  },
+
+  /** A plain link — the session cookie authenticates it, so no fetch/blob dance. Used when a paste
+   *  would be truncated by Discord or Reddit and an attachment is the right answer instead. */
+  supportBundleUrl: (): string => apiUrl("/api/support/bundle.txt"),
 };
 
 /** URL for the shared SSE stream (used by lib/sse.ts only). */

@@ -138,9 +138,12 @@ GET  /api/collections/{id}/effectiveness -> {delivered, watched, first_delivered
      `watched_pct` cannot express this — it is a ceiling, so the ranking shows unwatched titles first and merely PERMITS finished ones; even at 1.0 a
      library with plenty of unwatched candidates yields a mostly-unwatched row. Setting `rewatch` also keeps finished titles in the row's candidate
      POOL regardless of `watched_pct`, so the two rows do not share one pool.
-     `unstarted_only` (bool, default false, SHOWS only) drops every series the person has started, however little of it. The normal filter only drops
-     shows they have FINISHED (`recommendations.watched_show_pct`), so one they are three episodes into is otherwise still eligible — this is what makes
-     "a series to start" literally true. Meaningless for movies, where any view is already a finish.
+     `unstarted_only` (bool, default false; accepted on any row that can hold shows) drops every series the person has started, however little of it.
+     It only changes anything on a row whose `watched_pct` is ABOVE 0: such a row caps FINISHED titles and so still admits a series someone is three
+     episodes into, and this is what makes "a series to start" literally true there. At `watched_pct` 0 the row already excludes started series (see
+     "What 'already watched' means for a show"), so the flag is a no-op. Refused for `media: "movie"`, where any view is already a finish.
+     The finished bar itself is not configurable — it is `EngineConfig.watched_show_pct`, fixed at 0.8. Earlier revisions of this document cited a
+     `recommendations.watched_show_pct` setting; no such key has ever existed.
      Both are refused (422) in combinations that cannot work: `rewatch` + `unstarted_only` together (they ask for opposite things — the row would fill
      with titles nobody has seen, under a "you've already seen" name), and `unstarted_only` on a `media: "movie"` row. PATCH validates the MERGED row,
      not just the fields sent, so neither invalid pair can be reached one field at a time.
@@ -221,6 +224,63 @@ GET  /api/system/health -> {status} (the ONE unauthenticated endpoint — livene
 GET  /api/system/api-token -> {enabled, created_at, token} (owner-gated; token revealable) · POST /api/system/api-token -> {token, created_at} (generate/replace) · DELETE /api/system/api-token (revoke)
 GET  /api/setup/servers (Plex server picker during onboarding) · GET /api/setup/state
 ```
+
+### Support checks ("Have an issue?")
+
+Nineteen read-only diagnostics behind `/issue` in the UI. **Nothing here writes** — not to Plex, not
+to plex.tv, not to the settings a run reads. The only mutations are the mode's own switch and the
+audit rows it leaves.
+
+Two gates, not one. Every tool needs the owner session AND support mode switched on; the mode lapses
+by itself after 24 hours. Being off by default matters because this surface reads share filters and
+per-user tokens, and an install that never files a bug report should never expose it.
+
+```
+GET  /api/support/status -> {enabled, expires_at, seconds_remaining}   (owner only; usable while the mode is off)
+POST /api/support/enable -> switches the checks on for 24h (audited: events scope `support.enable`)
+POST /api/support/disable -> switches them off now
+```
+
+Everything below additionally requires the mode to be on, and returns **403** when it is not. Each
+response carries its own fields plus `text`: a fixed-width block, ≤76 columns, that the UI's "Copy
+for support" button puts on the clipboard verbatim. The block is rendered server-side so the format
+a maintainer reads is decided (and tested) in one place. Credentials are stripped centrally before
+anything reaches it, including from quoted exception messages.
+
+```
+GET  /api/support/health -> {checks[{name, ok, detail}], text} (Plex, libraries, tokens, TMDB, curator, database, clocks, last run — each probed independently so one failure is content, not a 500)
+GET  /api/support/title?q= -> {rows[{user, watched_record, viewed_leaf_count, leaf_count, counts_as_watched, cap_pct, delivered[], problem}], flagged[], text}
+GET  /api/support/person/{slug} -> {user_type, watched_movies, watched_shows, libraries[{section_key, library, titles_known, ever_read}], never_read[], text}
+GET  /api/support/rows -> {rows[{slug, watched_pct, watched_pct_source, freshness, rewatch, unstarted_only}], global_watched_pct, text}
+GET  /api/support/row-schedule -> {rows[{slug, freshness, rebuild_every_days, last_built_at, days_since_built, due}], text}
+GET  /api/support/libraries -> {libraries[{key, title, type, items}], error, text}
+GET  /api/support/connection -> {users[{user, has_token, libraries_read[], never_read[]}], problems[], text}
+GET  /api/support/read-as?user=&endpoint=&section= -> {status_code, total_size, body, sections[], choices[], text}
+GET  /api/support/sharing -> {accounts[{user, shortlist_excludes[], other_conditions[]}], error, text}
+GET  /api/support/drift -> {ledger_count, plex_count, missing_on_plex[], orphans_on_plex[], error, text}
+GET  /api/support/pick?user=&title= -> {picks[{row, rank, seed_title, sources, affinity, reason}], text}
+GET  /api/support/missing?user=&title= -> {verdict, hits[], run_id, text}
+GET  /api/support/funnel?user= -> {stages[{pool, pooled, disposition{}}], delivered, run_id, text}
+GET  /api/support/ai?user= -> {provider, model, llm_tokens, by_step{}, error, text}
+GET  /api/support/timeline?user= -> {entries[{at_utc, at_local, kind, what}], text}
+GET  /api/support/settings-history -> {changes[], last_build_at, change_after_last_build, text}
+GET  /api/support/jobs -> {jobs[], counts{}, failed, text}
+GET  /api/support/clocks -> {tz, local_now, utc_now, offset_hours, scheduled[], text}
+GET  /api/support/database -> {head, tables_present, tables_expected, missing_tables[], indexes, size_mb, text}
+GET  /api/support/config -> {settings[{env, key, env_set, secret, value, has_value}], text}
+GET  /api/support/bundle.txt -> text/plain; every server-wide block in one downloadable file
+```
+
+**`read-as` runs against an allowlist, never a URL you supply.** `endpoint` is one of `libraries`,
+`watched-movies`, `watched-shows`, `home-rows`, and `section` is validated against the keys the PMS
+itself just reported. The container sits on a home network, so an arbitrary-URL fetcher behind owner
+auth would be a port scanner with extra steps. It refuses (409) rather than falling back to the
+owner's token when a person has no share token — reading as the owner would answer a different
+question while looking like it worked.
+
+**`drift` reports, it never repairs.** It also refuses to call anything missing when the Plex read
+itself failed: an unread server is not an empty one, and treating it as one would mark every
+delivered row as missing.
 
 The AI provider (`curator.provider`) no longer ranks a fixed candidate pool. The engine does the
 diversification and writes the genre-template reasons itself. The provider's one remaining job is the
@@ -346,14 +406,30 @@ invisible, and already-seen films kept coming back. `viewCount > 0` (what `unwat
 counts **both**, at any depth. On one real server that meant seeing all ~13k watched titles instead
 of the ~1k the API reported.
 
-A show counts as "finished" once the user has watched enough of it. `viewedLeafCount` against a
-fraction of its episodes (80% by default), with a length-scaled floor so a long-running series a
-person is genuinely deep into isn't treated as fresh, while three episodes of a 200-episode run isn't
-treated as finished. `recommendations.watched_pct` then decides how much of a row (if any) may be
-titles already finished, as a CEILING, never a preference: unwatched titles are shown first, and at
-most that share of the row may be things already finished. A row that should LEAD with rewatches needs
-the per-row `rewatch` flag instead. A row that should exclude series merely STARTED (not just
-finished) needs `unstarted_only`.
+### What "already watched" means for a show
+
+A movie is watched the moment it is played. A show has no such moment — Plex gives no show-level
+`viewCount`, only `viewedLeafCount` and `leafCount` — so every yes/no answer is a threshold over
+those two numbers, and **which threshold depends on where `recommendations.watched_pct` sits**:
+
+| Cap                 | What it excludes                                                                                                                                                | A show they're 2 episodes into |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `0.0` (the default) | Everything they've **touched** — any show with at least one watched episode. This is Plex's own answer; `unwatched=0` returns a series from its first episode.  | Excluded                       |
+| above `0.0`         | A ceiling on **finished** titles: at most that share of the row may be things they've completed. Unwatched titles still come first — it permits, never prefers. | Allowed (it isn't finished)    |
+
+"Finished", used by the cap only, is `viewedLeafCount` against 80% of the episodes with a
+length-scaled floor (`max(3, 15%)`), so a long-running series someone is genuinely deep into isn't
+treated as fresh while three episodes of a 200-episode run isn't treated as finished.
+
+> **Changed in 1.2.** A 0% row used to exclude only _finished_ shows, so one you were two episodes
+> into was, to the row, a fresh discovery and could be recommended straight back. A live probe of a
+> real server found `?type=2&unwatched=0` returning shows as little as 1.1% watched (2 of 176), and
+> five of ten started shows there were still eligible. At 0%, started now means watched. Rows above
+> 0% are unchanged. If you relied on the old behaviour, set the cap above 0.
+
+A row that should LEAD with rewatches needs the per-row `rewatch` flag instead. `unstarted_only`
+still exists and still matters — but only on a row whose cap is **above** 0%, since a 0% row now
+drops started series anyway.
 
 **Why a watched title can still appear:** the read is per-run, so a title marked watched _after_ the
 last run stays eligible until the next run re-reads. Between runs, **Jobs → Sync history**

@@ -21,6 +21,7 @@ import { RunDetailPage } from "@/pages/run-detail";
 import { RunUserTracePage } from "@/pages/run-user-trace";
 import { WatchingAccountPage } from "@/pages/watching-account";
 import { LogsPage } from "@/pages/logs";
+import { IssuePage } from "@/pages/issue";
 import { RunsPage } from "@/pages/runs";
 import { SettingsPage } from "@/pages/settings";
 import { SetupPage } from "@/pages/setup";
@@ -138,6 +139,7 @@ export default function App() {
             {/* The page was /tools until the nav started calling it Jobs. Kept as a redirect:
                 bookmarks and the `action_url` baked into notifications already in the DB. */}
             <Route path="tools" element={<Navigate to="/jobs" replace />} />
+            <Route path="issue" element={<IssuePage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="settings/uninstall" element={<UninstallPage />} />
             <Route

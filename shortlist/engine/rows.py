@@ -330,7 +330,11 @@ def _reusable_prior(
     keep_watched: bool = False,
 ) -> list[Pick]:
     """Last run's picks for this library still valid to redeliver, in their original rank order: right
-    media type, still in the library, and — for a 0%-watched row — not since finished.
+    media type, still in the library, and — for a 0%-watched row — not since watched.
+
+    "Watched" here is whatever `RowPolicy.zero_pct_exclusions` says, which since 1.2 means STARTED,
+    not merely finished. Without that, a show someone began after the last run kept its place in
+    their row until the next rebuild — up to a fortnight at the slowest freshness.
 
     ``keep_watched`` exempts a REWATCH row from that last rule. Its picks are already-finished titles
     by design, so the 0%-row filter discarded every one of them — and since a rewatch row inherits the
@@ -1112,13 +1116,32 @@ class RowPolicy:
     def effective_watched_pct(self, spec: RowSpec) -> float:
         return spec.watched_pct if spec.watched_pct is not None else self.cfg.watched_pct
 
-    def excludes_finished(self, spec: RowSpec) -> bool:
-        """Whether this row's POOL drops finished titles outright (rather than capping at delivery).
+    def excludes_watched(self, spec: RowSpec) -> bool:
+        """Whether this row's POOL drops watched titles outright (rather than capping at delivery).
 
         A rewatch row must never exclude them — they are what it is built from — so it keeps the pool
         that includes them even at watched_pct 0.
         """
         return self.effective_watched_pct(spec) == 0 and not spec.rewatch
+
+    def zero_pct_exclusions(self) -> set[tuple[int, MediaType]]:
+        """What a 0% row must not contain: anything this person has TOUCHED, not merely finished.
+
+        The slider says "already-watched titles: 0%", and until 1.2 that quietly meant "0% FINISHED",
+        where a show only counted once they had seen 80% of it (or a length-scaled floor of ~3
+        episodes). Plex itself has no such notion: its watched filter returns a show from the first
+        episode, and a live probe of a real server found it returning shows as little as 1.1% watched
+        (2 of 176). So a show someone was two episodes into was, to a 0% row, a fresh discovery — and
+        five of ten started shows on that server were eligible to be recommended straight back.
+
+        Now the two agree: at 0%, started IS watched. `_watched_titles` survives for the >0 cap, where
+        "finished" still has to mean something definite for `floor(k * pct)` to be meaningful.
+
+        A UNION rather than a swap: `_started_shows` needs ``viewed > 0``, while `_watched_titles`
+        also counts a show whose episode total Plex could not report at all. Dropping the latter would
+        quietly re-admit those.
+        """
+        return self.watched_titles | _started_shows(self.watched_shows)
 
     def pool_exclusions(self, spec: RowSpec) -> set[tuple[int, MediaType]] | None:
         """Titles this row's pool must not contain, or None when this row has no exclusion rule.
@@ -1133,8 +1156,8 @@ class RowPolicy:
         """
         rule = False
         excluded: set[tuple[int, MediaType]] = set()
-        if self.excludes_finished(spec):
-            excluded |= self.watched_titles
+        if self.excludes_watched(spec):
+            excluded |= self.zero_pct_exclusions()
             rule = True
         # `and spec.media != "movie"` mirrors `pool_key` EXACTLY. `_started_shows` only ever yields
         # SHOW keys, so on a movies row this contributes nothing — but setting `rule` anyway returned
@@ -1223,18 +1246,28 @@ class RowPolicy:
             self.effective_sources(spec),
             spec.media,
             tuple(sorted(str(k) for k in spec.library_keys)),
-            # Only whether the pool hard-excludes finished titles changes the CANDIDATES: a 0% row
+            # Only whether the pool hard-excludes watched titles changes the CANDIDATES: a 0% row
             # drops them from the pool; any >0 row keeps them and caps at delivery. Two >0 rows (20%
             # and 50%) share one pool and differ only in their cap, so they must not key apart.
-            # A rewatch row keeps finished titles even at 0%, so it must key with the >0 rows — hence
-            # `excludes_finished`, not the raw percentage.
-            self.excludes_finished(spec),
+            # A rewatch row keeps watched titles even at 0%, so it must key with the >0 rows — hence
+            # `excludes_watched`, not the raw percentage.
+            self.excludes_watched(spec),
             # An "unstarted shows only" row removes every started series from the POOL, so it cannot
             # share one with a row that keeps them — it would be handed candidates it must not use.
-            # Excluded for a movies-only row: `_started_shows` yields only SHOW keys, which can never
-            # match anything in that pool, so keying on it there splits one gather into two for no
-            # difference in candidates. Over-eager separation is only ever a cost, never a leak.
-            spec.unstarted_only and spec.media != "movie",
+            #
+            # Three ways this contributes nothing, and keying on it anyway costs a whole extra
+            # TMDB/LLM gather per person per night:
+            #   * a movies-only row — `_started_shows` yields only SHOW keys, which can never match
+            #     anything in that pool;
+            #   * a 0% row — since 1.2 `zero_pct_exclusions` already unions the started shows in, so
+            #     the two rows' exclusion sets are byte-identical. Without this term a default 0% row
+            #     and a 0% + unstarted_only row (the commonest pairing, now that the toggle is
+            #     reachable on "films and shows" rows) each paid for their own gather for no
+            #     difference in candidates.
+            #   * a rewatch row — `excludes_watched` is false there, so the sets differ and the key
+            #     must still split; that is why the check is `excludes_watched`, not `pct == 0`.
+            # Over-eager separation is only ever a cost, never a leak — but it is a real cost.
+            spec.unstarted_only and spec.media != "movie" and not self.excludes_watched(spec),
             # recent_count changes how many titles the WEB-SEARCH source searches, so its candidates
             # differ — but only for rows that actually use llm_web. Key on it only then, so two non-web
             # rows differing solely in recent_count still share one pool (no wasted TMDB/curate gather).
@@ -1480,7 +1513,10 @@ def _build_section_picks(
             ctx.previous_picks.get((user.slug, spec.slug, str(section.key)), []),
             kind,
             sec_idx,
-            policy.watched_titles,
+            # The SAME set the 0% pool excludes, so a carried-forward pick can't survive a rule that
+            # would have kept it out of the pool. Consulted only when `pct <= 0`; passing the wider
+            # set unconditionally keeps the two definitions from drifting apart.
+            policy.zero_pct_exclusions(),
             pct,
             keep_watched=spec.rewatch,
         )

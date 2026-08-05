@@ -1,0 +1,103 @@
+<!--
+  PMS 1.43.3 GET /library/sections/{key}/all?type=2&unwatched=0 — the watched read against a SHOW
+  library. Recorded 2026-08-05 from a real server (plex-safety rule 11). Titles and ids are
+  sanitized; attribute NAMES, ordering and the container shape are verbatim.
+
+  WHY THIS FIXTURE EXISTS.
+
+  `pms_watched_incremental.xml.txt` records the same endpoint against a MOVIE library, and until now
+  it was the only recording we had. The show case was assumed rather than measured, and the whole
+  already-watched rule turns on it — so the assumption was load-bearing and unverified.
+
+  WHAT WAS MEASURED, on a show section, as the admin account:
+
+    ?type=2&unwatched=0   -> every show with viewedLeafCount > 0, INCLUDING barely-started ones.
+
+  The ten rows below are the real viewed/total pairs observed, unchanged:
+
+      2/23   4/142   47/47   14/67   42/122   2/176   4/138   100/100   12/17   4/38
+
+  THE POINT. `unwatched=0` on a show library does NOT mean "fully watched". It returns a series from
+  its FIRST episode — 2 of 176 is 1.1% and still comes back. Plex has no show-level `viewCount`; a
+  `<Directory>` carries only `viewedLeafCount` and `leafCount`, so every yes/no answer about a show
+  is somebody's threshold over those two numbers, and Plex's own threshold is "more than zero".
+
+  This is what settled the 1.2 change to the already-watched rule. Shortlist used to apply its own
+  bar on top (>=80% of episodes, or a length-scaled floor of ~3), which meant five of the ten shows
+  above — everything under its floor — were still eligible to be recommended back to the person
+  watching them. A 0% row now treats started as watched, matching the server. See
+  `RowPolicy.zero_pct_exclusions`.
+
+  Note also the mark-as-watched case (ratingKey 5006): a bulk "mark as played" sets the leaf counts
+  equal with no per-episode play history, which the playback-history API would never have shown.
+-->
+<MediaContainer size="10" totalSize="10" allowSync="1" identifier="com.plexapp.plugins.library"
+                librarySectionID="2" librarySectionTitle="TV Shows" librarySectionUUID="REDACTED-UUID"
+                mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1700000000"
+                offset="0" thumb="/:/resources/show.png" title1="TV Shows" title2="All Shows"
+                viewGroup="show" viewMode="65592">
+  <!-- Barely started: two episodes of twenty-three. Under every fraction, still returned. -->
+  <Directory ratingKey="5001" key="/library/metadata/5001/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show A" year="2024" leafCount="23" viewedLeafCount="2"
+             childCount="2" addedAt="1700000001" updatedAt="1700000002" lastViewedAt="1779572385">
+    <Guid id="imdb://tt1000001"/>
+    <Guid id="tmdb://300001"/>
+    <Guid id="tvdb://400001"/>
+  </Directory>
+  <!-- 4 of 142 — 2.8%. The case that makes a percentage-based rule wrong. -->
+  <Directory ratingKey="5002" key="/library/metadata/5002/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show B" year="2019" leafCount="142" viewedLeafCount="4"
+             childCount="8" addedAt="1700000003" updatedAt="1700000004" lastViewedAt="1774305861">
+    <Guid id="tmdb://300002"/>
+  </Directory>
+  <!-- Genuinely finished. -->
+  <Directory ratingKey="5003" key="/library/metadata/5003/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show C" year="2021" leafCount="47" viewedLeafCount="47"
+             childCount="4" addedAt="1700000005" updatedAt="1700000006" lastViewedAt="1765677185">
+    <Guid id="tmdb://300003"/>
+  </Directory>
+  <!-- Part-way through a long run: 14 of 67. -->
+  <Directory ratingKey="5004" key="/library/metadata/5004/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show D" year="2016" leafCount="67" viewedLeafCount="14"
+             childCount="5" addedAt="1700000007" updatedAt="1700000008" lastViewedAt="1760000000">
+    <Guid id="tmdb://300004"/>
+  </Directory>
+  <!-- 42 of 122. -->
+  <Directory ratingKey="5005" key="/library/metadata/5005/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show E" year="2013" leafCount="122" viewedLeafCount="42"
+             childCount="7" addedAt="1700000009" updatedAt="1700000010" lastViewedAt="1755000000">
+    <Guid id="tmdb://300005"/>
+  </Directory>
+  <!-- A bulk mark-as-played: counts equal, and NO lastViewedAt. `_watched_item` stamps such a row
+       1970, which an incremental read then skips — only the periodic full read catches it. -->
+  <Directory ratingKey="5006" key="/library/metadata/5006/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show F" year="2011" leafCount="100" viewedLeafCount="100"
+             childCount="6" addedAt="1700000011" updatedAt="1700000012">
+    <Guid id="tmdb://300006"/>
+  </Directory>
+  <!-- 2 of 176 — 1.1%, the thinnest observed, and the single clearest proof of the point. -->
+  <Directory ratingKey="5007" key="/library/metadata/5007/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show G" year="2005" leafCount="176" viewedLeafCount="2"
+             childCount="12" addedAt="1700000013" updatedAt="1700000014" lastViewedAt="1750000000">
+    <Guid id="tmdb://300007"/>
+  </Directory>
+  <!-- 4 of 138. -->
+  <Directory ratingKey="5008" key="/library/metadata/5008/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show H" year="2008" leafCount="138" viewedLeafCount="4"
+             childCount="9" addedAt="1700000015" updatedAt="1700000016" lastViewedAt="1745000000">
+    <Guid id="tmdb://300008"/>
+  </Directory>
+  <!-- 12 of 17: over the old bar, and watched under the new one too. -->
+  <Directory ratingKey="5009" key="/library/metadata/5009/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show I" year="2022" leafCount="17" viewedLeafCount="12"
+             childCount="2" addedAt="1700000017" updatedAt="1700000018" lastViewedAt="1740000000">
+    <Guid id="tmdb://300009"/>
+  </Directory>
+  <!-- 4 of 38. A show with no tmdb:// guid would be DROPPED by `_watched_item`; every row here has
+       one, which matched the live server (all ten carried an inline TMDB guid). -->
+  <Directory ratingKey="5010" key="/library/metadata/5010/children" guid="plex://show/REDACTED"
+             type="show" title="Sanitised Show J" year="2018" leafCount="38" viewedLeafCount="4"
+             childCount="3" addedAt="1700000019" updatedAt="1700000020" lastViewedAt="1735000000">
+    <Guid id="tmdb://300010"/>
+  </Directory>
+</MediaContainer>

@@ -4,6 +4,55 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-08-05
+
+A minor release with **one behaviour change** — read the first item below before upgrading if any of
+your rows are set to 0% already-watched, which is the default.
+
+### Changed
+
+- **A row set to 0% already-watched now also excludes shows someone has only STARTED.** It used to
+  exclude only shows they had _finished_, where "finished" meant 80% of the episodes or a
+  length-scaled floor of about three. So a series you were two episodes into was, as far as the row
+  was concerned, a fresh discovery — and could be recommended straight back to you. That was
+  reported, and it was doing exactly what it was told.
+
+  Plex draws no such line: its own watched filter returns a series from its first episode. A probe of
+  a real server found it returning shows as little as 1.1% watched (2 of 176), and on that server
+  five of ten started shows were still eligible to be suggested to the person watching them. At 0%,
+  started now means watched — the two agree.
+
+  **Rows above 0% are unchanged.** There the percentage is still a ceiling on _finished_ titles,
+  because "N% of the row" needs a definite line to mean anything. If you relied on the old
+  behaviour, set the cap above 0. Rows re-pick their titles on their own refresh night, so the change
+  reaches a row when it next rebuilds rather than immediately.
+
+- **"Only series they haven't started" is now offered on a films-and-shows row**, not just a
+  shows-only one. The API and the engine always accepted it there; the switch was hidden, so the
+  default row most installs have could never turn it on. On a 0% row it is now a no-op — that row
+  excludes started series anyway — and it still does real work on a row whose cap is above 0%.
+
+### Added
+
+- **"Have an issue?"** — a new page, replacing the sidebar's separate _Report a bug_ and _Copy
+  diagnostics_ buttons. It runs nineteen read-only checks against your own server and, for most
+  problems, names the cause outright: which library refused someone's token, which setting actually
+  applied, why a row is short, whether Plex still matches what Shortlist thinks it delivered.
+
+  Nothing on the page changes anything — not your Plex server, not your rows, not your settings. The
+  checks stay off until you switch them on and switch themselves off again after 24 hours, because
+  they read share filters and per-user tokens. Every check has a **Copy for support** button, and
+  what it copies is shown on screen first so a paste holds no surprises. The last section files the
+  report: a pre-filled GitHub issue plus a secrets-free diagnostic to attach, as a paste or a file.
+
+  If someone reports a problem on a server you don't administer, sending them there is usually faster
+  than a list of questions.
+
+### Fixed
+
+- The documentation described a `recommendations.watched_show_pct` setting that has never existed.
+  The finished threshold is fixed in the engine; the docs now say so.
+
 ## [1.1.0] - 2026-08-05
 
 A minor release: one new setting, four fixes reported by v1 users, and no breaking changes. An

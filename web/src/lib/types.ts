@@ -668,3 +668,138 @@ export type TestableService =
 
 /** Alias kept short for the components that render one line of this. */
 export type UserRun = UserRunSummary;
+
+// --- Support Mode -------------------------------------------------------------------------
+//
+// Every tool response carries `text`: the fixed-width block the "Copy for support" button puts on
+// the clipboard. It is rendered by the SERVER, not assembled here, so the format a maintainer reads
+// is decided and unit-tested in one place and cannot drift between the API and the UI.
+
+export interface SupportStatus {
+  enabled: boolean;
+  expires_at: string | null;
+  seconds_remaining: number;
+}
+
+export interface SupportHealthCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface SupportHealth {
+  checks: SupportHealthCheck[];
+  text: string;
+}
+
+export interface SupportTitleDelivery {
+  row: string;
+  rank: number;
+  library: string;
+}
+
+export interface SupportTitleRow {
+  user: string;
+  /** One row per person PER TITLE — a substring query can match a whole franchise, so the verdict is
+   *  meaningless without knowing which title it is about. */
+  title: string;
+  /** Null when Plex never matched the title to a TMDB id — reported as absent, not as id 0. */
+  tmdb_id: number | null;
+  watched_record: boolean;
+  media_type: string;
+  viewed_leaf_count: number | null;
+  leaf_count: number | null;
+  counts_as_watched: boolean;
+  cap_pct: number;
+  cap_source: string;
+  delivered: SupportTitleDelivery[];
+  /** Delivered to this person, not counted as watched, and their cap is 0% — the reported bug. */
+  problem: boolean;
+}
+
+export interface SupportTitleLookup {
+  query: string;
+  rows: SupportTitleRow[];
+  /** Usernames with at least one problem row. */
+  flagged: string[];
+  /** The same, as "user (title)" — what the copy block names. */
+  flagged_detail: string[];
+  /** True when the search hit its row cap, so the result is not the whole picture. */
+  capped: boolean;
+  text: string;
+}
+
+export interface SupportPersonLibrary {
+  section_key: string;
+  /** The library's display name from Plex; "" when Plex could not be listed. */
+  library: string;
+  titles_known: number;
+  last_full_at: string | null;
+  last_incremental_at: string | null;
+  /** False means the library has NEVER been read for this person — the signature of a refused
+   *  token, which looks identical to "watches nothing" everywhere else in the app. */
+  ever_read: boolean;
+}
+
+export interface SupportPerson {
+  slug: string;
+  display_name: string;
+  user_type: string;
+  enabled: boolean;
+  cold_start: boolean;
+  restricted: boolean;
+  restriction_profile: string;
+  watched_movies: number;
+  watched_shows: number;
+  libraries: SupportPersonLibrary[];
+  never_read: string[];
+  muted_rows: number[];
+  text: string;
+}
+
+export interface SupportLibrary {
+  key: string;
+  title: string;
+  type: string;
+  items: number;
+}
+
+export interface SupportLibraries {
+  libraries: SupportLibrary[];
+  error: string | null;
+  text: string;
+}
+
+export interface SupportRowSetting {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  media: string;
+  size: number;
+  watched_pct: number;
+  watched_pct_source: string;
+  freshness: number;
+  freshness_source: string;
+  rewatch: boolean;
+  unstarted_only: boolean;
+}
+
+export interface SupportRows {
+  rows: SupportRowSetting[];
+  global_watched_pct: number;
+  text: string;
+}
+
+/**
+ * Any support check's response.
+ *
+ * Every check returns its own fields PLUS `text` — the fixed-width block the copy button puts on
+ * the clipboard, rendered server-side. The page reads them all through one generic panel and only
+ * ever touches `text` and a handful of per-check flags (`flagged`, `never_read`, `problems`, …),
+ * which `verdictFor()` looks up by id. Declaring nineteen near-identical interfaces would add no
+ * safety over that, since the panel is generic by design.
+ */
+export interface SupportResult {
+  text: string;
+  [key: string]: unknown;
+}

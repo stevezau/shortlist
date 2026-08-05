@@ -149,6 +149,15 @@ DEFAULTS: dict[str, Any] = {
     "setup.completed": False,
     "setup.step": 0,
     "setup.state": {},
+    # Support Mode's expiry, as an ISO timestamp ("" = off). The diagnostics surface refuses every
+    # tool until this is in the future, and it lapses on its own.
+    #
+    # Listed here for the DEFAULT and for documentation only — it is also in PRIVATE_KEYS, which
+    # keeps it out of `KNOWN_KEYS` and therefore out of `PUT /api/settings`. Without that, the mode
+    # was settable as an ordinary setting: a write of a far-future timestamp switched every tool on
+    # with no `support.enable` event and no 24h lapse, defeating both halves of the boundary. A
+    # settings restore or a stray Settings-page save could do it by accident.
+    "support.enabled_until": "",
 }
 
 # Every schedulable cron ships BLANK, meaning "use the built-in default". The expressions themselves
@@ -184,7 +193,16 @@ SECRET_KEYS = {
 # `api.token_hash`/`api.token_hint` are tombstones: an earlier hash-only version persisted them as
 # NON-secret keys, so they must stay listed here or an upgraded DB would leak them via all_public()
 # (they're also deleted on boot — see LEGACY_KEYS).
-PRIVATE_KEYS = {"api.token", "api.token_created_at", "api.token_hash", "api.token_hint"}
+PRIVATE_KEYS = {
+    "api.token",
+    "api.token_created_at",
+    "api.token_hash",
+    "api.token_hint",
+    # Not a secret, but must never be writable through the generic settings PUT: it is Support Mode's
+    # own gate, and the whole point is that switching it on is audited and self-reversing. Its three
+    # dedicated endpoints (`/support/status|enable|disable`) are the only way in.
+    "support.enabled_until",
+}
 
 # Dropped keys purged from the settings table on boot, so stale rows don't linger.
 LEGACY_KEYS = {"api.token_hash", "api.token_hint", "requests.omdb.apikey", "staleness_runs", "requests.auto_user_tag"}
@@ -288,7 +306,12 @@ class SettingsStore:
         Reads secret rows without decrypting them — only their truthiness decides the redaction — so
         this stays callable from a store with no SecretBox.
         """
-        out = dict(DEFAULTS)
+        # The DEFAULTS seed is filtered too, not just the stored rows. Skipping private keys only on
+        # the way out of the DB still surfaced any private key that HAS a default, with its default
+        # value — which contradicts the promise directly above. It went unnoticed while every private
+        # key was an `api.token*` field with no DEFAULTS entry; `support.enabled_until` is the first
+        # that has one.
+        out = {k: v for k, v in DEFAULTS.items() if k not in PRIVATE_KEYS}
         for row in self._session.query(Setting).all():
             if row.key in PRIVATE_KEYS:
                 continue  # never surfaced to any client — managed via dedicated endpoints only

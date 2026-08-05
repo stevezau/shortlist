@@ -1797,3 +1797,67 @@ class TestScrobbleAs:
         monkeypatch.setattr(plex_pms.http_retry, "get", explode)
 
         assert mock_plex.scrobble_as(4242, "TARGET-TOKEN", dry_run=True) is True
+
+
+class TestTheRecordedShowLibraryResponse:
+    """Replays `tests/fixtures/pms_watched_shows.xml.txt` through the real parser.
+
+    A fixture nothing reads is documentation, not a fixture (rule 11). This one exists because the
+    already-watched rule turns entirely on what `?type=2&unwatched=0` returns, and that was assumed
+    rather than measured until a live probe on 2026-08-05.
+    """
+
+    _URL = "http://pms:32400/library/sections/2/all"
+
+    @staticmethod
+    def _fixture() -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[1] / "fixtures" / "pms_watched_shows.xml.txt").read_text()
+
+    @respx.mock
+    def test_a_real_show_library_read_returns_barely_started_series(self, mock_plex: PlexClient):
+        """The finding that drove the 1.2 rule change: Plex's watched filter is "more than zero
+        episodes", not "finished". A show 2 of 176 in — 1.1% — comes back from this endpoint."""
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
+
+        seen = {(i.viewed_leaf_count, i.leaf_count) for i in items}
+        assert (2, 176) in seen, "a 1.1%-watched show is returned by unwatched=0"
+        assert (2, 23) in seen and (4, 142) in seen
+        # ...and fully-watched ones come back through the same read, undistinguished.
+        assert (47, 47) in seen and (100, 100) in seen
+
+    @respx.mock
+    def test_most_of_what_it_returns_is_not_finished(self, mock_plex: PlexClient):
+        """Half the recorded rows sit under the OLD `min(80%, max(3, 15%))` bar, so under the old
+        rule they stayed eligible to be recommended back to the person watching them."""
+        from shortlist.engine.rows import _watched_titles
+
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
+        shows = {i.tmdb_id: (i.viewed_leaf_count, i.leaf_count) for i in items}
+        finished = _watched_titles(set(), shows, 0.8)
+
+        assert len(items) == 10
+        assert len(finished) == 5, "five of ten started shows did not count as watched"
+
+    @respx.mock
+    def test_a_bulk_mark_as_played_carries_no_last_viewed_stamp(self, mock_plex: PlexClient):
+        """Recorded because it decides a real behaviour: `_watched_item` stamps a row with no
+        `lastViewedAt` as 1970, which an INCREMENTAL read then skips — so a bulk mark-as-played is
+        only ever picked up by the periodic full read."""
+        from datetime import UTC, datetime
+
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
+
+        marked = next(i for i in items if i.tmdb_id == 300006)
+        assert marked.watched_at == datetime(1970, 1, 1, tzinfo=UTC)
+        assert (marked.viewed_leaf_count, marked.leaf_count) == (100, 100)

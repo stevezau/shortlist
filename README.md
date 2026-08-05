@@ -17,8 +17,9 @@
 > [!IMPORTANT]
 > **Shortlist 1.0.** It modifies other people's Plex views and share permissions, so it is built to
 > be careful: every write is previewed by `--dry-run`, your share filters are snapshotted before
-> they're touched, and a full uninstall puts everything back. **Please report bugs** — open an issue
-> with what happened and your `Settings → System → Copy diagnostics` bundle.
+> they're touched, and a full uninstall puts everything back. **Please report bugs** — the
+> **Have an issue?** page runs nineteen read-only checks that often name the cause outright, and
+> then opens a pre-filled issue with a secrets-free diagnostic to attach.
 
 ## The problem: "what should I watch next?"
 

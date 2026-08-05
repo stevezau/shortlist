@@ -16,7 +16,7 @@ export function newBugReportUrl(version: string): string {
     "1. ",
     "2. ",
     "",
-    "**Diagnostics** (paste from the sidebar → Copy diagnostics — it's secrets-free)",
+    "**Diagnostics** (Have an issue? → Copy the full report — it's secrets-free)",
     "",
     "",
     "---",

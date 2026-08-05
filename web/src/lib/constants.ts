@@ -24,18 +24,26 @@ export const DEFAULT_ROW_SLUG = "picked";
 
 /**
  * The already-watched cap, as a whole percentage of the row that may be things the person has
- * already finished. 0 = all fresh (the default), 100 = no filtering. "Finished" means a movie
- * they've watched or a show they've seen most of — a partly-watched show or one with a new season
- * still counts as fresh. Stored as a 0..1 fraction; the UI works in whole percent.
+ * already watched. 0 = all fresh (the default), 100 = no filtering. Stored as a 0..1 fraction; the
+ * UI works in whole percent.
+ *
+ * What "already watched" means depends on where the slider sits, and the two are worth keeping
+ * straight because the difference was a real bug:
+ *
+ *   - at 0 it means TOUCHED — a movie they've seen, or a show they've watched any of. This matches
+ *     Plex's own answer, which marks a show watched from its first episode.
+ *   - above 0 it is a ceiling on FINISHED titles, where a show counts once they're most of the way
+ *     through it. The cap needs a definite line for "N% of the row" to mean anything.
  */
 export const WATCHED_PCT_DEFAULT = 0;
 
 /** Human sentence describing a given whole-percent cap, for helper text under the control. */
 export function watchedPctDescription(pct: number): string {
-  if (pct <= 0) return "Only fresh picks — nothing they’ve already finished.";
+  if (pct <= 0)
+    return "Only fresh picks — nothing they’ve watched, including shows they’ve only started.";
   if (pct >= 100)
     return "No filtering — already-watched titles can fill the whole row.";
-  return `Up to ${pct}% of the row may be things they’ve already finished; the rest stays fresh.`;
+  return `Up to ${pct}% of the row may be things they’ve finished; the rest stays fresh. Shows they’ve only started still count as fresh here.`;
 }
 
 /** Terse label for a row card's "this row overrides the watched cap" badge (fraction → percent). */

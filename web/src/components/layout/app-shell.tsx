@@ -3,9 +3,7 @@ import {
   CircleAlert,
   CircleCheck,
   Loader2,
-  Bug,
-  Check,
-  ClipboardCopy,
+  BookOpen,
   Gauge,
   Inbox,
   LifeBuoy,
@@ -30,8 +28,7 @@ import { SettingsSubNav } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { useSession, useVersion } from "@/lib/queries";
-import { GITHUB_REPO, newBugReportUrl } from "@/lib/support";
-import { useCopy } from "@/lib/use-copy";
+import { GITHUB_REPO } from "@/lib/support";
 import { Toaster } from "sonner";
 
 import { cn } from "@/lib/utils";
@@ -47,25 +44,15 @@ const NAV_ITEMS = [
   { to: "/settings", label: "Settings", icon: SettingsIcon, end: false },
 ];
 
-/** Help + Report-a-bug — both open the project's GitHub in a new tab; the bug link pre-fills the
- *  version + browser so a report always carries the two facts people forget to include. */
+/** Help, and one door for everything that goes wrong.
+ *
+ *  "Report a bug" and "Copy diagnostics" used to sit here as two separate actions, which asked the
+ *  person to know that a bug report wants diagnostics attached and that the copy button is where
+ *  they come from. Both now live on the "Have an issue?" page, along with the checks that answer
+ *  most reports before they are filed. */
 export function HelpLinks() {
-  const version = useVersion();
-  const { state: copyState, copy } = useCopy(2500);
   const linkClass =
     "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
-
-  // The secrets-free diagnostics bundle lives with the bug-report action, not in Settings — grab it
-  // here, then paste it into the GitHub issue. (Too long to pre-fill into the issue URL.) Both the
-  // fetch (a 500 building the bundle) and the clipboard write can fail — useCopy surfaces either as
-  // "couldn't copy" rather than a silently dead button.
-  const copyDiagnostics = () => copy(api.getDebugBundle());
-  const copyLabel =
-    copyState === "copied"
-      ? "Copied — paste into the issue"
-      : copyState === "error"
-        ? "Couldn’t copy — try again"
-        : "Copy diagnostics";
 
   return (
     <div className="space-y-1 px-3">
@@ -75,31 +62,18 @@ export function HelpLinks() {
         rel="noopener noreferrer"
         className={linkClass}
       >
-        <LifeBuoy className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <BookOpen className="h-4 w-4 shrink-0" aria-hidden="true" />
         Help &amp; docs
       </a>
-      <a
-        href={newBugReportUrl(version.data?.current_version ?? "")}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={linkClass}
+      <NavLink
+        to="/issue"
+        className={({ isActive }) =>
+          cn(linkClass, isActive && "bg-accent text-accent-foreground")
+        }
       >
-        <Bug className="h-4 w-4 shrink-0" aria-hidden="true" />
-        Report a bug
-      </a>
-      <button
-        type="button"
-        onClick={copyDiagnostics}
-        className={linkClass}
-        title="Copy a secrets-free summary of your setup to paste into a bug report"
-      >
-        {copyState === "copied" ? (
-          <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
-        ) : (
-          <ClipboardCopy className="h-4 w-4 shrink-0" aria-hidden="true" />
-        )}
-        <span aria-live="polite">{copyLabel}</span>
-      </button>
+        <LifeBuoy className="h-4 w-4 shrink-0" aria-hidden="true" />
+        Have an issue?
+      </NavLink>
     </div>
   );
 }

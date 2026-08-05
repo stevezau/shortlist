@@ -631,3 +631,81 @@ class TestRowProvenanceLogging:
 
         assert "too loosely related" in logged
         assert "Torchwood" in logged, "naming the closest rejection makes the cut auditable"
+
+
+class TestPoolKeyMatchesPoolExclusions:
+    """The invariant `pool_key` exists to hold: same key ⇒ same exclusion set.
+
+    Rows sharing a key share ONE candidate gather, so if two rows can share a key while excluding
+    different things, one of them is handed candidates it must not use. For an `unstarted_only` row
+    that means a series the person has started; for a 0% row, something they have watched. A wrong
+    collapse here is a leak, not merely a wasted gather — which is why this is asserted as a property
+    over the whole matrix rather than as one example.
+
+    Checked directly rather than through a run, because a run only ever exercises the combinations its
+    fixture happens to configure.
+    """
+
+    def test_same_key_implies_same_exclusions_across_the_whole_matrix(self):
+        from types import SimpleNamespace
+
+        from shortlist.engine.rows import RowPolicy, _watched_titles
+
+        # One finished movie, one finished show, one merely STARTED show, and one whose episode total
+        # Plex could not report — the four shapes that make the three exclusion sets differ.
+        watched_movies = {949}
+        watched_shows = {10: (8, 8), 20: (1, 40), 30: (0, None)}
+
+        # A REAL RowPolicy, bypassing __init__ so its methods are genuinely bound and call each other
+        # exactly as they do in production. Stubbing each one would be testing a second copy of the
+        # resolution order rather than the one that ships.
+        stub = object.__new__(RowPolicy)
+        stub.watched_titles = _watched_titles(watched_movies, watched_shows, 0.8)
+        stub.watched_shows = watched_shows
+        stub.cfg = SimpleNamespace(watched_pct=0.0, watched_show_pct=0.8)
+
+        by_key: dict[tuple, set] = {}
+        for pct in (0.0, 0.2, 1.0):
+            for unstarted in (False, True):
+                for rewatch in (False, True):
+                    for media in ("movie", "show", "both"):
+                        if rewatch and unstarted:
+                            continue  # refused by the API (422): they ask for opposite things
+                        if unstarted and media == "movie":
+                            continue  # also refused (422)
+                        spec = SimpleNamespace(watched_pct=pct, rewatch=rewatch, unstarted_only=unstarted, media=media)
+                        # Only the two terms under test; the rest of the real key is irrelevant here.
+                        key = (
+                            media,
+                            stub.excludes_watched(spec),
+                            unstarted and media != "movie" and not stub.excludes_watched(spec),
+                        )
+                        excluded = stub.pool_exclusions(spec)
+                        as_set = frozenset(excluded) if excluded is not None else None
+                        if key in by_key:
+                            assert by_key[key] == as_set, (
+                                f"two rows share pool key {key} but exclude different sets: {by_key[key]} vs {as_set}"
+                            )
+                        by_key[key] = as_set
+
+    def test_a_zero_pct_rows_exclusions_are_a_superset_of_an_unstarted_rows(self):
+        """The reason the collapse in `pool_key` is sound, stated as its own assertion.
+
+        `zero_pct_exclusions` is `watched_titles | started_shows`, so OR-ing the started shows in
+        again adds nothing — which is exactly why a 0% row and a 0% + unstarted_only row may share a
+        pool. If `zero_pct_exclusions` ever stops including the started shows, this fails and the
+        `pool_key` collapse becomes a leak.
+        """
+        from types import SimpleNamespace
+
+        from shortlist.engine.rows import RowPolicy, _started_shows, _watched_titles
+
+        watched_shows = {10: (8, 8), 20: (1, 40), 30: (0, None)}
+        stub = object.__new__(RowPolicy)
+        stub.watched_titles = _watched_titles({949}, watched_shows, 0.8)
+        stub.watched_shows = watched_shows
+        stub.cfg = SimpleNamespace(watched_pct=0.0, watched_show_pct=0.8)
+
+        zero_pct = stub.zero_pct_exclusions()
+
+        assert _started_shows(watched_shows) <= zero_pct
