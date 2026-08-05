@@ -968,3 +968,41 @@ class TestUserWatched:
 
         assert page["items"][0]["title"] == "Transferred"
         assert page["items"][0]["watched_at"].startswith("2026-08-09")
+
+
+class TestPlexRatingsReachTheEngineConfig:
+    """The two settings collapse into one engine field, and "off" has to arrive as None.
+
+    Worth its own test because the collapse is the only place the switch exists: nothing downstream
+    reads `use_plex_ratings`, so if it failed to zero the threshold, the feature would stay on with
+    the switch showing off — and the only symptom would be seeds quietly missing from someone's row.
+    """
+
+    def _threshold(self, service, sessions, box, **values):
+        with sessions() as session:
+            store = SettingsStore(session, box)
+            for key, value in values.items():
+                store.set(key, value)
+        return service.build_context(dry_run=True).config.dislike_threshold
+
+    def test_on_by_default_at_one_star(self, service, sessions, configured):
+        assert self._threshold(service, sessions, configured) == 2.0
+
+    def test_the_configured_threshold_flows_through(self, service, sessions, configured):
+        assert self._threshold(service, sessions, configured, **{"recommendations.dislike_threshold": 6.0}) == 6.0
+
+    def test_a_threshold_of_zero_is_honoured_rather_than_replaced_by_the_default(self, service, sessions, configured):
+        """0 is legal, documented and validator-accepted — it means "only a rating of exactly zero
+        counts". It is also falsy, so `or 2.0` silently swapped it for the default: the settings
+        screen read back 0 while every run used 2, and both screens looked self-consistent."""
+        assert self._threshold(service, sessions, configured, **{"recommendations.dislike_threshold": 0.0}) == 0.0
+
+    def test_switching_it_off_leaves_no_threshold_at_all(self, service, sessions, configured):
+        threshold = self._threshold(
+            service,
+            sessions,
+            configured,
+            **{"recommendations.use_plex_ratings": False, "recommendations.dislike_threshold": 2.0},
+        )
+
+        assert threshold is None, "off must erase the threshold, not leave a number nobody applies"

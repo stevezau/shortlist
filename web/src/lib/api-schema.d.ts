@@ -4750,10 +4750,16 @@ export interface components {
          *     question this endpoint exists to answer.
          */
         WatchedPageOut: {
+            /** Dislike Threshold */
+            dislike_threshold: number | null;
             /** Items */
             items: components["schemas"]["WatchedTitleOut"][];
             /** Last Full Sync At */
             last_full_sync_at: string | null;
+            /** Rated Count */
+            rated_count: number;
+            /** Ratings Trusted */
+            ratings_trusted: boolean;
             /** Synced Titles */
             synced_titles: number;
             /** Total */
@@ -4774,6 +4780,8 @@ export interface components {
             title: string;
             /** Tmdb Id */
             tmdb_id: number | null;
+            /** User Rating */
+            user_rating: number | null;
             /** Viewed Leaf Count */
             viewed_leaf_count: number | null;
             /** Watch Count */

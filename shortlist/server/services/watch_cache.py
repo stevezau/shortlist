@@ -383,6 +383,11 @@ def _upsert(session: Session, user_id: int, section_key: str, media_type: MediaT
     # "none of its episodes were watched" — and the finished-show check reads these directly.
     row.viewed_leaf_count = item.viewed_leaf_count
     row.leaf_count = item.leaf_count
+    # Written unconditionally, INCLUDING when it is None — an un-rating has to be able to clear the
+    # column. Guarding this with `if item.user_rating is not None` would make a rating permanent:
+    # someone who thumbs-downs a title and then changes their mind would keep the old value for ever,
+    # and their row would stay quietly shaped by a judgement they withdrew.
+    row.user_rating = item.user_rating
     row.viewed_at = item.watched_at or utcnow()
 
 
@@ -401,4 +406,5 @@ def _to_item(row: WatchedTitle) -> WatchedItem:
         watch_count=row.watch_count or 1,
         viewed_leaf_count=row.viewed_leaf_count,
         leaf_count=row.leaf_count,
+        user_rating=row.user_rating,
     )

@@ -130,3 +130,29 @@ Blocks are personal. A **shared** row is public, so one person's block does _not
 everyone else sees. Otherwise an individual preference would become a server-wide edit nobody else
 can see or undo. Shared rows use their own server-wide list,
 `recommendations.blocked_shared_seeds`.
+
+## Letting people block their own
+
+Blocking is something only you can do, which means anyone who wants a bad seed gone has to message
+you about it. **Respect Plex ratings** (Settings → Finding titles) closes that gap: when someone
+rates a title 1 star or gives it a thumbs-down in Plex, it stops being used to find similar things
+for them, exactly as if you had blocked it.
+
+Nothing changes for them. They rate it in Plex, on the screen they just finished watching on. There
+is no Shortlist account, no login, and nothing for you to do per person.
+
+A few things worth knowing:
+
+- **A rating they haven't given changes nothing.** Only a low rating acts, so this is silent for the
+  majority of people, who rate nothing at all.
+- **It takes up to a week.** Rating a title doesn't change when it was last watched, and the nightly
+  sync only reads what changed — so a new rating is picked up by the weekly full re-read. Lower
+  `sync.watch_full_days` if you want it sooner.
+- **Shared rows ignore ratings**, for the same reason they ignore blocks.
+- **Ratings written by another tool are ignored.** If you run Kometa's rating sync, or anything else
+  that copies IMDb scores into Plex's user rating, Shortlist won't mistake those for your opinion —
+  Plex's own star control only writes whole numbers, so a rating with a decimal in it wasn't typed by
+  a person. A person's page says so plainly when this is happening to their account.
+
+You can see all of this on **Users → someone → Watch history**: what they rated each title, and
+which ones have stopped seeding as a result.

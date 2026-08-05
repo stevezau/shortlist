@@ -455,6 +455,15 @@ class WatchedTitle(Base):
     # leaves rows the PMS has never heard of, so a blind replace deletes the whole transfer on the
     # very first sync. Everything asking "how recently?" then reads this first.
     source_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # What THIS person rated the title in Plex, 0..10, or NULL if they never rated it — which is the
+    # overwhelming majority (0.27% of watched rows carried one on a real 50-account server). NULL is
+    # therefore the load-bearing value and must stay distinguishable from 0.0, an actual rating.
+    #
+    # A rating change does NOT move `lastViewedAt`, so the incremental read cannot see one: the walk
+    # is ordered by that stamp and stops at the cursor. Only the periodic full re-read
+    # (`sync.watch_full_days`) refreshes this column, which caps how quickly a new rating takes
+    # effect. See `docs/reference.md`.
+    user_rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 

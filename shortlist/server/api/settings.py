@@ -211,6 +211,10 @@ VALIDATORS = {
     "recommendations.min_history": _bounded_int(1, 100),
     "recommendations.cold_start": _one_of("popular", "skip"),
     "recommendations.blocked_shared_seeds": _int_list,
+    "recommendations.use_plex_ratings": _is_bool,
+    # Ceiling of 6 (three stars), not 10: at 10 every rated title counts as disliked and every rating
+    # anyone has ever given stops seeding, which is a setting whose only use is to break the feature.
+    "recommendations.dislike_threshold": _bounded_float(0.0, 6.0),
     # Above 1 only affects READ-ONLY jobs — Plex writers stay exclusive whatever this says.
     "jobs.max_parallel_readonly": _bounded_int(1, 8),
     "log.level": _one_of("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"),

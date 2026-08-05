@@ -12,6 +12,7 @@ import time
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from functools import cached_property
 
 from loguru import logger
 
@@ -31,7 +32,7 @@ from shortlist.engine.delivery import (
     sections_for_keys,
     target_sections,
 )
-from shortlist.engine.history import derive_seeds
+from shortlist.engine.history import derive_seeds, disliked_seed_keys
 from shortlist.engine.models import (
     SHARED_SLUG_PREFIX,
     Candidate,
@@ -806,6 +807,7 @@ def _record_history_trace(
     watched_shows: dict[int, tuple[int, int | None]],
     library_of_watch=lambda _item: "",
     library_of_seed=lambda _seed: "",
+    disliked: set[tuple[int, MediaType]] | None = None,
 ) -> None:
     """File the history/seeds/watched stage of the trace: the most recent watches, the seeds derived
     from them (the widest set any row uses), and a watched summary. Display only.
@@ -814,8 +816,17 @@ def _record_history_trace(
     the UI can group by real library — a server can have several movie or TV libraries with custom
     names, so grouping by media type alone would be wrong. Both default to "" (unknown), which the UI
     falls back to a media-type label for.
+
+    ``disliked`` is recorded, not applied — the seeds handed in were already filtered by it. It is
+    here so a watch that did NOT become a seed can say why: a title silently missing from the seed
+    list is the single hardest thing to explain about a run, and "they rated it 1 star" is the whole
+    answer. It must be the SAME set the run filtered with, passed in rather than recomputed here:
+    recomputing it from a threshold made the trace answer over the full history while the rows
+    answered over their slices, so the explanation could name a title the run had kept, or stay
+    silent about one it had dropped.
     """
     recent = sorted(history, key=lambda i: i.watched_at, reverse=True)[:_TRACE_HISTORY_SAMPLE]
+    disliked = disliked or set()
     seeds = max((seeds_for(spec) for spec in specs), key=len, default=[])
     # True per-library watched totals over the FULL history — NOT the recent sample. The sample is
     # time-ordered and capped, so a heavy-TV watcher's Movies tab would sample only a handful of recent
@@ -835,6 +846,15 @@ def _record_history_trace(
                 "library": library_of_watch(i),
                 "year": i.year,
                 "watched_at": i.watched_at.isoformat() if i.watched_at else None,
+                # Their own Plex rating, 0..10, and whether it is what kept this watch out of the
+                # seeds. `rating` is shown whenever they gave one; `rating_blocked` is the narrower
+                # claim that it ACTED — false for a rating above the threshold, for a tool-written
+                # one, and whenever the feature is off.
+                "rating": i.user_rating,
+                # The PAIR, matching what the exclusion is keyed on — an id-only lookup here would
+                # label a show "rated low" because a movie shares its TMDB number, printing a
+                # confident false reason next to a title the person never rated.
+                "rating_blocked": i.tmdb_id is not None and (i.tmdb_id, i.media_type) in disliked,
             }
             for i in recent
         ],
@@ -1095,6 +1115,18 @@ class RowPolicy:
     pool_failures: dict[tuple, str] = field(default_factory=dict)  # pool key -> why every source for it failed
     seed_cache: dict[tuple, list] = field(default_factory=dict)
 
+    @cached_property
+    def disliked(self) -> set[tuple[int, MediaType]]:
+        """Titles this person rated low in Plex, decided ONCE over their whole history.
+
+        Once, and over everything, is the load-bearing part. `seeds_for` hands `derive_seeds` a row's
+        SLICE of history (narrowed by the row's media and libraries), and whether a person's ratings
+        can be trusted at all is an account-level judgement that abstains on a small sample — so
+        deciding it per row let a movies-only row and a TV-only row reach opposite verdicts about the
+        same person, and the run trace (which reads the full history) disagree with both.
+        """
+        return disliked_seed_keys(self.user.history, self.cfg.dislike_threshold)
+
     def load_watched_breakdown(self) -> None:
         """Fill ``watched_movies``/``watched_shows`` from this person's history.
 
@@ -1234,6 +1266,9 @@ class RowPolicy:
                 blocked=self.user.blocked_seeds,
                 window=window,
                 cycle_offset=offset,
+                # Per-person rows only. The shared-row call below deliberately passes nothing.
+                # Decided once over the whole history, NOT from this row's slice — see `disliked`.
+                disliked=self.disliked,
             )
         return self.seed_cache[key]
 
@@ -1351,6 +1386,7 @@ def _cold_start(
         policy.watched_shows,
         library_of_watch=library_of_watch,
         library_of_seed=library_of_seed,
+        disliked=policy.disliked,
     )
     _record_cold_start_trace(report, base_cold)
     _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": 0})
@@ -1385,6 +1421,7 @@ def _warm_start(
         policy.watched_shows,
         library_of_watch=library_of_watch,
         library_of_seed=library_of_seed,
+        disliked=policy.disliked,
     )
     _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": report.counts.seeds})
     for spec in specs:  # build every row's pool up front so counts and demand see them all
@@ -2016,6 +2053,14 @@ def _shared_row(
     # A shared row cycles off the row alone — its "owner" is the audience, not a person, so there is no
     # user slug to stagger by. Everyone sees the same shared row, so there is nothing to stagger.
     shared_window = effective_seed_window(spec)
+    # No `disliked` here, on purpose — the same reasoning that keeps per-person BLOCKS out of a
+    # shared row (see `EngineConfig.blocked_shared_seeds`). `agg_history` is several people's watches
+    # pooled, so honouring one person's rating would let them quietly delete a title from a row
+    # everyone else sees, with no way for anyone to know why. Server-wide exclusions for shared rows
+    # go through `blocked_shared_seeds`, which the owner sets deliberately.
+    #
+    # Pinned by `TestPlexRatingsEndToEnd::test_a_shared_row_ignores_one_persons_rating` — adding the
+    # kwarg here used to leave the whole suite green.
     seeds = derive_seeds(
         agg_history,
         resolve,

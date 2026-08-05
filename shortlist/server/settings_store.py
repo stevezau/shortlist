@@ -125,6 +125,15 @@ DEFAULTS: dict[str, Any] = {
     # purpose: a shared row is public, so letting one person's block reshape what everyone sees would
     # make an individual preference into a server-wide edit nobody else can see or undo.
     "recommendations.blocked_shared_seeds": [],
+    # When on (default), a title someone rated low in Plex stops being used to find similar things
+    # for them. It rides on the watched read the sync already makes, so it costs nothing, and a title
+    # nobody rated is untouched — which on a real server is 99.7% of watches. Deliberately NOT
+    # row-overridable: a rating is a fact about a person, not about one of their rows.
+    "recommendations.use_plex_ratings": True,
+    # The 0..10 Plex rating at or below which that happens. 2 = one star, which is also where a
+    # thumbs-down lands. Capped at 6 by the validator: above three stars "disliked" stops being a
+    # fair reading, and 10 would suppress every rated title at once.
+    "recommendations.dislike_threshold": 2.0,
     # When on (default), disabling a user hides EVERY shared row from them too (even public "Popular on
     # this server" rows), so a disabled user sees nothing from Shortlist. Off = disabled users still see
     # public shared rows like any other account with library access.

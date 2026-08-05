@@ -10,6 +10,7 @@ playback sessions and capped at ~200 rows.
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Protocol
 
@@ -17,7 +18,7 @@ from loguru import logger
 
 from shortlist.engine.clients.plex_pms import PlexClient, SectionNotShared
 from shortlist.engine.clients.plextv import PlexTvClient
-from shortlist.engine.models import MediaType, Seed, UserProfile, UserType, WatchedItem
+from shortlist.engine.models import MediaType, Seed, UserProfile, UserType, WatchedItem, is_human_rating
 
 # Seed weight halves every ~6 weeks since the watch: a title seen today weighs ~2x one from 6 weeks
 # ago, ~4x one from 3 months ago. Long enough that a season finished last month still seeds strongly,
@@ -219,6 +220,82 @@ def _cycle_window(seeds: list[Seed], window: int, offset: int) -> list[Seed]:
     return [seeds[i], *seeds[:i], *seeds[i + 1 :]]
 
 
+#: Below this share of a person's ratings being whole numbers, none of their ratings are believed.
+#:
+#: The per-value check (`WatchedItem.is_human_rating`) rejects a fractional rating outright, but a
+#: tool writing thousands of scores lands some of them on whole numbers by chance — the owner's
+#: server had 1,455 tool-written ratings of which ~9% were whole, and those look exactly like an
+#: opinion. So a SECOND, account-level check: if most of what an account carries could not have been
+#: typed by a person, the whole account is treated as tool-managed and none of it is used.
+#:
+#: 0.8 leaves room for a real rater whose library also carries a few stray tool-written values,
+#: while the case this exists to catch sits at 0.093 — two orders of margin, not a fine line.
+_HUMAN_RATING_FLOOR = 0.8
+
+#: Below this many ratings, the account-level check above abstains and per-value screening stands
+#: alone. A single fractional rating is 0% whole, which would otherwise condemn an account for one
+#: stray value — and real raters are sparse (14 of 49 people on a live server had rated anything at
+#: all, a median of 2 titles each), so the common case must not be the failing one.
+_MIN_RATINGS_TO_JUDGE = 5
+
+
+def ratings_are_trustworthy(ratings: Iterable[float]) -> bool:
+    """Whether a person's Plex ratings look like OPINIONS rather than a tool's output.
+
+    Takes the ratings themselves rather than the items carrying them, so the server can ask the
+    question straight from a `SELECT user_rating` without rebuilding history — the page and the run
+    must answer it identically, and the surest way to guarantee that is one function over one input.
+
+    See `_HUMAN_RATING_FLOOR`. An account with no ratings is trivially trustworthy: there is nothing
+    to disbelieve, and the seed filter is a no-op for them either way.
+
+    Args:
+        ratings: Every 0..10 rating this person has, in any order. Nones are ignored.
+    """
+    rated = [r for r in ratings if r is not None]
+    if len(rated) < _MIN_RATINGS_TO_JUDGE:
+        return True
+    return sum(1 for r in rated if is_human_rating(r)) / len(rated) >= _HUMAN_RATING_FLOOR
+
+
+def disliked_seed_keys(history: list[WatchedItem], threshold: float | None) -> set[tuple[int, MediaType]]:
+    """Titles this person rated at or below `threshold` in Plex — the ones to stop seeding from.
+
+    Returns empty for `threshold=None` (the feature off), for an account whose ratings failed
+    `ratings_are_trustworthy`, and for the ~70% of people who have never rated anything. Only a
+    rating that could have come from a person counts: see `is_human_rating`.
+
+    Keyed on ``(tmdb_id, media_type)``, never the id alone. TMDB numbers movies and shows in separate
+    namespaces, so 1399 is both a film and Game of Thrones — and a bare-id exclusion built from one
+    person's movie rating silently deleted the identically-numbered SHOW from their seeds, a title
+    they had never rated and could not have. The same mismatch is called out on
+    `db/models.py`'s PickRow, and this is the auto-populated version of it: nobody typed the id, so
+    nobody would ever look at the row and spot it.
+
+    IMPORTANT — call this over the person's WHOLE history, once, not over a row's slice. Trust is an
+    account-level judgement (`ratings_are_trustworthy` abstains below `_MIN_RATINGS_TO_JUDGE`), so
+    computing it per row lets a media- or library-scoped row see too few ratings to judge, abstain,
+    and act on values the full-history verdict rejects. That is how a Kometa-managed movie library
+    and a hand-rated TV library end up disagreeing with each other about the same person.
+
+    Args:
+        history: The person's COMPLETE watched titles, carrying their own `user_rating`.
+        threshold: 0..10 rating at or below which a title stops seeding, or None to ignore ratings.
+
+    Returns:
+        ``(tmdb_id, media_type)`` pairs to exclude from seeding. Excluded from SEEDING only — a title
+        rated low is still watched, and must stay in history so the already-watched rules keep
+        working on it.
+    """
+    if threshold is None or not ratings_are_trustworthy(item.user_rating for item in history):
+        return set()
+    return {
+        (item.tmdb_id, item.media_type)
+        for item in history
+        if item.tmdb_id is not None and item.is_human_rating and item.user_rating <= threshold
+    }
+
+
 def derive_seeds(
     history: list[WatchedItem],
     resolve_tmdb_id,
@@ -227,6 +304,7 @@ def derive_seeds(
     blocked: set[int] | None = None,
     window: int = 1,
     cycle_offset: int = 0,
+    disliked: set[tuple[int, MediaType]] | None = None,
 ) -> list[Seed]:
     """Collapse history into weighted seeds: distinct titles, weighted purely by RECENCY.
 
@@ -249,6 +327,12 @@ def derive_seeds(
             which is every caller's behaviour before seed cycling existed.
         cycle_offset: Which of the window to lead with — the run's day plus a stable per-(row, user)
             phase, so one person's row advances a step a day and two people's rows advance out of step.
+        disliked: ``(tmdb_id, media_type)`` pairs this person rated low, from `disliked_seed_keys`
+            over their WHOLE history. Taken pre-computed rather than derived here from a threshold,
+            because this function is handed a row's SLICE of history — deriving it here judged each
+            row's slice separately, and a slice too small to judge abstains and acts on ratings the
+            full-history verdict rejects. Callers building a SHARED row pass nothing: one person's
+            rating must not reshape a row everyone sees (see `EngineConfig.dislike_threshold`).
     """
     if not history:
         return []
@@ -265,6 +349,11 @@ def derive_seeds(
         if tmdb_id is None:
             continue
         if blocked and tmdb_id in blocked:
+            continue
+        # Checked HERE rather than unioned into `blocked`, because only here is the media type in
+        # hand. `blocked` is owner-typed and id-only; a rating exclusion is auto-derived and must
+        # carry the type, or a disliked movie deletes the show sharing its TMDB number.
+        if disliked and (tmdb_id, media_type) in disliked:
             continue
         watch_count = sum(i.watch_count for i in items)
         recency_days = (newest - max(i.watched_at for i in items)).days

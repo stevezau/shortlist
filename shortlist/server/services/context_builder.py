@@ -23,7 +23,7 @@ from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.context import EngineContext
 from shortlist.engine.curator import make_curator
 from shortlist.engine.delivery import DEFAULT_ROW_NAME, render_row_name
-from shortlist.engine.history import ShareTokenWatchSource, distinct_recent
+from shortlist.engine.history import ShareTokenWatchSource, distinct_recent, ratings_are_trustworthy
 from shortlist.engine.models import (
     ArrTarget,
     EngineConfig,
@@ -81,6 +81,18 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
     if get("curator.model"):
         kwargs["model"] = get("curator.model")
     return kwargs
+
+
+def _dislike_threshold(store: SettingsStore) -> float:
+    """The 0..10 rating at or below which a title stops seeding.
+
+    `or 2.0` would be wrong here and was: 0.0 is a legal, documented, validator-accepted value — it
+    means "only a rating of exactly zero counts as dislike" — and it is falsy, so the owner's stored
+    0 was silently replaced by the default. The settings screen read back 0 while every run used 2,
+    which is the worst kind of disagreement: both screens are self-consistent and neither is right.
+    """
+    raw = store.get("recommendations.dislike_threshold")
+    return 2.0 if raw is None else float(raw)
 
 
 def _refuse_a_different_server(session, machine_id: str) -> None:
@@ -172,6 +184,13 @@ class ContextBuilder:
                 rating_source=store.get("recommendations.rating_source") or "tmdb",
                 min_history=int(store.get("recommendations.min_history") or 10),
                 cold_start=store.get("recommendations.cold_start") or "popular",
+                # The switch collapses into the threshold rather than travelling beside it: the
+                # engine's one question is "at or below what?", and None answers "never". Two fields
+                # would let the config express "off, but with a threshold of 2", which is not a state
+                # and would only ever be a bug waiting for someone to read the wrong one.
+                dislike_threshold=(
+                    _dislike_threshold(store) if store.get("recommendations.use_plex_ratings") else None
+                ),
                 hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
                 dry_run=dry_run,
                 rows=self._build_rows(session, store),
@@ -441,6 +460,7 @@ class ContextBuilder:
                         "watch_count": row.watch_count,
                         "viewed_leaf_count": row.viewed_leaf_count,
                         "leaf_count": row.leaf_count,
+                        "user_rating": row.user_rating,
                     }
                     for row in rows
                 ],
@@ -449,7 +469,36 @@ class ContextBuilder:
                 # claim of completeness while a whole library is still missing from the set.
                 "last_full_sync_at": oldest_full.isoformat() if oldest_full else None,
                 "synced_titles": sum(s.item_count for s in states),
+                # The two facts the page needs to say WHY a rating is or isn't acting, without
+                # reimplementing the rule client-side. Both are properties of the whole set rather
+                # than of a row: the threshold is a server setting, and trust is judged across all of
+                # this person's ratings at once. Deciding it here also means the page can never
+                # disagree with the engine about which titles are seeding.
+                **self._rating_state(session, user_id),
             }
+
+    def _rating_state(self, session: Session, user_id: int) -> dict:
+        """Whether this person's Plex ratings are being acted on, and from what threshold.
+
+        `trusted` is False when their ratings look tool-written rather than typed — the same
+        account-level judgement `history.ratings_are_trustworthy` makes, over the same values, so the
+        page and the run agree. Judged over EVERY rating they have, not just the page on screen: a
+        page-sized sample would flip the verdict as the user paged around.
+        """
+        store = SettingsStore(session)
+        threshold = _dislike_threshold(store)
+        enabled = bool(store.get("recommendations.use_plex_ratings"))
+        ratings = [
+            r
+            for (r,) in session.query(WatchedTitle.user_rating).filter(
+                WatchedTitle.user_id == user_id, WatchedTitle.user_rating.isnot(None)
+            )
+        ]
+        return {
+            "dislike_threshold": threshold if enabled else None,
+            "ratings_trusted": ratings_are_trustworthy(ratings),
+            "rated_count": len(ratings),
+        }
 
     def _delivered_keys(self, session: Session) -> dict[tuple[str, str, str], int]:
         """The delivery ledger as the engine wants it: (user_slug, row_slug, section_key) -> ratingKey.

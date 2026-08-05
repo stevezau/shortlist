@@ -527,6 +527,10 @@ export interface TraceWatch {
   library: string;
   year: number | null;
   watched_at: string | null;
+  /** What they rated it in Plex, 0..10, or null/absent (a run before ratings were read). */
+  rating?: number | null;
+  /** Whether that rating is why it isn't a seed — narrower than `rating`, which is just shown. */
+  rating_blocked?: boolean;
 }
 
 /** A seed derived from history — a history title used to find candidates. */

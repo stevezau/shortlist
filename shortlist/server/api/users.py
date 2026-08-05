@@ -155,6 +155,9 @@ class WatchedTitleOut(PassthroughModel):
     # render 0 of 0 for it.
     viewed_leaf_count: int | None
     leaf_count: int | None
+    # What THIS person rated it in Plex, 0..10, or None if they never did — which is almost always.
+    # Read with their own share token, so it is their rating and nobody else's.
+    user_rating: float | None
 
 
 class WatchedPageOut(PassthroughModel):
@@ -170,6 +173,16 @@ class WatchedPageOut(PassthroughModel):
     # None when any library has never had a full read — see `user_watched`.
     last_full_sync_at: str | None
     synced_titles: int
+    # At or below this 0..10 rating, a title stops seeding this person's rows. None = Plex ratings
+    # are switched off server-wide, so no rating is acting on anything.
+    dislike_threshold: float | None
+    # False when this account's ratings look tool-written (Kometa and friends sync IMDb scores into
+    # the same field) — none of them are used, whatever the threshold says. The page has to state
+    # this, or a row of visible low ratings that change nothing reads as a broken feature.
+    ratings_trusted: bool
+    # How many titles they have rated AT ALL, across the whole set rather than this page — the
+    # difference between "nobody rates things" and "you are looking at the wrong page".
+    rated_count: int
 
 
 class UserSyncOut(PassthroughModel):

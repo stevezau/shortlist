@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { Segmented } from "@/components/segmented";
+import { WatchRating } from "@/components/user-detail/watch-rating";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -139,6 +140,7 @@ export function WatchHistory({
                     <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                       {item.media_type === "show" ? "Show" : "Movie"}
                       {depth ? ` · ${depth}` : ""} · {timeAgo(item.watched_at)}
+                      <WatchRating rating={item.user_rating} page={page} />
                       {/* No tmdb:// GUID means nothing a block could key on, so no button rather than one
                           that fails. */}
                       {item.tmdb_id !== null &&
@@ -201,20 +203,62 @@ export function WatchHistory({
  *  has no visible answer — the set may simply not have been read yet. */
 function SyncFooter({ page, shown }: { page: WatchedPage; shown: number }) {
   return (
-    <p className="border-t pt-3 text-xs text-muted-foreground">
-      Showing {shown} of {page.total}
-      {page.synced_titles
-        ? ` · ${page.synced_titles} titles synced`
-        : ""} ·{" "}
-      {page.last_full_sync_at ? (
-        <>last full sync {timeAgo(page.last_full_sync_at)}</>
-      ) : (
-        <>
-          never fully synced &mdash; run{" "}
-          <strong className="text-foreground">Sync watch history</strong> in
-          Jobs
-        </>
-      )}
+    <div className="space-y-1.5 border-t pt-3 text-xs text-muted-foreground">
+      <p>
+        Showing {shown} of {page.total}
+        {page.synced_titles
+          ? ` · ${page.synced_titles} titles synced`
+          : ""} ·{" "}
+        {page.last_full_sync_at ? (
+          <>last full sync {timeAgo(page.last_full_sync_at)}</>
+        ) : (
+          <>
+            never fully synced &mdash; run{" "}
+            <strong className="text-foreground">Sync watch history</strong> in
+            Jobs
+          </>
+        )}
+      </p>
+      <RatingsNote page={page} />
+    </div>
+  );
+}
+
+/** Why the ratings in this list are, or aren't, changing anything.
+ *
+ *  The distrusted case is the one that has to be said out loud: an account whose ratings were
+ *  written by another tool shows a full column of stars that affect nothing, and silence there reads
+ *  as a broken feature rather than a deliberate refusal. Says nothing at all when nobody has rated
+ *  anything, which is most people — an explanation of an absent feature is just noise.
+ */
+function RatingsNote({ page }: { page: WatchedPage }) {
+  if (!page.rated_count) return null;
+  if (!page.ratings_trusted) {
+    return (
+      <p role="status" className="text-warning">
+        Another tool is writing Plex ratings on this account (they aren’t whole
+        numbers, which is the one thing Plex’s own star control can’t do), so
+        Shortlist ignores all {page.rated_count} of them.
+      </p>
+    );
+  }
+  if (page.dislike_threshold === null) {
+    return (
+      <p>
+        They’ve rated {page.rated_count}{" "}
+        {page.rated_count === 1 ? "title" : "titles"}. Turn on{" "}
+        <strong className="text-foreground">Respect Plex ratings</strong> in
+        Settings to stop the ones they disliked shaping their picks.
+      </p>
+    );
+  }
+  const stars = page.dislike_threshold / 2;
+  return (
+    <p>
+      They’ve rated {page.rated_count}{" "}
+      {page.rated_count === 1 ? "title" : "titles"} in Plex. Anything at or
+      below {stars} {stars === 1 ? "star" : "stars"} stops being used to find
+      similar titles for them.
     </p>
   );
 }

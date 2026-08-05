@@ -34,6 +34,34 @@ class TestSettingsValidation:
         assert client.put("/api/settings", json={"values": {"plex.timeout_s": 0}}).status_code == 422
         assert client.put("/api/settings", json={"values": {"plex.timeout_s": 301}}).status_code == 422
 
+    def test_the_dislike_threshold_is_capped_below_the_top_of_the_scale(self, client: TestClient):
+        """The cap is the whole reason this validator exists. `userRating` runs 0..10, so a naive
+        0..10 bound would let someone set 10 — at which point EVERY rated title counts as disliked
+        and every rating anyone ever gave stops seeding. 6 (three stars) is the last value where
+        "disliked" is still a fair reading of what the person meant."""
+        assert client.put("/api/settings", json={"values": {"recommendations.dislike_threshold": 0}}).status_code == 200
+        assert client.put("/api/settings", json={"values": {"recommendations.dislike_threshold": 2}}).status_code == 200
+        assert client.put("/api/settings", json={"values": {"recommendations.dislike_threshold": 6}}).status_code == 200
+        assert client.put("/api/settings", json={"values": {"recommendations.dislike_threshold": 8}}).status_code == 422
+        assert (
+            client.put("/api/settings", json={"values": {"recommendations.dislike_threshold": 10}}).status_code == 422
+        )
+        assert (
+            client.put("/api/settings", json={"values": {"recommendations.dislike_threshold": -1}}).status_code == 422
+        )
+        assert (
+            client.put("/api/settings", json={"values": {"recommendations.dislike_threshold": "low"}}).status_code
+            == 422
+        )
+
+    def test_respecting_plex_ratings_is_a_boolean(self, client: TestClient):
+        assert (
+            client.put("/api/settings", json={"values": {"recommendations.use_plex_ratings": False}}).status_code == 200
+        )
+        assert (
+            client.put("/api/settings", json={"values": {"recommendations.use_plex_ratings": "yes"}}).status_code == 422
+        )
+
     def test_a_non_numeric_row_size_is_refused(self, client: TestClient):
         # "abc" was stored happily, then raised ValueError inside every run and 500'd two endpoints.
         assert client.put("/api/settings", json={"values": {"row.size": "abc"}}).status_code == 422

@@ -134,7 +134,16 @@ class FakePlexState:
     collections: dict[int, FakeCollection] = field(default_factory=dict)
     users: dict[int, FakeUser] = field(default_factory=dict)  # owner is NOT in this dict
     history: list[FakeHistoryEntry] = field(default_factory=list)
+    # What each account rated each title, {(account_id, rating_key): 0..10}. Keyed by ACCOUNT because
+    # that is how Plex really scopes it: live-probed across 50 accounts on a real server, a title
+    # reading 6.2 for the owner carried no `userRating` at all for any of the 49 viewers. A fake that
+    # served one rating to everybody would make the leak this keying prevents untestable.
+    user_ratings: dict[tuple[int, int], float] = field(default_factory=dict)
     next_rating_key: int = 5000
+
+    def rate(self, account_id: int, rating_key: int, rating: float) -> None:
+        """Record that one account rated one title — what tapping the stars in Plex does."""
+        self.user_ratings[(account_id, rating_key)] = rating
 
     @property
     def section_id(self) -> int:
@@ -374,6 +383,11 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
     )
     if watched_by is not None:
         element.set("lastViewedAt", str(state.last_viewed_at(watched_by, movie.rating_key)))
+        # Only for the account being read AS — the real PMS omits the attribute entirely for anyone
+        # who hasn't rated it, which is what makes "never rated" distinguishable from a 0.
+        rating = state.user_ratings.get((watched_by, movie.rating_key))
+        if rating is not None:
+            element.set("userRating", str(rating))
         if is_show:
             # A watched show in the fixture is served fully watched (viewed == total) — the common
             # "finished the series" case, which the engine then treats as finished AND a seed.

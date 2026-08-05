@@ -1861,3 +1861,84 @@ class TestTheRecordedShowLibraryResponse:
         marked = next(i for i in items if i.tmdb_id == 300006)
         assert marked.watched_at == datetime(1970, 1, 1, tzinfo=UTC)
         assert (marked.viewed_leaf_count, marked.leaf_count) == (100, 100)
+
+
+class TestTheRecordedUserRatingResponse:
+    """Replays `tests/fixtures/pms_watched_user_rating.xml.txt` through the real parser.
+
+    Issue #69 turns on `userRating` arriving free on the watched read we already make. That is now
+    measured rather than assumed (rule 11), and the fixture also records the trap: on a server
+    running Kometa's rating sync, most of the OWNER's ratings were written by a tool, not typed.
+    """
+
+    _URL = "http://pms:32400/library/sections/1/all"
+
+    @staticmethod
+    def _fixture() -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[1] / "fixtures" / "pms_watched_user_rating.xml.txt").read_text()
+
+    def _items(self, mock_plex: PlexClient) -> list:
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+        return mock_plex.watched_titles("1", MediaType.MOVIE, "TOK").items
+
+    @respx.mock
+    def test_user_rating_is_parsed_off_the_watched_read(self, mock_plex: PlexClient):
+        """The whole feasibility claim in one assertion: no second request, no new endpoint."""
+        by_id = {i.tmdb_id: i for i in self._items(mock_plex)}
+
+        assert by_id[333371].user_rating == 7.9
+        assert by_id[1364939].user_rating == 2.0
+
+    @respx.mock
+    def test_a_title_nobody_rated_carries_no_rating_rather_than_a_zero(self, mock_plex: PlexClient):
+        """0.0 is a rating someone can give. "Never rated" has to stay distinguishable from it, or
+        every unrated title in the library reads as universally hated and stops seeding."""
+        by_id = {i.tmdb_id: i for i in self._items(mock_plex)}
+
+        assert by_id[1332077].user_rating is None
+        assert by_id[1332077].is_human_rating is False
+
+    @respx.mock
+    def test_a_fractional_rating_is_recognised_as_tool_written(self, mock_plex: PlexClient):
+        """The guard that keeps Kometa's IMDb scores from reading as the owner's opinion. Plex's own
+        control cannot write 7.9, so nothing that did was typed by a person."""
+        by_id = {i.tmdb_id: i for i in self._items(mock_plex)}
+
+        assert by_id[333371].is_human_rating is False, "7.9 cannot come from Plex's star control"
+        assert by_id[63].is_human_rating is False, "8.8 — and identical to the title's `rating`"
+        assert by_id[1248753].is_human_rating is True, "8.0, from a real viewer"
+
+    @respx.mock
+    def test_the_tool_also_writes_some_whole_numbers(self, mock_plex: PlexClient):
+        """Why one guard is not enough. Row 3 is tool-written and lands on 6.0, which the per-value
+        check cannot tell from an opinion — the account-level check in `history` is what catches it.
+        If this ever fails because the value changed, the account-level guard is what still holds."""
+        by_id = {i.tmdb_id: i for i in self._items(mock_plex)}
+
+        assert by_id[509967].user_rating == 6.0
+        assert by_id[509967].is_human_rating is True, "indistinguishable per-value — hence two layers"
+
+    @respx.mock
+    def test_the_owner_rows_in_this_fixture_fail_the_account_level_guard(self, mock_plex: PlexClient):
+        """The two layers composed, over the real recording: taken as one account, these ratings are
+        mostly fractional, so NONE of them are believed — including the whole-numbered 6.0."""
+        from shortlist.engine.history import disliked_seed_keys, ratings_are_trustworthy
+
+        owner_rows = [i for i in self._items(mock_plex) if i.tmdb_id in {333371, 63, 509967}]
+        # The recording holds three owner rows and the account guard abstains under five, so the
+        # sample is doubled to reach a judgeable size while keeping the recorded RATIO (1 whole in 3)
+        # — which is close to the real account's 9.3%. Doubling rows rather than bare values because
+        # `disliked_seed_keys` judges the account from the same list it then filters; handing it a
+        # short list would have it abstain and suppress on the 6.0, which is exactly what an earlier
+        # version of this test did.
+        doubled = owner_rows * 2
+
+        assert ratings_are_trustworthy([i.user_rating for i in doubled]) is False
+        assert disliked_seed_keys(doubled, 6.0) == set(), "a distrusted account suppresses nothing"
+        # ...and the same six rows, believed, WOULD have suppressed the tool's 6.0. That contrast is
+        # the point: the account guard is the only thing standing between Kometa's IMDb scores and a
+        # silently shrunken seed list.
+        assert disliked_seed_keys([i for i in doubled if i.is_human_rating], 6.0) == {(509967, MediaType.MOVIE)}

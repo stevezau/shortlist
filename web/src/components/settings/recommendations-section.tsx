@@ -104,6 +104,13 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   const [coldStart, setColdStart] = useState<ColdStart>(() =>
     asColdStart(settings["recommendations.cold_start"]),
   );
+  const [usePlexRatings, setUsePlexRatings] = useState<boolean>(
+    () => settings["recommendations.use_plex_ratings"] !== false,
+  );
+  const [dislikeThreshold, setDislikeThreshold] = useState<number>(() => {
+    const value = Number(settings["recommendations.dislike_threshold"]);
+    return Number.isFinite(value) ? Math.min(6, Math.max(0, value)) : 2;
+  });
 
   const toggle = (id: string) =>
     setEnabled((current) =>
@@ -123,11 +130,15 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       ratingSource,
       minHistory,
       coldStart,
+      usePlexRatings,
+      dislikeThreshold,
     },
     () => ({
       "candidates.sources": enabled,
       "recommendations.min_history": minHistory,
       "recommendations.cold_start": coldStart,
+      "recommendations.use_plex_ratings": usePlexRatings,
+      "recommendations.dislike_threshold": dislikeThreshold,
       "recommendations.watched_pct": watchedPct / 100,
       "recommendations.freshness": freshness / 100,
       "recommendations.recent_count": recentCount,
@@ -331,6 +342,74 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 />
                 <span className="text-sm text-muted-foreground">watches</span>
               </div>
+            </div>
+            {/* The switch and the line it draws stay in one block: "respect ratings" says nothing
+                about WHICH ratings, and a threshold with no switch above it can't be turned off. */}
+            <div className="space-y-2 border-t pt-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-0.5">
+                  <Label htmlFor="use-plex-ratings">Respect Plex ratings</Label>
+                  {/* Every other setting in this card advertises "any row can choose its own", so
+                      staying silent about scope reads as "presumably also per row". Say it: a
+                      rating is a fact about a PERSON, and "respect what they disliked on the movies
+                      row but ignore it on the TV row" is not a preference anyone holds. */}
+                  <p className="text-sm text-muted-foreground">
+                    When someone rates a title low in Plex, stop using it to
+                    find similar things for them. They rate it in Plex like they
+                    always have &mdash; there is nothing for them to sign in to,
+                    and nothing for you to do per person. A title they
+                    haven&rsquo;t rated is unaffected, which is nearly all of
+                    them. This one is server-wide: what someone thought of a
+                    film is true on every row, so no row overrides it. Shared
+                    rows ignore ratings entirely &mdash; one person&rsquo;s
+                    opinion shouldn&rsquo;t reshape a row everyone sees.
+                  </p>
+                </div>
+                <Switch
+                  id="use-plex-ratings"
+                  checked={usePlexRatings}
+                  onCheckedChange={setUsePlexRatings}
+                  aria-label="Respect Plex ratings"
+                />
+              </div>
+              {usePlexRatings && (
+                <div className="space-y-2 pt-2">
+                  <Label htmlFor="dislike-threshold">
+                    Treat as &ldquo;didn&rsquo;t like it&rdquo;
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    At or below this rating, a title stops shaping their picks.
+                    A thumbs-down in Plex counts as 1 star. It stays in their
+                    watch history either way &mdash; this only changes what gets
+                    recommended next.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="dislike-threshold"
+                      type="number"
+                      min={0.5}
+                      max={3}
+                      step={0.5}
+                      // Stored on Plex's 0..10 scale, shown as stars — the scale people actually see
+                      // in Plex. Halving/doubling here rather than storing stars keeps the setting in
+                      // the same units as the raw `userRating` every comparison uses.
+                      value={dislikeThreshold / 2}
+                      onChange={(e) =>
+                        setDislikeThreshold(
+                          Math.max(
+                            1,
+                            Math.min(6, (Number(e.target.value) || 1) * 2),
+                          ),
+                        )
+                      }
+                      className="w-24"
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      stars and below
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
             {/* Threshold and consequence together: the number is meaningless without knowing what
                 happens below it, and the choice is meaningless without knowing where the line is. */}

@@ -231,6 +231,20 @@ def _is_newest_first(entries: list) -> bool:
     return all(a >= b for a, b in pairwise(_stamps(entries)))
 
 
+def _float_or_none(raw: str | None) -> float | None:
+    """A PMS attribute as a float, or None when it is absent or unparseable.
+
+    Unparseable reads as absent on purpose: one malformed attribute must not raise out of a whole
+    library's watched read, the same tolerance `_watched_item` already gives a malformed guid.
+    """
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _stamps(entries: list) -> list[int]:
     """This page's parseable `lastViewedAt` values, in the order the server returned them."""
     stamps: list[int] = []
@@ -1084,6 +1098,11 @@ class PlexClient:
             datetime.fromtimestamp(int(last_viewed), tz=UTC) if last_viewed else datetime(1970, 1, 1, tzinfo=UTC)
         )
         year = el.get("year")
+        # `userRating` belongs to the TOKEN this page was read with, not to the server — live-probed
+        # 2026-08-06 across 50 accounts on a real server: a title reading 6.2 as the owner came back
+        # with no `userRating` at all for all 49 viewers. So it needs no extra request and cannot leak
+        # one person's opinion into another's row. Absent on all but ~0.3% of watched rows.
+        user_rating = _float_or_none(el.get("userRating"))
         if media_type is MediaType.MOVIE:
             return WatchedItem(
                 title=el.get("title") or "",
@@ -1093,6 +1112,7 @@ class PlexClient:
                 year=int(year) if year else None,
                 rating_key=int(el.get("ratingKey")) if el.get("ratingKey") else None,
                 watch_count=int(el.get("viewCount") or 1),
+                user_rating=user_rating,
             )
         viewed_leaf = el.get("viewedLeafCount")
         leaf = el.get("leafCount")
@@ -1109,4 +1129,5 @@ class PlexClient:
             watch_count=max(1, viewed_leaf_count),
             viewed_leaf_count=viewed_leaf_count,
             leaf_count=int(leaf) if leaf else None,
+            user_rating=user_rating,
         )

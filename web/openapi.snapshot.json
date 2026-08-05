@@ -5528,6 +5528,17 @@
         "additionalProperties": true,
         "description": "A page of the watched set, plus how complete the set behind it is.\n\nThe freshness fields travel WITH the page on purpose: this list is a cache, and a page that\ndoesn't say when it was last filled invites \"I watched that, why is it recommended?\" \u2014 the exact\nquestion this endpoint exists to answer.",
         "properties": {
+          "dislike_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dislike Threshold"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/WatchedTitleOut"
@@ -5546,6 +5557,14 @@
             ],
             "title": "Last Full Sync At"
           },
+          "rated_count": {
+            "title": "Rated Count",
+            "type": "integer"
+          },
+          "ratings_trusted": {
+            "title": "Ratings Trusted",
+            "type": "boolean"
+          },
           "synced_titles": {
             "title": "Synced Titles",
             "type": "integer"
@@ -5559,7 +5578,10 @@
           "items",
           "total",
           "last_full_sync_at",
-          "synced_titles"
+          "synced_titles",
+          "dislike_threshold",
+          "ratings_trusted",
+          "rated_count"
         ],
         "title": "WatchedPageOut",
         "type": "object"
@@ -5597,6 +5619,17 @@
               }
             ],
             "title": "Tmdb Id"
+          },
+          "user_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Rating"
           },
           "viewed_leaf_count": {
             "anyOf": [
@@ -5637,7 +5670,8 @@
           "year",
           "watch_count",
           "viewed_leaf_count",
-          "leaf_count"
+          "leaf_count",
+          "user_rating"
         ],
         "title": "WatchedTitleOut",
         "type": "object"
