@@ -844,7 +844,11 @@ async def person(request: Request, slug: str) -> dict:
         named = ", ".join(
             lib["library"] or f"section {lib['section_key']}" for lib in payload["libraries"] if not lib["ever_read"]
         )
-        block.line(f"PROBLEM: never successfully read: {named}")
+        # Same caution as the connection check: never-read does not prove broken. A library that is
+        # not shared with someone is never read, and that is correct configuration.
+        block.line(f"NEVER READ for this person: {named}")
+        block.line("Expected if those are not shared with them. If they are, reads are failing —")
+        block.line("'What errors has it logged?' will name them in a warning.")
     payload["text"] = block.render()
     return payload
 
@@ -1838,7 +1842,16 @@ async def connection(request: Request) -> dict:
             [14, 8, 6, 16, 12],
         )
         block.rule()
-        block.line(f"PROBLEM: {len(bad)} person/people cannot be fully read: {', '.join(r['user'] for r in bad)}")
+        # NOT stated as a fault, because it may not be one — and this ran on the maintainer's own
+        # healthy server and flagged two people whose only "problem" was a Sports library never
+        # shared with them. An unshared library and a failing one are indistinguishable from here:
+        # `watch_sync` skips a 403 without recording state, and `force_full_next_time` only touches a
+        # row that already exists, so neither leaves a trace. The check that CAN tell them apart is
+        # the log — a real failure warns, an unshared library does not — so it points there.
+        block.line(f"{len(bad)} person/people have a library we have never read:")
+        block.line(f"  {', '.join(r['user'] for r in bad)}")
+        block.line("That is expected if the library simply is not shared with them. If it IS shared,")
+        block.line("reads are failing — check 'What errors has it logged?' for a warning naming them.")
     return {"users": rows, "problems": [r["user"] for r in bad], "error": token_error, "text": block.render()}
 
 

@@ -368,8 +368,10 @@ class TestPerson:
         body = client.get("/api/support/person/sarah").json()
 
         assert body["never_read"] == ["3"]
-        # No Plex to list from here, so the fallback names the bare section key.
-        assert "PROBLEM: never successfully read: section 3" in body["text"]
+        # No Plex to list from here, so the fallback names the bare section key. And it is stated as
+        # a fact, not a fault: an unshared library is never read either, and that is correct config.
+        assert "NEVER READ for this person: section 3" in body["text"]
+        assert "not shared with them" in body["text"]
 
     def test_counts_movies_and_shows_separately(self, client):
         app = client.app
@@ -424,7 +426,7 @@ class TestPerson:
         assert body["never_read"] == ["1"]
         assert [lib["library"] for lib in body["libraries"]] == ["TV Shows", "Movies"]
         # Named, not keyed — the reporter has to match this against what they see in Plex.
-        assert "PROBLEM: never successfully read: TV Shows" in body["text"]
+        assert "NEVER READ for this person: TV Shows" in body["text"]
 
     def test_an_unknown_person_is_a_404_naming_what_was_looked_up(self, client):
         _enable(client)
@@ -783,7 +785,7 @@ class TestLivePlexTools:
         _enable(client)
         body = client.get("/api/support/connection").json()
         assert "sarah" in body["problems"]
-        assert "PROBLEM" in body["text"]
+        assert "have a library we have never read" in body["text"]
 
     def test_read_as_refuses_an_endpoint_that_is_not_on_the_allowlist(self, client):
         """An allowlist, never a free URL field: this container sits on someone's home network, so
@@ -1704,3 +1706,38 @@ class TestKnownIdentifiersAreRedactedAsLiterals:
         import shortlist.server.api.support as support
 
         assert "_KNOWN.set" in inspect.getsource(support.require_support_mode)
+
+
+class TestNeverReadIsNotStatedAsAFault:
+    """Run on the maintainer's own healthy 46-user server and it flagged two people as a PROBLEM.
+
+    Their only "problem" was a Sports library that had never been shared with them — correct
+    configuration. And an unshared library is indistinguishable from a failing one at this layer:
+    `watch_sync` skips a 403 without recording state, and `force_full_next_time` only touches a row
+    that already exists, so neither leaves a trace. A check that cannot tell them apart must not claim
+    one; it points at the log, which can.
+    """
+
+    def test_the_connection_check_states_a_fact_and_names_the_ambiguity(self, client):
+        _enable(client)
+
+        text = client.get("/api/support/connection").json()["text"]
+
+        assert "have a library we have never read" in text
+        assert "not shared with them" in text
+        assert "What errors has it logged?" in text
+        assert "PROBLEM:" not in text, "it cannot prove a fault, so it must not assert one"
+
+    def test_a_person_with_an_unread_library_is_reported_the_same_way(self, client):
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter(User.slug == "sarah").one()
+            session.add(
+                WatchedTitle(user_id=user.id, section_key="7", rating_key=1, tmdb_id=5, media_type="show", title="X")
+            )
+            session.commit()
+        _enable(client)
+
+        text = client.get("/api/support/person/sarah").json()["text"]
+
+        assert "NEVER READ for this person" in text
+        assert "not shared with them" in text
