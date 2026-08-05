@@ -1484,3 +1484,30 @@ class TestWhatTheReportDiscloses:
         assert "person1 and person2 watched the same show" in out, out
         assert "shortlist_person1" in out, "a name in label form must still be hidden"
         assert "antha" not in out
+
+
+class TestNoDisplayNameReachesTheReport:
+    """The anonymiser maps usernames and slugs, not nicknames or friendly names.
+
+    That is deliberate — those are free text and routinely ordinary words ("Dad", "Home", "TV"), so
+    substituting them would corrupt unrelated prose. It is only safe because the report renders slugs
+    and never display names, which is a property of the RENDERERS. Checked on the real 50-user server
+    (2026-08-05: 47 such names existed, none appeared) — this pins it so a future check that prints a
+    display name fails here rather than in someone's public GitHub issue.
+    """
+
+    def test_a_nickname_never_appears_in_the_report_anonymised_or_not(self, client):
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter(User.slug == "sarah").one()
+            user.nickname = "Zaphod"
+            user.friendly_name = "Beeblebrox"
+            session.commit()
+        _seed_teacup(client.app, viewed=None, total=None, delivered=True)
+        _enable(client)
+
+        plain = client.get("/api/support/bundle.txt").text
+        hidden = client.get("/api/support/bundle.txt", params={"anonymise": "true"}).text
+
+        for name in ("Zaphod", "Beeblebrox"):
+            assert name not in plain, f"{name} reached the report — add it to _anonymiser or stop rendering it"
+            assert name not in hidden, f"{name} survived anonymisation"

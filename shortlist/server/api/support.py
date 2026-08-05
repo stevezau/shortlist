@@ -872,6 +872,14 @@ def _anonymiser(session) -> dict[str, str]:
     people = session.query(User).order_by(User.id).all()
     mapping = {u.username: f"person{i}" for i, u in enumerate(people, start=1)}
     mapping.update({u.slug: mapping[u.username] for u in people if u.slug and u.slug != u.username})
+    # Usernames and slugs ONLY — deliberately not nicknames or friendly names.
+    #
+    # Those are free text an owner types, so they are routinely ordinary words ("Dad", "Home", "TV").
+    # Substituting them would corrupt unrelated prose the same way a bare `str.replace` does, and the
+    # boundary matching cannot help: "Home" as a nickname is indistinguishable from "Home" in "their
+    # Home screen". The report is safe because it renders SLUGS and never display names — which is a
+    # property of the renderers, so `test_no_display_name_reaches_the_report` pins it rather than
+    # leaving it to hold by luck.
     return dict(sorted(mapping.items(), key=lambda kv: -len(kv[0])))
 
 
