@@ -202,13 +202,22 @@ describe("WatchingAccountPage", () => {
     expect(scrollIntoView).toHaveBeenCalled();
   });
 
-  it("dismisses the notification by its id", async () => {
+  it("retires BOTH surfaces — this one is a decision about the fact, not about an alert", async () => {
+    // The bell and the inline note dismiss independently by design. "Leave it — I don't mind seeing
+    // them" is the one place that means "stop telling me at all", so it has to cover both.
     renderPage();
 
     await userEvent.click(
       await screen.findByRole("button", { name: /^dismiss$/i }),
     );
 
-    expect(dismissNotification).toHaveBeenCalledWith("owner-sees-all-rows");
+    await waitFor(() =>
+      expect(dismissNotification).toHaveBeenCalledWith("owner-sees-all-rows"),
+    );
+    await waitFor(() =>
+      expect(dismissNotification).toHaveBeenCalledWith(
+        "owner-sees-all-rows-note",
+      ),
+    );
   });
 });

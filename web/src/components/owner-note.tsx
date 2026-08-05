@@ -4,8 +4,17 @@ import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { useDismissNotification, useNotifications } from "@/lib/queries";
 
-/** The id this note shares with the bell notification and the guide's "Leave it" button. */
-export const OWNER_SHELF_ID = "owner-sees-all-rows";
+/** The bell notification's id. Dismissing THAT clears the alert, nothing more. */
+export const OWNER_SHELF_ALERT_ID = "owner-sees-all-rows";
+
+/** This note's own id, deliberately separate from the bell's.
+ *
+ *  They were one id at first, so that acknowledging the fact anywhere silenced it everywhere. That
+ *  was wrong: clearing a bell alert is a light "yep, seen it", while retiring an inline explainer is
+ *  a deliberate choice you make once. Coupling them meant one casual bell click permanently deleted
+ *  the explanation from the Users page, with no way to bring it back — which is exactly what
+ *  happened on the maintainer's own server within an hour of shipping. */
+export const OWNER_SHELF_NOTE_ID = "owner-sees-all-rows-note";
 
 /**
  * The one caveat that comes with owning the server: Plex cannot hide anyone's row from the admin
@@ -17,11 +26,11 @@ export const OWNER_SHELF_ID = "owner-sees-all-rows";
  * buried the thing an owner needs to know; it also offered "turn that toggle off" as though it were
  * the only option.
  *
- * **Dismissal is shared, not local.** This note, the bell notification and the guide's "Leave it"
- * button all report the same fact, so they dismiss as one — acknowledging it here silences the bell
- * too, and vice versa. Three separate dismissals for one piece of news is how a warning becomes
- * nagging. It stays reachable afterwards: the row editor's placement grid still links to the guide,
- * and /watching-account always renders.
+ * **This note owns its own dismissal.** Clearing the bell alert does NOT retire it, because those
+ * are different gestures — see `OWNER_SHELF_NOTE_ID`. The guide's "Leave it — I don't mind seeing
+ * them" DOES retire both, since that one is a decision about the fact itself rather than about an
+ * alert. It stays reachable afterwards either way: the row editor's placement grid still links to
+ * the guide, and /watching-account always renders.
  *
  * Shown on the Users list and on the owner's own page, so it is never more than one click from the
  * switch it is explaining.
@@ -33,7 +42,7 @@ export function OwnerNote({ className }: { className?: string }) {
   // Hidden only once the server CONFIRMS the dismissal. Hiding on click would be quicker but would
   // also hide it when the write failed, leaving the owner believing they had silenced something that
   // will be back next reload.
-  if (notifications.data?.dismissed?.includes(OWNER_SHELF_ID)) return null;
+  if (notifications.data?.dismissed?.includes(OWNER_SHELF_NOTE_ID)) return null;
 
   return (
     <div
@@ -88,7 +97,7 @@ export function OwnerNote({ className }: { className?: string }) {
             size="sm"
             className="h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
             disabled={dismiss.isPending}
-            onClick={() => dismiss.mutate(OWNER_SHELF_ID)}
+            onClick={() => dismiss.mutate(OWNER_SHELF_NOTE_ID)}
           >
             <X className="h-3 w-3" aria-hidden="true" />
             Got it &mdash; don&rsquo;t show this again

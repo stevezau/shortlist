@@ -3,7 +3,10 @@ import { ArrowRight, Check, Eye, Loader2, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { BackLink } from "@/components/back-link";
-import { OWNER_SHELF_ID } from "@/components/owner-note";
+import {
+  OWNER_SHELF_ALERT_ID,
+  OWNER_SHELF_NOTE_ID,
+} from "@/components/owner-note";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { Button } from "@/components/ui/button";
@@ -197,12 +200,18 @@ export function WatchingAccountPage() {
 
         <OptionCard
           title="Leave it — I don't mind seeing them"
-          body="Nothing changes. Shortlist stops mentioning it."
+          body="Nothing changes. Shortlist stops mentioning it — both the alert and the note on the Users page."
           action={
             <Button
               variant="ghost"
               disabled={dismiss.isPending}
-              onClick={() => dismiss.mutate(OWNER_SHELF_ID)}
+              // Unlike a bell click, this IS a decision about the fact itself, so it retires both
+              // surfaces. Sequential rather than parallel: the second write reads the list the first
+              // one wrote, and firing them together loses one to a last-write-wins race.
+              onClick={async () => {
+                await dismiss.mutateAsync(OWNER_SHELF_ALERT_ID);
+                await dismiss.mutateAsync(OWNER_SHELF_NOTE_ID);
+              }}
             >
               {dismiss.isSuccess ? "Dismissed" : "Dismiss"}
             </Button>

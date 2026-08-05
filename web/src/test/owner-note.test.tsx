@@ -4,7 +4,11 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { OWNER_SHELF_ID, OwnerNote } from "@/components/owner-note";
+import {
+  OWNER_SHELF_ALERT_ID,
+  OWNER_SHELF_NOTE_ID,
+  OwnerNote,
+} from "@/components/owner-note";
 import { WatchingAccountLink } from "@/components/watching-account-link";
 import type * as ApiModule from "@/lib/api";
 import type { NotificationsPage } from "@/lib/types";
@@ -89,23 +93,36 @@ describe("OwnerNote", () => {
     expect(screen.getByText(/You add the account in Plex/i)).toBeInTheDocument();
   });
 
-  it("dismisses under the same id the bell and the guide use", async () => {
-    // One fact, one dismissal. Three separate ones for a single piece of news is how a warning
-    // becomes nagging — acknowledging it here has to silence the bell too.
+  it("retires under its OWN id, not the bell's", async () => {
     renderIn(<OwnerNote />);
 
     await userEvent.click(
       await screen.findByRole("button", { name: /don.t show this again/i }),
     );
 
-    expect(dismissNotification).toHaveBeenCalledWith(OWNER_SHELF_ID);
-    expect(OWNER_SHELF_ID).toBe("owner-sees-all-rows");
+    expect(dismissNotification).toHaveBeenCalledWith(OWNER_SHELF_NOTE_ID);
+    expect(dismissNotification).not.toHaveBeenCalledWith(OWNER_SHELF_ALERT_ID);
   });
 
-  it("stays hidden once the server confirms it was dismissed", async () => {
+  it("survives the bell alert being dismissed", async () => {
+    // The bug this fixes. Clearing a bell alert is "yep, seen it"; retiring an inline explainer is a
+    // deliberate choice. Coupling them meant one casual bell click permanently deleted the
+    // explanation from the Users page, with no way in the UI to bring it back.
     getNotifications.mockResolvedValue({
       notifications: [],
-      dismissed: [OWNER_SHELF_ID],
+      dismissed: [OWNER_SHELF_ALERT_ID],
+    } as NotificationsPage);
+    renderIn(<OwnerNote />);
+
+    expect(
+      await screen.findByText(/you.ll see everyone else.s rows/i),
+    ).toBeInTheDocument();
+  });
+
+  it("stays hidden once the server confirms its own id was dismissed", async () => {
+    getNotifications.mockResolvedValue({
+      notifications: [],
+      dismissed: [OWNER_SHELF_NOTE_ID],
     } as NotificationsPage);
     renderIn(<OwnerNote />);
 
