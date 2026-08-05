@@ -24,8 +24,10 @@ from __future__ import annotations
 import platform
 import re
 import textwrap
+from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -50,6 +52,7 @@ from shortlist.server.db.models import (
     WatchedTitle,
     WatchSyncState,
 )
+from shortlist.server.services.redaction import known_identifiers, redact_all
 from shortlist.server.settings_store import SettingsStore
 
 #: How long a single "turn it on" lasts. Long enough to survive a slow chat exchange across
@@ -123,7 +126,7 @@ async def require_support_mode(request: Request) -> None:
         # `async def` is load-bearing: FastAPI runs a SYNC dependency in a threadpool, which copies
         # the context — so the value set there never reaches the endpoint, and every literal silently
         # went unredacted. Async runs it in the request's own task.
-        _KNOWN.set(_known_identifiers(session))
+        _KNOWN.set(known_identifiers(session))
 
 
 #: Owner-gated but NOT support-gated: the three endpoints that report and flip the mode itself.
@@ -214,12 +217,9 @@ def _scrub(s: str) -> str:
     (so every error string that reaches the JSON is too). The JSON matters as much as the block —
     `issue.tsx` prints `checks[].detail` and `error` on screen verbatim.
     """
-    out = _SECRET_PATTERN.sub(r"\1<redacted>", s)
-    # Known literals FIRST: exact, and immune to whatever escaping the surrounding text uses.
-    for literal in _KNOWN.get():
-        if literal in out:
-            out = out.replace(literal, "<machine-id>" if len(literal) >= 24 else "<host>")
-    return _shape_hosts(out)
+    # `redact_all` owns the literals-then-patterns order; see its docstring for why it is not the
+    # other way round.
+    return redact_all(_SECRET_PATTERN.sub(r"\1<redacted>", s), _KNOWN.get())
 
 
 #: Setting keys whose VALUE is a network location. Reported as a shape, never verbatim: a report is
@@ -252,21 +252,6 @@ def _location_shape(value: str) -> str:
         return "<set>"
 
 
-#: Hosts and machine ids, in the forms an exception or a log line actually carries them:
-#:   https://172.16.10.240:32400/x            a bare URL
-#:   host='172.16.10.240', port=32400         httpx/urllib3's connection-pool errors
-#:   https://192-168-1-5.<32hex>.plex.direct  a plex.direct name, which EMBEDS the machine id
-#:   https://plex.tv/api/servers/<32hex>/…    the machine id in a path
-_HOST_IN_URL = re.compile(r"\b([a-z][a-z0-9+.-]*)://([^/\s'\"]+)", re.IGNORECASE)
-_HOST_KWARG = re.compile(r"\bhost\s*=\s*(['\"]?)([A-Za-z0-9._-]+)\1")
-_MACHINE_ID = re.compile(r"\b[0-9a-f]{32,40}\b", re.IGNORECASE)
-#: A BARE address, no scheme and no `host=`. This is how `http_retry` logs every single PMS call
-#: ("GET 172.16.10.240 -> 200"), which on a real server is tens of thousands of lines — found at
-#: 17,234 occurrences in a report that the other two patterns had passed clean. Bounded so a PMS
-#: version string ("1.43.3.10861") cannot match: its last part is not 1-3 digits.
-_BARE_IPV4 = re.compile(r"(?<![\w.-])(?:\d{1,3}\.){3}\d{1,3}(?![\w.-])")
-
-
 #: Identifiers this instance is KNOWN to have, set per request from the database.
 #:
 #: Pattern-matching alone has now missed the same machine id three times — `\b` fails after the `F`
@@ -274,51 +259,7 @@ _BARE_IPV4 = re.compile(r"(?<![\w.-])(?:\d{1,3}\.){3}\d{1,3}(?![\w.-])")
 #: exact values are not a guess, so they are redacted as literals and the patterns are only the net
 #: for ids belonging to something else. A ContextVar rather than a global: two reports can be building
 #: at once, and one must never scrub with the other's values.
-_KNOWN: ContextVar[tuple[str, ...]] = ContextVar("_KNOWN", default=())
-
-
-def _known_identifiers(session) -> tuple[str, ...]:
-    """This server's machine id and address, longest first, for literal redaction."""
-    from shortlist.server.db.models import Server
-
-    row = session.query(Server).first()
-    if row is None:
-        return ()
-    host = ""
-    if row.url:
-        from urllib.parse import urlsplit
-
-        try:
-            host = urlsplit(row.url).hostname or ""
-        except ValueError:
-            host = ""
-    values = {v for v in (row.machine_id, host) if v and len(v) >= 4}
-    return tuple(sorted(values, key=len, reverse=True))
-
-
-def _shape_hosts(s: str) -> str:
-    """Replace addresses with `<host>`, keeping scheme and port.
-
-    `config` shapes the settings it prints, but that was only ever half of it: the same address
-    arrives in every QUOTED EXCEPTION and every log line — "my Plex is unreachable" is the single most
-    likely thing in a support report, and it prints `host='172.16.10.240', port=32400` verbatim. A
-    `plex.direct` hostname is worse: it embeds the server's machine id, which is the identifier the
-    whole privacy system keys on.
-
-    Scheme and port survive because they carry the diagnostic value ("is it https", "is it the
-    standard port"); the host itself never does.
-    """
-
-    def _url(m: re.Match[str]) -> str:
-        netloc = m.group(2)
-        port = netloc.rsplit(":", 1)[-1] if ":" in netloc and netloc.rsplit(":", 1)[-1].isdigit() else ""
-        return f"{m.group(1)}://<host>" + (f":{port}" if port else "")
-
-    s = _HOST_IN_URL.sub(_url, s)
-    s = _HOST_KWARG.sub(r"host=\1<host>\1", s)
-    # After the URL pass, so `http://1.2.3.4:32400` has already kept its port.
-    s = _BARE_IPV4.sub("<host>", s)
-    return _MACHINE_ID.sub("<machine-id>", s)
+_KNOWN: ContextVar[Mapping[str, str]] = ContextVar("_KNOWN", default=MappingProxyType({}))
 
 
 def _fail(e: BaseException) -> str:
@@ -1745,6 +1686,14 @@ _READ_AS_ENDPOINTS: dict[str, tuple[str, dict[str, object]]] = {
     "home-rows": ("/hubs", {}),
 }
 
+#: Filesystem locations in a PMS response, which `read-as` echoes verbatim behind a Copy button.
+#:
+#: `/library/sections` returns a `<Location path="/data_16tb/Movies">` per library and an item listing
+#: returns `<Part file="…">` per file, so a paste hands over the owner's storage layout — and a layout
+#: is routinely named after a person (`/Users/johnsmith/Media`, `/home/dave/tv`). None of it answers
+#: what this tool asks, which is whose token can read which library.
+_MEDIA_PATH_ATTR = re.compile(r"\b(path|file)=\"[^\"]*\"", re.IGNORECASE)
+
 
 def _plextv_client(store: SettingsStore, machine_id: str):
     """A plex.tv client, or None when Plex isn't linked. Never raises, for the usual reason."""
@@ -1933,6 +1882,7 @@ async def read_as(
     # Two passes: the token we KNOW we sent, plus anything else credential-shaped the server echoed
     # back. This text is destined for a chat window.
     body = _scrub(body.replace(token, "<redacted>") if token else body)
+    body = _MEDIA_PATH_ATTR.sub(r'\1="<path>"', body)
     total = ""
     if 'totalSize="' in body:
         total = body.split('totalSize="', 1)[1].split('"', 1)[0]
@@ -2201,7 +2151,15 @@ async def errors(request: Request) -> dict:
         found = log_reader.read_lines(config_dir, level="WARNING", limit=_ERROR_LINES)
     except Exception as e:
         found = {"lines": [], "total_matched": 0, "truncated": False, "file": None, "error": _fail(e)}
-    lines = found.get("lines", [])
+    # `read_lines` strips credentials but not addresses — it serves the live Logs view, which renders
+    # on the owner's own screen. Here the same lines are bound for a bug report, so they get the full
+    # pass BEFORE the block is built, which also covers the raw `lines` in the JSON below. Nothing
+    # renders that field today; leaving it as the one unshaped thing in the response is how it
+    # becomes a leak the day something does.
+    lines = [
+        {**entry, "source": _scrub(str(entry.get("source", ""))), "message": _scrub(str(entry.get("message", "")))}
+        for entry in found.get("lines", [])
+    ]
     with request.app.state.sessions() as session:
         _audit(session, "errors", {"lines": len(lines)})
 
@@ -2297,6 +2255,9 @@ async def report_zip(request: Request, anonymise: bool = False) -> Response:
     text = await bundle(request, anonymise=anonymise)
     config_dir = request.app.state.config_dir
     mapping: dict[str, str] = {}
+    # `require_support_mode` already read these from the same DB for this request; querying again
+    # would be a second source of truth for one value, which is the drift this module exists to end.
+    literals = _KNOWN.get()
     if anonymise:
         with request.app.state.sessions() as session:
             mapping = _anonymiser(session)
@@ -2312,16 +2273,16 @@ async def report_zip(request: Request, anonymise: bool = False) -> Response:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.writestr("shortlist-report.txt", text)
-            # Nested rather than merged: `build_zip` owns the redaction and the
-            # vanished-under-rotation handling, and duplicating either here is how one of them drifts.
+            # Nested rather than merged: `build_zip` owns ALL of the redaction — credentials,
+            # addresses and known literals — and the vanished-under-rotation handling. This function
+            # used to shape hosts itself on top, which is how the machine id survived: the copy here
+            # lacked the literal pass that `_scrub` had, and the pattern could not match a
+            # URL-encoded id. Anonymisation is the one thing left here, because it is the only pass
+            # that belongs to a report rather than to a log file.
             try:
-                with zipfile.ZipFile(io.BytesIO(log_reader.build_zip(config_dir))) as logs:
+                with zipfile.ZipFile(io.BytesIO(log_reader.build_zip(config_dir, literals))) as logs:
                     for name in logs.namelist():
                         body = logs.read(name).decode("utf-8", "replace")
-                        # `build_zip` strips credentials but not ADDRESSES, and a log file is dense
-                        # with them — every PMS call it ever made. Shaped here so the zip carries the
-                        # same guarantee the report body does.
-                        body = _shape_hosts(body)
                         if mapping:
                             # The logs name people constantly ("watch cache: chris35352 ..."), so
                             # hiding names in the report but not in the logs beside it achieves

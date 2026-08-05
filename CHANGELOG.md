@@ -35,7 +35,7 @@ your rows are set to 0% already-watched, which is the default.
 ### Added
 
 - **"Have an issue?"** — a new page, replacing the sidebar's separate _Report a bug_ and _Copy
-  diagnostics_ buttons. It runs nineteen read-only checks against your own server and, for most
+  diagnostics_ buttons. It runs twenty-one read-only checks against your own server and, for most
   problems, names the cause outright: which library refused someone's token, which setting actually
   applied, why a row is short, whether Plex still matches what Shortlist thinks it delivered.
 
@@ -43,12 +43,26 @@ your rows are set to 0% already-watched, which is the default.
   checks stay off until you switch them on and switch themselves off again after 24 hours, because
   they read share filters and per-user tokens. Every check has a **Copy for support** button, and
   what it copies is shown on screen first so a paste holds no surprises. The last section files the
-  report: a pre-filled GitHub issue plus a secrets-free diagnostic to attach, as a paste or a file.
+  report: a pre-filled GitHub issue plus a diagnostic to attach, as a paste or a file. That
+  diagnostic never carries credentials, your server's address or its machine id, and a **Hide
+  everyone's names** tick — on by default — relabels every account `person1`, `person2`… the same way
+  throughout, log files included.
 
   If someone reports a problem on a server you don't administer, sending them there is usually faster
   than a list of questions.
 
 ### Fixed
+
+- **A downloaded log zip no longer carries your server's address or machine id.**
+  `Logs → Download` calls itself "the attachment for a bug report" and had only ever removed
+  credentials — so it shipped your Plex server's address on every line that recorded a call to it
+  (17,234 of them in one real export) and, where a collection write was logged, the machine id that
+  identifies your server. Both are now removed there and in the diagnostic report, which had the same
+  gap in the log files it bundles.
+
+  A URL keeps its scheme and port (`https://<host>:32400`) because those are the parts that answer a
+  question. The live Logs view is deliberately unchanged: it renders on your own screen, where your
+  server's address is what makes a line readable.
 
 - The documentation described a `recommendations.watched_show_pct` setting that has never existed.
   The finished threshold is fixed in the engine; the docs now say so.

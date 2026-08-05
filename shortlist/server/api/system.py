@@ -264,9 +264,18 @@ async def logs(request: Request, level: str = "DEBUG", q: str = "", limit: int =
 
 @_authed.get("/logs/download")
 async def logs_download(request: Request) -> Response:
-    """Every log file as a redacted zip — the attachment for a bug report."""
+    """Every log file as a redacted zip — the attachment for a bug report.
+
+    The identifiers are read here and passed in: `build_zip` redacts this server's own machine id and
+    address by exact match, which is the only pass a novel escaping cannot slip past, and it has no
+    session of its own to look them up with.
+    """
+    from shortlist.server.services.redaction import known_identifiers
+
+    with request.app.state.sessions() as session:
+        literals = known_identifiers(session)
     payload = await asyncio.get_running_loop().run_in_executor(
-        None, lambda: log_reader.build_zip(request.app.state.config_dir)
+        None, lambda: log_reader.build_zip(request.app.state.config_dir, literals)
     )
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     return Response(

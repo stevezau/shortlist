@@ -7,7 +7,7 @@ nav_order: 7
 
 ## Start here: "Have an issue?"
 
-Before working through the list below, open **Have an issue?** in the sidebar. It runs nineteen
+Before working through the list below, open **Have an issue?** in the sidebar. It runs twenty-one
 read-only checks against your own server and, for most of these problems, tells you the answer
 outright — which library refused someone's token, which setting actually applied, why a row is
 short, whether Plex matches what Shortlist thinks it delivered.
@@ -20,9 +20,19 @@ Three things worth knowing:
   They read share filters and per-user tokens, so they stay closed on an install that isn't
   currently debugging something.
 - **Every check has a "Copy for support" button.** What it copies is shown on screen first, so
-  there is nothing to be surprised by after pasting. It contains no passwords, tokens or API keys.
+  there is nothing to be surprised by after pasting.
 - **The last section files the report.** It opens a pre-filled GitHub issue and gives you the full
   diagnostic to attach — as a paste, or as a file when a chat app would truncate it.
+
+What leaves your server, and what doesn't:
+
+| Removed always                                                                                                                            | Removed on request                                                                                                                                         | Kept                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Passwords, Plex tokens, API keys                                                                                                          | People's names — tick **Hide everyone's names**, which is on by default and relabels everyone `person1`, `person2`… the same way throughout, logs included | Library and row names, title names, error messages |
+| Your server's address and machine id, in the report and in every log file — a URL keeps only its scheme and port (`https://<host>:32400`) |                                                                                                                                                            | Counts, timings, settings values, migration state  |
+
+The same redaction covers **Logs → Download**, so a log zip attached straight to an issue carries
+the same guarantee the report does.
 
 If someone is reporting a problem on a server you don't administer, sending them there is usually
 faster than a list of questions: _"open /issue, switch the checks on, type the title, press Copy."_

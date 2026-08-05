@@ -1081,8 +1081,8 @@ function ReportSection() {
         <strong className="font-medium text-foreground">
           No passwords, tokens or API keys
         </strong>{" "}
-        — those are stripped from the report and from the logs, and your
-        server&rsquo;s address is reduced to{" "}
+        — those are stripped from the report and from the logs, along with your
+        server&rsquo;s machine id and its address, which is reduced to{" "}
         <code className="font-mono">http://&lt;host&gt;</code>. It{" "}
         <strong className="font-medium text-foreground">does</strong> include
         your library names, the titles involved, and — unless you leave the box

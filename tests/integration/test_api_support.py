@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from shortlist.server.api.support import ENABLED_UNTIL_KEY
-from shortlist.server.db.models import Collection, Event, PickRow, User, WatchedTitle, WatchSyncState
+from shortlist.server.db.models import Collection, Event, PickRow, Server, User, WatchedTitle, WatchSyncState
 from shortlist.server.settings_store import SettingsStore
 
 
@@ -795,6 +795,36 @@ class TestLivePlexTools:
         assert r.status_code == 400
         assert "Unknown check" in r.json()["detail"]
 
+    def test_read_as_does_not_echo_the_owners_filesystem_layout(self, client, monkeypatch):
+        """`/library/sections` returns a `<Location path=…>` per library, and this response sits behind
+        a Copy button. A storage layout is routinely named after a person (`/Users/johnsmith/Media`),
+        and it answers nothing this tool asks — which is whose token can read which library."""
+        import httpx
+
+        xml = (
+            '<MediaContainer size="1" machineIdentifier="7ee8abc1bcdcc79389ad1e15c30e2692714bc940">'
+            '<Directory key="1" title="Movies"><Location id="1" path="/Users/johnsmith/Media/Movies"/>'
+            '</Directory><Video><Part file="/Users/johnsmith/Media/Movies/Heat.mkv"/></Video>'
+            "</MediaContainer>"
+        )
+        monkeypatch.setattr(httpx, "get", lambda *_a, **_k: httpx.Response(200, text=xml))
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            store.set("plex.url", "http://pms:32400")
+            store.set("plex.token", "owner-token")
+            session.query(User).filter(User.slug == "sarah").update({"user_type": "owner"})
+            session.commit()
+        _enable(client)
+
+        body = client.get("/api/support/read-as", params={"user": "sarah", "endpoint": "libraries"}).json()
+
+        for field in ("body", "text"):
+            assert "johnsmith" not in body[field], field
+            assert "/Media/Movies" not in body[field], field
+        assert 'path="<path>"' in body["body"], body["body"]
+        assert 'file="<path>"' in body["body"]
+        assert "Movies" in body["body"], "the library TITLE is the diagnostic part and must survive"
+
     def test_read_as_refuses_when_no_token_exists_rather_than_reading_as_the_owner(self, client):
         """Silently falling back to the owner's token would answer a DIFFERENT question and look
         like it worked — the exact confusion the tool exists to end."""
@@ -1388,7 +1418,7 @@ class TestTheDownloadCarriesTheLogsToo:
 
         from shortlist.server.services import log_reader
 
-        monkeypatch.setattr(log_reader, "build_zip", lambda _dir: (_ for _ in ()).throw(OSError("disk gone")))
+        monkeypatch.setattr(log_reader, "build_zip", lambda *_a: (_ for _ in ()).throw(OSError("disk gone")))
         _enable(client)
 
         with zipfile.ZipFile(io.BytesIO(client.get("/api/support/report.zip").content)) as archive:
@@ -1496,6 +1526,81 @@ class TestWhatTheReportDiscloses:
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
             blob = b"".join(archive.read(n) for n in archive.namelist())
         assert b"sarah" not in blob, "the logs still named them"
+
+    def test_the_zip_does_not_carry_this_servers_machine_id_in_its_logs(self, client):
+        """Found by a positive-control audit of a real 88 MB report: the machine id was still in two of
+        the zipped log files, URL-encoded as `uri=server%3A%2F%2F<id>%2F…`.
+
+        `report_zip` shaped hosts itself instead of letting `build_zip` do all of the redaction, and
+        that private copy lacked the known-literal pass — so the only thing standing between the id and
+        the zip was a `\\b` pattern that cannot match after the `F` of a `%2F`.
+        """
+        import io
+        import zipfile
+
+        machine_id = "7ee8abc1bcdcc79389ad1e15c30e2692714bc940"
+        with client.app.state.sessions() as session:
+            session.query(Server).update({"machine_id": machine_id, "url": "http://172.16.10.240:32400"})
+            session.commit()
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        # Both escapings: `%2F` is what a real log carries and the pattern now catches it, `%252F` is
+        # reachable ONLY by the literal pass — so this cannot pass with either half missing.
+        (logs / "shortlist.log").write_text(
+            f"2026-08-05 03:31:02.000 | DEBUG | a:b:1 - PUT /library/collections/9"
+            f"?type=1&uri=server%3A%2F%2F{machine_id}%2Fcom.plexapp\n"
+            f"2026-08-05 03:31:03.000 | DEBUG | a:b:1 - retry uri=server%253A%252F%252F{machine_id}%252Fcom\n"
+            "2026-08-05 03:31:04.000 | DEBUG | a:b:1 - GET 172.16.10.240 -> 200 in 0.03s\n"
+        )
+        _enable(client)
+
+        for params in ({}, {"anonymise": "true"}):
+            with zipfile.ZipFile(io.BytesIO(client.get("/api/support/report.zip", params=params).content)) as archive:
+                blob = b"".join(archive.read(n) for n in archive.namelist())
+            assert machine_id.encode() not in blob, f"machine id survived with params={params}"
+            assert b"172.16.10.240" not in blob, f"address survived with params={params}"
+            assert b"<machine-id>" in blob
+
+    def test_the_errors_check_shapes_addresses_in_its_json_not_only_its_text(self, client):
+        """`read_lines` serves the live Logs view, which is allowed to show the owner their own
+        address. The same lines reaching a bug report are not, and the JSON `lines` field was the one
+        part of this response nothing had shaped."""
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text(
+            "2026-08-05 03:31:02.000 | ERROR | a:b:1 - host='172.16.10.240', port=32400 unreachable\n"
+        )
+        _enable(client)
+
+        body = client.get("/api/support/errors").json()
+
+        assert "172.16.10.240" not in body["text"]
+        assert "172.16.10.240" not in json.dumps(body["lines"]), body["lines"]
+        assert "<host>" in json.dumps(body["lines"])
+
+    def test_the_plain_log_download_carries_the_same_guarantee(self, client):
+        """`/api/system/logs/download` is the OTHER export whose docstring calls it "the attachment for
+        a bug report", and it had only the credential pass — so it shipped the machine id and every one
+        of the tens of thousands of addresses a log file accumulates."""
+        import io
+        import zipfile
+
+        machine_id = "7ee8abc1bcdcc79389ad1e15c30e2692714bc940"
+        with client.app.state.sessions() as session:
+            session.query(Server).update({"machine_id": machine_id, "url": "http://172.16.10.240:32400"})
+            session.commit()
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text(
+            f"2026-08-05 03:31:02.000 | DEBUG | a:b:1 - uri=server%253A%252F%252F{machine_id}%252Fcom\n"
+            "2026-08-05 03:31:03.000 | DEBUG | a:b:1 - GET 172.16.10.240 -> 200\n"
+        )
+
+        with zipfile.ZipFile(io.BytesIO(client.get("/api/system/logs/download").content)) as archive:
+            blob = b"".join(archive.read(n) for n in archive.namelist())
+
+        assert machine_id.encode() not in blob
+        assert b"172.16.10.240" not in blob
 
     def test_the_replacement_is_bounded_and_ordered(self):
         """Two ways this corrupts a report, both asserted on the function itself.

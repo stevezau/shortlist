@@ -155,7 +155,7 @@ POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/co
 
 ```
 GET  /api/system/image-provider -> {capable, provider, reason} (can the AI provider generate poster images — drives the row editor's Generate gate)
-GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files, redacted, as a zip)
+GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files as a zip; credentials, addresses and this server's machine id removed — the live view above strips credentials only, since it renders on the owner's own screen where the address is what makes a line readable)
 GET  /api/system/libraries -> [{key, title, type}] (the server's Plex libraries, for the row editor)
 GET  /api/system/jobs?kind=&limit=&before_id= -> [{id, kind, payload, result, status, attempts, max_attempts, detail, error, created_at, started_at, finished_at}] (background maintenance history, newest first; `kind` narrows it to one job type, which is how the Jobs page shows a single job's own history; runs have their own page)
 GET  /api/schedule -> {jobs[{kind, label, setting, cron, using_default, default_cron, optional, writes_plex, next_run}], rows[{cron, rows[], next_run}]} (everything on a timer, rows grouped by shared cron exactly as the scheduler groups them. One trigger builds all of them). `cron` is the EFFECTIVE one with defaults resolved; `default_cron` is the built-in it falls back to when nothing is stored, and `using_default` says whether that is what it is running on. Read-only: crons are still edited through PUT /api/settings and PATCH /api/collections, so each one is validated in exactly one place
@@ -268,8 +268,22 @@ GET  /api/support/jobs -> {jobs[], counts{}, failed, text}
 GET  /api/support/clocks -> {tz, local_now, utc_now, offset_hours, scheduled[], text}
 GET  /api/support/database -> {head, tables_present, tables_expected, missing_tables[], indexes, size_mb, text}
 GET  /api/support/config -> {settings[{env, key, env_set, secret, value, has_value}], text}
-GET  /api/support/bundle.txt -> text/plain; every server-wide block in one downloadable file
+GET  /api/support/bundle.txt?anonymise= -> text/plain; every server-wide block in one downloadable file
+GET  /api/support/report.zip?anonymise= -> the bundle plus every log file, redacted, as one attachment
+GET  /api/support/suggestions -> {users[], titles[], libraries[]} (type-ahead for the inputs above; owner-only, never part of a report, so it is not anonymised)
 ```
+
+**What a report never contains.** Credentials (rule 9), and this server's address and machine id —
+in the report body, in every quoted exception, and in every log file inside `report.zip`. A URL keeps
+only its scheme and port (`https://<host>:32400`), which are the parts with diagnostic value. The
+machine id is additionally removed by exact match rather than by pattern alone, because it reaches a
+log line URL-encoded (`uri=server%3A%2F%2F<id>%2F…`) where a word-boundary pattern cannot see it.
+
+**`anonymise=true` hides people, not the server.** Every account becomes `person1`, `person2`… by a
+stable mapping, applied to the report and to the log files beside it. It maps usernames and slugs
+only: nicknames and friendly names are free text and routinely ordinary words ("Dad", "Home", "TV"),
+so substituting them would corrupt unrelated prose — the report is safe because its renderers print
+slugs and never display names.
 
 **`read-as` runs against an allowlist, never a URL you supply.** `endpoint` is one of `libraries`,
 `watched-movies`, `watched-shows`, `home-rows`, and `section` is validated against the keys the PMS
