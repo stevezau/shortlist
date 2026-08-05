@@ -99,9 +99,9 @@ export function StepUsers() {
           Your own Home screen only ever shows your row. What Plex can&rsquo;t
           do is keep <em>other</em> people&rsquo;s rows out of the
           library&rsquo;s Collections tab for you &mdash; you own the server, so
-          nothing hides them. If you&rsquo;d rather not see them, do your
-          watching on a second Plex account you&rsquo;ve shared the server with,
-          and keep this one for admin.
+          nothing hides them. There are a few ways to deal with that, and
+          Shortlist will walk you through them once setup is done &mdash; look
+          for <strong>You see everyone&rsquo;s rows</strong> on the Users page.
         </p>
       </div>
 

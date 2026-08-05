@@ -440,6 +440,21 @@ class WatchedTitle(Base):
     viewed_leaf_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     leaf_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # When this watch REALLY happened, for a row transferred from another account. NULL for
+    # everything Plex reported directly, which is almost every row.
+    #
+    # This exists because Plex cannot backdate a watch. Marking a title played is a scrobble, and a
+    # scrobble is stamped `now` — so transferring an owner's history onto their new watching account
+    # leaves the PMS believing 2,000 titles were all watched today. `viewed_at` then faithfully
+    # records that lie on the next sync, and every seed the engine picks comes from a set with one
+    # timestamp, i.e. an arbitrary order. Recommendations quietly become noise.
+    #
+    # So the transfer writes the true date HERE and `watch_cache` protects it three ways: `_upsert`
+    # never writes the column, the FULL read's replace skips rows that have one, and
+    # `_drop_vanished_since` ignores them. That last pair matters most — a non-scrobbled transfer
+    # leaves rows the PMS has never heard of, so a blind replace deletes the whole transfer on the
+    # very first sync. Everything asking "how recently?" then reads this first.
+    source_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 

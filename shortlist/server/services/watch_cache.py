@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shortlist.engine.models import MediaType, UserProfile, WatchedItem
@@ -65,11 +66,17 @@ class WatchCache:
     # -- reading ------------------------------------------------------------------------
 
     def watched_set(self, session: Session, user_id: int) -> list[WatchedItem]:
-        """This person's cached watched titles, newest first."""
+        """This person's cached watched titles, newest first.
+
+        Ordered by the TRUE watch date — `source_viewed_at` when a transfer recorded one, else what
+        Plex reported. Seeds come off the front of this list, so ordering by the Plex date alone
+        would rank a transferred history by the day it was scrobbled rather than by when the person
+        actually watched anything. See `WatchedTitle.source_viewed_at`.
+        """
         rows = (
             session.query(WatchedTitle)
             .filter(WatchedTitle.user_id == user_id)
-            .order_by(WatchedTitle.viewed_at.desc())
+            .order_by(func.coalesce(WatchedTitle.source_viewed_at, WatchedTitle.viewed_at).desc())
             .all()
         )
         return [_to_item(row) for row in rows]
@@ -135,8 +142,18 @@ class WatchCache:
         if full:
             # Replace, don't merge: a full read is the ONLY thing that can notice an un-watch of
             # something watched long ago, and merging would keep the very rows it exists to drop.
+            #
+            # TRANSFERRED rows are the exception and must survive (`source_viewed_at IS NOT NULL`).
+            # They did not come from this read and Plex may not know them at all: a watch-history
+            # transfer that did not scrobble leaves rows the PMS has never heard of, so a blind
+            # replace deletes the entire transfer on the first sync — and `needs_full` is True for a
+            # brand-new watching account, so that is the FIRST sync, every time. A scrobbled row is
+            # returned by the read and simply gets updated in place, keeping its true date because
+            # `_upsert` never writes that column.
             session.query(WatchedTitle).filter(
-                WatchedTitle.user_id == user_id, WatchedTitle.section_key == section_key
+                WatchedTitle.user_id == user_id,
+                WatchedTitle.section_key == section_key,
+                WatchedTitle.source_viewed_at.is_(None),
             ).delete(synchronize_session=False)
             session.flush()
         elif since is not None and covers_window:
@@ -283,6 +300,10 @@ def _drop_vanished_since(
             WatchedTitle.user_id == user_id,
             WatchedTitle.section_key == section_key,
             WatchedTitle.viewed_at >= since,
+            # Transferred rows are not Plex's to vanish. A non-scrobbled transfer leaves rows the PMS
+            # has never heard of, so every incremental read "fails to return" them — which reads as
+            # an un-watch and deletes the transfer piecemeal. Same exemption as the full replace.
+            WatchedTitle.source_viewed_at.is_(None),
         )
         .all()
     )
@@ -369,7 +390,9 @@ def _to_item(row: WatchedTitle) -> WatchedItem:
     return WatchedItem(
         title=row.title,
         media_type=MediaType(row.media_type),
-        watched_at=_aware(row.viewed_at) or datetime(1970, 1, 1, tzinfo=UTC),
+        # The true date, not the scrobble date — same reason `watched_set` orders on it. Everything
+        # downstream (recency windows, "because you recently watched X") reads this field.
+        watched_at=_aware(row.source_viewed_at) or _aware(row.viewed_at) or datetime(1970, 1, 1, tzinfo=UTC),
         tmdb_id=row.tmdb_id,
         year=row.year,
         # The negative fallback key is ours, not Plex's — hand back None rather than a rating key

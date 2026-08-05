@@ -1294,6 +1294,36 @@
         "title": "HealthOut",
         "type": "object"
       },
+      "HomeUserOut": {
+        "additionalProperties": true,
+        "description": "A Home user that could become the owner's watching account.",
+        "properties": {
+          "already_a_shortlist_user": {
+            "title": "Already A Shortlist User",
+            "type": "boolean"
+          },
+          "plex_account_id": {
+            "title": "Plex Account Id",
+            "type": "integer"
+          },
+          "protected": {
+            "title": "Protected",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plex_account_id",
+          "title",
+          "protected",
+          "already_a_shortlist_user"
+        ],
+        "title": "HomeUserOut",
+        "type": "object"
+      },
       "HubAnchorIn": {
         "description": "A per-library shelf placement for one row: the very TOP (``top``), or after/before a collection\nby title. ``top`` needs no anchor; otherwise ``anchor`` must be a non-empty title.",
         "properties": {
@@ -4559,6 +4589,71 @@
         "title": "TraceRequestOut",
         "type": "object"
       },
+      "TransferIn": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "scrobble": {
+            "default": false,
+            "title": "Scrobble",
+            "type": "boolean"
+          },
+          "to_user_id": {
+            "title": "To User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "to_user_id"
+        ],
+        "title": "TransferIn",
+        "type": "object"
+      },
+      "TransferOut": {
+        "additionalProperties": true,
+        "properties": {
+          "already_present": {
+            "title": "Already Present",
+            "type": "integer"
+          },
+          "copied": {
+            "title": "Copied",
+            "type": "integer"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "scrobble_skipped": {
+            "title": "Scrobble Skipped",
+            "type": "integer"
+          },
+          "scrobbled": {
+            "title": "Scrobbled",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "copied",
+          "already_present",
+          "scrobbled",
+          "scrobble_skipped",
+          "dry_run",
+          "errors"
+        ],
+        "title": "TransferOut",
+        "type": "object"
+      },
       "TrendPointOut": {
         "additionalProperties": true,
         "properties": {
@@ -5388,6 +5483,124 @@
           "next"
         ],
         "title": "WatchSyncOut",
+        "type": "object"
+      },
+      "WatchedPageOut": {
+        "additionalProperties": true,
+        "description": "A page of the watched set, plus how complete the set behind it is.\n\nThe freshness fields travel WITH the page on purpose: this list is a cache, and a page that\ndoesn't say when it was last filled invites \"I watched that, why is it recommended?\" \u2014 the exact\nquestion this endpoint exists to answer.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WatchedTitleOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "last_full_sync_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Full Sync At"
+          },
+          "synced_titles": {
+            "title": "Synced Titles",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "last_full_sync_at",
+          "synced_titles"
+        ],
+        "title": "WatchedPageOut",
+        "type": "object"
+      },
+      "WatchedTitleOut": {
+        "additionalProperties": true,
+        "description": "One title from the cached watched set \u2014 the set recommendations are actually filtered against.",
+        "properties": {
+          "leaf_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Count"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tmdb Id"
+          },
+          "viewed_leaf_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Viewed Leaf Count"
+          },
+          "watch_count": {
+            "title": "Watch Count",
+            "type": "integer"
+          },
+          "watched_at": {
+            "title": "Watched At",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "title",
+          "tmdb_id",
+          "media_type",
+          "watched_at",
+          "year",
+          "watch_count",
+          "viewed_leaf_count",
+          "leaf_count"
+        ],
+        "title": "WatchedTitleOut",
         "type": "object"
       },
       "WizardState": {
@@ -8643,6 +8856,164 @@
         "summary": "User Runs Summary",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/watched": {
+      "get": {
+        "description": "Search one person's watched set.\n\nReads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB\nquery, it can search the WHOLE set rather than the page on screen, and it shows the same titles\nthe recommender excludes from.",
+        "operationId": "user_watched_api_users__user_id__watched_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Case-insensitive substring of the title.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "Case-insensitive substring of the title.",
+              "maxLength": 200,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "media_type",
+            "required": false,
+            "schema": {
+              "default": "",
+              "pattern": "^(movie|show)?$",
+              "title": "Media Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchedPageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Watched",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/watching-account/candidates": {
+      "get": {
+        "description": "Home users on the owner's Plex Home that could become their watching account.",
+        "operationId": "list_candidates_api_watching_account_candidates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HomeUserOut"
+                  },
+                  "title": "Response List Candidates Api Watching Account Candidates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Candidates",
+        "tags": [
+          "watching-account"
+        ]
+      }
+    },
+    "/api/watching-account/transfer": {
+      "post": {
+        "description": "Copy the owner's watched set onto their watching account.\n\nThe copy into Shortlist is what makes the new account's picks correct and writes nothing to\nPlex. `scrobble` additionally marks each title played on the PMS so Plex shows checkmarks \u2014\nthousands of writes, and Plex dates every one of them today (it cannot be told otherwise), which\nis why the true dates are stored separately.",
+        "operationId": "transfer_api_watching_account_transfer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transfer",
+        "tags": [
+          "watching-account"
         ]
       }
     }

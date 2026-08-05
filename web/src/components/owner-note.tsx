@@ -1,5 +1,7 @@
 import { Info } from "lucide-react";
 
+import { WatchingAccountLink } from "@/components/watching-account-link";
+
 /**
  * The one caveat that comes with the owner having a row of their own: Plex cannot hide a row from
  * the account that owns the server, so the admin sees everyone's rows, not just theirs. Shortlist
@@ -35,7 +37,11 @@ export function OwnerNote({ className }: { className?: string }) {
           <strong>Recommended shelf</strong> if you leave{" "}
           <em>Everyone else &rarr; Recommended shelf</em> on for a row. You own
           the server, so there is no share filter to hide them behind &mdash;
-          turn that toggle off to clear the shelf.
+          turn that toggle off to clear the shelf, or keep it and do your
+          watching on a separate account.
+        </p>
+        <p>
+          <WatchingAccountLink />
         </p>
       </div>
     </div>

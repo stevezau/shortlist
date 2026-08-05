@@ -108,7 +108,25 @@ GET  /api/users/search/titles?q=&media_type=movie|show -> [{tmdb_id, title, medi
 POST /api/users/{id}/blocked-seeds {tmdb_id, title?, media_type?, year?} · DELETE /api/users/{id}/blocked-seeds/{tmdb_id} -> {blocked_seeds: [{tmdb_id, title, media_type, year}]}
      Titles that must never SEED this person's recommendations. The watch stays in their history, it just stops shaping their picks.
      Stored on `users.prefs`; an install that predates the richer shape holds bare TMDB ids and keeps working unchanged.
-GET  /api/users/{id}/history (recent watches; each item carries `title`, `media_type`, `year`, plus `season`/`episode`/`episode_title` for TV)
+GET  /api/users/{id}/history (recent watches read LIVE from Plex; each item carries `title`, `media_type`, `year`, plus `season`/`episode`/`episode_title` for TV)
+GET  /api/users/{id}/watched?q=&media_type=movie|show&limit=&offset= -> {items, total, last_full_sync_at, synced_titles}
+     Search this person's CACHED watched set — the same set recommendations are filtered against, so
+     it can answer "I watched that, why was it recommended?". Unlike `/history` it never touches Plex,
+     so it searches the whole set rather than the newest page, and each item carries `watch_count`
+     plus `viewed_leaf_count`/`leaf_count` (null for movies) for the "3 of 8 episodes" progress.
+     `last_full_sync_at` is null while ANY library has never had a full read — the set is incomplete.
+```
+
+### Watching account (the owner's escape from seeing everyone's rows)
+
+```
+GET  /api/watching-account/candidates -> [{plex_account_id, title, protected, already_a_shortlist_user}]
+     Plex Home users the owner could move their watching to. The admin account is never a candidate.
+POST /api/watching-account/transfer {to_user_id, scrobble?, dry_run?} -> {copied, already_present, scrobbled, scrobble_skipped, dry_run, errors}
+     Copies the owner's watched set onto the watching account, preserving the TRUE watch dates in
+     `watched_titles.source_viewed_at`. `scrobble` additionally marks each title played on the PMS as
+     that account — Plex stamps every one of those `now` and cannot be told otherwise, which is
+     exactly why the real dates are stored separately.
 ```
 
 ### Rows
@@ -342,6 +360,43 @@ last run stays eligible until the next run re-reads. Between runs, **Jobs → Sy
 (`POST /api/report/sync`) re-reads every user's watched set on demand. It writes nothing to Plex,
 only refreshes what Shortlist knows, so hit rates and the per-user "N titles watched" count stay
 current without waiting for a scheduled run.
+
+## Why you see everyone's rows (and the watching account)
+
+If you own the server, the **Recommended shelf** inside each library shows you every person's row,
+not just yours. This is a Plex limitation with no setting behind it: rows are hidden from other
+people through the _share_ each of them has with your server, and you have no share with yourself,
+so there is nothing for Plex to hide them behind. Your own **Home screen** is unaffected — Plex
+tracks "on the owner's Home" separately from "on a friend's Home", so nobody else's row lands there.
+
+**Users → You see everyone's rows** (`/watching-account`) lays out the three ways to deal with it:
+
+1. **Take the rows off the library shelf.** Everyone still gets their row on their Home screen, and
+   nobody — including you — sees anyone else's. You lose the row inside Movies and TV Shows. One
+   click; it flips `placement_friends` on every per-person row and leaves the Home half alone.
+2. **Leave it.** Some owners genuinely don't mind. Dismissing stops Shortlist mentioning it.
+3. **Move your watching to a separate account.** Keep the library shelf _and_ stop seeing everyone
+   else's rows. You create a Plex Home user (Plex → Settings → Home → Add user), share the same
+   libraries with it, and Shortlist copies your watch history across so its picks are right from the
+   first run.
+
+### The date problem, and `source_viewed_at`
+
+Plex cannot backdate a watch. Marking a title played is a scrobble, and the server stamps a scrobble
+**now** — there is no documented way to set another account's `lastViewedAt`. Copying two thousand
+titles onto a new account would therefore tell Plex they were all watched today, and the next watch
+sync would write exactly that into `watched_titles.viewed_at`.
+
+That matters more than it sounds: Shortlist picks seeds from the **most recent** watches, so a set
+where every row shares one timestamp orders arbitrarily and the new account's recommendations become
+noise. The migration that gave someone their history back would be the one that broke their picks.
+
+So the transfer records the true date in `watched_titles.source_viewed_at`. The watch sync neither
+overwrites that column nor deletes a row carrying one — which matters because a transfer that did
+not scrobble leaves rows Plex has never heard of, and the periodic full re-read would otherwise wipe
+the entire transfer on its first pass. Every "how recently?" read prefers it. Plex gets its checkmarks; Shortlist
+keeps the recency signal it actually ranks on. `NULL` — the value on every row Plex reported
+directly — means `viewed_at` is the truth, so nothing changes for anyone who never runs a transfer.
 
 ## How a pick is chosen (and why a row can be short)
 

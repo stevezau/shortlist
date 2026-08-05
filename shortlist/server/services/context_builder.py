@@ -48,6 +48,8 @@ from shortlist.server.db.models import (
     RequestCandidate,
     Server,
     User,
+    WatchedTitle,
+    WatchSyncState,
     iso_utc,
     utcnow,
 )
@@ -377,6 +379,77 @@ class ContextBuilder:
             }
             for w in distinct_recent(items, limit)
         ]
+
+    def user_watched(
+        self,
+        user_id: int,
+        *,
+        q: str = "",
+        media_type: str = "",
+        limit: int = 25,
+        offset: int = 0,
+    ) -> dict | None:
+        """One person's watched set, searchable — read from the `watched_titles` CACHE, not from Plex.
+
+        This is deliberately a different source from `user_history`, which reads the PMS live. The
+        cache is what every recommendation is filtered against, so showing it here means the page
+        answers "why was this recommended when I've seen it?" instead of showing a second, unrelated
+        list. The cost is honesty about freshness, which is why `last_full_sync_at` and
+        `synced_titles` come back with the page and the UI states them.
+
+        Args:
+            user_id: The person to read.
+            q: Case-insensitive substring of the title. Empty matches everything.
+            media_type: "movie" or "show" to filter; empty for both.
+            limit: Page size.
+            offset: Rows to skip, for paging.
+
+        Returns:
+            ``{items, total, last_full_sync_at, synced_titles}``, or None if the user doesn't exist.
+        """
+        with self._sessions() as session:
+            if session.get(User, user_id) is None:
+                return None
+            query = session.query(WatchedTitle).filter(WatchedTitle.user_id == user_id)
+            if q.strip():
+                # `ilike` over one person's rows only — the (user_id, viewed_at) index keeps the scan
+                # inside their few thousand, so no separate title index is needed. `%`/`_` are escaped
+                # so a title containing them searches literally rather than as a wildcard.
+                pattern = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                query = query.filter(WatchedTitle.title.ilike(f"%{pattern}%", escape="\\"))
+            if media_type in ("movie", "show"):
+                query = query.filter(WatchedTitle.media_type == media_type)
+            total = query.count()
+            # The TRUE watch date, same as `WatchCache.watched_set` — a transferred history is dated
+            # by when the person actually watched, not by the day the scrobbles were written.
+            true_date = func.coalesce(WatchedTitle.source_viewed_at, WatchedTitle.viewed_at)
+            rows = query.order_by(true_date.desc()).limit(limit).offset(offset).all()
+            # Across ALL libraries: `watch_sync_state` is per (person, library), and the page's claim
+            # is "your history is complete as of X". The OLDEST full read is the only honest X — one
+            # library synced an hour ago says nothing about the one that hasn't synced since Tuesday.
+            states = session.query(WatchSyncState).filter(WatchSyncState.user_id == user_id).all()
+            fulls = [s.last_full_at for s in states if s.last_full_at is not None]
+            oldest_full = min(fulls) if fulls and len(fulls) == len(states) else None
+            return {
+                "items": [
+                    {
+                        "title": row.title,
+                        "tmdb_id": row.tmdb_id,
+                        "media_type": row.media_type,
+                        "watched_at": (row.source_viewed_at or row.viewed_at).isoformat(),
+                        "year": row.year,
+                        "watch_count": row.watch_count,
+                        "viewed_leaf_count": row.viewed_leaf_count,
+                        "leaf_count": row.leaf_count,
+                    }
+                    for row in rows
+                ],
+                "total": total,
+                # None when ANY library has never had a full read — "synced 4h ago" would be a false
+                # claim of completeness while a whole library is still missing from the set.
+                "last_full_sync_at": oldest_full.isoformat() if oldest_full else None,
+                "synced_titles": sum(s.item_count for s in states),
+            }
 
     def _delivered_keys(self, session: Session) -> dict[tuple[str, str, str], int]:
         """The delivery ledger as the engine wants it: (user_slug, row_slug, section_key) -> ratingKey.

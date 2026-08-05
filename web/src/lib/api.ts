@@ -51,7 +51,11 @@ import type {
   UserRow,
   UserRunsCount,
   UserRunSummary,
+  HomeUserCandidate,
+  TransferResult,
   WatchItem,
+  WatchedFilters,
+  WatchedPage,
 } from "./types";
 
 /**
@@ -286,6 +290,35 @@ export const api = {
 
   getUserHistory: (id: number): Promise<WatchItem[]> =>
     request(`/api/users/${id}/history`),
+
+  /** Search one person's cached watched set. Unlike `getUserHistory` this never touches Plex, so it
+   *  can search the whole set rather than the page on screen. */
+  getUserWatched: (
+    id: number,
+    { q, mediaType, limit }: WatchedFilters,
+  ): Promise<WatchedPage> => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (q) params.set("q", q);
+    if (mediaType) params.set("media_type", mediaType);
+    return request(`/api/users/${id}/watched?${params}`);
+  },
+
+  // --- Watching account (the owner's escape from seeing everyone's rows) ---
+
+  listHomeUsers: (): Promise<HomeUserCandidate[]> =>
+    request("/api/watching-account/candidates"),
+
+  /** Copy the owner's watched set onto their watching account. `scrobble` also marks the titles
+   *  played in Plex — thousands of writes, all dated today because Plex cannot backdate them. */
+  transferWatchHistory: (body: {
+    to_user_id: number;
+    scrobble: boolean;
+    dry_run: boolean;
+  }): Promise<TransferResult> =>
+    request("/api/watching-account/transfer", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // --- Runs ---
   /** Recent runs; pass a row slug to get only the runs that built that row. `beforeId` pages

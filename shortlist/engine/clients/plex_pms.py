@@ -832,6 +832,35 @@ class PlexClient:
         r.raise_for_status()
         return r.json().get("MediaContainer", {}).get("Hub", []) or []
 
+    def scrobble_as(self, rating_key: int, token: str, *, dry_run: bool = False) -> bool:
+        """Mark one item played AS another account, using that account's server token.
+
+        **Plex stamps this `now` and offers no way to say otherwise.** There is no documented
+        endpoint for setting another account's `lastViewedAt`, so a transferred history arrives on
+        the PMS dated today no matter what. That is why `WatchedTitle.source_viewed_at` exists —
+        Plex gets the checkmark, Shortlist keeps the real date. Never infer a watch DATE from a
+        scrobbled item; read the column.
+
+        Returns True when the PMS accepted the write (or would have, under dry run). Returns False —
+        rather than raising — when the item is simply not visible to that account, which is the
+        normal outcome for a title in a library they were not shared, and must not abort a transfer
+        of thousands of others.
+        """
+        if dry_run:
+            logger.info("DRY RUN: would mark ratingKey={} played for the target account", rating_key)
+            return True
+        r = http_retry.get(
+            self._server.url("/:/scrobble", includeToken=False),
+            params={"key": str(rating_key), "identifier": "com.plexapp.plugins.library"},
+            headers={"X-Plex-Token": token, "Accept": "application/json"},
+            timeout=self._timeout,
+        )
+        if r.status_code in (401, 403, 404):
+            logger.debug("scrobble skipped for ratingKey={} (HTTP {})", rating_key, r.status_code)
+            return False
+        r.raise_for_status()
+        return True
+
     # A watched-titles read for one section, paged. Plex defaults to 50 unless X-Plex-Container-Size
     # says otherwise; a heavy watcher has thousands of watched titles, so we page rather than trust a
     # single response to hold them all (a silent cap here would hide older watches from the

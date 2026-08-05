@@ -1744,3 +1744,56 @@ class TestWatchedWindowCoverage:
         with sessions() as session:
             titles = {r.title for r in session.query(WatchedTitle).all()}
         assert titles == {"Newest", "Older"}, "a title the walk never reached was deleted as an un-watch"
+
+
+class TestScrobbleAs:
+    """Marking a title played AS another account — the write behind the watch-history transfer.
+
+    Two things must hold or the transfer is unsafe: it uses the TARGET's token (not the owner's, or
+    it marks the title watched for the wrong person), and a title that account cannot see is skipped
+    rather than raised (that is the normal case for an unshared library, and one of them must not
+    abandon the other two thousand).
+    """
+
+    _URL = "http://pms:32400/:/scrobble"
+
+    @respx.mock
+    def test_sends_the_targets_token_and_the_library_identifier(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        route = respx.get(self._URL).mock(return_value=httpx.Response(200, text=""))
+
+        assert mock_plex.scrobble_as(4242, "TARGET-TOKEN") is True
+
+        request = route.calls[0].request
+        assert request.headers["X-Plex-Token"] == "TARGET-TOKEN"
+        assert request.url.params["key"] == "4242"
+        # Without the identifier the PMS ignores the scrobble entirely.
+        assert request.url.params["identifier"] == "com.plexapp.plugins.library"
+
+    @respx.mock
+    def test_an_invisible_title_is_skipped_not_raised(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(404, text=""))
+
+        assert mock_plex.scrobble_as(4242, "TARGET-TOKEN") is False
+
+    @respx.mock
+    def test_a_real_server_error_still_raises(self, mock_plex: PlexClient):
+        """403/404 mean "not visible to them"; a 500 means the PMS is unwell and the caller should
+        hear about it rather than silently record thousands of skips."""
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(500, text=""))
+
+        with pytest.raises(httpx.HTTPStatusError):
+            mock_plex.scrobble_as(4242, "TARGET-TOKEN")
+
+    def test_dry_run_writes_nothing_at_all(self, mock_plex: PlexClient, monkeypatch):
+        """Rule 8. No respx route registered, so any HTTP call would fail the test outright."""
+        from shortlist.engine.clients import plex_pms
+
+        def explode(*_a, **_k):
+            raise AssertionError("dry run must not touch the PMS")
+
+        monkeypatch.setattr(plex_pms.http_retry, "get", explode)
+
+        assert mock_plex.scrobble_as(4242, "TARGET-TOKEN", dry_run=True) is True

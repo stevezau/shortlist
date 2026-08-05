@@ -180,6 +180,22 @@ export type RowOverridePatch = Schemas["RowOverridePatch"];
 /** GET /api/users/{id}/history — one recent watch. */
 export type WatchItem = Schemas["WatchItemOut"];
 
+/** One title from the cached watched set (GET /api/users/{id}/watched) — the set recommendations
+ *  are filtered against, which is a DIFFERENT source from `WatchItem`'s live Plex read. */
+export type WatchedTitle = Schemas["WatchedTitleOut"];
+export type WatchedPage = Schemas["WatchedPageOut"];
+
+/** A Plex Home user the owner could move their watching to (GET /api/watching-account/candidates). */
+export type HomeUserCandidate = Schemas["HomeUserOut"];
+export type TransferResult = Schemas["TransferOut"];
+
+/** What the watch-history panel is filtering by. "" = every type. */
+export type WatchedFilters = {
+  q: string;
+  mediaType: "" | "movie" | "show";
+  limit: number;
+};
+
 /** `prefs.blocked_seeds` as records, whatever shape it is stored in. Mirrors the server's
  *  `blocked_entries` — an old install's bare-int list is valid data and keeps working. */
 export function blockedSeeds(prefs: UserPrefs | undefined): BlockedSeed[] {

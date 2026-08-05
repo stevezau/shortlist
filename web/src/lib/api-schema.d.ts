@@ -1620,6 +1620,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/watched": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * User Watched
+         * @description Search one person's watched set.
+         *
+         *     Reads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB
+         *     query, it can search the WHOLE set rather than the page on screen, and it shows the same titles
+         *     the recommender excludes from.
+         */
+        get: operations["user_watched_api_users__user_id__watched_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watching-account/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Candidates
+         * @description Home users on the owner's Plex Home that could become their watching account.
+         */
+        get: operations["list_candidates_api_watching_account_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watching-account/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transfer
+         * @description Copy the owner's watched set onto their watching account.
+         *
+         *     The copy into Shortlist is what makes the new account's picks correct and writes nothing to
+         *     Plex. `scrobble` additionally marks each title played on the PMS so Plex shows checkmarks —
+         *     thousands of writes, and Plex dates every one of them today (it cannot be told otherwise), which
+         *     is why the true dates are stored separately.
+         */
+        post: operations["transfer_api_watching_account_transfer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2190,6 +2259,22 @@ export interface components {
         HealthOut: {
             /** Status */
             status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * HomeUserOut
+         * @description A Home user that could become the owner's watching account.
+         */
+        HomeUserOut: {
+            /** Already A Shortlist User */
+            already_a_shortlist_user: boolean;
+            /** Plex Account Id */
+            plex_account_id: number;
+            /** Protected */
+            protected: boolean;
+            /** Title */
+            title: string;
         } & {
             [key: string]: unknown;
         };
@@ -3646,6 +3731,38 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** TransferIn */
+        TransferIn: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * Scrobble
+             * @default false
+             */
+            scrobble: boolean;
+            /** To User Id */
+            to_user_id: number;
+        };
+        /** TransferOut */
+        TransferOut: {
+            /** Already Present */
+            already_present: number;
+            /** Copied */
+            copied: number;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Errors */
+            errors: string[];
+            /** Scrobble Skipped */
+            scrobble_skipped: number;
+            /** Scrobbled */
+            scrobbled: number;
+        } & {
+            [key: string]: unknown;
+        };
         /** TrendPointOut */
         TrendPointOut: {
             /** Watched */
@@ -3952,6 +4069,50 @@ export interface components {
             last: string | null;
             /** Next */
             next: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WatchedPageOut
+         * @description A page of the watched set, plus how complete the set behind it is.
+         *
+         *     The freshness fields travel WITH the page on purpose: this list is a cache, and a page that
+         *     doesn't say when it was last filled invites "I watched that, why is it recommended?" — the exact
+         *     question this endpoint exists to answer.
+         */
+        WatchedPageOut: {
+            /** Items */
+            items: components["schemas"]["WatchedTitleOut"][];
+            /** Last Full Sync At */
+            last_full_sync_at: string | null;
+            /** Synced Titles */
+            synced_titles: number;
+            /** Total */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WatchedTitleOut
+         * @description One title from the cached watched set — the set recommendations are actually filtered against.
+         */
+        WatchedTitleOut: {
+            /** Leaf Count */
+            leaf_count: number | null;
+            /** Media Type */
+            media_type: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number | null;
+            /** Viewed Leaf Count */
+            viewed_leaf_count: number | null;
+            /** Watch Count */
+            watch_count: number;
+            /** Watched At */
+            watched_at: string;
+            /** Year */
+            year: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -6254,6 +6415,96 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserRunsSummaryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_watched_api_users__user_id__watched_get: {
+        parameters: {
+            query?: {
+                /** @description Case-insensitive substring of the title. */
+                q?: string;
+                media_type?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                user_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchedPageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_candidates_api_watching_account_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeUserOut"][];
+                };
+            };
+        };
+    };
+    transfer_api_watching_account_transfer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferOut"];
                 };
             };
             /** @description Validation Error */

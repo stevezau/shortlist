@@ -19,6 +19,7 @@ import { RowRenamePage } from "@/pages/row-rename";
 import { RowsPage } from "@/pages/rows";
 import { RunDetailPage } from "@/pages/run-detail";
 import { RunUserTracePage } from "@/pages/run-user-trace";
+import { WatchingAccountPage } from "@/pages/watching-account";
 import { LogsPage } from "@/pages/logs";
 import { RunsPage } from "@/pages/runs";
 import { SettingsPage } from "@/pages/settings";
@@ -121,6 +122,7 @@ export default function App() {
             <Route path="rows/:id" element={<RowEditPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="users/:id" element={<UserDetailPage />} />
+            <Route path="watching-account" element={<WatchingAccountPage />} />
             <Route path="runs" element={<RunsPage />} />
             <Route path="logs" element={<LogsPage />} />
             <Route path="runs/:id" element={<RunDetailPage />} />

@@ -1,24 +1,41 @@
-import { Ban } from "lucide-react";
+import { Ban, Search } from "lucide-react";
+import { useState } from "react";
 
 import { QueryBoundary, EmptyState } from "@/components/query-boundary";
+import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { timeAgo } from "@/lib/format";
-import { useBlockSeed, useUserHistory } from "@/lib/queries";
+import { useBlockSeed, useUserWatched } from "@/lib/queries";
 import { blockedSeeds } from "@/lib/types";
-import type { User, WatchItem } from "@/lib/types";
+import type { User, WatchedPage, WatchedTitle } from "@/lib/types";
+import { useDebouncedValue } from "@/lib/use-debounced-value";
 
-/** "S2 · E5 · Episode title" for a show watch — as much as the source reported, or null if none. */
-function episodeLabel(item: WatchItem): string | null {
-  if (item.media_type !== "show") return null;
-  const parts: string[] = [];
-  if (item.season != null) parts.push(`S${item.season}`);
-  if (item.episode != null) parts.push(`E${item.episode}`);
-  if (item.episode_title) parts.push(item.episode_title);
-  return parts.length ? parts.join(" · ") : null;
+const PAGE = 25;
+
+/** How much of a show they've actually seen, or how often they've rewatched a film.
+ *
+ *  This is the line that answers "I've watched that — why was it recommended?". A part-watched show
+ *  is CORRECTLY still eligible (the engine only drops one seen past `watched_show_pct`), and until
+ *  the page said so the only way to find that out was to ask. Both counts are null for movies and
+ *  for anything Plex reports no episode totals for — "0 of 0" would be a different, wrong claim.
+ */
+export function watchDepth(item: WatchedTitle): string | null {
+  if (item.media_type === "show") {
+    if (item.leaf_count == null || item.viewed_leaf_count == null) return null;
+    if (item.viewed_leaf_count >= item.leaf_count) return "finished";
+    return `${item.viewed_leaf_count} of ${item.leaf_count} episodes`;
+  }
+  return item.watch_count > 1 ? `watched ${item.watch_count}×` : null;
 }
 
-/** A user's recent watches, read from Plex per user. All four states via QueryBoundary.
+/** A user's watched set, searchable — read from Shortlist's cache rather than live from Plex.
+ *
+ *  That choice is the point: this is the SAME set every recommendation is filtered against, so the
+ *  page can answer why something was picked. The cost is freshness, which the footer states rather
+ *  than hides — a live read would be fresher but could only ever show the 25 most recent titles,
+ *  making a search box that mostly finds nothing.
  *
  *  Each watch carries a Block control, because THIS is where you realise a watch shouldn't be shaping
  *  their picks — you're looking at the sport, or the thing they put on for a friend. Sending someone
@@ -32,87 +49,172 @@ export function WatchHistory({
   userId: number;
   user?: User;
 }) {
-  const query = useUserHistory(userId);
+  const [search, setSearch] = useState("");
+  const [mediaType, setMediaType] = useState<"" | "movie" | "show">("");
+  const [limit, setLimit] = useState(PAGE);
+  const debounced = useDebouncedValue(search, 250);
+  const query = useUserWatched(userId, { q: debounced, mediaType, limit });
   const block = useBlockSeed(userId);
   const alreadyBlocked = new Set(
     blockedSeeds(user?.prefs).map((seed) => seed.tmdb_id),
   );
+
+  // A new filter starts a new list — carrying the old "Show 50 more" over would ask the server for
+  // 200 rows of a search that has three.
+  const reset = (next: () => void) => {
+    setLimit(PAGE);
+    next();
+  };
+
   return (
-    <QueryBoundary
-      query={query}
-      skeleton={<Skeleton className="h-40 w-full" />}
-      isEmpty={(items) => items.length === 0}
-      empty={
-        <EmptyState
-          title="No watch history"
-          hint="Shortlist sees nothing this person has watched yet — recommendations start once they do."
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative sm:max-w-xs sm:flex-1">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <Input
+            type="search"
+            className="pl-9"
+            placeholder="Search watched titles…"
+            aria-label="Search watched titles"
+            value={search}
+            onChange={(e) => reset(() => setSearch(e.target.value))}
+          />
+        </div>
+        <Segmented<"" | "movie" | "show">
+          value={mediaType}
+          ariaLabel="Filter by type"
+          options={[
+            { value: "", label: "All" },
+            { value: "movie", label: "Movies" },
+            { value: "show", label: "Shows" },
+          ]}
+          onChange={(value) => reset(() => setMediaType(value))}
         />
-      }
-    >
-      {(items) => (
-        <ul className="divide-y">
-          {items.map((item, i) => {
-            const episode = episodeLabel(item);
-            return (
-              <li
-                key={i}
-                className="flex items-baseline justify-between gap-3 py-2"
-              >
-                <span className="min-w-0 text-sm">
-                  <span className="font-medium">{item.title}</span>
-                  {item.year ? (
-                    <span className="text-muted-foreground">
-                      {" "}
-                      ({item.year})
+      </div>
+
+      <QueryBoundary
+        query={query}
+        skeleton={<Skeleton className="h-40 w-full" />}
+        isEmpty={(page) => page.items.length === 0}
+        empty={
+          debounced || mediaType ? (
+            <EmptyState
+              title="Nothing matches that"
+              hint={
+                debounced
+                  ? `No watched title contains “${debounced}”. Their history may not have synced yet — check the count below the list.`
+                  : "No watched title of that type yet."
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No watch history"
+              hint="Shortlist sees nothing this person has watched yet — recommendations start once they do."
+            />
+          )
+        }
+      >
+        {(page) => (
+          <>
+            <ul className="divide-y">
+              {page.items.map((item, i) => {
+                const depth = watchDepth(item);
+                return (
+                  <li
+                    key={i}
+                    className="flex items-baseline justify-between gap-3 py-2"
+                  >
+                    <span className="min-w-0 text-sm">
+                      <span className="font-medium">{item.title}</span>
+                      {item.year ? (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          ({item.year})
+                        </span>
+                      ) : null}
                     </span>
-                  ) : null}
-                  {episode ? (
-                    <span className="block text-xs text-muted-foreground">
-                      {episode}
+                    <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                      {item.media_type === "show" ? "Show" : "Movie"}
+                      {depth ? ` · ${depth}` : ""} · {timeAgo(item.watched_at)}
+                      {/* No tmdb:// GUID means nothing a block could key on, so no button rather than one
+                          that fails. */}
+                      {item.tmdb_id !== null &&
+                        (alreadyBlocked.has(item.tmdb_id) ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-muted-foreground/70"
+                            title="Already blocked — it stays in their history but no longer shapes their picks"
+                          >
+                            <Ban className="h-3 w-3" aria-hidden />
+                            blocked
+                          </span>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+                            disabled={block.isPending}
+                            title={`Stop "${item.title}" shaping their picks`}
+                            aria-label={`Block ${item.title} — stop it shaping their picks`}
+                            onClick={() =>
+                              block.mutate({
+                                tmdbId: item.tmdb_id as number,
+                                title: item.title,
+                                mediaType: item.media_type,
+                                year: item.year ?? undefined,
+                              })
+                            }
+                          >
+                            <Ban className="h-3 w-3" aria-hidden />
+                            Block
+                          </Button>
+                        ))}
                     </span>
-                  ) : null}
-                </span>
-                <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                  {item.media_type === "show" ? "Show" : "Movie"} ·{" "}
-                  {timeAgo(item.watched_at)}
-                  {/* No tmdb:// GUID means nothing a block could key on, so no button rather than one
-                      that fails. */}
-                  {item.tmdb_id !== null &&
-                    (alreadyBlocked.has(item.tmdb_id) ? (
-                      <span
-                        className="inline-flex items-center gap-1 text-muted-foreground/70"
-                        title="Already blocked — it stays in their history but no longer shapes their picks"
-                      >
-                        <Ban className="h-3 w-3" aria-hidden />
-                        blocked
-                      </span>
-                    ) : (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-1.5 text-xs text-muted-foreground hover:text-foreground"
-                        disabled={block.isPending}
-                        title={`Stop "${item.title}" shaping their picks`}
-                        aria-label={`Block ${item.title} — stop it shaping their picks`}
-                        onClick={() =>
-                          block.mutate({
-                            tmdbId: item.tmdb_id as number,
-                            title: item.title,
-                            mediaType: item.media_type,
-                            year: item.year ?? undefined,
-                          })
-                        }
-                      >
-                        <Ban className="h-3 w-3" aria-hidden />
-                        Block
-                      </Button>
-                    ))}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {page.total > page.items.length && (
+              <div className="flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLimit((n) => n + 50)}
+                >
+                  Show 50 more
+                </Button>
+              </div>
+            )}
+
+            <SyncFooter page={page} shown={page.items.length} />
+          </>
+        )}
+      </QueryBoundary>
+    </div>
+  );
+}
+
+/** What this list is and how complete it is. Without it "I watched that and it still got picked"
+ *  has no visible answer — the set may simply not have been read yet. */
+function SyncFooter({ page, shown }: { page: WatchedPage; shown: number }) {
+  return (
+    <p className="border-t pt-3 text-xs text-muted-foreground">
+      Showing {shown} of {page.total}
+      {page.synced_titles
+        ? ` · ${page.synced_titles} titles synced`
+        : ""} ·{" "}
+      {page.last_full_sync_at ? (
+        <>last full sync {timeAgo(page.last_full_sync_at)}</>
+      ) : (
+        <>
+          never fully synced &mdash; run{" "}
+          <strong className="text-foreground">Sync watch history</strong> in
+          Jobs
+        </>
       )}
-    </QueryBoundary>
+    </p>
   );
 }
