@@ -6285,7 +6285,9 @@ export interface operations {
     };
     bundle_api_support_bundle_txt_get: {
         parameters: {
-            query?: never;
+            query?: {
+                anonymise?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6299,6 +6301,15 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -6712,7 +6723,9 @@ export interface operations {
     };
     report_zip_api_support_report_zip_get: {
         parameters: {
-            query?: never;
+            query?: {
+                anonymise?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -6726,6 +6739,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

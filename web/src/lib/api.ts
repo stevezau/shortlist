@@ -733,25 +733,27 @@ export const api = {
   supportSuggestions: (): Promise<SupportSuggestions> =>
     request("/api/support/suggestions"),
 
-  /** The whole report as text, for the clipboard. Not `request()` — the response is text/plain, and
-   *  `request()` would fail trying to parse it as JSON. */
-  getSupportBundle: async (): Promise<string> => {
-    const response = await fetch(apiUrl("/api/support/bundle.txt"), {
-      headers: { Accept: "text/plain" },
-    });
+  /** Plain links — the session cookie authenticates them, so no fetch/blob dance.
+   *
+   *  `supportReportZipUrl` is the one to offer: the text report PLUS every redacted log file. The
+   *  `.txt` remains for anyone who wants only the pasteable part. */
+  supportReportZipUrl: (anonymise = false): string =>
+    apiUrl(`/api/support/report.zip${anonymise ? "?anonymise=true" : ""}`),
+
+  supportBundleUrl: (): string => apiUrl("/api/support/bundle.txt"),
+
+  /** The pasteable report. `anonymise` replaces every account name with person1, person2… — for when
+   *  it is going somewhere public. Not `request()`: the response is text/plain. */
+  getSupportBundle: async (anonymise = false): Promise<string> => {
+    const response = await fetch(
+      apiUrl(`/api/support/bundle.txt${anonymise ? "?anonymise=true" : ""}`),
+      { headers: { Accept: "text/plain" } },
+    );
     if (!response.ok) {
       throw new ApiError(response.status, await errorMessageFrom(response));
     }
     return response.text();
   },
-
-  /** Plain links — the session cookie authenticates them, so no fetch/blob dance.
-   *
-   *  `supportReportZipUrl` is the one to offer: the text report PLUS every redacted log file. The
-   *  `.txt` remains for anyone who wants only the pasteable part. */
-  supportReportZipUrl: (): string => apiUrl("/api/support/report.zip"),
-
-  supportBundleUrl: (): string => apiUrl("/api/support/bundle.txt"),
 };
 
 /** URL for the shared SSE stream (used by lib/sse.ts only). */

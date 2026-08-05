@@ -209,6 +209,36 @@ def _scrub(s: str) -> str:
     return _SECRET_PATTERN.sub(r"\1<redacted>", s)
 
 
+#: Setting keys whose VALUE is a network location. Reported as a shape, never verbatim: a report is
+#: destined for a public issue tracker, and a bare `http://172.16.10.240:32400` hands over someone's
+#: LAN topology — while a `plex.direct` hostname embeds their server's machine id. The scheme and port
+#: are the only parts with diagnostic value ("is it https", "is it the standard port").
+_LOCATION_KEYS = {
+    "plex.url",
+    "tautulli.url",
+    "requests.radarr.url",
+    "requests.sonarr.url",
+    "curator.ollama_url",
+    "curator.openai_base_url",
+}
+
+
+def _location_shape(value: str) -> str:
+    """`http://172.16.10.240:32400` -> `http://<host>:32400`. Empty stays empty."""
+    from urllib.parse import urlsplit
+
+    if not value:
+        return ""
+    try:
+        parts = urlsplit(value)
+        if not parts.scheme or not parts.netloc:
+            return "<set>"
+        port = f":{parts.port}" if parts.port else ""
+        return f"{parts.scheme}://<host>{port}"
+    except ValueError:
+        return "<set>"
+
+
 def _fail(e: BaseException) -> str:
     """One exception-to-string conversion for the whole module, scrubbed.
 
@@ -832,8 +862,42 @@ async def rows(request: Request) -> dict:
 # --------------------------------------------------------------------------------------------
 
 
+def _anonymiser(session) -> dict[str, str]:
+    """`{plex_username: "person1"}` for every account, longest name first.
+
+    Longest first matters: replacing "sam" before "samantha" would leave "person3antha" behind.
+    Deterministic (ordered by id) so two reports from the same server use the same labels and can be
+    compared, and so the owner can tell you privately which person is which.
+    """
+    people = session.query(User).order_by(User.id).all()
+    mapping = {u.username: f"person{i}" for i, u in enumerate(people, start=1)}
+    mapping.update({u.slug: mapping[u.username] for u in people if u.slug and u.slug != u.username})
+    return dict(sorted(mapping.items(), key=lambda kv: -len(kv[0])))
+
+
+def _anonymise(text: str, mapping: dict[str, str]) -> str:
+    """Replace every account name in the report, INCLUDING inside quoted log lines.
+
+    Bounded on LETTERS AND DIGITS ONLY, not `\b`, and that distinction is the whole function:
+
+    * plain `str.replace` corrupts the report — a person called "sam" turns every "same" into
+      "person3e", and someone called "a" destroys it outright;
+    * `\b` counts `_` as a word character, so it would miss `shortlist_sarah` — the label form these
+      names appear in throughout the privacy sections, which is exactly where hiding them matters.
+
+    So the boundary is "not adjacent to another alphanumeric", which matches `sarah` inside
+    `shortlist_sarah` and leaves `same` alone. Longest-first ordering (see `_anonymiser`) then stops
+    a short name pre-empting a longer one that contains it.
+    """
+    names = [n for n in mapping if n]
+    if not names:
+        return text
+    pattern = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(re.escape(n) for n in names) + r")(?![A-Za-z0-9])")
+    return pattern.sub(lambda m: mapping[m.group(1)], text)
+
+
 @_tool.get("/support/bundle.txt", response_class=PlainTextResponse)
-async def bundle(request: Request) -> str:
+async def bundle(request: Request, anonymise: bool = False) -> str:
     """Every tool's block in one file, for when a paste would be truncated.
 
     Discord collapses long messages and Reddit truncates them, so past a certain size the right
@@ -897,7 +961,21 @@ async def bundle(request: Request) -> str:
             failed = _stamp(_Block(f"person {slug}"))
             failed.line(f"THIS SECTION FAILED: {_fail(e)}")
             parts.append(failed.render())
-    return "\n\n".join(parts)
+
+    text = "\n\n".join(parts)
+    if anonymise:
+        # Applied to the FINISHED text, once, rather than per section: every section quotes names in
+        # its own way (a table cell, a log line, a `shortlist_<slug>` label), and a per-section pass
+        # would have to know each of them.
+        with request.app.state.sessions() as session:
+            mapping = _anonymiser(session)
+        header = _stamp(_Block("names hidden"))
+        header.line("Everyone is shown as person1, person2 and so on.")
+        header.line("The same label every time, in the logs too, so this still hangs together.")
+        header.line("The owner can tell you who is who privately.")
+        header.line("Library names and title names are NOT hidden.")
+        text = _anonymise(text, mapping) + "\n\n" + header.render()
+    return text
 
 
 #: How many flagged people get their own section. A cap, because a server where every share token is
@@ -1150,7 +1228,13 @@ async def config(request: Request) -> dict:
                     "key": key,
                     "env_set": in_env,
                     "secret": key in SECRET_KEYS,
-                    "value": "" if key in SECRET_KEYS or key in PRIVATE_KEYS else str(stored or ""),
+                    "value": (
+                        ""
+                        if key in SECRET_KEYS or key in PRIVATE_KEYS
+                        else _location_shape(str(stored or ""))
+                        if key in _LOCATION_KEYS
+                        else str(stored or "")
+                    ),
                     "has_value": has_value,
                 }
             )
@@ -2025,7 +2109,7 @@ async def recent_runs(request: Request) -> dict:
 
 
 @_tool.get("/support/report.zip")
-async def report_zip(request: Request) -> Response:
+async def report_zip(request: Request, anonymise: bool = False) -> Response:
     """The whole report AND every redacted log file, as one attachment.
 
     The text report is deliberately capped so it can be pasted into a chat window — newest 40
@@ -2041,7 +2125,7 @@ async def report_zip(request: Request) -> Response:
 
     from shortlist.server.services import log_reader
 
-    text = await bundle(request)
+    text = await bundle(request, anonymise=anonymise)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("shortlist-report.txt", text)
@@ -2049,8 +2133,17 @@ async def report_zip(request: Request) -> Response:
         # handling, and duplicating either here is how one of them drifts.
         try:
             with zipfile.ZipFile(io.BytesIO(log_reader.build_zip(request.app.state.config_dir))) as logs:
+                mapping = {}
+                if anonymise:
+                    with request.app.state.sessions() as session:
+                        mapping = _anonymiser(session)
                 for name in logs.namelist():
-                    archive.writestr(name, logs.read(name))
+                    body = logs.read(name)
+                    if mapping:
+                        # The logs name people constantly ("watch cache: chris35352 ..."), so hiding
+                        # names in the report and not in the logs beside it would achieve nothing.
+                        body = _anonymise(body.decode("utf-8", "replace"), mapping).encode()
+                    archive.writestr(name, body)
         except Exception as e:
             archive.writestr("logs/UNAVAILABLE.txt", f"Logs could not be read: {_fail(e)}")
     with request.app.state.sessions() as session:

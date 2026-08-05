@@ -1375,3 +1375,88 @@ class TestTheDownloadCarriesTheLogsToo:
         text = client.get("/api/support/bundle.txt").text
 
         assert "=== Shortlist support · person ===" not in text
+
+
+class TestWhatTheReportDiscloses:
+    """The report is destined for a PUBLIC issue tracker. What is in it is a privacy decision.
+
+    Found by auditing an actual report rather than trusting the copy beside the button: it named every
+    person on the server by their Plex username and printed the server's address verbatim. "No
+    passwords or tokens" was true, and misleading — it sat next to a button that posts publicly.
+    """
+
+    def test_the_server_address_is_reduced_to_a_shape(self, client):
+        """A bare `http://172.16.10.240:32400` hands over someone's LAN topology, and a `plex.direct`
+        hostname embeds their server's machine id. Scheme and port are the only diagnostic parts."""
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            store.set("plex.url", "http://172.16.10.240:32400")
+            store.set("tautulli.url", "https://tautulli.mydomain.example:8181")
+            session.commit()
+        _enable(client)
+
+        body = client.get("/api/support/config").json()
+
+        assert "172.16.10.240" not in body["text"]
+        assert "tautulli.mydomain.example" not in body["text"]
+        assert "http://<host>:32400" in body["text"], body["text"]
+        assert "https://<host>:8181" in body["text"]
+
+    def test_names_are_hidden_when_asked_consistently_and_everywhere(self, client):
+        """One label per person, the same every time — otherwise the report stops hanging together and
+        a maintainer cannot follow one person through it."""
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text(
+            "2026-08-05 03:31:02.000 | WARNING | a:b:1 - watch cache: sarah section 2 failed\n"
+        )
+        _seed_teacup(client.app, viewed=None, total=None, delivered=True)
+        _enable(client)
+
+        plain = client.get("/api/support/bundle.txt").text
+        hidden = client.get("/api/support/bundle.txt", params={"anonymise": "true"}).text
+
+        assert "sarah" in plain, "the default still names people — a maintainer needs that"
+        assert "sarah" not in hidden
+        assert "person" in hidden
+        # The same label throughout, including where it appears as a label (`shortlist_sarah`).
+        label = next(w for w in hidden.split() if w.startswith("person"))
+        assert hidden.count(label) >= 2, hidden
+        assert "names hidden" in hidden, "it must say that it did this"
+
+    def test_the_zip_hides_names_in_the_logs_too(self, client):
+        """Hiding names in the report and not in the logs beside it would achieve nothing — the logs
+        name people constantly."""
+        import io
+        import zipfile
+
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text(
+            "2026-08-05 03:31:02.000 | WARNING | a:b:1 - watch cache: sarah section 2 failed\n"
+        )
+        _enable(client)
+
+        response = client.get("/api/support/report.zip", params={"anonymise": "true"})
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            blob = b"".join(archive.read(n) for n in archive.namelist())
+        assert b"sarah" not in blob, "the logs still named them"
+
+    def test_the_replacement_is_bounded_and_ordered(self):
+        """Two ways this corrupts a report, both asserted on the function itself.
+
+        * Ordering: `sam` replaced before `samantha` leaves `person1antha` behind.
+        * Boundary: plain `str.replace` turns every "same" into "person1e", and a person called "a"
+          destroys the report outright. `\b` is not the answer either — it counts `_` as a word
+          character, so it would MISS `shortlist_sarah`, which is where hiding a name matters most.
+        """
+        from shortlist.server.api.support import _anonymise
+
+        mapping = dict(sorted({"samantha": "person2", "sam": "person1"}.items(), key=lambda kv: -len(kv[0])))
+
+        out = _anonymise("sam and samantha watched the same show; label!=shortlist_sam", mapping)
+
+        assert "person1 and person2 watched the same show" in out, out
+        assert "shortlist_person1" in out, "a name in label form must still be hidden"
+        assert "antha" not in out

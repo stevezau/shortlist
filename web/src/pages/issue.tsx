@@ -990,18 +990,50 @@ function HealthStrip() {
   );
 }
 
-/** The last step: turn what the checks found into a report someone can act on. */
+/** The last step: turn what the checks found into a report someone can act on.
+ *
+ *  The privacy choice here is the point. The report NAMES the people on the server, because a
+ *  maintainer cannot act on "someone can't be read" — and a GitHub issue is public. So the default is
+ *  to hide names, and sending them is the deliberate option, not the accident. */
 function ReportSection() {
   const version = useVersion();
   const { state, copy } = useCopy(2500);
+  // Defaults to hiding names: the button beside this one posts to a public tracker, so the safe
+  // choice has to be the one you get without thinking about it.
+  const [hideNames, setHideNames] = useState(true);
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
       <h2 className="text-sm font-semibold">Still stuck? Report it</h2>
       <p className="text-sm text-muted-foreground">
-        Open an issue, then attach the full report below so whoever picks it up
+        Open an issue, then attach the report below so whoever picks it up
         already has the answers to the first three questions they'd ask.
       </p>
+
+      <label className="flex items-start gap-2.5 rounded-md border border-border bg-elevated p-3">
+        <input
+          type="checkbox"
+          // Explicit: the wrapping label holds a heading AND a paragraph, so the computed name would
+          // be the whole block — unhelpful to a screen reader and to anything matching on it.
+          aria-label="Hide everyone's names"
+          checked={hideNames}
+          onChange={(event) => setHideNames(event.target.checked)}
+          className="mt-0.5 h-4 w-4 accent-primary"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium">
+            Hide everyone&rsquo;s names
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Replaces each person with “person1”, “person2” and so on — the same
+            label every time, in the logs too, so the report still makes sense.
+            Leave this on for a public GitHub issue. Turn it off only if
+            you&rsquo;re sending the report privately and it&rsquo;s easier to
+            talk about real names.
+          </span>
+        </span>
+      </label>
+
       <div className="flex flex-wrap gap-2">
         <Button asChild>
           <a
@@ -1015,7 +1047,10 @@ function ReportSection() {
         </Button>
         {/* Both the fetch (a 500 building the report) and the clipboard write can fail — useCopy
             surfaces either as an error state rather than a silently dead button. */}
-        <Button variant="outline" onClick={() => copy(api.getSupportBundle())}>
+        <Button
+          variant="outline"
+          onClick={() => copy(api.getSupportBundle(hideNames))}
+        >
           {state === "copied" ? (
             <Check className="mr-2 h-4 w-4" aria-hidden="true" />
           ) : (
@@ -1026,12 +1061,12 @@ function ReportSection() {
               ? "Copied — paste it into the issue"
               : state === "error"
                 ? "Couldn't copy — use the download instead"
-                : "Copy the full report"}
+                : "Copy the summary"}
           </span>
         </Button>
         <Button asChild variant="outline">
           <a
-            href={api.supportReportZipUrl()}
+            href={api.supportReportZipUrl(hideNames)}
             download="shortlist-report.zip"
           >
             <Download className="mr-2 h-4 w-4" aria-hidden="true" />
@@ -1039,11 +1074,21 @@ function ReportSection() {
           </a>
         </Button>
       </div>
+      {/* Specific about what IS and ISN'T in there. "No passwords or tokens" was true and
+          misleading — it sat next to a button that posts publicly, and someone reading it would
+          reasonably conclude the whole thing was safe to publish. */}
       <p className="text-xs text-muted-foreground">
-        Nothing here contains passwords, tokens or API keys — the logs are
-        stripped of them before the file is made. Copying gives you the summary,
-        which fits in a chat message; the download adds the full logs, which is
-        what to attach if the summary isn&rsquo;t enough.
+        <strong className="font-medium text-foreground">
+          No passwords, tokens or API keys
+        </strong>{" "}
+        — those are stripped from the report and from the logs, and your
+        server&rsquo;s address is reduced to{" "}
+        <code className="font-mono">http://&lt;host&gt;</code>. It{" "}
+        <strong className="font-medium text-foreground">does</strong> include
+        your library names, the titles involved, and — unless you leave the box
+        above ticked — the Plex usernames of people on your server. Copying
+        gives you the summary, which fits in a chat message; the download adds
+        the full logs.
       </p>
     </section>
   );

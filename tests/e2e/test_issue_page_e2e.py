@@ -113,8 +113,13 @@ class TestFilingTheReport:
 
         report = page.get_by_role("link", name=re.compile("report a bug on github", re.IGNORECASE))
         expect(report).to_have_attribute("href", re.compile(r"github\.com.*issues/new"))
-        expect(page.get_by_role("button", name=re.compile("copy the full report", re.IGNORECASE))).to_be_visible()
-        expect(page.get_by_text(re.compile("contains passwords, tokens or api keys", re.IGNORECASE))).to_be_visible()
+        expect(page.get_by_role("button", name=re.compile("copy the summary", re.IGNORECASE))).to_be_visible()
+        # Says what it does AND does not contain. The report names people, and the button beside it
+        # publishes — so "no passwords or tokens" alone was true and misleading.
+        expect(page.get_by_text(re.compile("no passwords, tokens or api keys", re.IGNORECASE))).to_be_visible()
+        expect(page.get_by_text(re.compile("plex usernames of people on your server", re.IGNORECASE))).to_be_visible()
+        # And names are hidden by default, because the safe choice must be the one you get for free.
+        expect(page.get_by_role("checkbox", name=re.compile("hide everyone", re.IGNORECASE))).to_be_checked()
 
     def test_the_downloadable_report_is_real_text_and_carries_no_secrets(self, page: Page, app: ShortlistApp):
         """Fetched through the API rather than clicked, because what matters is the CONTENT: someone

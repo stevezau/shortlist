@@ -60,8 +60,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
       supportLibraries: () => supportLibraries(),
       supportPerson: (slug: string) => supportPerson(slug),
       supportBundleUrl: () => "/api/support/bundle.txt",
-      supportReportZipUrl: () => "/api/support/report.zip",
-      getSupportBundle: () => getSupportBundle(),
+      supportReportZipUrl: (anon = false) =>
+        `/api/support/report.zip${anon ? "?anonymise=true" : ""}`,
+      getSupportBundle: (anon = false) => getSupportBundle(anon),
       supportSuggestions: () => supportSuggestions(),
     },
   };
@@ -297,7 +298,7 @@ describe("IssuePage — sending a long report", () => {
     const link = await screen.findByRole("link", {
       name: /download everything \(with logs\)/i,
     });
-    expect(link.getAttribute("href")).toBe("/api/support/report.zip");
+    expect(link.getAttribute("href")).toContain("/api/support/report.zip");
     expect(link.getAttribute("download")).toBe("shortlist-report.zip");
   });
 });
@@ -359,16 +360,48 @@ describe("IssuePage — filing the report", () => {
 
     const link = await screen.findByRole("link", { name: /report a bug on github/i });
     expect(link.getAttribute("href")).toContain("github.com");
-    expect(screen.getByRole("button", { name: /copy the full report/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /copy the summary/i })).toBeTruthy();
     expect(screen.getByRole("link", { name: /download everything \(with logs\)/i })).toBeTruthy();
   });
 
-  it("says outright that the report carries no secrets", async () => {
-    // Someone is about to paste this into a public GitHub issue.
+  it("says what the report does AND does not contain", async () => {
+    // Someone is about to paste this into a public GitHub issue. "No passwords or tokens" was true
+    // and misleading — it sat beside a button that publishes, and it said nothing about the fact
+    // that the report names every person on the server.
     renderPage();
+
     expect(
-      await screen.findByText(/contains passwords, tokens or api keys/i),
+      await screen.findByText(/no passwords, tokens or api keys/i),
     ).toBeTruthy();
+    expect(screen.getByText(/plex usernames of people on your server/i)).toBeTruthy();
+  });
+
+  it("hides names by default, because the button beside it publishes", async () => {
+    renderPage();
+
+    const toggle = await screen.findByRole("checkbox", {
+      name: /hide everyone's names/i,
+    });
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+
+    // And the download carries that choice through.
+    const link = screen.getByRole("link", {
+      name: /download everything \(with logs\)/i,
+    });
+    expect(link.getAttribute("href")).toContain("anonymise=true");
+  });
+
+  it("lets you send real names deliberately", async () => {
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("checkbox", { name: /hide everyone's names/i }),
+    );
+
+    expect(
+      screen
+        .getByRole("link", { name: /download everything \(with logs\)/i })
+        .getAttribute("href"),
+    ).not.toContain("anonymise");
   });
 });
 
@@ -386,7 +419,7 @@ describe("IssuePage — the report copy can fail two ways", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /copy the full report/i }),
+      await screen.findByRole("button", { name: /copy the summary/i }),
     );
 
     await waitFor(() =>
@@ -402,7 +435,7 @@ describe("IssuePage — the report copy can fail two ways", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /copy the full report/i }),
+      await screen.findByRole("button", { name: /copy the summary/i }),
     );
 
     expect(await screen.findByText(/use the download instead/i)).toBeTruthy();
@@ -416,7 +449,7 @@ describe("IssuePage — the report copy can fail two ways", () => {
     renderPage();
 
     await userEvent.click(
-      await screen.findByRole("button", { name: /copy the full report/i }),
+      await screen.findByRole("button", { name: /copy the summary/i }),
     );
 
     expect(await screen.findByText(/use the download instead/i)).toBeTruthy();
