@@ -264,14 +264,13 @@ async def logs(request: Request, level: str = "DEBUG", q: str = "", limit: int =
 
 @_authed.get("/logs/download")
 async def logs_download(request: Request) -> Response:
-    """Every log file as a redacted zip — the attachment for a bug report.
-
-    The identifiers are read here and passed in: `build_zip` redacts this server's own machine id and
-    address by exact match, which is the only pass a novel escaping cannot slip past, and it has no
-    session of its own to look them up with.
-    """
+    """Every log file as a redacted zip — the attachment for a bug report."""
     from shortlist.server.services.redaction import known_identifiers
 
+    # Read here and passed in: `build_zip` redacts this server's own machine id and address by exact
+    # match — the only pass a novel escaping cannot slip past — and it has no session to look them up
+    # with. A comment rather than docstring prose: FastAPI publishes the docstring as this endpoint's
+    # OpenAPI description, and internal plumbing does not belong in the API contract.
     with request.app.state.sessions() as session:
         literals = known_identifiers(session)
     payload = await asyncio.get_running_loop().run_in_executor(
