@@ -1637,3 +1637,70 @@ class TestTheFindingsFromTheFifthReviewPass:
         import shortlist.server.api.support as support
 
         assert "run_in_threadpool" in inspect.getsource(support.report_zip)
+
+
+class TestKnownIdentifiersAreRedactedAsLiterals:
+    """Pattern-matching missed this server's machine id three times.
+
+    The last miss was a URL-encoded log line — `uri=server%3A%2F%2F<id>%2F…` — where `\\b` cannot match
+    because the `F` of `%2F` is itself a hex character. Found by a positive-control audit against the
+    real server: enumerate every secret that exists, then assert none appears. The exact values are
+    not a guess, so they are redacted as literals; the regexes are only the net for ids belonging to
+    something else.
+    """
+
+    MACHINE = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+
+    def _link(self, client):
+        from shortlist.server.db.models import Server
+
+        with client.app.state.sessions() as session:
+            server = session.query(Server).first()
+            server.machine_id = self.MACHINE
+            server.url = "http://172.16.10.240:32400"
+            session.commit()
+
+    def test_a_url_encoded_machine_id_is_redacted(self, client, monkeypatch):
+        """The exact form that escaped: percent-escapes either side, no word boundary available."""
+        self._link(client)
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text(
+            f"2026-08-05 03:31:02.000 | WARNING | a:b:1 - PUT /x?uri=server%3A%2F%2F{self.MACHINE}%2Fcom.plexapp\n"
+        )
+        _enable(client)
+
+        text = client.get("/api/support/bundle.txt").text
+
+        assert self.MACHINE not in text
+        assert "<machine-id>" in text
+
+    def test_a_bare_host_in_a_log_line_is_redacted(self, client):
+        """`http_retry` logs every PMS call as a bare host with no scheme — tens of thousands of lines
+        on a real server, and 17,234 of them leaked past the scheme-based pattern."""
+        self._link(client)
+        logs = client.app.state.config_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "shortlist.log").write_text(
+            "2026-08-05 03:31:02.000 | WARNING | http_retry:_send:134 - GET 172.16.10.240 -> 500 in 0.05s\n"
+        )
+        _enable(client)
+
+        text = client.get("/api/support/bundle.txt").text
+
+        assert "172.16.10.240" not in text
+        assert "<host>" in text
+
+    def test_a_version_string_is_not_mistaken_for_an_address(self, client):
+        """`1.43.3.10861` must survive — over-redaction that eats the PMS version costs a diagnostic."""
+        from shortlist.server.api.support import _scrub
+
+        assert _scrub("PMS 1.43.3.10861-07dfddaeb ready") == "PMS 1.43.3.10861-07dfddaeb ready"
+
+    def test_the_gate_populates_the_literals_so_no_tool_can_forget(self):
+        """Set once on `require_support_mode`, so a tool added later inherits it."""
+        import inspect
+
+        import shortlist.server.api.support as support
+
+        assert "_KNOWN.set" in inspect.getsource(support.require_support_mode)

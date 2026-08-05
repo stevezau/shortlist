@@ -24,6 +24,7 @@ from __future__ import annotations
 import platform
 import re
 import textwrap
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -105,7 +106,7 @@ def _expiry(session) -> datetime | None:
     return when if when > datetime.now(UTC) else None
 
 
-def require_support_mode(request: Request) -> None:
+async def require_support_mode(request: Request) -> None:
     """Refuse a tool unless the owner has support mode switched on and unexpired.
 
     Deliberately a separate gate from `require_owner` rather than folded into it. The owner is
@@ -116,6 +117,13 @@ def require_support_mode(request: Request) -> None:
     with request.app.state.sessions() as session:
         if _expiry(session) is None:
             raise HTTPException(status_code=403, detail="Support mode is off. Turn it on to use the diagnostic tools.")
+        # Set on the GATE, so every tool inherits it and none can forget. A tool added later gets the
+        # literal redaction for free, which is the only way this stays true.
+        #
+        # `async def` is load-bearing: FastAPI runs a SYNC dependency in a threadpool, which copies
+        # the context — so the value set there never reaches the endpoint, and every literal silently
+        # went unredacted. Async runs it in the request's own task.
+        _KNOWN.set(_known_identifiers(session))
 
 
 #: Owner-gated but NOT support-gated: the three endpoints that report and flip the mode itself.
@@ -206,7 +214,12 @@ def _scrub(s: str) -> str:
     (so every error string that reaches the JSON is too). The JSON matters as much as the block —
     `issue.tsx` prints `checks[].detail` and `error` on screen verbatim.
     """
-    return _shape_hosts(_SECRET_PATTERN.sub(r"\1<redacted>", s))
+    out = _SECRET_PATTERN.sub(r"\1<redacted>", s)
+    # Known literals FIRST: exact, and immune to whatever escaping the surrounding text uses.
+    for literal in _KNOWN.get():
+        if literal in out:
+            out = out.replace(literal, "<machine-id>" if len(literal) >= 24 else "<host>")
+    return _shape_hosts(out)
 
 
 #: Setting keys whose VALUE is a network location. Reported as a shape, never verbatim: a report is
@@ -247,6 +260,40 @@ def _location_shape(value: str) -> str:
 _HOST_IN_URL = re.compile(r"\b([a-z][a-z0-9+.-]*)://([^/\s'\"]+)", re.IGNORECASE)
 _HOST_KWARG = re.compile(r"\bhost\s*=\s*(['\"]?)([A-Za-z0-9._-]+)\1")
 _MACHINE_ID = re.compile(r"\b[0-9a-f]{32,40}\b", re.IGNORECASE)
+#: A BARE address, no scheme and no `host=`. This is how `http_retry` logs every single PMS call
+#: ("GET 172.16.10.240 -> 200"), which on a real server is tens of thousands of lines — found at
+#: 17,234 occurrences in a report that the other two patterns had passed clean. Bounded so a PMS
+#: version string ("1.43.3.10861") cannot match: its last part is not 1-3 digits.
+_BARE_IPV4 = re.compile(r"(?<![\w.-])(?:\d{1,3}\.){3}\d{1,3}(?![\w.-])")
+
+
+#: Identifiers this instance is KNOWN to have, set per request from the database.
+#:
+#: Pattern-matching alone has now missed the same machine id three times — `\b` fails after the `F`
+#: of a `%2F` escape, so a URL-encoded `uri=server%3A%2F%2F<id>%2F…` in a log line sailed through. The
+#: exact values are not a guess, so they are redacted as literals and the patterns are only the net
+#: for ids belonging to something else. A ContextVar rather than a global: two reports can be building
+#: at once, and one must never scrub with the other's values.
+_KNOWN: ContextVar[tuple[str, ...]] = ContextVar("_KNOWN", default=())
+
+
+def _known_identifiers(session) -> tuple[str, ...]:
+    """This server's machine id and address, longest first, for literal redaction."""
+    from shortlist.server.db.models import Server
+
+    row = session.query(Server).first()
+    if row is None:
+        return ()
+    host = ""
+    if row.url:
+        from urllib.parse import urlsplit
+
+        try:
+            host = urlsplit(row.url).hostname or ""
+        except ValueError:
+            host = ""
+    values = {v for v in (row.machine_id, host) if v and len(v) >= 4}
+    return tuple(sorted(values, key=len, reverse=True))
 
 
 def _shape_hosts(s: str) -> str:
@@ -267,7 +314,11 @@ def _shape_hosts(s: str) -> str:
         port = netloc.rsplit(":", 1)[-1] if ":" in netloc and netloc.rsplit(":", 1)[-1].isdigit() else ""
         return f"{m.group(1)}://<host>" + (f":{port}" if port else "")
 
-    return _MACHINE_ID.sub("<machine-id>", _HOST_KWARG.sub(r"host=\1<host>\1", _HOST_IN_URL.sub(_url, s)))
+    s = _HOST_IN_URL.sub(_url, s)
+    s = _HOST_KWARG.sub(r"host=\1<host>\1", s)
+    # After the URL pass, so `http://1.2.3.4:32400` has already kept its port.
+    s = _BARE_IPV4.sub("<host>", s)
+    return _MACHINE_ID.sub("<machine-id>", s)
 
 
 def _fail(e: BaseException) -> str:
