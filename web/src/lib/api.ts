@@ -5,7 +5,7 @@ import type {
   JobResult,
   ApiTokenCreated,
   ApiTokenStatus,
-  AppNotification,
+  NotificationsPage,
   ArrOptions,
   Backup,
   BlockedSeed,
@@ -429,7 +429,7 @@ export const api = {
     request("/api/system/api-token", { method: "DELETE" }),
 
   /** The owner's current notifications (update available, failed/paused run, errors). */
-  getNotifications: (): Promise<{ notifications: AppNotification[] }> =>
+  getNotifications: (): Promise<NotificationsPage> =>
     request("/api/notifications"),
 
   /** Dismiss a notification by id (a new failure / newer release re-surfaces on its own). */

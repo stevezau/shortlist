@@ -104,7 +104,11 @@ class TestNotifications:
         # Every field the bell renders, spelled out: the endpoint declares a response model now, and
         # one that missed `action_url` or `dismissable` would quietly serve un-clickable, un-hideable
         # alerts instead of erroring.
-        assert set(body) == {"notifications"}
+        assert set(body) == {"notifications", "dismissed"}
+        # `dismissed` is not decoration: the owner-shelf warning also renders inline on the Users
+        # page, so both surfaces read this one list and dismiss as one. A payload that dropped it
+        # would leave that note with no way to know it had already been acknowledged.
+        assert body["dismissed"] == []
         for note in items:
             assert set(note) == {
                 "id",
@@ -115,6 +119,13 @@ class TestNotifications:
                 "action_label",
                 "dismissable",
             }, note
+
+    def test_a_dismissed_id_comes_back_in_the_dismissed_list(self, client: TestClient):
+        """The round trip the inline owner-shelf note depends on. Without it that note cannot tell
+        it was dismissed and would reappear on every page load."""
+        client.post("/api/notifications/dismiss", json={"id": "owner-sees-all-rows"})
+
+        assert client.get("/api/notifications").json()["dismissed"] == ["owner-sees-all-rows"]
 
     def test_a_partial_run_and_recent_errors_surface_as_warnings(self, client: TestClient, monkeypatch):
         import shortlist.server.notifications as notif

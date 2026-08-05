@@ -350,6 +350,11 @@ export type ApiTokenCreated = Schemas["ApiTokenCreatedOut"];
 /** One alert in the bell menu (GET /api/notifications). */
 export type AppNotification = Schemas["NotificationOut"];
 
+/** `GET /api/notifications` — the firing alerts, plus every id already dismissed. The second list
+ *  exists because the owner-shelf warning also renders inline on the Users page: both surfaces
+ *  report one fact, so they dismiss as one. */
+export type NotificationsPage = Schemas["NotificationsOut"];
+
 /** Report windows, in days. "all" is lifetime. */
 export type ReportWindow = Schemas["EffectivenessReportOut"]["window"];
 

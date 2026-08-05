@@ -317,7 +317,8 @@ export interface paths {
         };
         /**
          * List Notifications
-         * @description Every currently-firing notification (update available, failed/partial run, paused, errors).
+         * @description Every currently-firing notification (update available, failed/partial run, paused, errors),
+         *     plus the ids already dismissed so inline surfaces reporting the same fact can hide themselves.
          */
         get: operations["list_notifications_api_notifications_get"];
         put?: never;
@@ -2598,6 +2599,8 @@ export interface components {
         };
         /** NotificationsOut */
         NotificationsOut: {
+            /** Dismissed */
+            dismissed: string[];
             /** Notifications */
             notifications: components["schemas"]["NotificationOut"][];
         } & {

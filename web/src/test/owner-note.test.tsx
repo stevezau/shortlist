@@ -1,31 +1,68 @@
-import { render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { OwnerNote } from "@/components/owner-note";
+import { OWNER_SHELF_ID, OwnerNote } from "@/components/owner-note";
 import { WatchingAccountLink } from "@/components/watching-account-link";
+import type * as ApiModule from "@/lib/api";
+import type { NotificationsPage } from "@/lib/types";
+
+const { getNotifications, dismissNotification } = vi.hoisted(() => ({
+  getNotifications: vi.fn(() =>
+    Promise.resolve({ notifications: [], dismissed: [] } as NotificationsPage),
+  ),
+  dismissNotification: vi.fn((_id: string) => Promise.resolve({ ok: true })),
+}));
+
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof ApiModule>();
+  return {
+    ...actual,
+    api: {
+      getNotifications: () => getNotifications(),
+      dismissNotification: (id: string) => dismissNotification(id),
+    },
+  };
+});
 
 function renderIn(node: React.ReactNode) {
-  return render(<MemoryRouter>{node}</MemoryRouter>);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>{node}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
+beforeEach(() => {
+  vi.clearAllMocks();
+  getNotifications.mockResolvedValue({
+    notifications: [],
+    dismissed: [],
+  } as NotificationsPage);
+});
+
 describe("OwnerNote", () => {
-  it("points at the guide instead of dead-ending on advice", () => {
+  it("points at the guide instead of dead-ending on advice", async () => {
     // The note always explained the limitation correctly; what it lacked was a next step, which is
     // why the same question kept arriving. The link IS the change.
     renderIn(<OwnerNote />);
 
     expect(
-      screen.getByRole("link", { name: /see the options/i }),
+      await screen.findByRole("link", { name: /see the options/i }),
     ).toHaveAttribute("href", "/watching-account");
   });
 
-  it("leads with the notice, not with the reassurance", () => {
+  it("leads with the notice, not with the reassurance", async () => {
     // Ordering is the point of this component. An earlier version opened with "your Home screen
     // shows only your own row" — true, but it buried the one thing an owner needs to know.
     renderIn(<OwnerNote />);
 
-    const heading = screen.getByText(/you.ll see everyone else.s rows/i);
+    const heading = await screen.findByText(/you.ll see everyone else.s rows/i);
     const reassurance = screen.getByText(/Not your Home screen/i);
     expect(
       heading.compareDocumentPosition(reassurance) &
@@ -33,23 +70,66 @@ describe("OwnerNote", () => {
     ).toBeTruthy();
   });
 
-  it("still says the owner's own Home is safe", () => {
+  it("still says the owner's own Home is safe", async () => {
     // Load-bearing and easy to lose in an edit: Plex splits `promotedToOwnHome` from
     // `promotedToSharedHome`, so nobody else's row reaches the owner's Home. The docs stated the
     // opposite for a while — this pins the true claim to a test.
     renderIn(<OwnerNote />);
 
-    expect(screen.getByText(/Not your Home screen/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Not your Home screen/i)).toBeInTheDocument();
   });
 
-  it("names the recommended fix, and does not promise Shortlist creates the Plex account", () => {
+  it("names the recommended fix, and does not promise Shortlist creates the Plex account", async () => {
     // Shortlist deliberately has no create-a-Home-user endpoint (plex-safety rule 11), so the copy
     // must say the owner adds it in Plex. "We can do this for you" would be a promise the API
     // cannot keep.
     renderIn(<OwnerNote />);
 
-    expect(screen.getByText(/What we suggest:/i)).toBeInTheDocument();
+    expect(await screen.findByText(/What we suggest:/i)).toBeInTheDocument();
     expect(screen.getByText(/You add the account in Plex/i)).toBeInTheDocument();
+  });
+
+  it("dismisses under the same id the bell and the guide use", async () => {
+    // One fact, one dismissal. Three separate ones for a single piece of news is how a warning
+    // becomes nagging — acknowledging it here has to silence the bell too.
+    renderIn(<OwnerNote />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /don.t show this again/i }),
+    );
+
+    expect(dismissNotification).toHaveBeenCalledWith(OWNER_SHELF_ID);
+    expect(OWNER_SHELF_ID).toBe("owner-sees-all-rows");
+  });
+
+  it("stays hidden once the server confirms it was dismissed", async () => {
+    getNotifications.mockResolvedValue({
+      notifications: [],
+      dismissed: [OWNER_SHELF_ID],
+    } as NotificationsPage);
+    renderIn(<OwnerNote />);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/you.ll see everyone else.s rows/i),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("stays visible when the dismissal fails, rather than pretending it saved", async () => {
+    // Hiding on click would be quicker but would also hide a FAILED write, leaving the owner
+    // believing they silenced something that will be back on the next reload.
+    dismissNotification.mockRejectedValue(new Error("boom"));
+    renderIn(<OwnerNote />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /don.t show this again/i }),
+    );
+
+    expect(await screen.findByText(/Couldn.t save that/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/you.ll see everyone else.s rows/i),
+    ).toBeInTheDocument();
   });
 });
 

@@ -1988,6 +1988,13 @@
       "NotificationsOut": {
         "additionalProperties": true,
         "properties": {
+          "dismissed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dismissed",
+            "type": "array"
+          },
           "notifications": {
             "items": {
               "$ref": "#/components/schemas/NotificationOut"
@@ -1997,7 +2004,8 @@
           }
         },
         "required": [
-          "notifications"
+          "notifications",
+          "dismissed"
         ],
         "title": "NotificationsOut",
         "type": "object"
@@ -6390,7 +6398,7 @@
     },
     "/api/notifications": {
       "get": {
-        "description": "Every currently-firing notification (update available, failed/partial run, paused, errors).",
+        "description": "Every currently-firing notification (update available, failed/partial run, paused, errors),\nplus the ids already dismissed so inline surfaces reporting the same fact can hide themselves.",
         "operationId": "list_notifications_api_notifications_get",
         "responses": {
           "200": {

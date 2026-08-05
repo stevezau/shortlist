@@ -3,6 +3,7 @@ import { ArrowRight, Check, Eye, Loader2, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { BackLink } from "@/components/back-link";
+import { OWNER_SHELF_ID } from "@/components/owner-note";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState, QueryBoundary } from "@/components/query-boundary";
 import { Button } from "@/components/ui/button";
@@ -201,7 +202,7 @@ export function WatchingAccountPage() {
             <Button
               variant="ghost"
               disabled={dismiss.isPending}
-              onClick={() => dismiss.mutate("owner-sees-all-rows")}
+              onClick={() => dismiss.mutate(OWNER_SHELF_ID)}
             >
               {dismiss.isSuccess ? "Dismissed" : "Dismiss"}
             </Button>
