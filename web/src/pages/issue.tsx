@@ -1088,8 +1088,9 @@ function ReportSection() {
         your library names, the titles involved, and — unless you leave the box
         above ticked — the Plex usernames of people on your server. On a busy
         server the summary runs to tens of kilobytes, which is more than a chat
-        message holds — attach it as a file if the paste gets cut off, and use
-        the download when you want the logs as well.
+        message holds — attach it as a file if the paste gets cut off. The
+        download adds the full logs and can take a few seconds to build, so give
+        it a moment before clicking again.
       </p>
     </section>
   );
