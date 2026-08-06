@@ -7,6 +7,7 @@ import {
   placementSummary,
 } from "@/lib/placement";
 import { Switch } from "@/components/ui/switch";
+import { WatchingAccountLink } from "@/components/watching-account-link";
 import type { Placement, User } from "@/lib/types";
 
 /** A stable, valid HTML id fragment from a switch's label — "Owner Library Recommended" →
@@ -266,7 +267,8 @@ export function PlacementToggles({
           <strong className="text-foreground">
             Everyone else &rarr; Recommended shelf
           </strong>{" "}
-          to clear them from it.
+          to clear them from it, or keep the shelf and move your own watching to
+          a separate account. <WatchingAccountLink />
         </p>
       )}
 

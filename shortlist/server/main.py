@@ -29,9 +29,11 @@ from shortlist.server.api import (
     runs,
     schedule,
     setup,
+    support,
     system,
     user_rows,
     users,
+    watching_account,
 )
 from shortlist.server.api import settings as settings_api
 from shortlist.server.db.models import Run, Server
@@ -285,6 +287,8 @@ def create_app(config_dir: Path | None = None) -> FastAPI:
         report,
         notifications,
         schedule,
+        support,
+        watching_account,
     ):
         app.include_router(module.router, prefix="/api")
 

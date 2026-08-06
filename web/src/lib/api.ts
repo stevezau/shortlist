@@ -5,7 +5,7 @@ import type {
   JobResult,
   ApiTokenCreated,
   ApiTokenStatus,
-  AppNotification,
+  NotificationsPage,
   ArrOptions,
   Backup,
   BlockedSeed,
@@ -38,6 +38,14 @@ import type {
   ScheduleResponse,
   RunUserTraceResponse,
   RowOverridePatch,
+  SupportHealth,
+  SupportLibraries,
+  SupportPerson,
+  SupportResult,
+  SupportSuggestions,
+  SupportRows,
+  SupportStatus,
+  SupportTitleLookup,
   Session,
   Settings,
   SetupState,
@@ -51,7 +59,11 @@ import type {
   UserRow,
   UserRunsCount,
   UserRunSummary,
+  HomeUserCandidate,
+  TransferResult,
   WatchItem,
+  WatchedFilters,
+  WatchedPage,
 } from "./types";
 
 /**
@@ -96,6 +108,14 @@ export function apiUrl(path: string): string {
   return `${apiBase}${path}`;
 }
 
+/** What a reverse proxy's status actually means, in the terms the person can act on. */
+function proxyErrorMessage(status: number): string {
+  if (status === 502 || status === 503 || status === 504) {
+    return "Shortlist didn't answer — it may have been restarting, or the request took too long. Wait a moment and try again.";
+  }
+  return `Something between your browser and Shortlist returned ${status}. Try again, and check your reverse proxy if it keeps happening.`;
+}
+
 async function errorMessageFrom(response: Response): Promise<string> {
   try {
     const body: unknown = await response.clone().json();
@@ -108,6 +128,14 @@ async function errorMessageFrom(response: Response): Promise<string> {
   }
   try {
     const text = await response.text();
+    // An HTML body is never ours — it is a reverse proxy's own error page, and dumping it put an
+    // Apache banner and the server's HOSTNAME on screen where a diagnostic report was expected
+    // (seen for real: a 502 during a container restart rendered
+    // "Apache/2.4.66 (Ubuntu) Server at <host> Port 443" into the panel). Someone screenshotting
+    // that into a public issue publishes their hostname, so the body is dropped and the status
+    // explained instead.
+    if (/^\s*(<!doctype|<html)/i.test(text))
+      return proxyErrorMessage(response.status);
     if (text.length > 0 && text.length <= 500) return text;
   } catch {
     // Unreadable body — fall through to the status line.
@@ -287,6 +315,35 @@ export const api = {
   getUserHistory: (id: number): Promise<WatchItem[]> =>
     request(`/api/users/${id}/history`),
 
+  /** Search one person's cached watched set. Unlike `getUserHistory` this never touches Plex, so it
+   *  can search the whole set rather than the page on screen. */
+  getUserWatched: (
+    id: number,
+    { q, mediaType, limit }: WatchedFilters,
+  ): Promise<WatchedPage> => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (q) params.set("q", q);
+    if (mediaType) params.set("media_type", mediaType);
+    return request(`/api/users/${id}/watched?${params}`);
+  },
+
+  // --- Watching account (the owner's escape from seeing everyone's rows) ---
+
+  listHomeUsers: (): Promise<HomeUserCandidate[]> =>
+    request("/api/watching-account/candidates"),
+
+  /** Copy the owner's watched set onto their watching account. `scrobble` also marks the titles
+   *  played in Plex — thousands of writes, all dated today because Plex cannot backdate them. */
+  transferWatchHistory: (body: {
+    to_user_id: number;
+    scrobble: boolean;
+    dry_run: boolean;
+  }): Promise<TransferResult> =>
+    request("/api/watching-account/transfer", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   // --- Runs ---
   /** Recent runs; pass a row slug to get only the runs that built that row. `beforeId` pages
    *  backwards — the id of the oldest run you already have. */
@@ -396,7 +453,7 @@ export const api = {
     request("/api/system/api-token", { method: "DELETE" }),
 
   /** The owner's current notifications (update available, failed/paused run, errors). */
-  getNotifications: (): Promise<{ notifications: AppNotification[] }> =>
+  getNotifications: (): Promise<NotificationsPage> =>
     request("/api/notifications"),
 
   /** Dismiss a notification by id (a new failure / newer release re-surfaces on its own). */
@@ -605,6 +662,111 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
+
+  // --- Support Mode ---
+  // The tools 403 until the mode is on; `supportStatus` is what the page uses to tell the two
+  // states apart rather than rendering a wall of permission errors.
+  supportStatus: (): Promise<SupportStatus> => request("/api/support/status"),
+
+  enableSupport: (): Promise<SupportStatus> =>
+    request("/api/support/enable", { method: "POST" }),
+
+  disableSupport: (): Promise<SupportStatus> =>
+    request("/api/support/disable", { method: "POST" }),
+
+  supportHealth: (): Promise<SupportHealth> => request("/api/support/health"),
+
+  supportTitle: (q: string): Promise<SupportTitleLookup> =>
+    request(`/api/support/title?q=${encodeURIComponent(q)}`),
+
+  supportPerson: (slug: string): Promise<SupportPerson> =>
+    request(`/api/support/person/${encodeURIComponent(slug)}`),
+
+  supportLibraries: (): Promise<SupportLibraries> =>
+    request("/api/support/libraries"),
+
+  supportRows: (): Promise<SupportRows> => request("/api/support/rows"),
+
+  // The remaining checks return their own shapes plus a `text` block. The page reads them through
+  // one generic panel, so they are typed as open records rather than nineteen near-identical
+  // interfaces — the one field every caller actually touches is `text`, which is always present.
+  supportRowSchedule: (): Promise<SupportResult> =>
+    request("/api/support/row-schedule"),
+
+  supportConnection: (): Promise<SupportResult> =>
+    request("/api/support/connection"),
+
+  supportReadAs: (
+    user: string,
+    endpoint: string,
+    section: string,
+  ): Promise<SupportResult> =>
+    request(
+      `/api/support/read-as?user=${encodeURIComponent(user)}&endpoint=${encodeURIComponent(endpoint)}&section=${encodeURIComponent(section)}`,
+    ),
+
+  supportSharing: (): Promise<SupportResult> => request("/api/support/sharing"),
+
+  supportDrift: (): Promise<SupportResult> => request("/api/support/drift"),
+
+  supportPick: (user: string, title: string): Promise<SupportResult> =>
+    request(
+      `/api/support/pick?user=${encodeURIComponent(user)}&title=${encodeURIComponent(title)}`,
+    ),
+
+  supportMissing: (user: string, title: string): Promise<SupportResult> =>
+    request(
+      `/api/support/missing?user=${encodeURIComponent(user)}&title=${encodeURIComponent(title)}`,
+    ),
+
+  supportFunnel: (user: string): Promise<SupportResult> =>
+    request(`/api/support/funnel?user=${encodeURIComponent(user)}`),
+
+  supportAi: (user: string): Promise<SupportResult> =>
+    request(`/api/support/ai?user=${encodeURIComponent(user)}`),
+
+  supportTimeline: (user: string): Promise<SupportResult> =>
+    request(`/api/support/timeline?user=${encodeURIComponent(user)}`),
+
+  supportSettingsHistory: (): Promise<SupportResult> =>
+    request("/api/support/settings-history"),
+
+  supportJobs: (): Promise<SupportResult> => request("/api/support/jobs"),
+
+  supportClocks: (): Promise<SupportResult> => request("/api/support/clocks"),
+
+  supportDatabase: (): Promise<SupportResult> =>
+    request("/api/support/database"),
+
+  supportConfig: (): Promise<SupportResult> => request("/api/support/config"),
+
+  supportErrors: (): Promise<SupportResult> => request("/api/support/errors"),
+
+  supportRecentRuns: (): Promise<SupportResult> => request("/api/support/runs"),
+
+  /** People and titles for the type-ahead on checks that take a name. DB-only, so it still populates
+   *  when Plex is unreachable — which is exactly when these checks get used. */
+  supportSuggestions: (): Promise<SupportSuggestions> =>
+    request("/api/support/suggestions"),
+
+  /** Plain links — the session cookie authenticates them, so no fetch/blob dance.
+   *
+   *  `supportReportZipUrl` is the one to offer: the text report PLUS every redacted log file. The
+   *  `.txt` remains for anyone who wants only the pasteable part. */
+  supportReportZipUrl: (): string => apiUrl("/api/support/report.zip"),
+
+  supportBundleUrl: (): string => apiUrl("/api/support/bundle.txt"),
+
+  /** The pasteable report. Not `request()`: the response is text/plain. */
+  getSupportBundle: async (): Promise<string> => {
+    const response = await fetch(apiUrl("/api/support/bundle.txt"), {
+      headers: { Accept: "text/plain" },
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await errorMessageFrom(response));
+    }
+    return response.text();
+  },
 };
 
 /** URL for the shared SSE stream (used by lib/sse.ts only). */

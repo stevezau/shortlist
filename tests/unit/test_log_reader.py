@@ -164,3 +164,93 @@ class TestTailAndZip:
     def test_zip_is_still_valid_when_there_are_no_logs(self, tmp_path: Path):
         archive = zipfile.ZipFile(io.BytesIO(log_reader.build_zip(tmp_path)))
         assert archive.namelist() == ["logs/EMPTY.txt"]
+
+    def test_zip_shapes_addresses_and_machine_ids_without_any_literals(self, tmp_path: Path):
+        """The export is what gets attached to a public issue, so `scrub`'s credential pass was only
+        ever a third of the job — a log file's bulk is addresses."""
+        write_log(
+            tmp_path,
+            LINE.format(level="DEBUG", message="GET 172.16.10.240 -> 200 in 0.03s"),
+            LINE.format(level="ERROR", message="host='172.16.10.240', port=32400 unreachable"),
+            LINE.format(level="INFO", message="PMS 1.43.3.10861 ok"),
+        )
+
+        body = zipfile.ZipFile(io.BytesIO(log_reader.build_zip(tmp_path))).read("logs/shortlist.log").decode()
+
+        assert "172.16.10.240" not in body
+        assert body.count("<host>") == 2
+        assert "1.43.3.10861" in body, "a version string is not an address"
+
+    def test_zip_redacts_this_servers_own_identifiers_as_literals(self, tmp_path: Path):
+        """The regression that reached a real report.zip: the machine id arrives URL-encoded, where no
+        word-boundary pattern can find it, so the known value is replaced by exact match.
+
+        DOUBLE-encoded on purpose. `%2F` is now caught by the pattern too, so a test using it passes
+        with the literal pass deleted — which is what the first version of this test did. `%252F` is a
+        shape only the literal pass can catch, so this can only go green for the right reason.
+        """
+        machine_id = "7ee8abc1bcdcc79389ad1e15c30e2692714bc940"
+        write_log(
+            tmp_path,
+            LINE.format(
+                level="DEBUG", message=f"PUT /library/collections?type=1&uri=server%253A%252F%252F{machine_id}%252Fcom"
+            ),
+        )
+
+        body = (
+            zipfile.ZipFile(io.BytesIO(log_reader.build_zip(tmp_path, {machine_id: "<machine-id>"})))
+            .read("logs/shortlist.log")
+            .decode()
+        )
+
+        assert machine_id not in body
+        assert "<machine-id>" in body
+
+    def test_zip_redacts_a_plex_direct_host_before_the_pattern_can_break_it(self, tmp_path: Path):
+        """The ordering defect. A `plex.direct` hostname EMBEDS the machine id, so running the patterns
+        first rewrites its middle to `<machine-id>` — after which the exact hostname no longer matches
+        and the dashed LAN IP on the front survives into the export."""
+        machine_id = "7ee8abc1bcdcc79389ad1e15c30e2692"
+        host = f"192-168-1-5.{machine_id}.plex.direct"
+        write_log(tmp_path, LINE.format(level="DEBUG", message=f"GET {host} -> 200 in 0.03s"))
+
+        literals = {host: "<host>", machine_id: "<machine-id>"}
+        body = zipfile.ZipFile(io.BytesIO(log_reader.build_zip(tmp_path, literals))).read("logs/shortlist.log").decode()
+
+        assert "192-168-1-5" not in body, "the LAN IP survived on the front of the hostname"
+        assert "GET <host> -> 200" in body, body
+
+    def test_zip_does_not_mangle_the_log_when_the_pms_hostname_is_a_common_word(self, tmp_path: Path):
+        """`plex` is the stock Docker Compose hostname. Replacing it as a bare substring rewrites the
+        loguru source field, `com.plexapp`, `plex.tv` and `plexapi` — destroying the field that says
+        which client logged the line, in the export whose whole purpose is being readable."""
+        write_log(
+            tmp_path,
+            "2026-08-05 03:31:02.000 | DEBUG    | shortlist.engine.clients.plex_pms:_send:134 - "
+            "GET plex -> 200; uri=com.plexapp.plugins.library; see plex.tv\n",
+        )
+
+        body = (
+            zipfile.ZipFile(io.BytesIO(log_reader.build_zip(tmp_path, {"plex": "<host>"})))
+            .read("logs/shortlist.log")
+            .decode()
+        )
+
+        assert "clients.plex_pms:_send:134" in body, body
+        assert "com.plexapp.plugins.library" in body
+        assert "plex.tv" in body
+        assert "GET <host> -> 200" in body, "the actual hostname must still be redacted"
+
+    def test_an_unreadable_log_file_does_not_disclose_its_path(self, tmp_path: Path, monkeypatch):
+        """`OSError.__str__` carries the absolute path — a home directory and an OS username on any
+        non-Docker install. This branch was the one writer into the zip with no redaction at all."""
+        write_log(tmp_path, LINE.format(level="INFO", message="hello"))
+        monkeypatch.setattr(
+            Path, "read_text", lambda *_a, **_k: (_ for _ in ()).throw(OSError("[Errno 13] denied: '/home/dave/x'"))
+        )
+
+        archive = zipfile.ZipFile(io.BytesIO(log_reader.build_zip(tmp_path)))
+        body = archive.read("logs/shortlist.log.unreadable.txt").decode()
+
+        assert "/home/dave" not in body, body
+        assert "OSError" in body, "the failure must still be reported"

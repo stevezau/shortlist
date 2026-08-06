@@ -429,3 +429,68 @@ class TestDeadLibraries:
 
         with sessions() as session:
             assert session.query(WatchedTitle).count() == 1
+
+
+class TestUserRatingSurvivesTheCache:
+    """The rating has to make it PMS -> cache -> engine, or the feature silently does nothing.
+
+    Everything else about issue #69 is tested on in-memory items. This is the one seam where a
+    correct engine and a correct client can still add up to nothing: the cache is what the run
+    actually reads from, and a column that is written but never read back (or read but never
+    written) fails invisibly — every rating would simply look absent, which is indistinguishable
+    from the 99.7% of titles nobody rated.
+    """
+
+    def _rated(self, title: str, *, tmdb_id: int, rating: float | None) -> WatchedItem:
+        item = watched(title, tmdb_id=tmdb_id)
+        return WatchedItem(**{**item.__dict__, "user_rating": rating})
+
+    def test_a_rating_written_by_a_sync_is_read_back_by_the_engine(self, sessions, user_id):
+        cache = WatchCache(sessions)
+
+        sync_pms(cache, sessions, user_id, [self._rated("Hated It", tmdb_id=1, rating=2.0)])
+
+        with sessions() as session:
+            (item,) = cache.watched_set(session, user_id)
+        assert item.user_rating == 2.0
+        assert item.is_human_rating is True
+
+    def test_an_unrated_title_reads_back_as_unrated_rather_than_zero(self, sessions, user_id):
+        """0.0 is a rating someone can give, so the round trip must preserve None as None."""
+        cache = WatchCache(sessions)
+
+        sync_pms(cache, sessions, user_id, [self._rated("Never Rated", tmdb_id=1, rating=None)])
+
+        with sessions() as session:
+            (item,) = cache.watched_set(session, user_id)
+        assert item.user_rating is None
+
+    def test_changing_a_rating_updates_the_cached_row(self, sessions, user_id):
+        """An upsert, not an insert — otherwise the first rating a person ever gives is permanent."""
+        cache = WatchCache(sessions)
+        sync_pms(cache, sessions, user_id, [self._rated("Changed My Mind", tmdb_id=1, rating=2.0)])
+
+        sync_pms(
+            cache,
+            sessions,
+            user_id,
+            [self._rated("Changed My Mind", tmdb_id=1, rating=10.0)],
+            force_full=True,
+        )
+
+        with sessions() as session:
+            (item,) = cache.watched_set(session, user_id)
+        assert item.user_rating == 10.0
+
+    def test_withdrawing_a_rating_clears_it(self, sessions, user_id):
+        """The case a guarded write would break. Someone thumbs-downs a title, then removes the
+        rating in Plex — if the cache only wrote non-None values, the withdrawn judgement would keep
+        shaping their row for ever and nothing on any screen would explain why."""
+        cache = WatchCache(sessions)
+        sync_pms(cache, sessions, user_id, [self._rated("Took It Back", tmdb_id=1, rating=2.0)])
+
+        sync_pms(cache, sessions, user_id, [self._rated("Took It Back", tmdb_id=1, rating=None)], force_full=True)
+
+        with sessions() as session:
+            (item,) = cache.watched_set(session, user_id)
+        assert item.user_rating is None, "an un-rating must clear the column, not be skipped"

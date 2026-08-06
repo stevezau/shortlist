@@ -1744,3 +1744,201 @@ class TestWatchedWindowCoverage:
         with sessions() as session:
             titles = {r.title for r in session.query(WatchedTitle).all()}
         assert titles == {"Newest", "Older"}, "a title the walk never reached was deleted as an un-watch"
+
+
+class TestScrobbleAs:
+    """Marking a title played AS another account — the write behind the watch-history transfer.
+
+    Two things must hold or the transfer is unsafe: it uses the TARGET's token (not the owner's, or
+    it marks the title watched for the wrong person), and a title that account cannot see is skipped
+    rather than raised (that is the normal case for an unshared library, and one of them must not
+    abandon the other two thousand).
+    """
+
+    _URL = "http://pms:32400/:/scrobble"
+
+    @respx.mock
+    def test_sends_the_targets_token_and_the_library_identifier(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        route = respx.get(self._URL).mock(return_value=httpx.Response(200, text=""))
+
+        assert mock_plex.scrobble_as(4242, "TARGET-TOKEN") is True
+
+        request = route.calls[0].request
+        assert request.headers["X-Plex-Token"] == "TARGET-TOKEN"
+        assert request.url.params["key"] == "4242"
+        # Without the identifier the PMS ignores the scrobble entirely.
+        assert request.url.params["identifier"] == "com.plexapp.plugins.library"
+
+    @respx.mock
+    def test_an_invisible_title_is_skipped_not_raised(self, mock_plex: PlexClient):
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(404, text=""))
+
+        assert mock_plex.scrobble_as(4242, "TARGET-TOKEN") is False
+
+    @respx.mock
+    def test_a_real_server_error_still_raises(self, mock_plex: PlexClient):
+        """403/404 mean "not visible to them"; a 500 means the PMS is unwell and the caller should
+        hear about it rather than silently record thousands of skips."""
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(500, text=""))
+
+        with pytest.raises(httpx.HTTPStatusError):
+            mock_plex.scrobble_as(4242, "TARGET-TOKEN")
+
+    def test_dry_run_writes_nothing_at_all(self, mock_plex: PlexClient, monkeypatch):
+        """Rule 8. No respx route registered, so any HTTP call would fail the test outright."""
+        from shortlist.engine.clients import plex_pms
+
+        def explode(*_a, **_k):
+            raise AssertionError("dry run must not touch the PMS")
+
+        monkeypatch.setattr(plex_pms.http_retry, "get", explode)
+
+        assert mock_plex.scrobble_as(4242, "TARGET-TOKEN", dry_run=True) is True
+
+
+class TestTheRecordedShowLibraryResponse:
+    """Replays `tests/fixtures/pms_watched_shows.xml.txt` through the real parser.
+
+    A fixture nothing reads is documentation, not a fixture (rule 11). This one exists because the
+    already-watched rule turns entirely on what `?type=2&unwatched=0` returns, and that was assumed
+    rather than measured until a live probe on 2026-08-05.
+    """
+
+    _URL = "http://pms:32400/library/sections/2/all"
+
+    @staticmethod
+    def _fixture() -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[1] / "fixtures" / "pms_watched_shows.xml.txt").read_text()
+
+    @respx.mock
+    def test_a_real_show_library_read_returns_barely_started_series(self, mock_plex: PlexClient):
+        """The finding that drove the 1.2 rule change: Plex's watched filter is "more than zero
+        episodes", not "finished". A show 2 of 176 in — 1.1% — comes back from this endpoint."""
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
+
+        seen = {(i.viewed_leaf_count, i.leaf_count) for i in items}
+        assert (2, 176) in seen, "a 1.1%-watched show is returned by unwatched=0"
+        assert (2, 23) in seen and (4, 142) in seen
+        # ...and fully-watched ones come back through the same read, undistinguished.
+        assert (47, 47) in seen and (100, 100) in seen
+
+    @respx.mock
+    def test_most_of_what_it_returns_is_not_finished(self, mock_plex: PlexClient):
+        """Half the recorded rows sit under the OLD `min(80%, max(3, 15%))` bar, so under the old
+        rule they stayed eligible to be recommended back to the person watching them."""
+        from shortlist.engine.rows import _watched_titles
+
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
+        shows = {i.tmdb_id: (i.viewed_leaf_count, i.leaf_count) for i in items}
+        finished = _watched_titles(set(), shows, 0.8)
+
+        assert len(items) == 10
+        assert len(finished) == 5, "five of ten started shows did not count as watched"
+
+    @respx.mock
+    def test_a_bulk_mark_as_played_carries_no_last_viewed_stamp(self, mock_plex: PlexClient):
+        """Recorded because it decides a real behaviour: `_watched_item` stamps a row with no
+        `lastViewedAt` as 1970, which an INCREMENTAL read then skips — so a bulk mark-as-played is
+        only ever picked up by the periodic full read."""
+        from datetime import UTC, datetime
+
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+
+        items = mock_plex.watched_titles("2", MediaType.SHOW, "TOK").items
+
+        marked = next(i for i in items if i.tmdb_id == 300006)
+        assert marked.watched_at == datetime(1970, 1, 1, tzinfo=UTC)
+        assert (marked.viewed_leaf_count, marked.leaf_count) == (100, 100)
+
+
+class TestTheRecordedUserRatingResponse:
+    """Replays `tests/fixtures/pms_watched_user_rating.xml.txt` through the real parser.
+
+    Issue #69 turns on `userRating` arriving free on the watched read we already make. That is now
+    measured rather than assumed (rule 11), and the fixture also records the trap: on a server
+    running Kometa's rating sync, most of the OWNER's ratings were written by a tool, not typed.
+    """
+
+    _URL = "http://pms:32400/library/sections/1/all"
+
+    @staticmethod
+    def _fixture() -> str:
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[1] / "fixtures" / "pms_watched_user_rating.xml.txt").read_text()
+
+    def _items(self, mock_plex: PlexClient) -> list:
+        mock_plex._server.url.return_value = self._URL
+        respx.get(self._URL).mock(return_value=httpx.Response(200, text=self._fixture()))
+        return mock_plex.watched_titles("1", MediaType.MOVIE, "TOK").items
+
+    @respx.mock
+    def test_user_rating_is_parsed_off_the_watched_read(self, mock_plex: PlexClient):
+        """The whole feasibility claim in one assertion: no second request, no new endpoint."""
+        by_id = {i.tmdb_id: i for i in self._items(mock_plex)}
+
+        assert by_id[333371].user_rating == 7.9
+        assert by_id[1364939].user_rating == 2.0
+
+    @respx.mock
+    def test_a_title_nobody_rated_carries_no_rating_rather_than_a_zero(self, mock_plex: PlexClient):
+        """0.0 is a rating someone can give. "Never rated" has to stay distinguishable from it, or
+        every unrated title in the library reads as universally hated and stops seeding."""
+        by_id = {i.tmdb_id: i for i in self._items(mock_plex)}
+
+        assert by_id[1332077].user_rating is None
+        assert by_id[1332077].is_human_rating is False
+
+    @respx.mock
+    def test_a_fractional_rating_is_recognised_as_tool_written(self, mock_plex: PlexClient):
+        """The guard that keeps Kometa's IMDb scores from reading as the owner's opinion. Plex's own
+        control cannot write 7.9, so nothing that did was typed by a person."""
+        by_id = {i.tmdb_id: i for i in self._items(mock_plex)}
+
+        assert by_id[333371].is_human_rating is False, "7.9 cannot come from Plex's star control"
+        assert by_id[63].is_human_rating is False, "8.8 — and identical to the title's `rating`"
+        assert by_id[1248753].is_human_rating is True, "8.0, from a real viewer"
+
+    @respx.mock
+    def test_the_tool_also_writes_some_whole_numbers(self, mock_plex: PlexClient):
+        """Why one guard is not enough. Row 3 is tool-written and lands on 6.0, which the per-value
+        check cannot tell from an opinion — the account-level check in `history` is what catches it.
+        If this ever fails because the value changed, the account-level guard is what still holds."""
+        by_id = {i.tmdb_id: i for i in self._items(mock_plex)}
+
+        assert by_id[509967].user_rating == 6.0
+        assert by_id[509967].is_human_rating is True, "indistinguishable per-value — hence two layers"
+
+    @respx.mock
+    def test_the_owner_rows_in_this_fixture_fail_the_account_level_guard(self, mock_plex: PlexClient):
+        """The two layers composed, over the real recording: taken as one account, these ratings are
+        mostly fractional, so NONE of them are believed — including the whole-numbered 6.0."""
+        from shortlist.engine.history import disliked_seed_keys, ratings_are_trustworthy
+
+        owner_rows = [i for i in self._items(mock_plex) if i.tmdb_id in {333371, 63, 509967}]
+        # The recording holds three owner rows and the account guard abstains under five, so the
+        # sample is doubled to reach a judgeable size while keeping the recorded RATIO (1 whole in 3)
+        # — which is close to the real account's 9.3%. Doubling rows rather than bare values because
+        # `disliked_seed_keys` judges the account from the same list it then filters; handing it a
+        # short list would have it abstain and suppress on the 6.0, which is exactly what an earlier
+        # version of this test did.
+        doubled = owner_rows * 2
+
+        assert ratings_are_trustworthy([i.user_rating for i in doubled]) is False
+        assert disliked_seed_keys(doubled, 6.0) == set(), "a distrusted account suppresses nothing"
+        # ...and the same six rows, believed, WOULD have suppressed the tool's 6.0. That contrast is
+        # the point: the account guard is the only thing standing between Kometa's IMDb scores and a
+        # silently shrunken seed list.
+        assert disliked_seed_keys([i for i in doubled if i.is_human_rating], 6.0) == {(509967, MediaType.MOVIE)}

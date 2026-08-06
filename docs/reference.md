@@ -52,12 +52,14 @@ heading: Reference
 | `jobs.max_parallel_readonly`                          | `3`                                | how many READ-ONLY background jobs may run at once (1–8). Jobs that write to Plex/plex.tv are always exclusive and never overlap a run. Share-filter writes are read-modify-write merges, so two at once would lose one of them. Only `sync.history` and `backup.take` are read-only; `sync.users` counts as a writer because it renames collections. Dial to 1 if your PMS objects to the concurrency                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `sync.watch_cron`                                     | `""` (daily 04:17)                 | cron expression for the watch-history sync schedule. Blank = built-in default. Set from the job's frequency picker on the Jobs page                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `sync.watch_incremental`                              | `true`                             | read only what changed since the last sync instead of every watched title, per user, per library, every night. Done by ORDERING (`sort=lastViewedAt:desc`, then stop at the first title older than the cursor), because a `lastViewedAt>=` query filter is silently ignored by PMS 1.43.3. It returns the full set with a 200 (measured; see `tests/fixtures/pms_watched_incremental.xml.txt`). When the read can prove it reached everything back to the cursor — it either saw an older title or walked the library's reported total — a title missing from it that was watched inside that window has been un-watched, and is dropped. When it cannot prove that (a PMS that reports no total and caps the page, or one that ignores the sort), it tops up and deletes nothing, because a truncated read and an un-watch look identical from the outside. Further back than the cursor it cannot tell either way, so a complete read still happens every `sync.watch_full_days` regardless. `false` = always read everything |
-| `sync.watch_full_days`                                | `7`                                | how often the COMPLETE watch-history re-read happens, in days (1–90). It is the only thing that can notice a title un-watched or removed longer ago than the nightly read reaches back, so it is not optional. Only its frequency is. If a library cannot be read incrementally at all, that library falls back to a complete read on its own rather than serving a stale set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `sync.watch_full_days`                                | `7`                                | how often the COMPLETE watch-history re-read happens, in days (1–90). It is the only thing that can notice a title un-watched or removed longer ago than the nightly read reaches back, so it is not optional. Only its frequency is. It also bounds how quickly a **Plex rating** takes effect: rating a title does not move its `lastViewedAt`, and the incremental read walks by that stamp, so a new rating is invisible until the next full read. At the default that is up to 7 days — lower this if you want `recommendations.use_plex_ratings` to bite sooner, at the cost of a full re-read that much more often. If a library cannot be read incrementally at all, that library falls back to a complete read on its own rather than serving a stale set                                                                                                                                                                                                                                                              |
 | `sync.users_cron`                                     | `""` (daily 04:47)                 | cron expression for the user-list sync schedule. Blank = built-in default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `privacy.sync_cron`                                   | `""` (daily 05:15)                 | cron for the nightly privacy sync. A re-merge of every account's share filter. It builds, delivers and promotes nothing, so it can only ever make the server _more_ private; it is the cheapest safety net against drift now that nothing verifies hiding after the fact                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `sync.check_cron`                                     | `""` (daily 05:45)                 | cron for the drift check — after the rows build (03:30) and the privacy pass (05:15), so it checks the state those left behind. The ONE schedule that can be switched off entirely: it writes corrections to Plex, so choosing **Off** in its frequency picker (Jobs → Check and fix rows on Plex) stores an empty value the scheduler reads as an explicit "off" rather than "inherit the default" (every other blank cron means "use the built-in default"). Because of that, its picker is driven by the EFFECTIVE cron from `GET /api/schedule`, not by the raw setting. The two are indistinguishable in `GET /api/settings`, which folds the blank default in. The way back is the **Built-in (05:45)** chip in the same picker, which saves `null` — that deletes the stored value, so the job inherits the built-in cron again rather than pinning a copy of it                                                                                                                                                         |
 | `maintenance.prune_cron`                              | `""` (daily 06:15)                 | cron for the retention prune. It applies `runs.retention` and `events.retention` and drops expired cache rows. Last of the night, after every other schedule has finished writing, so it trims a settled database. The prune is also queued after every run; this schedule is the FLOOR under that, for a server whose rows have no cron (or one paused from the Danger Zone) and so has no runs to queue it. Local database housekeeping. Nothing on Plex changes. Blank = built-in default                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `recommendations.blocked_shared_seeds`                | `[]`                               | TMDB ids that must never seed a SHARED row. Separate from each person's own blocked seeds on purpose: a shared row is public, so letting one person's block reshape what everyone sees would make an individual preference into a server-wide edit nobody else can see or undo                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `recommendations.use_plex_ratings`                    | `true`                             | when on, a title someone rated low in Plex stops being used to find similar things FOR THEM. Their rating arrives on the watched read Shortlist already makes, scoped to their own share token, so it costs no extra calls and one person's opinion can never reach another's row. A title nobody rated is unaffected — on a real 50-account server that was 99.7% of watches. Never applied to a SHARED row, for the same reason as `blocked_shared_seeds` above. Ratings that look tool-written (Kometa and friends sync IMDb scores into the same field) are ignored: Plex's own controls write whole numbers only, so a fractional value was not typed by a person, and an account whose ratings are mostly fractional is disbelieved wholesale                                                                                                                                                                                                                                                                             |
+| `recommendations.dislike_threshold`                   | `2.0`                              | the 0–10 Plex rating at or below which that happens, inclusive. 2 = one star, which is also where a thumbs-down lands. Capped at 6 (three stars): above that “disliked” stops being a fair reading, and 10 would suppress every rated title at once (0–6)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `paused_all`                                          | `false`                            | Danger-Zone "stop all runs" switch; pauses without disabling anyone                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `requests.enabled`                                    | `false`                            | ask Radarr/Sonarr for picks the library lacks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `requests.radarr.url` / `.apikey`                     | —                                  | Radarr (movies); key stored Fernet-encrypted, redacted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
@@ -108,7 +110,30 @@ GET  /api/users/search/titles?q=&media_type=movie|show -> [{tmdb_id, title, medi
 POST /api/users/{id}/blocked-seeds {tmdb_id, title?, media_type?, year?} · DELETE /api/users/{id}/blocked-seeds/{tmdb_id} -> {blocked_seeds: [{tmdb_id, title, media_type, year}]}
      Titles that must never SEED this person's recommendations. The watch stays in their history, it just stops shaping their picks.
      Stored on `users.prefs`; an install that predates the richer shape holds bare TMDB ids and keeps working unchanged.
-GET  /api/users/{id}/history (recent watches; each item carries `title`, `media_type`, `year`, plus `season`/`episode`/`episode_title` for TV)
+GET  /api/users/{id}/history (recent watches read LIVE from Plex; each item carries `title`, `media_type`, `year`, plus `season`/`episode`/`episode_title` for TV)
+GET  /api/users/{id}/watched?q=&media_type=movie|show&limit=&offset= -> {items, total, last_full_sync_at, synced_titles, dislike_threshold, ratings_trusted, rated_count}
+     Search this person's CACHED watched set — the same set recommendations are filtered against, so
+     it can answer "I watched that, why was it recommended?". Unlike `/history` it never touches Plex,
+     so it searches the whole set rather than the newest page, and each item carries `watch_count`
+     plus `viewed_leaf_count`/`leaf_count` (null for movies) for the "3 of 8 episodes" progress.
+     `last_full_sync_at` is null while ANY library has never had a full read — the set is incomplete.
+     Each item also carries `user_rating` — what THIS person rated it in Plex, 0–10, or null if they
+     never did (nearly always). The three page-level rating fields say whether that rating is acting:
+     `dislike_threshold` is the cutoff in force (null = `recommendations.use_plex_ratings` is off),
+     and `ratings_trusted` is false when this account's ratings look tool-written, in which case none
+     of them are used whatever the threshold says. `rated_count` counts the whole set, not the page.
+```
+
+### Watching account (the owner's escape from seeing everyone's rows)
+
+```
+GET  /api/watching-account/candidates -> [{plex_account_id, title, protected, already_a_shortlist_user}]
+     Plex Home users the owner could move their watching to. The admin account is never a candidate.
+POST /api/watching-account/transfer {to_user_id, scrobble?, dry_run?} -> {copied, already_present, scrobbled, scrobble_skipped, dry_run, errors}
+     Copies the owner's watched set onto the watching account, preserving the TRUE watch dates in
+     `watched_titles.source_viewed_at`. `scrobble` additionally marks each title played on the PMS as
+     that account — Plex stamps every one of those `now` and cannot be told otherwise, which is
+     exactly why the real dates are stored separately.
 ```
 
 ### Rows
@@ -120,9 +145,12 @@ GET  /api/collections/{id}/effectiveness -> {delivered, watched, first_delivered
      `watched_pct` cannot express this — it is a ceiling, so the ranking shows unwatched titles first and merely PERMITS finished ones; even at 1.0 a
      library with plenty of unwatched candidates yields a mostly-unwatched row. Setting `rewatch` also keeps finished titles in the row's candidate
      POOL regardless of `watched_pct`, so the two rows do not share one pool.
-     `unstarted_only` (bool, default false, SHOWS only) drops every series the person has started, however little of it. The normal filter only drops
-     shows they have FINISHED (`recommendations.watched_show_pct`), so one they are three episodes into is otherwise still eligible — this is what makes
-     "a series to start" literally true. Meaningless for movies, where any view is already a finish.
+     `unstarted_only` (bool, default false; accepted on any row that can hold shows) drops every series the person has started, however little of it.
+     It only changes anything on a row whose `watched_pct` is ABOVE 0: such a row caps FINISHED titles and so still admits a series someone is three
+     episodes into, and this is what makes "a series to start" literally true there. At `watched_pct` 0 the row already excludes started series (see
+     "What 'already watched' means for a show"), so the flag is a no-op. Refused for `media: "movie"`, where any view is already a finish.
+     The finished bar itself is not configurable — it is `EngineConfig.watched_show_pct`, fixed at 0.8. Earlier revisions of this document cited a
+     `recommendations.watched_show_pct` setting; no such key has ever existed.
      Both are refused (422) in combinations that cannot work: `rewatch` + `unstarted_only` together (they ask for opposite things — the row would fill
      with titles nobody has seen, under a "you've already seen" name), and `unstarted_only` on a `media: "movie"` row. PATCH validates the MERGED row,
      not just the fields sent, so neither invalid pair can be reached one field at a time.
@@ -134,7 +162,7 @@ POST /api/collections/{id}/poster/upload (multipart image) · GET/DELETE /api/co
 
 ```
 GET  /api/system/image-provider -> {capable, provider, reason} (can the AI provider generate poster images — drives the row editor's Generate gate)
-GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files, redacted, as a zip)
+GET  /api/system/logs?level=&q=&limit= (parsed + redacted log lines) · GET /api/system/logs/download (all log files as a zip; credentials, addresses and this server's machine id removed — the live view above strips credentials only, since it renders on the owner's own screen where the address is what makes a line readable)
 GET  /api/system/libraries -> [{key, title, type}] (the server's Plex libraries, for the row editor)
 GET  /api/system/jobs?kind=&limit=&before_id= -> [{id, kind, payload, result, status, attempts, max_attempts, detail, error, created_at, started_at, finished_at}] (background maintenance history, newest first; `kind` narrows it to one job type, which is how the Jobs page shows a single job's own history; runs have their own page)
 GET  /api/schedule -> {jobs[{kind, label, setting, cron, using_default, default_cron, optional, writes_plex, next_run}], rows[{cron, rows[], next_run}]} (everything on a timer, rows grouped by shared cron exactly as the scheduler groups them. One trigger builds all of them). `cron` is the EFFECTIVE one with defaults resolved; `default_cron` is the built-in it falls back to when nothing is stored, and `using_default` says whether that is what it is running on. Read-only: crons are still edited through PUT /api/settings and PATCH /api/collections, so each one is validated in exactly one place
@@ -203,6 +231,95 @@ GET  /api/system/health -> {status} (the ONE unauthenticated endpoint — livene
 GET  /api/system/api-token -> {enabled, created_at, token} (owner-gated; token revealable) · POST /api/system/api-token -> {token, created_at} (generate/replace) · DELETE /api/system/api-token (revoke)
 GET  /api/setup/servers (Plex server picker during onboarding) · GET /api/setup/state
 ```
+
+### Support checks ("Have an issue?")
+
+Nineteen read-only diagnostics behind `/issue` in the UI. **Nothing here writes** — not to Plex, not
+to plex.tv, not to the settings a run reads. The only mutations are the mode's own switch and the
+audit rows it leaves.
+
+Two gates, not one. Every tool needs the owner session AND support mode switched on; the mode lapses
+by itself after 24 hours. Being off by default matters because this surface reads share filters and
+per-user tokens, and an install that never files a bug report should never expose it.
+
+```
+GET  /api/support/status -> {enabled, expires_at, seconds_remaining}   (owner only; usable while the mode is off)
+POST /api/support/enable -> switches the checks on for 24h (audited: events scope `support.enable`)
+POST /api/support/disable -> switches them off now
+```
+
+Everything below additionally requires the mode to be on, and returns **403** when it is not. Each
+response carries its own fields plus `text`: a fixed-width block, ≤76 columns, that the UI's "Copy
+for support" button puts on the clipboard verbatim. The block is rendered server-side so the format
+a maintainer reads is decided (and tested) in one place. Credentials are stripped centrally before
+anything reaches it, including from quoted exception messages.
+
+```
+GET  /api/support/health -> {checks[{name, ok, detail}], text} (Plex, libraries, tokens, TMDB, curator, database, clocks, last run — each probed independently so one failure is content, not a 500)
+GET  /api/support/title?q= -> {rows[{user, watched_record, viewed_leaf_count, leaf_count, counts_as_watched, cap_pct, delivered[], problem}], flagged[], text}
+GET  /api/support/person/{slug} -> {user_type, watched_movies, watched_shows, libraries[{section_key, library, titles_known, ever_read}], never_read[], text}
+GET  /api/support/rows -> {rows[{slug, watched_pct, watched_pct_source, freshness, rewatch, unstarted_only}], global_watched_pct, text}
+GET  /api/support/row-schedule -> {rows[{slug, freshness, rebuild_every_days, last_built_at, days_since_built, due}], text}
+GET  /api/support/libraries -> {libraries[{key, title, type, items}], error, text}
+GET  /api/support/connection -> {users[{user, has_token, libraries_read[], never_read[]}], problems[], text}
+GET  /api/support/read-as?user=&endpoint=&section= -> {status_code, total_size, body, sections[], choices[], text}
+GET  /api/support/sharing -> {accounts[{user, shortlist_excludes[], other_conditions[]}], error, text}
+GET  /api/support/drift -> {ledger_count, plex_count, missing_on_plex[], orphans_on_plex[], error, text}
+GET  /api/support/pick?user=&title= -> {picks[{row, rank, seed_title, sources, affinity, reason}], text}
+GET  /api/support/missing?user=&title= -> {verdict, hits[], run_id, text}
+GET  /api/support/funnel?user= -> {stages[{pool, pooled, disposition{}}], delivered, run_id, text}
+GET  /api/support/ai?user= -> {provider, model, llm_tokens, by_step{}, error, text}
+GET  /api/support/timeline?user= -> {entries[{at_utc, at_local, kind, what}], text}
+GET  /api/support/settings-history -> {changes[], last_build_at, change_after_last_build, text}
+GET  /api/support/jobs -> {jobs[], counts{}, failed, text}
+GET  /api/support/clocks -> {tz, local_now, utc_now, offset_hours, scheduled[], text}
+GET  /api/support/database -> {head, tables_present, tables_expected, missing_tables[], indexes, size_mb, text}
+GET  /api/support/config -> {settings[{env, key, env_set, secret, value, has_value}], text}
+GET  /api/support/bundle.txt -> text/plain; every server-wide block in one downloadable file
+GET  /api/support/report.zip -> the bundle plus every log file, redacted, as one attachment
+GET  /api/support/suggestions -> {users[], titles[], libraries[]} (type-ahead for the inputs above; owner-only, never part of a report)
+```
+
+**What a report masks.** Credentials (rule 9), IP addresses, and this server's machine id — in the
+report body, in every quoted exception, and in every log file inside `report.zip`. A URL keeps only
+its scheme and port (`https://<host>:32400`), which are the parts with diagnostic value. The machine
+id is additionally removed by exact match rather than by pattern alone, because it reaches a log line
+URL-encoded (`uri=server%3A%2F%2F<id>%2F…`) where a word-boundary pattern cannot see it.
+
+This is a filter for the shapes we know about, not a proof of absence, and the docs should not claim
+otherwise — a promise the code cannot keep is what gets a report pasted unread. Log files are the
+weak spot: they carry whatever a dependency chose to print. Every leak found so far arrived in an
+escaping nobody had thought of (`%2F`, then `%252F`, then a `plex.direct` hostname with the id
+embedded), so assume the next one will too. `tests/unit/test_redaction.py` is where a newly found
+shape gets pinned.
+
+**People are named, deliberately.** The report prints each account's Plex username and slug — a
+maintainer cannot follow one person through a report otherwise, and the slug is what appears on Plex
+as `shortlist_<slug>`. Anyone who would rather not publish them can replace them before posting. The
+report BODY does not print nicknames or friendly names, which are free text and routinely someone's
+real name; that is a property of the renderers, pinned by `TestNoDisplayNameReachesTheReport`.
+
+That guarantee stops at the report body. The LOG FILES bundled in `report.zip` are not filtered for
+names and nothing masks them — `redaction.py` knows about this server's own host and machine id, not
+about people. A row template containing `{user}` renders as the nickname (`UserProfile.display_name`),
+and the rendered title is logged verbatim on every delivery, so the nickname is in the logs. Say so
+in the UI and the guide rather than implying the whole artifact is covered: the previous wording put
+nicknames in a "Masked" column, which is exactly the overstatement that gets a zip pasted unread.
+
+(An `anonymise=true` mode existed briefly in 1.2 and was removed before release: it governed only
+these two endpoints, not the per-check `text` blocks beside them, so a tickbox reading "hide
+everyone's names" covered less than it appeared to.)
+
+**`read-as` runs against an allowlist, never a URL you supply.** `endpoint` is one of `libraries`,
+`watched-movies`, `watched-shows`, `home-rows`, and `section` is validated against the keys the PMS
+itself just reported. The container sits on a home network, so an arbitrary-URL fetcher behind owner
+auth would be a port scanner with extra steps. It refuses (409) rather than falling back to the
+owner's token when a person has no share token — reading as the owner would answer a different
+question while looking like it worked.
+
+**`drift` reports, it never repairs.** It also refuses to call anything missing when the Plex read
+itself failed: an unread server is not an empty one, and treating it as one would mark every
+delivered row as missing.
 
 The AI provider (`curator.provider`) no longer ranks a fixed candidate pool. The engine does the
 diversification and writes the genre-template reasons itself. The provider's one remaining job is the
@@ -328,20 +445,73 @@ invisible, and already-seen films kept coming back. `viewCount > 0` (what `unwat
 counts **both**, at any depth. On one real server that meant seeing all ~13k watched titles instead
 of the ~1k the API reported.
 
-A show counts as "finished" once the user has watched enough of it. `viewedLeafCount` against a
-fraction of its episodes (80% by default), with a length-scaled floor so a long-running series a
-person is genuinely deep into isn't treated as fresh, while three episodes of a 200-episode run isn't
-treated as finished. `recommendations.watched_pct` then decides how much of a row (if any) may be
-titles already finished, as a CEILING, never a preference: unwatched titles are shown first, and at
-most that share of the row may be things already finished. A row that should LEAD with rewatches needs
-the per-row `rewatch` flag instead. A row that should exclude series merely STARTED (not just
-finished) needs `unstarted_only`.
+### What "already watched" means for a show
+
+A movie is watched the moment it is played. A show has no such moment — Plex gives no show-level
+`viewCount`, only `viewedLeafCount` and `leafCount` — so every yes/no answer is a threshold over
+those two numbers, and **which threshold depends on where `recommendations.watched_pct` sits**:
+
+| Cap                 | What it excludes                                                                                                                                                | A show they're 2 episodes into |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `0.0` (the default) | Everything they've **touched** — any show with at least one watched episode. This is Plex's own answer; `unwatched=0` returns a series from its first episode.  | Excluded                       |
+| above `0.0`         | A ceiling on **finished** titles: at most that share of the row may be things they've completed. Unwatched titles still come first — it permits, never prefers. | Allowed (it isn't finished)    |
+
+"Finished", used by the cap only, is `viewedLeafCount` against 80% of the episodes with a
+length-scaled floor (`max(3, 15%)`), so a long-running series someone is genuinely deep into isn't
+treated as fresh while three episodes of a 200-episode run isn't treated as finished.
+
+> **Changed in 1.2.** A 0% row used to exclude only _finished_ shows, so one you were two episodes
+> into was, to the row, a fresh discovery and could be recommended straight back. A live probe of a
+> real server found `?type=2&unwatched=0` returning shows as little as 1.1% watched (2 of 176), and
+> five of ten started shows there were still eligible. At 0%, started now means watched. Rows above
+> 0% are unchanged. If you relied on the old behaviour, set the cap above 0.
+
+A row that should LEAD with rewatches needs the per-row `rewatch` flag instead. `unstarted_only`
+still exists and still matters — but only on a row whose cap is **above** 0%, since a 0% row now
+drops started series anyway.
 
 **Why a watched title can still appear:** the read is per-run, so a title marked watched _after_ the
 last run stays eligible until the next run re-reads. Between runs, **Jobs → Sync history**
 (`POST /api/report/sync`) re-reads every user's watched set on demand. It writes nothing to Plex,
 only refreshes what Shortlist knows, so hit rates and the per-user "N titles watched" count stay
 current without waiting for a scheduled run.
+
+## Why you see everyone's rows (and the watching account)
+
+If you own the server, the **Recommended shelf** inside each library shows you every person's row,
+not just yours. This is a Plex limitation with no setting behind it: rows are hidden from other
+people through the _share_ each of them has with your server, and you have no share with yourself,
+so there is nothing for Plex to hide them behind. Your own **Home screen** is unaffected — Plex
+tracks "on the owner's Home" separately from "on a friend's Home", so nobody else's row lands there.
+
+**Users → You see everyone's rows** (`/watching-account`) lays out the three ways to deal with it:
+
+1. **Take the rows off the library shelf.** Everyone still gets their row on their Home screen, and
+   nobody — including you — sees anyone else's. You lose the row inside Movies and TV Shows. One
+   click; it flips `placement_friends` on every per-person row and leaves the Home half alone.
+2. **Leave it.** Some owners genuinely don't mind. Dismissing stops Shortlist mentioning it.
+3. **Move your watching to a separate account.** Keep the library shelf _and_ stop seeing everyone
+   else's rows. You create a Plex Home user (Plex → Settings → Home → Add user), share the same
+   libraries with it, and Shortlist copies your watch history across so its picks are right from the
+   first run.
+
+### The date problem, and `source_viewed_at`
+
+Plex cannot backdate a watch. Marking a title played is a scrobble, and the server stamps a scrobble
+**now** — there is no documented way to set another account's `lastViewedAt`. Copying two thousand
+titles onto a new account would therefore tell Plex they were all watched today, and the next watch
+sync would write exactly that into `watched_titles.viewed_at`.
+
+That matters more than it sounds: Shortlist picks seeds from the **most recent** watches, so a set
+where every row shares one timestamp orders arbitrarily and the new account's recommendations become
+noise. The migration that gave someone their history back would be the one that broke their picks.
+
+So the transfer records the true date in `watched_titles.source_viewed_at`. The watch sync neither
+overwrites that column nor deletes a row carrying one — which matters because a transfer that did
+not scrobble leaves rows Plex has never heard of, and the periodic full re-read would otherwise wipe
+the entire transfer on its first pass. Every "how recently?" read prefers it. Plex gets its checkmarks; Shortlist
+keeps the recency signal it actually ranks on. `NULL` — the value on every row Plex reported
+directly — means `viewed_at` is the truth, so nothing changes for anyone who never runs a transfer.
 
 ## How a pick is chosen (and why a row can be short)
 

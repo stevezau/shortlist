@@ -1281,3 +1281,52 @@ describe("RowEditor — the preview's sample library", () => {
     expect(screen.getByText(/“More TV Shows to watch”/)).toBeInTheDocument();
   });
 });
+
+describe("RowEditor — only series they haven't started", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+    settingsData.current = {};
+  });
+
+  it("offers the switch on a films-and-shows row, not just a shows-only one", () => {
+    // The bug: gated on `media === "show"`, so the default "both" row — the one most installs have —
+    // could never turn this on, even though the API accepts it and the engine honours it. The API
+    // refuses exactly one combination, movies-only, and the control now matches that.
+    renderEditor(row({ media: "both" }));
+
+    expect(
+      screen.getByRole("switch", { name: /only series they have not started/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides it on a movies-only row, which is the one thing the API refuses", () => {
+    renderEditor(row({ media: "movie" }));
+
+    expect(
+      screen.queryByRole("switch", { name: /only series they have not started/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says the switch only matters once already-watched titles are allowed", () => {
+    // Since 1.2 a 0% row drops started shows anyway, so the old copy ("normally only finished shows
+    // are skipped") described a rule that no longer exists.
+    renderEditor(row({ media: "show" }));
+
+    expect(
+      screen.getByText(/only changes anything if you.*allowed already-watched titles/i),
+    ).toBeInTheDocument();
+  });
+
+  it("round-trips the flag on a both row into the PATCH body", async () => {
+    renderEditor(row({ media: "both", unstarted_only: false }));
+
+    await userEvent.click(
+      screen.getByRole("switch", { name: /only series they have not started/i }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    const call = updateCollection.mock.calls.at(0);
+    expect((call?.[1] as Collection).unstarted_only).toBe(true);
+  });
+});

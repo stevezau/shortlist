@@ -28,6 +28,31 @@ class UserType(StrEnum):
 LABEL_PREFIX = "shortlist"
 
 
+def is_human_rating(value: float | None) -> bool:
+    """Whether a Plex ``userRating`` was plausibly set by a PERSON rather than by a tool.
+
+    Plex's own rating controls write whole numbers only — five stars in half-star steps on a 0..10
+    scale, and thumbs, which land on the same grid. Nothing a user can press produces 6.2.
+
+    Tools do. Kometa's rating sync writes IMDb/TMDB scores straight into ``userRating``, and those
+    carry a decimal: measured on the maintainer's server, 1,455 of the owner's 1,630 watched titles
+    were rated this way and 90.7% of the values were fractional, against 0 of 36 among the 49 real
+    viewers. Treating those as opinions would have silently stopped dozens of the owner's own seeds
+    on IMDb's say-so. Coexisting with Kometa is a standing rule here (plex-safety 4), and this is
+    that rule applied to a field rather than to a collection.
+
+    It cannot catch a tool's value that lands on a whole number by chance (~9% of them did), which is
+    why `history.ratings_are_trustworthy` judges the account as well.
+
+    Args:
+        value: A 0..10 ``userRating``, or None for a title nobody rated.
+
+    Returns:
+        False for None — "not rated" is not a rating, let alone a human one.
+    """
+    return value is not None and float(value).is_integer()
+
+
 def slugify(name: str) -> str:
     """Normalize a username into the slug used in labels: ``shortlist_<slug>``."""
     text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
@@ -84,6 +109,17 @@ class WatchedItem:
     season: int | None = None
     episode: int | None = None
     episode_title: str | None = None
+    # What THIS person rated the title in Plex, 0..10 (5 stars x 2), or None if they haven't rated it
+    # — which is 99.7% of watches on a real server, so None is the case to optimise for. Per-account:
+    # the share-token read returns the rating belonging to the token it was read with, never the
+    # owner's. Only ever a whole number; `is_human_rating` explains why a fractional one is discarded.
+    user_rating: float | None = None
+
+    @property
+    def is_human_rating(self) -> bool:
+        """Whether `user_rating` was plausibly set by a PERSON rather than a tool — see the module
+        function of the same name."""
+        return is_human_rating(self.user_rating)
 
 
 @dataclass(frozen=True)
@@ -614,6 +650,13 @@ class EngineConfig:
     # person's "don't seed this" quietly reshape what everyone else sees would make an individual
     # preference into a server-wide edit nobody else can see or undo.
     blocked_shared_seeds: set[int] = field(default_factory=set)
+    # A title someone rated at or below this in Plex (0..10, so 2 = one star, which is also where
+    # thumbs-down lands) stops seeding THEIR rows. None = ignore Plex ratings entirely.
+    #
+    # Like `blocked_shared_seeds` above, and for the same reason, this never applies to a shared row:
+    # one person rating a film badly must not remove it from a row everyone else can see. It is
+    # applied at the per-person seed derivation only.
+    dislike_threshold: float | None = 2.0
     # Cap on already-watched titles in a row, as a fraction of the row. 0.0 (default): all fresh —
     # drop every finished title (a movie you watched, or a show you've seen >= watched_show_pct of;
     # a partly-watched show or one with a new season stays eligible). 1.0: no filtering. Between:

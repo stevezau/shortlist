@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from shortlist.server.db.models import Event, Run
@@ -127,6 +128,63 @@ def _mdblist_quota(session: Session) -> dict | None:
     }
 
 
+def _owner_sees_all_rows(session: Session) -> dict | None:
+    """The owner has per-person rows on a library's Recommended shelf, so their own shelf shows
+    everyone's row — Plex hides rows through each person's SHARE, and the owner has no share.
+
+    This is the single most-asked support question, and the copy explaining it already exists in
+    three places (the row editor's placement grid, the Users page's owner note, the wizard). All
+    three are passive: the owner reads them while setting up, then meets the actual problem days
+    later in Plex. This fires when the condition becomes TRUE, which is the moment it can be acted
+    on, and points at the guide that offers a way out rather than restating the limitation.
+
+    Dismissable, because "I don't mind seeing them" is a legitimate answer — Ssvvois's, in fact.
+    The id is stable (not state-encoded) so dismissing it means dismissing it for good.
+    """
+    from shortlist.server.db.models import Collection, User
+
+    # NOT gated on the owner being enabled. An owner who turned their OWN row off still sees every
+    # friend's row on the library shelf — they own the server, so nothing hides them — and gating on
+    # `enabled` silenced the notification for exactly the person most likely to be surprised by it.
+    owner = session.query(User).filter(User.user_type == "owner").first()
+    if owner is None:
+        return None
+    others = session.query(func.count(User.id)).filter(User.user_type != "owner", User.enabled.is_(True)).scalar() or 0
+    if others < 1:
+        return None
+    # Only a per_person row stacks one collection per person onto the shelf. A shared row is ONE
+    # collection everybody sees on purpose, so it is not this problem.
+    on_shelf = (
+        session.query(func.count(Collection.id))
+        .filter(
+            Collection.enabled.is_(True),
+            Collection.build == "per_person",
+            Collection.placement_friends.in_(("both", "library")),
+        )
+        .scalar()
+        or 0
+    )
+    if not on_shelf:
+        return None
+    return {
+        "id": "owner-sees-all-rows",
+        "severity": "info",
+        "title": "You see everyone's rows in your libraries",
+        # Deliberately NO number. The true count is rows-on-the-shelf x their resolved audience, and
+        # audience="subset" plus per-user `CollectionUserOverride` mutes make that neither `others`
+        # nor `others + 1`. A confident wrong number in a notification is worse than no number: the
+        # page it links to counts properly from the roster it has loaded.
+        "body": (
+            "You own this server, so the Recommended shelf inside each library shows you everyone's "
+            "row, not just yours — Plex hides rows through each person's share, and you don't have "
+            "one. There are three ways to deal with it."
+        ),
+        "action_url": "/watching-account",
+        "action_label": "See the options",
+        "dismissable": True,
+    }
+
+
 def _failed_jobs(session: Session) -> dict | None:
     """Background jobs that ran out of retries.
 
@@ -169,6 +227,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _failed_jobs(session),
         _mdblist_quota(session),
         _recent_service_errors(session),
+        _owner_sees_all_rows(session),
     ]
     dismissed = set(store.get(DISMISSED_KEY) or [])
     order = {"error": 0, "warning": 1, "info": 2}

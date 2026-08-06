@@ -180,6 +180,22 @@ export type RowOverridePatch = Schemas["RowOverridePatch"];
 /** GET /api/users/{id}/history — one recent watch. */
 export type WatchItem = Schemas["WatchItemOut"];
 
+/** One title from the cached watched set (GET /api/users/{id}/watched) — the set recommendations
+ *  are filtered against, which is a DIFFERENT source from `WatchItem`'s live Plex read. */
+export type WatchedTitle = Schemas["WatchedTitleOut"];
+export type WatchedPage = Schemas["WatchedPageOut"];
+
+/** A Plex Home user the owner could move their watching to (GET /api/watching-account/candidates). */
+export type HomeUserCandidate = Schemas["HomeUserOut"];
+export type TransferResult = Schemas["TransferOut"];
+
+/** What the watch-history panel is filtering by. "" = every type. */
+export type WatchedFilters = {
+  q: string;
+  mediaType: "" | "movie" | "show";
+  limit: number;
+};
+
 /** `prefs.blocked_seeds` as records, whatever shape it is stored in. Mirrors the server's
  *  `blocked_entries` — an old install's bare-int list is valid data and keeps working. */
 export function blockedSeeds(prefs: UserPrefs | undefined): BlockedSeed[] {
@@ -333,6 +349,11 @@ export type ApiTokenCreated = Schemas["ApiTokenCreatedOut"];
 
 /** One alert in the bell menu (GET /api/notifications). */
 export type AppNotification = Schemas["NotificationOut"];
+
+/** `GET /api/notifications` — the firing alerts, plus every id already dismissed. The second list
+ *  exists because the owner-shelf warning also renders inline on the Users page: both surfaces
+ *  report one fact, so they dismiss as one. */
+export type NotificationsPage = Schemas["NotificationsOut"];
 
 /** Report windows, in days. "all" is lifetime. */
 export type ReportWindow = Schemas["EffectivenessReportOut"]["window"];
@@ -506,6 +527,10 @@ export interface TraceWatch {
   library: string;
   year: number | null;
   watched_at: string | null;
+  /** What they rated it in Plex, 0..10, or null/absent (a run before ratings were read). */
+  rating?: number | null;
+  /** Whether that rating is why it isn't a seed — narrower than `rating`, which is just shown. */
+  rating_blocked?: boolean;
 }
 
 /** A seed derived from history — a history title used to find candidates. */
@@ -647,3 +672,144 @@ export type TestableService =
 
 /** Alias kept short for the components that render one line of this. */
 export type UserRun = UserRunSummary;
+
+// --- Support Mode -------------------------------------------------------------------------
+//
+// Every tool response carries `text`: the fixed-width block the "Copy for support" button puts on
+// the clipboard. It is rendered by the SERVER, not assembled here, so the format a maintainer reads
+// is decided and unit-tested in one place and cannot drift between the API and the UI.
+
+export interface SupportStatus {
+  enabled: boolean;
+  expires_at: string | null;
+  seconds_remaining: number;
+}
+
+export interface SupportHealthCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface SupportHealth {
+  checks: SupportHealthCheck[];
+  text: string;
+}
+
+export interface SupportTitleDelivery {
+  row: string;
+  rank: number;
+  library: string;
+}
+
+export interface SupportTitleRow {
+  user: string;
+  /** One row per person PER TITLE — a substring query can match a whole franchise, so the verdict is
+   *  meaningless without knowing which title it is about. */
+  title: string;
+  /** Null when Plex never matched the title to a TMDB id — reported as absent, not as id 0. */
+  tmdb_id: number | null;
+  watched_record: boolean;
+  media_type: string;
+  viewed_leaf_count: number | null;
+  leaf_count: number | null;
+  counts_as_watched: boolean;
+  cap_pct: number;
+  cap_source: string;
+  delivered: SupportTitleDelivery[];
+  /** Delivered to this person, not counted as watched, and their cap is 0% — the reported bug. */
+  problem: boolean;
+}
+
+export interface SupportTitleLookup {
+  query: string;
+  rows: SupportTitleRow[];
+  /** Usernames with at least one problem row. */
+  flagged: string[];
+  /** The same, as "user (title)" — what the copy block names. */
+  flagged_detail: string[];
+  /** True when the search hit its row cap, so the result is not the whole picture. */
+  capped: boolean;
+  text: string;
+}
+
+export interface SupportPersonLibrary {
+  section_key: string;
+  /** The library's display name from Plex; "" when Plex could not be listed. */
+  library: string;
+  titles_known: number;
+  last_full_at: string | null;
+  last_incremental_at: string | null;
+  /** False means the library has NEVER been read for this person — the signature of a refused
+   *  token, which looks identical to "watches nothing" everywhere else in the app. */
+  ever_read: boolean;
+}
+
+export interface SupportPerson {
+  slug: string;
+  display_name: string;
+  user_type: string;
+  enabled: boolean;
+  cold_start: boolean;
+  restricted: boolean;
+  restriction_profile: string;
+  watched_movies: number;
+  watched_shows: number;
+  libraries: SupportPersonLibrary[];
+  never_read: string[];
+  muted_rows: number[];
+  text: string;
+}
+
+export interface SupportLibrary {
+  key: string;
+  title: string;
+  type: string;
+  items: number;
+}
+
+export interface SupportLibraries {
+  libraries: SupportLibrary[];
+  error: string | null;
+  text: string;
+}
+
+export interface SupportRowSetting {
+  slug: string;
+  name: string;
+  enabled: boolean;
+  media: string;
+  size: number;
+  watched_pct: number;
+  watched_pct_source: string;
+  freshness: number;
+  freshness_source: string;
+  rewatch: boolean;
+  unstarted_only: boolean;
+}
+
+export interface SupportRows {
+  rows: SupportRowSetting[];
+  global_watched_pct: number;
+  text: string;
+}
+
+/**
+ * Any support check's response.
+ *
+ * Every check returns its own fields PLUS `text` — the fixed-width block the copy button puts on
+ * the clipboard, rendered server-side. The page reads them all through one generic panel and only
+ * ever touches `text` and a handful of per-check flags (`flagged`, `never_read`, `problems`, …),
+ * which `verdictFor()` looks up by id. Declaring nineteen near-identical interfaces would add no
+ * safety over that, since the panel is generic by design.
+ */
+export interface SupportResult {
+  text: string;
+  [key: string]: unknown;
+}
+
+/** Type-ahead data for the "Have an issue?" checks that take a person or a title. */
+export interface SupportSuggestions {
+  people: { slug: string; display_name: string; enabled: boolean }[];
+  titles: string[];
+}

@@ -1294,6 +1294,36 @@
         "title": "HealthOut",
         "type": "object"
       },
+      "HomeUserOut": {
+        "additionalProperties": true,
+        "description": "A Home user that could become the owner's watching account.",
+        "properties": {
+          "already_a_shortlist_user": {
+            "title": "Already A Shortlist User",
+            "type": "boolean"
+          },
+          "plex_account_id": {
+            "title": "Plex Account Id",
+            "type": "integer"
+          },
+          "protected": {
+            "title": "Protected",
+            "type": "boolean"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "plex_account_id",
+          "title",
+          "protected",
+          "already_a_shortlist_user"
+        ],
+        "title": "HomeUserOut",
+        "type": "object"
+      },
       "HubAnchorIn": {
         "description": "A per-library shelf placement for one row: the very TOP (``top``), or after/before a collection\nby title. ``top`` needs no anchor; otherwise ``anchor`` must be a non-empty title.",
         "properties": {
@@ -1958,6 +1988,13 @@
       "NotificationsOut": {
         "additionalProperties": true,
         "properties": {
+          "dismissed": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dismissed",
+            "type": "array"
+          },
           "notifications": {
             "items": {
               "$ref": "#/components/schemas/NotificationOut"
@@ -1967,7 +2004,8 @@
           }
         },
         "required": [
-          "notifications"
+          "notifications",
+          "dismissed"
         ],
         "title": "NotificationsOut",
         "type": "object"
@@ -4230,6 +4268,37 @@
         "title": "SettingsUpdate",
         "type": "object"
       },
+      "StatusOut": {
+        "additionalProperties": true,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "seconds_remaining": {
+            "title": "Seconds Remaining",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled",
+          "expires_at",
+          "seconds_remaining"
+        ],
+        "title": "StatusOut",
+        "type": "object"
+      },
       "SyncFinishedEvent": {
         "additionalProperties": true,
         "description": "Event ``sync.finished`` \u2014 a Tools-page sync ended.\n\nThe two syncs report different things because they did different work, so most fields belong to\none of them: `count` to the watched sync, `added`/`updated`/`total` to the users sync.",
@@ -4557,6 +4626,71 @@
           "excluded"
         ],
         "title": "TraceRequestOut",
+        "type": "object"
+      },
+      "TransferIn": {
+        "properties": {
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "scrobble": {
+            "default": false,
+            "title": "Scrobble",
+            "type": "boolean"
+          },
+          "to_user_id": {
+            "title": "To User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "to_user_id"
+        ],
+        "title": "TransferIn",
+        "type": "object"
+      },
+      "TransferOut": {
+        "additionalProperties": true,
+        "properties": {
+          "already_present": {
+            "title": "Already Present",
+            "type": "integer"
+          },
+          "copied": {
+            "title": "Copied",
+            "type": "integer"
+          },
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "scrobble_skipped": {
+            "title": "Scrobble Skipped",
+            "type": "integer"
+          },
+          "scrobbled": {
+            "title": "Scrobbled",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "copied",
+          "already_present",
+          "scrobbled",
+          "scrobble_skipped",
+          "dry_run",
+          "errors"
+        ],
+        "title": "TransferOut",
         "type": "object"
       },
       "TrendPointOut": {
@@ -5390,6 +5524,158 @@
         "title": "WatchSyncOut",
         "type": "object"
       },
+      "WatchedPageOut": {
+        "additionalProperties": true,
+        "description": "A page of the watched set, plus how complete the set behind it is.\n\nThe freshness fields travel WITH the page on purpose: this list is a cache, and a page that\ndoesn't say when it was last filled invites \"I watched that, why is it recommended?\" \u2014 the exact\nquestion this endpoint exists to answer.",
+        "properties": {
+          "dislike_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dislike Threshold"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WatchedTitleOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "last_full_sync_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Full Sync At"
+          },
+          "rated_count": {
+            "title": "Rated Count",
+            "type": "integer"
+          },
+          "ratings_trusted": {
+            "title": "Ratings Trusted",
+            "type": "boolean"
+          },
+          "synced_titles": {
+            "title": "Synced Titles",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "last_full_sync_at",
+          "synced_titles",
+          "dislike_threshold",
+          "ratings_trusted",
+          "rated_count"
+        ],
+        "title": "WatchedPageOut",
+        "type": "object"
+      },
+      "WatchedTitleOut": {
+        "additionalProperties": true,
+        "description": "One title from the cached watched set \u2014 the set recommendations are actually filtered against.",
+        "properties": {
+          "leaf_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leaf Count"
+          },
+          "media_type": {
+            "title": "Media Type",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "tmdb_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tmdb Id"
+          },
+          "user_rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Rating"
+          },
+          "viewed_leaf_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Viewed Leaf Count"
+          },
+          "watch_count": {
+            "title": "Watch Count",
+            "type": "integer"
+          },
+          "watched_at": {
+            "title": "Watched At",
+            "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "title",
+          "tmdb_id",
+          "media_type",
+          "watched_at",
+          "year",
+          "watch_count",
+          "viewed_leaf_count",
+          "leaf_count",
+          "user_rating"
+        ],
+        "title": "WatchedTitleOut",
+        "type": "object"
+      },
       "WizardState": {
         "properties": {
           "completed": {
@@ -5464,7 +5750,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6177,7 +6463,7 @@
     },
     "/api/notifications": {
       "get": {
-        "description": "Every currently-firing notification (update available, failed/partial run, paused, errors).",
+        "description": "Every currently-firing notification (update available, failed/partial run, paused, errors),\nplus the ids already dismissed so inline surfaces reporting the same fact can hide themselves.",
         "operationId": "list_notifications_api_notifications_get",
         "responses": {
           "200": {
@@ -7443,6 +7729,882 @@
         ]
       }
     },
+    "/api/support/ai": {
+      "get": {
+        "description": "What the AI curator actually did for this person: tokens spent per step, and any error.",
+        "operationId": "ai_decisions_api_support_ai_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ai Decisions Api Support Ai Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Ai Decisions",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/bundle.txt": {
+      "get": {
+        "description": "Every tool's block in one file, for when a paste would be truncated.\n\nDiscord collapses long messages and Reddit truncates them, so past a certain size the right\nanswer is an attachment rather than a paste. Deliberately over-collects: a second round trip\nwith a non-technical reporter costs a day, and redundant text costs nothing.",
+        "operationId": "bundle_api_support_bundle_txt_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Bundle",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/clocks": {
+      "get": {
+        "description": "Timezones and the next scheduled fire times.\n\nEvery timestamp in the database is UTC and every line in the log is local. Reading one as the\nother inverts the order of events, which has cost this project real debugging time \u2014 so the\noffset is stated outright rather than left to be inferred.",
+        "operationId": "clocks_api_support_clocks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Clocks Api Support Clocks Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clocks",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/config": {
+      "get": {
+        "description": "Where each setting's value came from: an environment variable, or the database.\n\nEnv vars are ONE-TIME seeds \u2014 read into the database on first boot and ignored for ever after \u2014\nwhich surprises people who then edit their compose file and see nothing change. This says so per\nkey. Secret values are never rendered; only whether one is set.",
+        "operationId": "config_api_support_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Config Api Support Config Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Config",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/connection": {
+      "get": {
+        "description": "Per person: do we hold a working share token, and which libraries has it ever read?\n\nA library that silently refuses someone's token is indistinguishable from a person who watches\nnothing \u2014 both produce an empty watched set. Only this pairing separates them, and getting it\nwrong sends a maintainer hunting the recommendation engine for a permissions bug.",
+        "operationId": "connection_api_support_connection_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Connection Api Support Connection Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Connection",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/database": {
+      "get": {
+        "description": "Migration head plus proof the schema actually has what the ORM claims.\n\nHead alone is not health: a migration that no-ops on a real database still stamps its version,\nand this project has shipped exactly that. So the tables and indexes are counted, not assumed.",
+        "operationId": "database_api_support_database_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Database Api Support Database Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Database",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/disable": {
+      "post": {
+        "description": "Switch support mode off immediately, without waiting for the expiry.",
+        "operationId": "disable_api_support_disable_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Disable",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/drift": {
+      "get": {
+        "description": "Does Plex match the ledger? The register of a bug class with fifteen recorded instances.\n\nThe database records that a row was delivered; the server is where it either exists or does not.\nNothing today compares the two, so a write that silently failed looks identical to one that\nworked. Read-only by design: this reports drift and never repairs it, because repair belongs to a\nrun, where snapshots and dry-run already live.",
+        "operationId": "drift_api_support_drift_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Drift Api Support Drift Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Drift",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/enable": {
+      "post": {
+        "description": "Switch support mode on for `_SUPPORT_HOURS`. Re-enabling extends from now, it does not stack.",
+        "operationId": "enable_api_support_enable_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Enable",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/errors": {
+      "get": {
+        "description": "Recent WARNING and ERROR log lines \u2014 the part of a bug report nobody remembers to attach.\n\nEverything here is already redacted by `log_reader.scrub` (an alias for `http_retry.redact`),\nwhich covers more credential shapes than this module's own `_scrub`: query params, header forms,\nBearer credentials. Over-redaction is fine; a leaked token is not (rule 9).\n\nCapped hard, because this rides along in a report someone pastes into a chat window. When the tail\nis not enough, the full redacted log zip is a separate download (`/api/system/logs/download`) and\nthe block says so.",
+        "operationId": "errors_api_support_errors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Errors Api Support Errors Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Errors",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/funnel": {
+      "get": {
+        "description": "Counts at each stage from TMDB pool to delivered row \u2014 \"why is my row short\", answered.\n\nA short row has one cause per stage, and they need completely different fixes: a thin library, an\nover-tight watched cap, a genre filter, or the AI declining. Only the counts distinguish them.",
+        "operationId": "funnel_api_support_funnel_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Funnel Api Support Funnel Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Funnel",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/health": {
+      "get": {
+        "description": "The overview strip: is each moving part working, answered independently.",
+        "operationId": "health_api_support_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Api Support Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/jobs": {
+      "get": {
+        "description": "The durable queue: what is stuck, what failed, and with what error.",
+        "operationId": "jobs_api_support_jobs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Jobs Api Support Jobs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Jobs",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/libraries": {
+      "get": {
+        "description": "Every library with its key, type and TMDB-id coverage.\n\nA library whose TYPE is not what everyone assumes, or that holds titles Plex never matched, is\ninvisible in a log and explains a whole class of \"nothing gets recommended from here\".",
+        "operationId": "libraries_api_support_libraries_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Libraries Api Support Libraries Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Libraries",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/missing": {
+      "get": {
+        "description": "Why a title never appeared \u2014 usually the real question, and nothing else answers it.\n\nWalks the last run's trace for this person and reports the first stage that rejected the title:\nit was never pooled, the library does not hold it, it counted as already-watched, a genre filter\ndropped it, or it simply lost the ranking cut.",
+        "operationId": "why_missing_api_support_missing_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "title",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Why Missing Api Support Missing Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Why Missing",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/person/{slug}": {
+      "get": {
+        "description": "One person's watch read, library by library \u2014 the tool that separates \"watches nothing\" from\n\"a library silently refused their token\", which look identical everywhere else.",
+        "operationId": "person_api_support_person__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Person Api Support Person  Slug  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Person",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/pick": {
+      "get": {
+        "description": "Why a delivered title is in someone's row: the seed it came from, the source, its strength.",
+        "operationId": "why_here_api_support_pick_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "title",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Title",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Why Here Api Support Pick Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Why Here",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/read-as": {
+      "get": {
+        "description": "Read the PMS AS one person, using their own share token, and show the raw response.\n\nThe one thing nobody can do from a browser: a maintainer cannot log in as someone else's Plex\naccount, and the owner's own view answers a different question. Reading the library through the\nshare token is what settles \"is this actually marked watched for THEM\".",
+        "operationId": "read_as_api_support_read_as_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "User",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "endpoint",
+            "required": false,
+            "schema": {
+              "default": "libraries",
+              "title": "Endpoint",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "section",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Section",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Read As Api Support Read As Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read As",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/report.zip": {
+      "get": {
+        "description": "The whole report AND every redacted log file, as one attachment.\n\nThe text report is deliberately capped so it can be pasted into a chat window \u2014 newest 40\nwarnings, five runs. That is enough to name most problems and not enough for one that needs\nhistory, and asking someone to then find the Logs page and export separately is a step that does\nnot happen. This is the one button for \"give them everything\".\n\nLog files are redacted by `log_reader.build_zip`, file by file, because an export is the single\nmost likely thing to end up in a public issue tracker.",
+        "operationId": "report_zip_api_support_report_zip_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Report Zip",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/row-schedule": {
+      "get": {
+        "description": "When each row last rebuilt, and when it is next due to.\n\nThe gap this closes: freshness is a CADENCE, not a nightly shuffle. At the 0.5 default a row\nre-selects its titles roughly weekly and redelivers the same picks on every other night, and the\nengine logs that decision NOWHERE. So \"I changed the setting and nothing happened\" has been\nunanswerable \u2014 the setting was fine, the row simply had not rebuilt yet.",
+        "operationId": "row_schedule_api_support_row_schedule_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Row Schedule Api Support Row Schedule Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Row Schedule",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/rows": {
+      "get": {
+        "description": "Every row's effective settings, with the SOURCE of each winning value.\n\n\"But I set it to 0%\" is answerable only by showing whether the global default or a per-row\noverride actually applied \u2014 the two are indistinguishable from the row editor alone.",
+        "operationId": "rows_api_support_rows_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rows Api Support Rows Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Rows",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/runs": {
+      "get": {
+        "description": "The last few runs, and WHO failed in each \u2014 the other thing a report always needs.\n\nThe timeline says a run finished with a status. This says which people it could not build and why,\nwhich is the difference between \"a run failed\" and something actionable.",
+        "operationId": "recent_runs_api_support_runs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Recent Runs Api Support Runs Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Recent Runs",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/settings-history": {
+      "get": {
+        "description": "Settings changes, newest first \u2014 turning \"but I set it to 0%\" into a timestamp.\n\nPaired with the row schedule: a change made after a row's last rebuild has not reached that row\nyet, which is the commonest reason a correct setting appears to do nothing.",
+        "operationId": "settings_history_api_support_settings_history_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Settings History Api Support Settings History Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Settings History",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/sharing": {
+      "get": {
+        "description": "Every account's live share filters, with OUR exclusions separated from everything else.\n\nRows are made private by merging `label!=shortlist_<user>` into each other account's filters, and\nthe event log records what CHANGED. Nothing shows what is true right now \u2014 so a filter that was\nnever written, or was overwritten by another tool, is invisible until someone reports a leak.",
+        "operationId": "sharing_api_support_sharing_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Sharing Api Support Sharing Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Sharing",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/status": {
+      "get": {
+        "description": "Whether the diagnostic tools are currently usable, and for how much longer.",
+        "operationId": "status_api_support_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Status",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/suggestions": {
+      "get": {
+        "description": "People and titles to offer as you type, for the checks that take a name.\n\nExists because a username typed from memory is the commonest way one of these checks comes back\nempty \u2014 and an empty result is indistinguishable from \"nothing is wrong\", which is the worst\nanswer a diagnostic can give. The person operating the page may not know that Plex usernames are\nnot display names, or how a title is spelled in the library.\n\nDeliberately DB-only and unconditional: no Plex call, so it still populates when the server is\nunreachable, which is exactly when these checks are being used.",
+        "operationId": "suggestions_api_support_suggestions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Suggestions Api Support Suggestions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Suggestions",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/timeline": {
+      "get": {
+        "description": "Runs, jobs and audited events on one axis, newest first.\n\nRendered in BOTH local and UTC. The database stores UTC and the log prints local, so a timeline\nthat picked one would be misread against the other \u2014 which is precisely the mistake this is here\nto stop someone making.\n\n``user`` is a PLAIN default, not ``Query(default=\"\")``. `bundle` calls these handlers directly,\nwhich bypasses FastAPI's dependency injection \u2014 so a `Query(...)` default arrives as a\n`fastapi.params.Query` OBJECT, which is truthy and then blows up on `in`. That silently cost the\ndownloaded diagnostic its whole runs/jobs/events section on every install. FastAPI still parses\n`?user=` from the query string for a plain str parameter, so nothing is lost by dropping it.",
+        "operationId": "timeline_api_support_timeline_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "user",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "User",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Timeline Api Support Timeline Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Timeline",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/title": {
+      "get": {
+        "description": "Where one title stands for every person: watched record, episodes, whether it counts, delivery.\n\nThe tool this whole surface was built for. A run log records how MANY titles a watch read\nreturned and never WHICH, so \"is this in their watched set\" has been unanswerable from the\noutside \u2014 this is that missing column.",
+        "operationId": "title_lookup_api_support_title_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Title Lookup Api Support Title Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Title Lookup",
+        "tags": [
+          "support"
+        ]
+      }
+    },
     "/api/system/api-token": {
       "delete": {
         "description": "Revoke the API token \u2014 any script still using it starts getting 401s on the next call.",
@@ -8643,6 +9805,164 @@
         "summary": "User Runs Summary",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/api/users/{user_id}/watched": {
+      "get": {
+        "description": "Search one person's watched set.\n\nReads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB\nquery, it can search the WHOLE set rather than the page on screen, and it shows the same titles\nthe recommender excludes from.",
+        "operationId": "user_watched_api_users__user_id__watched_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Case-insensitive substring of the title.",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "description": "Case-insensitive substring of the title.",
+              "maxLength": 200,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "media_type",
+            "required": false,
+            "schema": {
+              "default": "",
+              "pattern": "^(movie|show)?$",
+              "title": "Media Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WatchedPageOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "User Watched",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/watching-account/candidates": {
+      "get": {
+        "description": "Home users on the owner's Plex Home that could become their watching account.",
+        "operationId": "list_candidates_api_watching_account_candidates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/HomeUserOut"
+                  },
+                  "title": "Response List Candidates Api Watching Account Candidates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Candidates",
+        "tags": [
+          "watching-account"
+        ]
+      }
+    },
+    "/api/watching-account/transfer": {
+      "post": {
+        "description": "Copy the owner's watched set onto their watching account.\n\nThe copy into Shortlist is what makes the new account's picks correct and writes nothing to\nPlex. `scrobble` additionally marks each title played on the PMS so Plex shows checkmarks \u2014\nthousands of writes, and Plex dates every one of them today (it cannot be told otherwise), which\nis why the true dates are stored separately.",
+        "operationId": "transfer_api_watching_account_transfer_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransferOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transfer",
+        "tags": [
+          "watching-account"
         ]
       }
     }

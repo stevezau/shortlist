@@ -93,7 +93,7 @@ describe("UsersPage", () => {
     const { unmount } = renderPage();
     // A server with no owner row yet (pre-sync) shouldn't explain a caveat nobody has hit.
     expect(await screen.findByText("sarah")).toBeInTheDocument();
-    expect(screen.queryByText(/Home screen shows only/i)).toBeNull();
+    expect(screen.queryByText(/you.ll see everyone else.s rows/i)).toBeNull();
     unmount();
 
     getUsers.mockResolvedValue([
@@ -106,10 +106,12 @@ describe("UsersPage", () => {
     // never reaches the owner's Home. The note used to claim otherwise and send them off to make a
     // Home user for nothing.
     expect(
-      await screen.findByText(/Home screen shows only/i),
+      await screen.findByText(/you.ll see everyone else.s rows/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Collections tab/i)).toBeInTheDocument();
-    expect(screen.queryByText(/watch on a Plex Home user/i)).toBeNull();
+    expect(screen.getByText(/Collections/i)).toBeInTheDocument();
+    // The note must NOT claim the owner's Home shows everyone — `promotedToOwnHome` and
+    // `promotedToSharedHome` are separate flags, so a friend's row never reaches it.
+    expect(screen.getByText(/Not your Home screen/i)).toBeInTheDocument();
   });
 
   it("only enables everyone after confirming", async () => {

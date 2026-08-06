@@ -801,3 +801,208 @@ class TestRefusingADifferentServer:
         """Setup itself builds a context before a `Server` row exists — refusing there would make the
         wizard unable to complete."""
         self._check(linked=None, reported="m1")
+
+
+class TestUserWatched:
+    """`user_watched` is the searchable view of the CACHE — the set recommendations are filtered
+    against. It is a plain DB query, so no Plex fixtures: what matters is that the filters compose,
+    the paging totals are honest, and one person's search can never reach another's rows."""
+
+    @staticmethod
+    def _seed(sessions):
+        from datetime import UTC, datetime
+
+        from shortlist.server.db.models import WatchedTitle, WatchSyncState
+
+        with sessions() as session:
+            session.add(User(id=1, plex_account_id=1, username="sarah", slug="sarah"))
+            session.add(User(id=2, plex_account_id=2, username="mike", slug="mike"))
+            rows = [
+                ("Teacup", "show", 2024, 3, 8, 1),
+                ("The Bear", "show", 2022, 30, 30, 1),
+                ("Dune: Part Two", "movie", 2024, None, None, 2),
+                ("Tea Leaves", "movie", 2019, None, None, 1),
+            ]
+            for i, (title, media, year, viewed, leaf, count) in enumerate(rows):
+                session.add(
+                    WatchedTitle(
+                        user_id=1,
+                        section_key="1",
+                        rating_key=100 + i,
+                        tmdb_id=500 + i,
+                        media_type=media,
+                        title=title,
+                        year=year,
+                        watch_count=count,
+                        viewed_leaf_count=viewed,
+                        leaf_count=leaf,
+                        viewed_at=datetime(2026, 8, 1 + i, tzinfo=UTC),
+                    )
+                )
+            # Mike watched something that would match sarah's search, to prove the scoping.
+            session.add(
+                WatchedTitle(
+                    user_id=2,
+                    section_key="1",
+                    rating_key=999,
+                    tmdb_id=999,
+                    media_type="show",
+                    title="Teacup",
+                    year=2024,
+                    viewed_at=datetime(2026, 8, 1, tzinfo=UTC),
+                )
+            )
+            session.add(
+                WatchSyncState(
+                    user_id=1,
+                    section_key="1",
+                    last_full_at=datetime(2026, 8, 4, 10, 0, tzinfo=UTC),
+                    item_count=4,
+                )
+            )
+            session.commit()
+
+    def test_returns_the_whole_set_newest_first_with_sync_state(self, service, sessions):
+        self._seed(sessions)
+
+        page = service.user_watched(1)
+
+        assert [i["title"] for i in page["items"]] == ["Tea Leaves", "Dune: Part Two", "The Bear", "Teacup"]
+        assert page["total"] == 4
+        assert page["synced_titles"] == 4
+        assert page["last_full_sync_at"].startswith("2026-08-04T10:00")
+
+    def test_search_is_case_insensitive_and_matches_a_substring(self, service, sessions):
+        self._seed(sessions)
+
+        page = service.user_watched(1, q="tea")
+
+        assert sorted(i["title"] for i in page["items"]) == ["Tea Leaves", "Teacup"]
+        assert page["total"] == 2
+
+    def test_search_never_reaches_another_persons_rows(self, service, sessions):
+        """Mike has a "Teacup" too. Sarah's search must not see it, and Mike's must not see hers."""
+        self._seed(sessions)
+
+        assert service.user_watched(1, q="teacup")["total"] == 1
+        assert service.user_watched(2, q="tea")["total"] == 1
+        assert service.user_watched(2, q="bear")["total"] == 0
+
+    def test_media_filter_composes_with_search(self, service, sessions):
+        self._seed(sessions)
+
+        assert [i["title"] for i in service.user_watched(1, q="tea", media_type="movie")["items"]] == ["Tea Leaves"]
+        assert [i["title"] for i in service.user_watched(1, q="tea", media_type="show")["items"]] == ["Teacup"]
+
+    def test_total_counts_the_whole_match_not_the_page(self, service, sessions):
+        """The "Show more" button reads this — a total that shrank to the page size would hide rows."""
+        self._seed(sessions)
+
+        page = service.user_watched(1, limit=2)
+
+        assert len(page["items"]) == 2
+        assert page["total"] == 4
+        assert [i["title"] for i in service.user_watched(1, limit=2, offset=2)["items"]] == ["The Bear", "Teacup"]
+
+    def test_a_wildcard_in_the_query_searches_literally(self, service, sessions):
+        """`%` is a SQL wildcard. Unescaped, searching "%" would return the entire history — which
+        reads as "your filter matched everything" rather than "nothing is called that"."""
+        self._seed(sessions)
+
+        assert service.user_watched(1, q="%")["total"] == 0
+
+    def test_show_progress_and_watch_count_come_through(self, service, sessions):
+        """The fields that let the page say "3 of 8 episodes" — the answer to "I watched that, why
+        was it recommended?" — and that a movie was watched twice."""
+        self._seed(sessions)
+
+        by_title = {i["title"]: i for i in service.user_watched(1)["items"]}
+
+        assert (by_title["Teacup"]["viewed_leaf_count"], by_title["Teacup"]["leaf_count"]) == (3, 8)
+        assert by_title["Dune: Part Two"]["watch_count"] == 2
+        assert by_title["Dune: Part Two"]["leaf_count"] is None  # a movie has no episode totals
+
+    def test_sync_state_is_none_when_a_library_has_never_had_a_full_read(self, service, sessions):
+        """ "Synced 4h ago" while a whole library is missing is a false claim of completeness."""
+        from shortlist.server.db.models import WatchSyncState
+
+        self._seed(sessions)
+        with sessions() as session:
+            session.add(WatchSyncState(user_id=1, section_key="2", last_full_at=None, item_count=0))
+            session.commit()
+
+        assert service.user_watched(1)["last_full_sync_at"] is None
+
+    def test_unknown_user_is_none(self, service, sessions):
+        self._seed(sessions)
+
+        assert service.user_watched(999) is None
+
+    def test_a_transferred_row_is_dated_and_ordered_by_its_TRUE_watch_date(self, service, sessions):
+        """The panel must not rank a transferred history by the day the scrobbles landed. The two
+        dates are inverted so ordering on `viewed_at` gives exactly the wrong answer — without that,
+        removing the coalesce would not fail anything (every other seeded row leaves it NULL)."""
+        from datetime import UTC, datetime
+
+        from shortlist.server.db.models import WatchedTitle
+
+        self._seed(sessions)
+        with sessions() as session:
+            session.add(
+                WatchedTitle(
+                    user_id=1,
+                    section_key="1",
+                    rating_key=900,
+                    tmdb_id=900,
+                    media_type="movie",
+                    title="Transferred",
+                    year=2021,
+                    watch_count=1,
+                    viewed_at=datetime(2020, 1, 1, tzinfo=UTC),  # scrobbled long ago by viewed_at
+                    source_viewed_at=datetime(2026, 8, 9, tzinfo=UTC),  # actually the newest watch
+                )
+            )
+            session.commit()
+
+        page = service.user_watched(1)
+
+        assert page["items"][0]["title"] == "Transferred"
+        assert page["items"][0]["watched_at"].startswith("2026-08-09")
+
+
+class TestPlexRatingsReachTheEngineConfig:
+    """The two settings collapse into one engine field, and "off" has to arrive as None.
+
+    Worth its own test because the collapse is the only place the switch exists: nothing downstream
+    reads `use_plex_ratings`, so if it failed to zero the threshold, the feature would stay on with
+    the switch showing off — and the only symptom would be seeds quietly missing from someone's row.
+    """
+
+    def _threshold(self, service, sessions, box, **values):
+        with sessions() as session:
+            store = SettingsStore(session, box)
+            for key, value in values.items():
+                store.set(key, value)
+        return service.build_context(dry_run=True).config.dislike_threshold
+
+    def test_on_by_default_at_one_star(self, service, sessions, configured):
+        assert self._threshold(service, sessions, configured) == 2.0
+
+    def test_the_configured_threshold_flows_through(self, service, sessions, configured):
+        assert self._threshold(service, sessions, configured, **{"recommendations.dislike_threshold": 6.0}) == 6.0
+
+    def test_a_threshold_of_zero_is_honoured_rather_than_replaced_by_the_default(self, service, sessions, configured):
+        """0 is legal, documented and validator-accepted — it means "only a rating of exactly zero
+        counts". It is also falsy, so `or 2.0` silently swapped it for the default: the settings
+        screen read back 0 while every run used 2, and both screens looked self-consistent."""
+        assert self._threshold(service, sessions, configured, **{"recommendations.dislike_threshold": 0.0}) == 0.0
+
+    def test_switching_it_off_leaves_no_threshold_at_all(self, service, sessions, configured):
+        threshold = self._threshold(
+            service,
+            sessions,
+            configured,
+            **{"recommendations.use_plex_ratings": False, "recommendations.dislike_threshold": 2.0},
+        )
+
+        assert threshold is None, "off must erase the threshold, not leave a number nobody applies"

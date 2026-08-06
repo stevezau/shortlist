@@ -317,7 +317,8 @@ export interface paths {
         };
         /**
          * List Notifications
-         * @description Every currently-firing notification (update available, failed/partial run, paused, errors).
+         * @description Every currently-firing notification (update available, failed/partial run, paused, errors),
+         *     plus the ids already dismissed so inline surfaces reporting the same fact can hide themselves.
          */
         get: operations["list_notifications_api_notifications_get"];
         put?: never;
@@ -975,6 +976,661 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/support/ai": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ai Decisions
+         * @description What the AI curator actually did for this person: tokens spent per step, and any error.
+         */
+        get: operations["ai_decisions_api_support_ai_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/bundle.txt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Bundle
+         * @description Every tool's block in one file, for when a paste would be truncated.
+         *
+         *     Discord collapses long messages and Reddit truncates them, so past a certain size the right
+         *     answer is an attachment rather than a paste. Deliberately over-collects: a second round trip
+         *     with a non-technical reporter costs a day, and redundant text costs nothing.
+         */
+        get: operations["bundle_api_support_bundle_txt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/clocks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Clocks
+         * @description Timezones and the next scheduled fire times.
+         *
+         *     Every timestamp in the database is UTC and every line in the log is local. Reading one as the
+         *     other inverts the order of events, which has cost this project real debugging time — so the
+         *     offset is stated outright rather than left to be inferred.
+         */
+        get: operations["clocks_api_support_clocks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Config
+         * @description Where each setting's value came from: an environment variable, or the database.
+         *
+         *     Env vars are ONE-TIME seeds — read into the database on first boot and ignored for ever after —
+         *     which surprises people who then edit their compose file and see nothing change. This says so per
+         *     key. Secret values are never rendered; only whether one is set.
+         */
+        get: operations["config_api_support_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connection
+         * @description Per person: do we hold a working share token, and which libraries has it ever read?
+         *
+         *     A library that silently refuses someone's token is indistinguishable from a person who watches
+         *     nothing — both produce an empty watched set. Only this pairing separates them, and getting it
+         *     wrong sends a maintainer hunting the recommendation engine for a permissions bug.
+         */
+        get: operations["connection_api_support_connection_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/database": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Database
+         * @description Migration head plus proof the schema actually has what the ORM claims.
+         *
+         *     Head alone is not health: a migration that no-ops on a real database still stamps its version,
+         *     and this project has shipped exactly that. So the tables and indexes are counted, not assumed.
+         */
+        get: operations["database_api_support_database_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Disable
+         * @description Switch support mode off immediately, without waiting for the expiry.
+         */
+        post: operations["disable_api_support_disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/drift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Drift
+         * @description Does Plex match the ledger? The register of a bug class with fifteen recorded instances.
+         *
+         *     The database records that a row was delivered; the server is where it either exists or does not.
+         *     Nothing today compares the two, so a write that silently failed looks identical to one that
+         *     worked. Read-only by design: this reports drift and never repairs it, because repair belongs to a
+         *     run, where snapshots and dry-run already live.
+         */
+        get: operations["drift_api_support_drift_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enable
+         * @description Switch support mode on for `_SUPPORT_HOURS`. Re-enabling extends from now, it does not stack.
+         */
+        post: operations["enable_api_support_enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Errors
+         * @description Recent WARNING and ERROR log lines — the part of a bug report nobody remembers to attach.
+         *
+         *     Everything here is already redacted by `log_reader.scrub` (an alias for `http_retry.redact`),
+         *     which covers more credential shapes than this module's own `_scrub`: query params, header forms,
+         *     Bearer credentials. Over-redaction is fine; a leaked token is not (rule 9).
+         *
+         *     Capped hard, because this rides along in a report someone pastes into a chat window. When the tail
+         *     is not enough, the full redacted log zip is a separate download (`/api/system/logs/download`) and
+         *     the block says so.
+         */
+        get: operations["errors_api_support_errors_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/funnel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Funnel
+         * @description Counts at each stage from TMDB pool to delivered row — "why is my row short", answered.
+         *
+         *     A short row has one cause per stage, and they need completely different fixes: a thin library, an
+         *     over-tight watched cap, a genre filter, or the AI declining. Only the counts distinguish them.
+         */
+        get: operations["funnel_api_support_funnel_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Health
+         * @description The overview strip: is each moving part working, answered independently.
+         */
+        get: operations["health_api_support_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Jobs
+         * @description The durable queue: what is stuck, what failed, and with what error.
+         */
+        get: operations["jobs_api_support_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Libraries
+         * @description Every library with its key, type and TMDB-id coverage.
+         *
+         *     A library whose TYPE is not what everyone assumes, or that holds titles Plex never matched, is
+         *     invisible in a log and explains a whole class of "nothing gets recommended from here".
+         */
+        get: operations["libraries_api_support_libraries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/missing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Why Missing
+         * @description Why a title never appeared — usually the real question, and nothing else answers it.
+         *
+         *     Walks the last run's trace for this person and reports the first stage that rejected the title:
+         *     it was never pooled, the library does not hold it, it counted as already-watched, a genre filter
+         *     dropped it, or it simply lost the ranking cut.
+         */
+        get: operations["why_missing_api_support_missing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/person/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Person
+         * @description One person's watch read, library by library — the tool that separates "watches nothing" from
+         *     "a library silently refused their token", which look identical everywhere else.
+         */
+        get: operations["person_api_support_person__slug__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/pick": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Why Here
+         * @description Why a delivered title is in someone's row: the seed it came from, the source, its strength.
+         */
+        get: operations["why_here_api_support_pick_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/read-as": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read As
+         * @description Read the PMS AS one person, using their own share token, and show the raw response.
+         *
+         *     The one thing nobody can do from a browser: a maintainer cannot log in as someone else's Plex
+         *     account, and the owner's own view answers a different question. Reading the library through the
+         *     share token is what settles "is this actually marked watched for THEM".
+         */
+        get: operations["read_as_api_support_read_as_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/report.zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Report Zip
+         * @description The whole report AND every redacted log file, as one attachment.
+         *
+         *     The text report is deliberately capped so it can be pasted into a chat window — newest 40
+         *     warnings, five runs. That is enough to name most problems and not enough for one that needs
+         *     history, and asking someone to then find the Logs page and export separately is a step that does
+         *     not happen. This is the one button for "give them everything".
+         *
+         *     Log files are redacted by `log_reader.build_zip`, file by file, because an export is the single
+         *     most likely thing to end up in a public issue tracker.
+         */
+        get: operations["report_zip_api_support_report_zip_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/row-schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Row Schedule
+         * @description When each row last rebuilt, and when it is next due to.
+         *
+         *     The gap this closes: freshness is a CADENCE, not a nightly shuffle. At the 0.5 default a row
+         *     re-selects its titles roughly weekly and redelivers the same picks on every other night, and the
+         *     engine logs that decision NOWHERE. So "I changed the setting and nothing happened" has been
+         *     unanswerable — the setting was fine, the row simply had not rebuilt yet.
+         */
+        get: operations["row_schedule_api_support_row_schedule_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/rows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rows
+         * @description Every row's effective settings, with the SOURCE of each winning value.
+         *
+         *     "But I set it to 0%" is answerable only by showing whether the global default or a per-row
+         *     override actually applied — the two are indistinguishable from the row editor alone.
+         */
+        get: operations["rows_api_support_rows_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Recent Runs
+         * @description The last few runs, and WHO failed in each — the other thing a report always needs.
+         *
+         *     The timeline says a run finished with a status. This says which people it could not build and why,
+         *     which is the difference between "a run failed" and something actionable.
+         */
+        get: operations["recent_runs_api_support_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/settings-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Settings History
+         * @description Settings changes, newest first — turning "but I set it to 0%" into a timestamp.
+         *
+         *     Paired with the row schedule: a change made after a row's last rebuild has not reached that row
+         *     yet, which is the commonest reason a correct setting appears to do nothing.
+         */
+        get: operations["settings_history_api_support_settings_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/sharing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sharing
+         * @description Every account's live share filters, with OUR exclusions separated from everything else.
+         *
+         *     Rows are made private by merging `label!=shortlist_<user>` into each other account's filters, and
+         *     the event log records what CHANGED. Nothing shows what is true right now — so a filter that was
+         *     never written, or was overwritten by another tool, is invisible until someone reports a leak.
+         */
+        get: operations["sharing_api_support_sharing_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Status
+         * @description Whether the diagnostic tools are currently usable, and for how much longer.
+         */
+        get: operations["status_api_support_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggestions
+         * @description People and titles to offer as you type, for the checks that take a name.
+         *
+         *     Exists because a username typed from memory is the commonest way one of these checks comes back
+         *     empty — and an empty result is indistinguishable from "nothing is wrong", which is the worst
+         *     answer a diagnostic can give. The person operating the page may not know that Plex usernames are
+         *     not display names, or how a title is spelled in the library.
+         *
+         *     Deliberately DB-only and unconditional: no Plex call, so it still populates when the server is
+         *     unreachable, which is exactly when these checks are being used.
+         */
+        get: operations["suggestions_api_support_suggestions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Timeline
+         * @description Runs, jobs and audited events on one axis, newest first.
+         *
+         *     Rendered in BOTH local and UTC. The database stores UTC and the log prints local, so a timeline
+         *     that picked one would be misread against the other — which is precisely the mistake this is here
+         *     to stop someone making.
+         *
+         *     ``user`` is a PLAIN default, not ``Query(default="")``. `bundle` calls these handlers directly,
+         *     which bypasses FastAPI's dependency injection — so a `Query(...)` default arrives as a
+         *     `fastapi.params.Query` OBJECT, which is truthy and then blows up on `in`. That silently cost the
+         *     downloaded diagnostic its whole runs/jobs/events section on every install. FastAPI still parses
+         *     `?user=` from the query string for a plain str parameter, so nothing is lost by dropping it.
+         */
+        get: operations["timeline_api_support_timeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/support/title": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Title Lookup
+         * @description Where one title stands for every person: watched record, episodes, whether it counts, delivery.
+         *
+         *     The tool this whole surface was built for. A run log records how MANY titles a watch read
+         *     returned and never WHICH, so "is this in their watched set" has been unanswerable from the
+         *     outside — this is that missing column.
+         */
+        get: operations["title_lookup_api_support_title_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/api-token": {
         parameters: {
             query?: never;
@@ -1620,6 +2276,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/users/{user_id}/watched": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * User Watched
+         * @description Search one person's watched set.
+         *
+         *     Reads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB
+         *     query, it can search the WHOLE set rather than the page on screen, and it shows the same titles
+         *     the recommender excludes from.
+         */
+        get: operations["user_watched_api_users__user_id__watched_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watching-account/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Candidates
+         * @description Home users on the owner's Plex Home that could become their watching account.
+         */
+        get: operations["list_candidates_api_watching_account_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/watching-account/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Transfer
+         * @description Copy the owner's watched set onto their watching account.
+         *
+         *     The copy into Shortlist is what makes the new account's picks correct and writes nothing to
+         *     Plex. `scrobble` additionally marks each title played on the PMS so Plex shows checkmarks —
+         *     thousands of writes, and Plex dates every one of them today (it cannot be told otherwise), which
+         *     is why the true dates are stored separately.
+         */
+        post: operations["transfer_api_watching_account_transfer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2194,6 +2919,22 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * HomeUserOut
+         * @description A Home user that could become the owner's watching account.
+         */
+        HomeUserOut: {
+            /** Already A Shortlist User */
+            already_a_shortlist_user: boolean;
+            /** Plex Account Id */
+            plex_account_id: number;
+            /** Protected */
+            protected: boolean;
+            /** Title */
+            title: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * HubAnchorIn
          * @description A per-library shelf placement for one row: the very TOP (``top``), or after/before a collection
          *     by title. ``top`` needs no anchor; otherwise ``anchor`` must be a non-empty title.
@@ -2513,6 +3254,8 @@ export interface components {
         };
         /** NotificationsOut */
         NotificationsOut: {
+            /** Dismissed */
+            dismissed: string[];
             /** Notifications */
             notifications: components["schemas"]["NotificationOut"][];
         } & {
@@ -3516,6 +4259,17 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** StatusOut */
+        StatusOut: {
+            /** Enabled */
+            enabled: boolean;
+            /** Expires At */
+            expires_at: string | null;
+            /** Seconds Remaining */
+            seconds_remaining: number;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * SyncFinishedEvent
          * @description Event ``sync.finished`` — a Tools-page sync ended.
@@ -3643,6 +4397,38 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "sent" | "rejected";
+        } & {
+            [key: string]: unknown;
+        };
+        /** TransferIn */
+        TransferIn: {
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+            /**
+             * Scrobble
+             * @default false
+             */
+            scrobble: boolean;
+            /** To User Id */
+            to_user_id: number;
+        };
+        /** TransferOut */
+        TransferOut: {
+            /** Already Present */
+            already_present: number;
+            /** Copied */
+            copied: number;
+            /** Dry Run */
+            dry_run: boolean;
+            /** Errors */
+            errors: string[];
+            /** Scrobble Skipped */
+            scrobble_skipped: number;
+            /** Scrobbled */
+            scrobbled: number;
         } & {
             [key: string]: unknown;
         };
@@ -3952,6 +4738,58 @@ export interface components {
             last: string | null;
             /** Next */
             next: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WatchedPageOut
+         * @description A page of the watched set, plus how complete the set behind it is.
+         *
+         *     The freshness fields travel WITH the page on purpose: this list is a cache, and a page that
+         *     doesn't say when it was last filled invites "I watched that, why is it recommended?" — the exact
+         *     question this endpoint exists to answer.
+         */
+        WatchedPageOut: {
+            /** Dislike Threshold */
+            dislike_threshold: number | null;
+            /** Items */
+            items: components["schemas"]["WatchedTitleOut"][];
+            /** Last Full Sync At */
+            last_full_sync_at: string | null;
+            /** Rated Count */
+            rated_count: number;
+            /** Ratings Trusted */
+            ratings_trusted: boolean;
+            /** Synced Titles */
+            synced_titles: number;
+            /** Total */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * WatchedTitleOut
+         * @description One title from the cached watched set — the set recommendations are actually filtered against.
+         */
+        WatchedTitleOut: {
+            /** Leaf Count */
+            leaf_count: number | null;
+            /** Media Type */
+            media_type: string;
+            /** Title */
+            title: string;
+            /** Tmdb Id */
+            tmdb_id: number | null;
+            /** User Rating */
+            user_rating: number | null;
+            /** Viewed Leaf Count */
+            viewed_leaf_count: number | null;
+            /** Watch Count */
+            watch_count: number;
+            /** Watched At */
+            watched_at: string;
+            /** Year */
+            year: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -5420,6 +6258,704 @@ export interface operations {
             };
         };
     };
+    ai_decisions_api_support_ai_get: {
+        parameters: {
+            query: {
+                user: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bundle_api_support_bundle_txt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    clocks_api_support_clocks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    config_api_support_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    connection_api_support_connection_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    database_api_support_database_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    disable_api_support_disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+        };
+    };
+    drift_api_support_drift_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    enable_api_support_enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+        };
+    };
+    errors_api_support_errors_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    funnel_api_support_funnel_get: {
+        parameters: {
+            query: {
+                user: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    health_api_support_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    jobs_api_support_jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    libraries_api_support_libraries_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    why_missing_api_support_missing_get: {
+        parameters: {
+            query: {
+                user: string;
+                title: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    person_api_support_person__slug__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    why_here_api_support_pick_get: {
+        parameters: {
+            query: {
+                user: string;
+                title: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_as_api_support_read_as_get: {
+        parameters: {
+            query: {
+                user: string;
+                endpoint?: string;
+                section?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_zip_api_support_report_zip_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    row_schedule_api_support_row_schedule_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    rows_api_support_rows_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    recent_runs_api_support_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    settings_history_api_support_settings_history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    sharing_api_support_sharing_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    status_api_support_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusOut"];
+                };
+            };
+        };
+    };
+    suggestions_api_support_suggestions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    timeline_api_support_timeline_get: {
+        parameters: {
+            query?: {
+                user?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    title_lookup_api_support_title_get: {
+        parameters: {
+            query: {
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     api_token_status_api_system_api_token_get: {
         parameters: {
             query?: never;
@@ -6254,6 +7790,96 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserRunsSummaryOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    user_watched_api_users__user_id__watched_get: {
+        parameters: {
+            query?: {
+                /** @description Case-insensitive substring of the title. */
+                q?: string;
+                media_type?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                user_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchedPageOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_candidates_api_watching_account_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeUserOut"][];
+                };
+            };
+        };
+    };
+    transfer_api_watching_account_transfer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TransferOut"];
                 };
             };
             /** @description Validation Error */

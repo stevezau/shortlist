@@ -599,10 +599,14 @@ export function RowEditor({
               onChange={(next) =>
                 set({
                   ...next,
-                  // `media` is DERIVED from the libraries picked, so a row can stop being shows-only
+                  // `media` is DERIVED from the libraries picked, so a row can narrow to movies-only
                   // without anyone touching the flag. Its control is hidden then, and the API refuses
-                  // the combination — which would be a save failing with no visible cause.
-                  ...(next.media !== "show" ? { unstarted_only: false } : {}),
+                  // that one combination — a save failing with no visible cause.
+                  //
+                  // `=== "movie"`, matching the API exactly. It used to clear on anything that wasn't
+                  // shows-only, which silently switched the flag off when a row widened to "films and
+                  // shows" — a combination both the API and the engine accept.
+                  ...(next.media === "movie" ? { unstarted_only: false } : {}),
                 })
               }
             />
@@ -663,10 +667,13 @@ export function RowEditor({
                     />
                   </div>
 
-                  {/* Shown for shows only, and cleared when the row stops being a shows row: an
-                    invisible setting the API then refuses is a save that fails for no visible
-                    reason. */}
-                  {input.media === "show" && (
+                  {/* Anything that can hold shows, which is what the API accepts — it refuses this
+                    only on a movies-only row. It used to be gated on `=== "show"`, which hid it from
+                    every "films and shows" row even though the engine honours it there, so the one
+                    row most installs have could never turn it on. Cleared when the row narrows to
+                    movies: an invisible setting the API then refuses is a save that fails for no
+                    visible reason. */}
+                  {input.media !== "movie" && (
                     <div className="flex items-start justify-between gap-4 rounded-md border p-3">
                       <div className="space-y-1">
                         <Label htmlFor="row-unstarted">
@@ -674,9 +681,9 @@ export function RowEditor({
                         </Label>
                         <p className="text-sm text-muted-foreground">
                           Drops any show they&rsquo;ve watched even one episode
-                          of. Normally only <em>finished</em> shows are skipped,
-                          so one they&rsquo;re three episodes into still turns
-                          up.
+                          of. This only changes anything if you&rsquo;ve allowed
+                          already-watched titles above — at 0% those are already
+                          left out.
                         </p>
                       </div>
                       <Switch

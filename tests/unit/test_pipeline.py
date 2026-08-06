@@ -997,10 +997,12 @@ class TestPerRowOverrides:
         assert delivered[0] == 20, f"the already-watched title must lead the row, got {delivered}"
 
     def test_an_unstarted_only_row_drops_a_barely_started_show(self, ctx: EngineContext, mock_plextv):
-        """Stricter than the finished filter, and its own pool.
+        """Stricter than the CAP, and its own pool.
 
-        A show 1 episode into 40 is NOT finished, so every other row may still offer it. An
-        "unstarted only" row must not — that is the whole claim of "a series to start".
+        Since 1.2 a 0% row already drops started shows, so the contrast is no longer against a
+        default row — it is against a row that PERMITS watched titles (`watched_pct > 0`). There, a
+        show 1 episode into 40 is fair game; an "unstarted only" row must still refuse it, which is
+        the whole claim of "a series to start".
         """
         show_section = MagicMock()
         show_section.type = "show"
@@ -1034,7 +1036,10 @@ class TestPerRowOverrides:
         # one. Only the most recent watch (the Fargo/Seed row) seeds; the older one stays a candidate.
         ctx.config.max_seeds = 1
         ctx.config.rows = [
-            RowSpec(slug="anything", name_template="Anything", size=2, media=MediaType.SHOW),
+            # watched_pct 1.0: this row permits watched titles, so it is the one that still offers a
+            # part-watched show. At the 0% default it would now drop it too — see
+            # `test_a_zero_pct_row_drops_a_barely_started_show`.
+            RowSpec(slug="anything", name_template="Anything", size=2, media=MediaType.SHOW, watched_pct=1.0),
             RowSpec(slug="tostart", name_template="To start", size=2, media=MediaType.SHOW, unstarted_only=True),
         ]
         mock_plextv.users = [plextv_user(100, "sarah")]
@@ -1045,15 +1050,57 @@ class TestPerRowOverrides:
         for pick in report.users[0].picks:
             by_row.setdefault(pick.collection_slug, set()).add(pick.tmdb_id)
         assert by_row, "the run produced no picks at all — the test fixture, not the feature"
-        assert 30 in by_row.get("anything", set()), "a part-watched show is fair game for a normal row"
+        assert 30 in by_row.get("anything", set()), "a part-watched show is fair game for a row that allows watched"
         assert 30 not in by_row.get("tostart", set()), "a started series must never reach an unstarted row"
         assert 40 in by_row.get("tostart", set()), "the never-opened one is exactly what it wants"
 
-    def test_a_rewatch_row_shares_the_pool_of_a_watched_pct_row(self, ctx: EngineContext, mock_plextv):
-        """The OTHER direction of `excludes_finished`, which no membership assertion can catch.
+    def test_a_zero_pct_row_drops_a_barely_started_show(self, ctx: EngineContext, mock_plextv):
+        """The Teacup fix, end to end through a real run.
 
-        Both rows want finished titles kept in the pool, so they must share ONE gather. Without this,
-        `excludes_finished` could regress to keying on the raw percentage — splitting the pool and
+        Reported 2026-08-04: a show the person had started kept appearing in a row set to 0%
+        already-watched. It was doing what it was told — until 1.2, "already-watched" for a SHOW meant
+        finished (>=80%, or a length-scaled floor of ~3 episodes), so one episode in was, to the row,
+        a fresh discovery. Plex disagrees: its own watched filter returns a show from episode one.
+        """
+        show_section = MagicMock()
+        show_section.type = "show"
+        show_section.title = "TV Shows"
+        show_section.collections.return_value = []
+        ctx.plex.sections.return_value = [show_section]
+        ctx.plex.sections_by_type.return_value = {MediaType.SHOW: show_section}
+        ctx.plex.build_library_index.return_value = {900: 999, 30: 1030, 40: 1040}
+        ctx.tmdb.suggestions.return_value = _ranked(
+            [
+                {"id": 30, "name": "Teacup", "genre_ids": [], "vote_average": 8.0},
+                {"id": 40, "name": "Never Opened", "genre_ids": [], "vote_average": 7.0},
+            ]
+        )
+        ctx.history_source.fetch.return_value = [
+            *[
+                make_watched("Seed Show", days_ago=i, rating_key=999, media_type=MediaType.SHOW, leaf_count=10)
+                for i in range(1, 5)
+            ],
+            # 2 of 8 — under the old 3-episode floor, and the exact shape of the report.
+            make_watched(
+                "Teacup", days_ago=6, media_type=MediaType.SHOW, tmdb_id=30, viewed_leaf_count=2, leaf_count=8
+            ),
+        ]
+        ctx.config.max_seeds = 1
+        ctx.config.watched_pct = 0.0
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=2, media=MediaType.SHOW)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = {pick.tmdb_id for pick in report.users[0].picks}
+        assert 30 not in delivered, "a show they have started must not reach a 0% row"
+        assert 40 in delivered, "the unwatched one still should — the rule must not empty the row"
+
+    def test_a_rewatch_row_shares_the_pool_of_a_watched_pct_row(self, ctx: EngineContext, mock_plextv):
+        """The OTHER direction of `excludes_watched`, which no membership assertion can catch.
+
+        Both rows want watched titles kept in the pool, so they must share ONE gather. Without this,
+        `excludes_watched` could regress to keying on the raw percentage — splitting the pool and
         paying a second time for every rate-limited/LLM source — and every other test still passes.
         """
         ctx.config.max_seeds = 1
@@ -1068,6 +1115,41 @@ class TestPerRowOverrides:
 
         # One suggestions() call per seed per pool. One seed, one shared pool = exactly one call.
         assert ctx.tmdb.suggestions.call_count == 1, "a rewatch row and a >0 row must share one pool"
+
+    def test_a_zero_pct_row_and_an_unstarted_only_row_share_one_pool(self, ctx: EngineContext, mock_plextv):
+        """Found by architecture review 2026-08-05, and invisible to any membership assertion.
+
+        Since 1.2 a 0% row's exclusion set already unions in the started shows, so a 0% row and a
+        0% + `unstarted_only` row exclude byte-identical sets. `pool_key` still split them, which
+        bought a second full TMDB/LLM gather per person per night for no difference in candidates —
+        on the commonest pairing, now that the toggle is reachable on "films and shows" rows.
+
+        The reverse must still split, which `test_an_unstarted_only_row_drops_a_barely_started_show`
+        covers: a row that PERMITS watched titles genuinely differs from an unstarted-only one.
+        """
+        show_section = MagicMock()
+        show_section.type = "show"
+        show_section.title = "TV Shows"
+        show_section.collections.return_value = []
+        ctx.plex.sections.return_value = [show_section]
+        ctx.plex.sections_by_type.return_value = {MediaType.SHOW: show_section}
+        ctx.plex.build_library_index.return_value = {900: 999, 30: 1030}
+        ctx.config.max_seeds = 1
+        ctx.config.watched_pct = 0.0
+        ctx.history_source.fetch.return_value = [
+            make_watched("Seed Show", days_ago=i, rating_key=999, media_type=MediaType.SHOW, leaf_count=10)
+            for i in range(1, 5)
+        ]
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="Picked", size=2, media=MediaType.SHOW),
+            RowSpec(slug="tostart", name_template="To start", size=2, media=MediaType.SHOW, unstarted_only=True),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        # One suggestions() call per seed per pool. One seed, one shared pool = exactly one call.
+        assert ctx.tmdb.suggestions.call_count == 1, "a 0% row and a 0% unstarted-only row must share one pool"
 
     def test_rewatch_works_for_shows_where_finished_is_a_different_predicate(self, ctx: EngineContext, mock_plextv):
         """For movies "finished" is any watch; for shows it is the `watched_show_pct` fraction plus a

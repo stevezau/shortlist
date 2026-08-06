@@ -16,6 +16,7 @@ import type {
   Settings,
   User,
   UserPatch,
+  WatchedFilters,
 } from "./types";
 
 /**
@@ -45,7 +46,10 @@ export const queryKeys = {
   userRows: (id: number) => ["users", id, "rows"] as const,
   userRuns: (id: number) => ["users", id, "runs"] as const,
   userRunsSummary: (id: number) => ["users", id, "runs", "summary"] as const,
+  homeUsers: ["watching-account", "candidates"] as const,
   userHistory: (id: number) => ["users", id, "history"] as const,
+  userWatched: (id: number, filters: WatchedFilters) =>
+    ["users", id, "watched", filters] as const,
   session: ["auth", "session"] as const,
   setupState: ["setup", "state"] as const,
   apiToken: ["api-token"] as const,
@@ -461,6 +465,45 @@ export function useUserHistory(id: number) {
     queryKey: queryKeys.userHistory(id),
     queryFn: () => api.getUserHistory(id),
     retry: false, // a live per-user Plex read; surface the error rather than hammering
+  });
+}
+
+/** A page of someone's cached watched set. `placeholderData` keeps the previous page on screen while
+ *  a new search resolves — without it every keystroke blanks the list to a skeleton, which reads as
+ *  "no results" for a moment and makes typing feel broken. */
+export function useUserWatched(id: number, filters: WatchedFilters) {
+  return useQuery({
+    queryKey: queryKeys.userWatched(id, filters),
+    queryFn: () => api.getUserWatched(id, filters),
+    placeholderData: (previous) => previous,
+  });
+}
+
+/** Plex Home users the owner could move their watching to. `enabled: false` — it is a live plex.tv
+ *  read behind a "look again" button, so it runs when asked rather than on mount. */
+export function useHomeUserCandidates() {
+  return useQuery({
+    queryKey: queryKeys.homeUsers,
+    queryFn: () => api.listHomeUsers(),
+    retry: false,
+  });
+}
+
+export function useTransferWatchHistory() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      to_user_id: number;
+      scrobble: boolean;
+      dry_run: boolean;
+    }) => api.transferWatchHistory(body),
+    onSuccess: (result) => {
+      // A dry run changed nothing, so refetching would only churn. A real one rewrote someone's
+      // watched set, which the users list and every watch-history panel read from.
+      if (result.dry_run) return;
+      queryClient.invalidateQueries({ queryKey: queryKeys.users });
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
   });
 }
 

@@ -8,6 +8,12 @@ JSON-shaped field, or a provider API key. The two used to be separate ladders of
 (`redact()` matched only the query-param form); they were merged so the ladder guarding a 502 detail
 or an `events` row is exactly as strong as the one guarding this view.
 
+Credentials are only half of it, though: a log file is also the densest source of ADDRESSES in the
+product — one line per PMS call, for the life of the file — and `scrub` never touched those. The
+`download` export therefore adds two more passes (see `build_zip`). The live view deliberately does
+not: it renders on the owner's own screen, where their own server's address is what makes a log line
+readable.
+
 Over-redaction is fine. A leaked token is not (plex-safety rule 9).
 """
 
@@ -16,11 +22,14 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from shortlist.engine.clients.http_retry import redact
 from shortlist.logging_config import LOG_LEVELS
+from shortlist.server.services.redaction import redact_all
 
 # Loguru's default line, which is what the file sink writes:
 #   2026-07-21 19:06:47.886 | INFO     | shortlist.server.db.session:run_migrations:99 - message
@@ -145,20 +154,41 @@ def read_lines(config_dir: Path, *, level: str = "DEBUG", query: str = "", limit
     }
 
 
-def build_zip(config_dir: Path) -> bytes:
+def build_zip(config_dir: Path, literals: Mapping[str, str] = MappingProxyType({})) -> bytes:
     """Every log file, redacted, as a zip — what the operator attaches to a bug report.
 
     Redacted file-by-file rather than shipping the raw files: the export is the single most likely
-    thing to end up in a public issue tracker.
+    thing to end up in a public issue tracker. Two passes, because `scrub` only ever covered the
+    first of them:
+
+    1. credentials (`scrub`),
+    2. this install's own identifiers, then addresses and machine ids by pattern (`redact_all`) — a
+       log file is the densest source of these anywhere in the product, one line per PMS call for the
+       life of the file.
+
+    Args:
+        config_dir: The instance's config directory, holding the log files.
+        literals: This server's known identifiers, from `redaction.known_identifiers`. Defaulted so a
+            caller with no session still gets the pattern pass rather than failing closed to none.
+
+    Returns:
+        The zip archive as bytes.
     """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         files = log_files(config_dir)
         for path in files:
             try:
-                archive.writestr(f"logs/{path.name}", scrub(path.read_text(encoding="utf-8", errors="replace")))
+                body = scrub(path.read_text(encoding="utf-8", errors="replace"))
+                archive.writestr(f"logs/{path.name}", redact_all(body, literals))
             except OSError as e:  # a file that vanished under rotation shouldn't sink the export
-                archive.writestr(f"logs/{path.name}.unreadable.txt", f"could not read: {type(e).__name__}: {e}")
+                # Redacted like everything else, and named rather than pathed: `OSError.__str__`
+                # carries the absolute path, which on a non-Docker install is a home directory and an
+                # OS username. This branch was the one writer into the zip with no passes at all.
+                archive.writestr(
+                    f"logs/{path.name}.unreadable.txt",
+                    redact_all(f"could not read {path.name}: {type(e).__name__}", literals),
+                )
         if not files:
             archive.writestr("logs/EMPTY.txt", "No log files were found in this instance's config directory.")
     return buffer.getvalue()

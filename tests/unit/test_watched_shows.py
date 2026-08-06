@@ -91,3 +91,61 @@ class TestEngagedFloor:
     def test_crossover_is_around_twenty_episodes(self):
         """15% of 20 = 3, exactly the minimum — the two bars meet here."""
         assert _engaged_floor(20) == 3.0
+
+
+class TestWhatAZeroPctRowExcludes:
+    """`zero_pct_exclusions` — what "already-watched titles: 0%" means, as of 1.2.
+
+    It used to mean "0% FINISHED", so a show under the bar above was, to a 0% row, a fresh
+    discovery. Plex itself draws no such line: its watched filter returns a show from the first
+    episode. A live probe of a real server (2026-08-05) found `?type=2&unwatched=0` returning shows
+    as little as 1.1% watched (2 of 176), and five of ten started shows there were still eligible to
+    be recommended straight back to the person watching them.
+    """
+
+    @staticmethod
+    def _excluded(watched_movies: set[int], watched_shows: dict[int, tuple[int, int | None]]):
+        """The real `RowPolicy.zero_pct_exclusions`, assembled without a whole engine context.
+
+        `SimpleNamespace` rather than a constructed RowPolicy: the method reads exactly three
+        attributes, and building the real dataclass would need a context, a config and a user for no
+        extra coverage of the thing under test.
+        """
+        from types import SimpleNamespace
+
+        from shortlist.engine.rows import RowPolicy, _watched_titles
+
+        finished = _watched_titles(watched_movies, watched_shows, 0.8)
+        stub = SimpleNamespace(watched_titles=finished, watched_shows=watched_shows)
+        return RowPolicy.zero_pct_exclusions(stub)
+
+    def test_a_show_one_episode_in_is_excluded(self):
+        """The reported bug. Two of eight is under the old 3-episode floor and was therefore offered
+        back to the person who had started it."""
+        assert (100, MediaType.SHOW) in self._excluded(set(), {100: (2, 8)})
+
+    def test_a_single_episode_of_a_long_run_is_excluded(self):
+        """1 of 176 — 0.6%, and nowhere near any fraction. Plex still calls it watched."""
+        assert (100, MediaType.SHOW) in self._excluded(set(), {100: (1, 176)})
+
+    def test_an_untouched_show_is_not_excluded(self):
+        """The rule must not empty the row: zero episodes is still a fresh discovery."""
+        assert (100, MediaType.SHOW) not in self._excluded(set(), {100: (0, 8)})
+
+    def test_a_finished_show_is_still_excluded(self):
+        assert (100, MediaType.SHOW) in self._excluded(set(), {100: (8, 8)})
+
+    def test_watched_movies_are_unaffected(self):
+        """A movie is finished the moment it is watched — there was never a fraction to loosen."""
+        excluded = self._excluded({949}, {})
+        assert (949, MediaType.MOVIE) in excluded
+
+    def test_a_show_with_no_episode_total_survives_the_union(self):
+        """Why it is a UNION and not a swap.
+
+        `_started_shows` needs `viewed > 0`; `_watched_titles` also counts a show whose episode total
+        Plex could not report, on the reasoning that re-surfacing one someone worked through is worse
+        than omitting it. Swapping one rule for the other would have quietly re-admitted those.
+        """
+        assert (100, MediaType.SHOW) in self._excluded(set(), {100: (0, None)})
+        assert (101, MediaType.SHOW) in self._excluded(set(), {101: (0, 0)})

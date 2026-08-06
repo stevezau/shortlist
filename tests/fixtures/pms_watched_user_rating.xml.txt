@@ -1,0 +1,148 @@
+<!--
+  PMS 1.43.3 GET /library/sections/{key}/all?type=1&unwatched=0&includeGuids=1 — the SAME watched
+  read `plex_pms.watched_titles` already makes, recorded once per token to show what `userRating`
+  does across accounts. Recorded 2026-08-06 from a real server (plex-safety rule 11). Titles, ids,
+  summaries and account names are sanitized; attribute NAMES, ordering, value FORMAT and the
+  container shape are verbatim.
+
+  WHY THIS FIXTURE EXISTS.
+
+  Issue #69 asks for a viewer's own rating to stop a title seeding their row. That turns on three
+  claims about this response, none of which had ever been measured:
+
+    1. `userRating` is returned by the read we ALREADY make — no second request, no new endpoint.
+    2. It is scoped to the TOKEN, not the server, so one person's opinion cannot reach another's row.
+    3. Its value tells you what the person actually thought.
+
+  WHAT WAS MEASURED, across all 50 accounts on the server (owner + 49 shared):
+
+    1. TRUE.  `userRating` rides along on `/library/sections/{k}/all`, costing nothing.
+    2. TRUE.  1,462 titles carried a `userRating` as the owner and NO `userRating` at all for every
+              one of the 49 viewers. Per-account, confirmed by disagreement, not by assumption.
+    3. FALSE for the owner, TRUE for the viewers — and that is what this fixture is really for.
+
+  THE TRAP (rows 1-2 below).
+
+  The owner's account had 1,455 of 1,630 watched titles rated, and 90.7% of those values were
+  FRACTIONAL — 7.9, 8.8, 6.2. Plex's own controls cannot write those: stars move in half-star steps
+  on a 0..10 scale, and thumbs land on the same grid, so every value a PERSON can produce is a whole
+  number. An external tool wrote these (Kometa's rating sync copies IMDb/TMDB scores into the field;
+  note row 2, where `userRating` equals `rating` exactly). `lastRatedAt` gives it away independently:
+  the owner's three sampled ratings are stamped 1696072109, 1696072110 and 1696070087 — two of them
+  one second apart, which is a bulk write, not an opinion.
+
+  Across the 49 real viewers, by contrast, 0 of 36 ratings were fractional.
+
+  So a naive `userRating <= threshold` would have read IMDb's opinion as the OWNER's and silently
+  stopped dozens of their own seeds. `WatchedItem.is_human_rating` is the guard, and row 1 is the
+  case it exists to reject: a fractional value that a person could never have entered.
+
+  ROW 1 also carries the residue the per-value guard CANNOT catch: `userRating="6.0"` on row 3 is
+  tool-written too, and is a whole number. That is why the account-level guard in `history.py`
+  exists as a second layer — see `_ratings_are_trustworthy`.
+
+  THE HONEST CASE (rows 4-5). A viewer's rating: whole-numbered, and `lastRatedAt` sits a few
+  minutes after `lastViewedAt` — someone finished a film and rated it. Row 5 is the shape the
+  feature acts on, a low rating from a real person.
+
+  ROW 6 is the overwhelming majority: watched, never rated, no `userRating` attribute at all. 99.7%
+  of watched rows on this server look like this, so "absent" is the case to optimise for.
+
+  NOTE: no `totalSize` on this container — see `watched_titles`, which treats a short page as the
+  only end-signal when the server omits it.
+-->
+<MediaContainer size="6" allowSync="1" librarySectionTitle="Movies" librarySectionUUID="REDACTED"
+                mediaTagPrefix="/system/bundle/media/flags/" mediaTagVersion="1785000000"
+                title1="Movies" title2="All Movies" viewGroup="movie">
+
+  <!-- 1. OWNER token. Tool-written: fractional value a person cannot enter. REJECTED by is_human_rating. -->
+  <Video ratingKey="20001" key="/library/metadata/20001" guid="plex://movie/REDACTED01"
+         slug="sanitised-movie-a" studio="Sanitised Studio" type="movie" title="Sanitised Movie A"
+         contentRating="R" contentRatingAge="17" summary="Sanitised summary."
+         rating="9.1" audienceRating="7.2" userRating="7.9" viewOffset="490509" viewCount="1"
+         lastViewedAt="1513057169" lastRatedAt="1696072109" year="2016"
+         tagline="Sanitised tagline." thumb="/library/metadata/20001/thumb/1785784144"
+         art="/library/metadata/20001/art/1785784144" duration="6214816"
+         originallyAvailableAt="2016-03-10" addedAt="1605186041" updatedAt="1785784144"
+         chapterSource="media" ratingImage="imdb://image.rating">
+    <Guid id="imdb://tt0000011"/>
+    <Guid id="tmdb://333371"/>
+    <Guid id="tvdb://200011"/>
+  </Video>
+
+  <!-- 2. OWNER token. Same tool, and here `userRating` is EXACTLY `rating` — the copy is visible. -->
+  <Video ratingKey="20002" key="/library/metadata/20002" guid="plex://movie/REDACTED02"
+         slug="sanitised-movie-b" studio="Sanitised Studio" type="movie" title="Sanitised Movie B"
+         originalTitle="Sanitised Original B" contentRating="R" contentRatingAge="17"
+         summary="Sanitised summary."
+         rating="8.8" audienceRating="8.0" userRating="8.8" viewCount="1"
+         lastViewedAt="1592121344" lastRatedAt="1696072110" year="1995"
+         tagline="Sanitised tagline." thumb="/library/metadata/20002/thumb/1785784215"
+         art="/library/metadata/20002/art/1785784215" duration="7772515"
+         originallyAvailableAt="1995-12-29" addedAt="1754955262" updatedAt="1785784215"
+         audienceRatingImage="imdb://image.rating" chapterSource="media">
+    <Guid id="imdb://tt0000012"/>
+    <Guid id="tmdb://63"/>
+    <Guid id="tvdb://200012"/>
+  </Video>
+
+  <!-- 3. OWNER token. Tool-written but WHOLE — the per-value guard passes it, the account guard
+          is what rejects it. Recorded because it is the case that makes one layer insufficient. -->
+  <Video ratingKey="20003" key="/library/metadata/20003" guid="plex://movie/REDACTED03"
+         slug="sanitised-movie-c" studio="Sanitised Studio" type="movie" title="Sanitised Movie C"
+         contentRating="R" contentRatingAge="17" summary="Sanitised summary."
+         rating="3.6" audienceRating="6.1" userRating="6.0" viewCount="1"
+         lastViewedAt="1576847797" lastRatedAt="1696070087" year="2019"
+         tagline="Sanitised tagline." thumb="/library/metadata/20003/thumb/1785784219"
+         art="/library/metadata/20003/art/1785784219" duration="7732288"
+         originallyAvailableAt="2019-12-12" addedAt="1755326014" updatedAt="1785784219"
+         audienceRatingImage="imdb://image.rating" primaryExtraKey="/library/metadata/20004">
+    <Guid id="imdb://tt0000013"/>
+    <Guid id="tmdb://509967"/>
+    <Guid id="tvdb://200013"/>
+  </Video>
+
+  <!-- 4. VIEWER A's token. A real rating: whole number, stamped ~3 minutes after they finished it. -->
+  <Video ratingKey="20004" key="/library/metadata/20004" guid="plex://movie/REDACTED04"
+         slug="sanitised-movie-d" studio="Sanitised Studio" type="movie" title="Sanitised Movie D"
+         contentRating="PG-13" contentRatingAge="13" summary="Sanitised summary."
+         rating="6.3" audienceRating="6.1" userRating="8.0" viewCount="1" skipCount="1"
+         lastViewedAt="1774259708" lastRatedAt="1774259903" year="2024"
+         tagline="Sanitised tagline." thumb="/library/metadata/20004/thumb/1785567798"
+         art="/library/metadata/20004/art/1785567798" duration="5408362"
+         originallyAvailableAt="2024-09-27" addedAt="1773493590" updatedAt="1785567798"
+         audienceRatingImage="imdb://image.rating" chapterSource="media">
+    <Guid id="imdb://tt0000014"/>
+    <Guid id="tmdb://1248753"/>
+    <Guid id="tvdb://200014"/>
+  </Video>
+
+  <!-- 5. VIEWER A's token, rated LOW. This is the row the whole feature acts on: a person watched
+          it, didn't like it, and said so. `userRating="2.0"` is one star / thumbs-down. -->
+  <Video ratingKey="20005" key="/library/metadata/20005" guid="plex://movie/REDACTED05"
+         slug="sanitised-movie-e" studio="Sanitised Studio" type="movie" title="Sanitised Movie E"
+         contentRating="PG" summary="Sanitised summary."
+         audienceRating="6.4" userRating="2.0" viewCount="1"
+         lastViewedAt="1785147321" lastRatedAt="1785148548" year="2024"
+         tagline="Sanitised tagline." thumb="/library/metadata/20005/thumb/1783148718"
+         art="/library/metadata/20005/art/1783148718" duration="5040064"
+         originallyAvailableAt="2024-10-10" addedAt="1732488541" updatedAt="1783148718"
+         audienceRatingImage="imdb://image.rating" primaryExtraKey="/library/metadata/20006">
+    <Guid id="imdb://tt0000015"/>
+    <Guid id="tmdb://1364939"/>
+    <Guid id="tvdb://200015"/>
+  </Video>
+
+  <!-- 6. Watched, never rated — no `userRating` attribute at all. 99.7% of rows look like this. -->
+  <Video ratingKey="20006" key="/library/metadata/20006" guid="plex://movie/REDACTED06"
+         slug="sanitised-movie-f" studio="Sanitised Studio" type="movie" title="Sanitised Movie F"
+         summary="Sanitised summary."
+         audienceRating="6.3" viewCount="1" lastViewedAt="1726838022" year="2024"
+         thumb="/library/metadata/20006/thumb/1783148666" art="/library/metadata/20006/art/1783148666"
+         duration="3668840" originallyAvailableAt="2024-09-10" addedAt="1726275445"
+         updatedAt="1783148666" audienceRatingImage="imdb://image.rating">
+    <Guid id="imdb://tt0000016"/>
+    <Guid id="tmdb://1332077"/>
+    <Guid id="tvdb://200016"/>
+  </Video>
+</MediaContainer>

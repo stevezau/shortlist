@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from shortlist.server import notifications as notif
-from shortlist.server.db.models import Event, Job, Run
+from shortlist.server.db.models import Collection, Event, Job, Run, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
 from shortlist.server.settings_store import SettingsStore
 
@@ -194,6 +194,74 @@ class TestFailedJobs:
 
         assert result["id"] == f"failed-jobs-{second.id}"
         assert result["title"] == "2 background jobs failed"
+
+
+class TestOwnerSeesAllRows:
+    """The condition is a four-way AND, and every leg has to be able to switch it off on its own —
+    otherwise the owner gets nagged about a shelf they haven't got. The `build == "shared"` leg is
+    the subtle one: a shared row is ONE collection everybody sees on purpose, not a per-person row
+    stacked N times, so it must never fire this."""
+
+    @staticmethod
+    def _setup(session, *, owner_enabled=True, others=2, build="per_person", placement_friends="both", row=True):
+        # The initial migration seeds a default "Picked for You" row, which is per_person and on both
+        # surfaces — i.e. it satisfies the condition on its own. Clear it so each case controls the
+        # one variable it is about.
+        session.query(Collection).delete()
+        session.add(User(plex_account_id=1, username="owner", slug="owner", user_type="owner", enabled=owner_enabled))
+        for i in range(others):
+            session.add(User(plex_account_id=10 + i, username=f"u{i}", slug=f"u{i}", user_type="shared", enabled=True))
+        if row:
+            session.add(
+                Collection(
+                    slug="picked", name="Picked for You", build=build, enabled=True, placement_friends=placement_friends
+                )
+            )
+        session.commit()
+
+    def test_fires_when_per_person_rows_are_on_the_friends_recommended_shelf(self, session):
+        self._setup(session)
+
+        result = notif._owner_sees_all_rows(session)
+
+        assert result is not None
+        assert result["id"] == "owner-sees-all-rows"
+        assert result["action_url"] == "/watching-account"
+        assert result["dismissable"] is True
+        # No number in the copy: the true count is rows x resolved audience, which neither
+        # `others` nor `others + 1` gets right once a row is audience="subset" or muted per-user.
+        assert "everyone's row" in result["body"]
+
+    def test_fires_even_when_the_owner_has_no_row_of_their_own(self, session):
+        """Turning your OWN row off does not stop you seeing everyone else's — you own the server, so
+        nothing hides them. Gating on `enabled` silenced this for the person most likely to be
+        surprised by it."""
+        self._setup(session, owner_enabled=False)
+
+        assert notif._owner_sees_all_rows(session) is not None
+
+    def test_silent_when_the_owner_is_the_only_person(self, session):
+        """One row on your own shelf is your row. There is nothing to warn about."""
+        self._setup(session, others=0)
+
+        assert notif._owner_sees_all_rows(session) is None
+
+    def test_silent_when_rows_are_home_only(self, session):
+        """Home screens are already split by audience — this is only ever about the library shelf."""
+        self._setup(session, placement_friends="home")
+
+        assert notif._owner_sees_all_rows(session) is None
+
+    def test_silent_for_a_shared_row(self, session):
+        """One collection everyone sees deliberately — not N per-person rows stacked on the shelf."""
+        self._setup(session, build="shared")
+
+        assert notif._owner_sees_all_rows(session) is None
+
+    def test_silent_when_no_row_exists_at_all(self, session):
+        self._setup(session, row=False)
+
+        assert notif._owner_sees_all_rows(session) is None
 
 
 class TestSeverityVocabulary:

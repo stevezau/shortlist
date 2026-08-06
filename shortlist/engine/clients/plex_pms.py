@@ -231,6 +231,20 @@ def _is_newest_first(entries: list) -> bool:
     return all(a >= b for a, b in pairwise(_stamps(entries)))
 
 
+def _float_or_none(raw: str | None) -> float | None:
+    """A PMS attribute as a float, or None when it is absent or unparseable.
+
+    Unparseable reads as absent on purpose: one malformed attribute must not raise out of a whole
+    library's watched read, the same tolerance `_watched_item` already gives a malformed guid.
+    """
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _stamps(entries: list) -> list[int]:
     """This page's parseable `lastViewedAt` values, in the order the server returned them."""
     stamps: list[int] = []
@@ -832,6 +846,35 @@ class PlexClient:
         r.raise_for_status()
         return r.json().get("MediaContainer", {}).get("Hub", []) or []
 
+    def scrobble_as(self, rating_key: int, token: str, *, dry_run: bool = False) -> bool:
+        """Mark one item played AS another account, using that account's server token.
+
+        **Plex stamps this `now` and offers no way to say otherwise.** There is no documented
+        endpoint for setting another account's `lastViewedAt`, so a transferred history arrives on
+        the PMS dated today no matter what. That is why `WatchedTitle.source_viewed_at` exists —
+        Plex gets the checkmark, Shortlist keeps the real date. Never infer a watch DATE from a
+        scrobbled item; read the column.
+
+        Returns True when the PMS accepted the write (or would have, under dry run). Returns False —
+        rather than raising — when the item is simply not visible to that account, which is the
+        normal outcome for a title in a library they were not shared, and must not abort a transfer
+        of thousands of others.
+        """
+        if dry_run:
+            logger.info("DRY RUN: would mark ratingKey={} played for the target account", rating_key)
+            return True
+        r = http_retry.get(
+            self._server.url("/:/scrobble", includeToken=False),
+            params={"key": str(rating_key), "identifier": "com.plexapp.plugins.library"},
+            headers={"X-Plex-Token": token, "Accept": "application/json"},
+            timeout=self._timeout,
+        )
+        if r.status_code in (401, 403, 404):
+            logger.debug("scrobble skipped for ratingKey={} (HTTP {})", rating_key, r.status_code)
+            return False
+        r.raise_for_status()
+        return True
+
     # A watched-titles read for one section, paged. Plex defaults to 50 unless X-Plex-Container-Size
     # says otherwise; a heavy watcher has thousands of watched titles, so we page rather than trust a
     # single response to hold them all (a silent cap here would hide older watches from the
@@ -1055,6 +1098,11 @@ class PlexClient:
             datetime.fromtimestamp(int(last_viewed), tz=UTC) if last_viewed else datetime(1970, 1, 1, tzinfo=UTC)
         )
         year = el.get("year")
+        # `userRating` belongs to the TOKEN this page was read with, not to the server — live-probed
+        # 2026-08-06 across 50 accounts on a real server: a title reading 6.2 as the owner came back
+        # with no `userRating` at all for all 49 viewers. So it needs no extra request and cannot leak
+        # one person's opinion into another's row. Absent on all but ~0.3% of watched rows.
+        user_rating = _float_or_none(el.get("userRating"))
         if media_type is MediaType.MOVIE:
             return WatchedItem(
                 title=el.get("title") or "",
@@ -1064,6 +1112,7 @@ class PlexClient:
                 year=int(year) if year else None,
                 rating_key=int(el.get("ratingKey")) if el.get("ratingKey") else None,
                 watch_count=int(el.get("viewCount") or 1),
+                user_rating=user_rating,
             )
         viewed_leaf = el.get("viewedLeafCount")
         leaf = el.get("leafCount")
@@ -1080,4 +1129,5 @@ class PlexClient:
             watch_count=max(1, viewed_leaf_count),
             viewed_leaf_count=viewed_leaf_count,
             leaf_count=int(leaf) if leaf else None,
+            user_rating=user_rating,
         )

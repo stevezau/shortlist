@@ -1,12 +1,20 @@
+/**
+ * The sidebar's help block.
+ *
+ * It used to carry three actions — docs, "Report a bug", and "Copy diagnostics" — which asked the
+ * person to already know that a bug report wants diagnostics attached and that the third button is
+ * where those come from. Two of the three now live behind one "Have an issue?" door, alongside the
+ * checks that answer most reports before they are filed; the copy behaviour itself is covered where
+ * it now lives, in `issue-page.test.tsx`.
+ */
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
+import { describe, expect, it, vi } from "vitest";
 
 import { HelpLinks } from "@/components/layout/app-shell";
 import type * as ApiModule from "@/lib/api";
-
-const { getDebugBundle } = vi.hoisted(() => ({ getDebugBundle: vi.fn() }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof ApiModule>();
@@ -15,7 +23,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
     api: {
       ...actual.api,
       getVersion: vi.fn().mockResolvedValue({ version: "1.2.3" }),
-      getDebugBundle,
     },
   };
 });
@@ -26,64 +33,39 @@ function renderLinks() {
   });
   render(
     <QueryClientProvider client={client}>
-      <HelpLinks />
+      <MemoryRouter>
+        <HelpLinks />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
 
-describe("HelpLinks — Copy diagnostics", () => {
-  beforeEach(() => {
-    getDebugBundle.mockReset();
-    Object.assign(navigator, { clipboard: { writeText: vi.fn() } });
-  });
-
-  it("copies the secrets-free bundle to the clipboard on success", async () => {
-    getDebugBundle.mockResolvedValue("shortlist diagnostics\nversion: 1.2.3");
+describe("HelpLinks", () => {
+  it("offers one door for problems, routed in-app rather than out to GitHub", () => {
+    // In-app on purpose: the page runs the checks first and only then offers to file a report.
+    // Sending someone straight to GitHub skips every answer we could have given them.
     renderLinks();
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /copy diagnostics/i }),
-    );
-
-    await waitFor(() =>
-      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-        "shortlist diagnostics\nversion: 1.2.3",
-      ),
-    );
-    expect(
-      await screen.findByText(/copied — paste into the issue/i),
-    ).toBeInTheDocument();
+    const issue = screen.getByRole("link", { name: /have an issue\?/i });
+    expect(issue.getAttribute("href")).toBe("/issue");
   });
 
-  it("surfaces an error label when the bundle cannot be fetched", async () => {
-    getDebugBundle.mockRejectedValue(new Error("500"));
+  it("still links out to the docs", () => {
     renderLinks();
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /copy diagnostics/i }),
-    );
-
-    expect(
-      await screen.findByText(/couldn’t copy — try again/i),
-    ).toBeInTheDocument();
-    expect(navigator.clipboard.writeText).not.toHaveBeenCalled();
+    const docs = screen.getByRole("link", { name: /help & docs/i });
+    expect(docs.getAttribute("href")).toContain("github.com");
+    expect(docs.getAttribute("target")).toBe("_blank");
   });
 
-  it("surfaces an error label when the clipboard write is blocked", async () => {
-    getDebugBundle.mockResolvedValue("bundle");
-    Object.assign(navigator, {
-      clipboard: {
-        writeText: vi.fn().mockRejectedValue(new Error("blocked")),
-      },
-    });
+  it("no longer carries the bug-report and diagnostics actions itself", () => {
+    // Both moved onto the issue page. Left here they were a second, competing entry point — and the
+    // one that produced reports with no diagnostics attached.
     renderLinks();
 
-    await userEvent.click(
-      screen.getByRole("button", { name: /copy diagnostics/i }),
-    );
-
+    expect(screen.queryByRole("link", { name: /report a bug/i })).toBeNull();
     expect(
-      await screen.findByText(/couldn’t copy — try again/i),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /copy diagnostics/i }),
+    ).toBeNull();
   });
 });

@@ -9,7 +9,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from shortlist.engine.clients.plex_pms import WatchedRead
-from shortlist.engine.history import NoWatchToken, ShareTokenWatchSource, derive_seeds, distinct_recent
+from shortlist.engine.history import (
+    NoWatchToken,
+    ShareTokenWatchSource,
+    derive_seeds,
+    disliked_seed_keys,
+    distinct_recent,
+    ratings_are_trustworthy,
+)
 from shortlist.engine.models import MediaType, UserType
 from tests.conftest import make_profile, make_watched
 
@@ -409,3 +416,174 @@ class TestDeriveSeeds:
         # All 3 movies survive the cap despite ranking below every show by weight — without the
         # per-media reserve the top 10 would be all shows and the movie row would get no candidates.
         assert sum(1 for s in seeds if s.media_type is MediaType.MOVIE) == 3
+
+
+class TestRatingsAreTrustworthy:
+    """The account-level guard: whose ratings are opinions, and whose were written by a tool.
+
+    The case this exists for is real and was measured, not imagined — see
+    `tests/fixtures/pms_watched_user_rating.xml.txt`.
+    """
+
+    def test_an_account_with_no_ratings_is_trusted(self):
+        """Nothing to disbelieve. Matters because it is the state ~70% of real people are in, and a
+        guard that failed closed here would switch the feature off for almost everyone."""
+        assert ratings_are_trustworthy([]) is True
+
+    def test_a_handful_of_whole_ratings_is_trusted(self):
+        assert ratings_are_trustworthy([10.0, 8.0, 2.0, 6.0, 10.0]) is True
+
+    def test_an_account_of_mostly_fractional_ratings_is_not(self):
+        """The Kometa shape: scores copied off IMDb, which land on decimals."""
+        assert ratings_are_trustworthy([7.9, 8.8, 6.2, 5.4, 6.0, 9.1]) is False
+
+    def test_it_abstains_below_five_ratings(self):
+        """One stray fractional value must not condemn a real rater. A tool writes thousands, so a
+        tiny sample is never evidence of one — and real raters are sparse (a median of 2 titles each
+        across the 14 people on a live server who had rated anything at all)."""
+        assert ratings_are_trustworthy([7.9]) is True
+        assert ratings_are_trustworthy([7.9, 10.0, 8.0]) is True
+
+    def test_a_mostly_human_account_survives_a_few_stray_values(self):
+        """8 whole of 10 is at the floor — an owner who rates things AND once ran a sync script."""
+        assert ratings_are_trustworthy([10.0] * 8 + [7.9, 6.2]) is True
+
+    def test_nones_are_ignored_rather_than_counted_as_ratings(self):
+        """`user_rating` is None for almost every watch. Counting those would put every account
+        under the floor and disable the feature server-wide."""
+        assert ratings_are_trustworthy([None] * 50 + [10.0, 8.0, 2.0, 6.0, 4.0]) is True
+
+
+class TestDislikedSeedIds:
+    """Which watched titles stop seeding — the matrix of rating x trust x threshold."""
+
+    def _rated(self, *pairs) -> list:
+        """Watched items as (tmdb_id, rating) pairs. Distinct titles so nothing collapses."""
+        return [make_watched(f"Title {tid}", days_ago=1, tmdb_id=tid, user_rating=rating) for tid, rating in pairs]
+
+    def test_a_title_rated_below_the_threshold_stops_seeding(self):
+        history = self._rated((1, 2.0), (2, 10.0), (3, 8.0), (4, 6.0), (5, 4.0))
+
+        assert disliked_seed_keys(history, 2.0) == {(1, MediaType.MOVIE)}
+
+    def test_the_threshold_is_inclusive(self):
+        """ "2 stars and below" has to include 2 stars, or the setting reads off by one."""
+        history = self._rated((1, 4.0), (2, 6.0), (3, 8.0), (4, 10.0), (5, 10.0))
+
+        assert disliked_seed_keys(history, 4.0) == {(1, MediaType.MOVIE)}
+
+    def test_an_unrated_title_is_never_suppressed(self):
+        """The 99.7% case. `None` must not compare as low."""
+        history = [
+            make_watched("Unrated", tmdb_id=9, user_rating=None),
+            *self._rated((1, 10.0), (2, 8.0), (3, 6.0), (4, 4.0), (5, 2.0)),
+        ]
+
+        assert (9, MediaType.MOVIE) not in disliked_seed_keys(history, 2.0)
+
+    def test_a_zero_rating_is_a_rating(self):
+        """0.0 is what Plex writes for the lowest possible rating, and is NOT "unrated"."""
+        history = self._rated((1, 0.0), (2, 10.0), (3, 8.0), (4, 6.0), (5, 4.0))
+
+        assert disliked_seed_keys(history, 2.0) == {(1, MediaType.MOVIE)}
+
+    def test_no_threshold_suppresses_nothing(self):
+        """The feature switched off — and the state every SHARED row is built in."""
+        history = self._rated((1, 0.0), (2, 2.0), (3, 10.0), (4, 8.0), (5, 6.0))
+
+        assert disliked_seed_keys(history, None) == set()
+
+    def test_a_tool_written_rating_is_not_an_opinion(self):
+        """A fractional value below the threshold changes nothing — nobody typed it."""
+        history = self._rated((1, 1.6), (2, 10.0), (3, 8.0), (4, 6.0), (5, 4.0))
+
+        assert disliked_seed_keys(history, 2.0) == set()
+
+    def test_a_distrusted_account_suppresses_nothing_even_where_the_value_is_whole(self):
+        """Both layers. The 2.0 here is indistinguishable from an opinion on its own; the account it
+        sits in is what disqualifies it."""
+        history = self._rated((1, 2.0), (2, 7.9), (3, 8.8), (4, 6.2), (5, 5.4), (6, 9.1))
+
+        assert disliked_seed_keys(history, 2.0) == set()
+
+    def test_a_title_with_no_tmdb_id_cannot_be_suppressed(self):
+        """Seeds are keyed on TMDB id, so a watch without one has nothing to exclude BY. It must be
+        skipped rather than contributing a None to the set, which would be silently unmatchable."""
+        history = [
+            make_watched("No guid", tmdb_id=None, user_rating=2.0),
+            *self._rated((1, 10.0), (2, 8.0), (3, 6.0), (4, 4.0)),
+        ]
+
+        assert disliked_seed_keys(history, 2.0) == set()
+
+
+class TestDeriveSeedsHonoursRatings:
+    """`derive_seeds` end to end — the suppression has to reach the seed list, not just the helper."""
+
+    def _history(self) -> list:
+        return [
+            make_watched("Loved It", days_ago=1, tmdb_id=1, user_rating=10.0),
+            make_watched("Hated It", days_ago=2, tmdb_id=2, user_rating=2.0),
+            make_watched("Unrated", days_ago=3, tmdb_id=3),
+            make_watched("Fine", days_ago=4, tmdb_id=4, user_rating=6.0),
+            make_watched("Also Fine", days_ago=5, tmdb_id=5, user_rating=8.0),
+        ]
+
+    def test_a_disliked_title_does_not_become_a_seed(self):
+        seeds = derive_seeds(self._history(), lambda _i: None, disliked=disliked_seed_keys(self._history(), 2.0))
+
+        assert {s.tmdb_id for s in seeds} == {1, 3, 4, 5}
+
+    def test_without_a_threshold_every_watch_still_seeds(self):
+        """The default, and what a shared row always gets — one person's rating must never reshape
+        a row everyone can see (the same rule `blocked_shared_seeds` exists for)."""
+        seeds = derive_seeds(self._history(), lambda _i: None)
+
+        assert {s.tmdb_id for s in seeds} == {1, 2, 3, 4, 5}
+
+    def test_ratings_and_explicit_blocks_both_apply(self):
+        """Two independent reasons a title stops seeding; neither may cancel the other."""
+        history = self._history()
+
+        seeds = derive_seeds(history, lambda _i: None, blocked={4}, disliked=disliked_seed_keys(history, 2.0))
+
+        assert {s.tmdb_id for s in seeds} == {1, 3, 5}
+
+    def test_a_disliked_title_stays_in_history(self):
+        """Suppression is about SEEDING only. The title is still watched, and the already-watched
+        rules must keep working on it — otherwise disliking something makes it get recommended."""
+        history = self._history()
+
+        derive_seeds(history, lambda _i: None, disliked=disliked_seed_keys(self._history(), 2.0))
+
+        assert any(i.tmdb_id == 2 for i in history), "the caller's history must not be mutated"
+
+
+class TestTheTmdbNamespaceCollision:
+    """TMDB numbers movies and shows separately, so 1399 is both a film and Game of Thrones.
+
+    Found by review: the exclusion was originally a bare `set[int]` unioned into `blocked`, so one
+    person's 1-star on a MOVIE silently deleted the identically-numbered SHOW from their seeds — a
+    title they had never rated and could not have. Nobody types these ids, so nobody would ever have
+    spotted the row and questioned it. Same key-space mismatch class this repo has shipped before.
+    """
+
+    def _history(self) -> list:
+        return [
+            make_watched("Hated Film", days_ago=1, tmdb_id=1399, user_rating=2.0),
+            make_watched("Innocent Show", days_ago=2, tmdb_id=1399, media_type=MediaType.SHOW),
+            # Filler so the account-level guard has a judgeable sample and does not abstain.
+            *[make_watched(f"Fine {n}", days_ago=3 + n, tmdb_id=500 + n, user_rating=10.0) for n in range(5)],
+        ]
+
+    def test_the_key_carries_the_media_type(self):
+        assert disliked_seed_keys(self._history(), 2.0) == {(1399, MediaType.MOVIE)}
+
+    def test_a_disliked_movie_does_not_suppress_the_show_sharing_its_id(self):
+        history = self._history()
+
+        seeds = derive_seeds(history, lambda _i: None, disliked=disliked_seed_keys(history, 2.0))
+
+        kept = {(s.tmdb_id, s.media_type) for s in seeds}
+        assert (1399, MediaType.SHOW) in kept, "the show was never rated — it must still seed"
+        assert (1399, MediaType.MOVIE) not in kept, "the film they rated 1 star must not seed"

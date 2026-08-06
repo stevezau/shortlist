@@ -46,11 +46,19 @@ whole point on a one-person server.
 
 ## What can the server owner see?
 
-Everything. Plex cannot hide collections from the owner, so your Home shows every user's row, not
-just your own.
+Everyone's rows — but **not** on your Home screen. Plex tracks "on the owner's Home"
+(`promotedToOwnHome`) separately from "on a friend's Home" (`promotedToSharedHome`), and Shortlist
+puts each person's row on their own side only, so nobody else's row ever lands on your Home.
 
-If you share with other people and want a clean Home, watch on a Plex Home user and keep the admin
-account for admin.
+Where you do see them all is the library's **Collections tab**, and its **Recommended shelf** if you
+leave _Everyone else → Recommended shelf_ on for a row. Rows are hidden from other people through
+the share each of them has with your server, and you have no share with yourself, so there is
+nothing for Plex to hide them behind. There is no Plex setting for this.
+
+Shortlist walks you through the three options under **Users → You see everyone's rows**: take the
+rows off the library shelf, leave it alone, or move your own watching to a separate Plex Home
+account (it can copy your watch history across). See
+[the reference](reference.md#why-you-see-everyones-rows-and-the-watching-account).
 
 ## Does the AI invent recommendations I don't have?
 
@@ -76,10 +84,10 @@ out**, so a model gets straight to the useful part.
 
 In Shortlist it powers the optional web-search source. You have three choices:
 
-| Option                        | Works with                         | Trade-off                                              |
-| ----------------------------- | ---------------------------------- | ------------------------------------------------------ |
-| Your AI provider's own search | Claude, GPT, Gemini only           | no extra signup; unavailable on local models           |
-| **Exa key**                   | **every provider, local included** | one extra free-tier signup                             |
+| Option                        | Works with                         | Trade-off                                                 |
+| ----------------------------- | ---------------------------------- | --------------------------------------------------------- |
+| Your AI provider's own search | Claude, GPT, Gemini only           | no extra signup; unavailable on local models              |
+| **Exa key**                   | **every provider, local included** | one extra free-tier signup                                |
 | **Auto** (default)            | uses both when both are set up     | widest coverage, and they find noticeably different films |
 
 **Why we suggest adding an Exa key**, even if your provider can already search:
@@ -118,7 +126,7 @@ before Shortlist's first change, every Shortlist collection is deleted, and you 
 exactly what changed. Your server ends up as we found it.
 
 You can also rehearse the whole thing before trusting it: start the container with
-`SHORTLIST_DRY_RUN=1` and every run logs exactly what it *would* change while writing nothing to
+`SHORTLIST_DRY_RUN=1` and every run logs exactly what it _would_ change while writing nothing to
 Plex.
 
 ## Managed users and kids' accounts?

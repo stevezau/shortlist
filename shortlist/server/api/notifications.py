@@ -36,14 +36,22 @@ class NotificationOut(PassthroughModel):
 
 class NotificationsOut(PassthroughModel):
     notifications: list[NotificationOut]
+    #: Every id the owner has dismissed. Returned because dismissal is not only the bell's business:
+    #: the owner-shelf warning renders as an inline note on the Users page as well, and both surfaces
+    #: report the SAME fact. Without this the note has no way to know it was already acknowledged, and
+    #: the owner would have to dismiss the same thing in two places.
+    dismissed: list[str]
 
 
 @router.get("", response_model=NotificationsOut)
 async def list_notifications(request: Request) -> dict:
-    """Every currently-firing notification (update available, failed/partial run, paused, errors)."""
+    """Every currently-firing notification (update available, failed/partial run, paused, errors),
+    plus the ids already dismissed so inline surfaces reporting the same fact can hide themselves."""
     with request.app.state.sessions() as session:
-        items = build_notifications(session, SettingsStore(session), shortlist.__version__)
-    return {"notifications": items}
+        store = SettingsStore(session)
+        items = build_notifications(session, store, shortlist.__version__)
+        dismissed = list(store.get(DISMISSED_KEY) or [])
+    return {"notifications": items, "dismissed": dismissed}
 
 
 class Dismiss(BaseModel):

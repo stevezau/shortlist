@@ -1897,3 +1897,286 @@ def test_a_managed_user_with_a_parental_profile_is_left_out_of_the_filters(fakes
     others = [u for u in after.values() if u.id != kid.id and not u.restricted]
     assert any("label!=" in u.filters.get("filterMovies", "") for u in others)
     assert not report.promotion_blockers
+
+
+def _rating_ctx(state, pms_url, tmp_path, *, dislike_threshold):
+    plex = PlexClient(pms_url, state.owner_token)
+    plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+    return EngineContext(
+        config=EngineConfig(
+            row_size=12,
+            min_history=5,
+            candidates_pre_rank=40,
+            # Wide enough that every one of sarah's watches becomes a seed — so a title MISSING from
+            # her seeds is the rating acting, not the cap truncating.
+            max_seeds=30,
+            dislike_threshold=dislike_threshold,
+            rows=[RowSpec(slug="picked", name_template="✨ {library_name} Picked for You", size=12)],
+            rows_defined=True,
+        ),
+        plex=plex,
+        plextv=plextv,
+        tmdb=TmdbClient("test-key"),
+        history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+        curator=NullCurator(),
+        snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+    ), plextv
+
+
+def _users(plextv):
+    return [
+        UserProfile(
+            username=u.username,
+            plex_account_id=u.id,
+            user_type=UserType.MANAGED if u.home else UserType.SHARED,
+        )
+        for u in sorted(plextv.list_users(), key=lambda u: u.id)
+    ]
+
+
+def _seed_titles(report, slug: str) -> set[str]:
+    return {s["title"] for s in next(u for u in report.users if u.slug == slug).trace.get("seeds", [])}
+
+
+class TestPlexRatingsEndToEnd:
+    """Issue #69 over the real wire: fake PMS -> real HTTP -> real plexapi -> parse -> seeds.
+
+    Every other test of this feature works on in-memory `WatchedItem`s. This is the only one where
+    the rating actually travels as an XML attribute on the same `unwatched=0` read the engine already
+    makes, read with a per-user share token — which is the entire feasibility claim.
+    """
+
+    #: One of sarah's watched movies (`seed_state` gives her 101..108).
+    DISLIKED = 103
+    DISLIKED_TITLE = "Movie 03"
+
+    def test_a_title_sarah_rated_low_stops_seeding_her_row(self, fakes, tmp_path):
+        state, pms_url, _ = fakes
+        state.rate(201, self.DISLIKED, 2.0)  # sarah, one star
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=2.0)
+
+        report = engine_run(ctx, _users(plextv))
+
+        assert report.ok, [(u.username, u.error) for u in report.users]
+        seeds = _seed_titles(report, "sarah")
+        assert seeds, "sarah produced no seeds at all, so the absence below proves nothing"
+        assert self.DISLIKED_TITLE not in seeds
+        assert "Movie 04" in seeds, "her other watches must still seed — this is not a blanket drop"
+
+    def test_the_same_title_still_seeds_when_the_feature_is_off(self, fakes, tmp_path):
+        """The control. Without it, a title missing from the seeds could be the fixture, the cap, or
+        anything else — this pins the difference to the rating and nothing else."""
+        state, pms_url, _ = fakes
+        state.rate(201, self.DISLIKED, 2.0)
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=None)
+
+        report = engine_run(ctx, _users(plextv))
+
+        assert self.DISLIKED_TITLE in _seed_titles(report, "sarah")
+
+    def test_a_rating_above_the_threshold_changes_nothing(self, fakes, tmp_path):
+        state, pms_url, _ = fakes
+        state.rate(201, self.DISLIKED, 10.0)  # five stars
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=2.0)
+
+        report = engine_run(ctx, _users(plextv))
+
+        assert self.DISLIKED_TITLE in _seed_titles(report, "sarah")
+
+    def test_one_persons_rating_never_reaches_another_persons_row(self, fakes, tmp_path):
+        """The leak this feature could have caused. `userRating` is per-account on a real server, so
+        mike rating a show badly must not remove it from sarah's seeds — and the only thing making
+        that true is that each read uses that person's OWN share token."""
+        state, pms_url, _ = fakes
+        shared_show = 305  # in mike's watched set (305..312) AND sarah's (301..304 + ...) neighbours
+        state.rate(202, shared_show, 2.0)  # mike hates it
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=2.0)
+
+        report = engine_run(ctx, _users(plextv))
+
+        assert "Show 05" not in _seed_titles(report, "mike"), "mike's own rating must act on mike"
+        # sarah never rated it, so nothing about it changed for her.
+        sarah_watched = {"Show 01", "Show 02", "Show 03", "Show 04"}
+        assert sarah_watched & _seed_titles(report, "sarah") == sarah_watched
+
+    def test_a_tool_written_rating_is_ignored_over_the_real_wire(self, fakes, tmp_path):
+        """The Kometa case, end to end: a fractional value arrives on the XML exactly as it does on a
+        real server, and must not act. Proves the guard survives the parse, not just in isolation."""
+        state, pms_url, _ = fakes
+        state.rate(201, self.DISLIKED, 1.6)
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=2.0)
+
+        report = engine_run(ctx, _users(plextv))
+
+        assert self.DISLIKED_TITLE in _seed_titles(report, "sarah")
+
+    def test_the_run_trace_says_why_the_title_dropped_out(self, fakes, tmp_path):
+        """The owner-facing half. A seed silently absent is the hardest thing to explain about a run,
+        so the trace has to name the reason."""
+        state, pms_url, _ = fakes
+        state.rate(201, self.DISLIKED, 2.0)
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=2.0)
+
+        report = engine_run(ctx, _users(plextv))
+
+        sarah = next(u for u in report.users if u.slug == "sarah")
+        recent = sarah.trace["history"]["recent"]
+        dropped = next(w for w in recent if w["title"] == self.DISLIKED_TITLE)
+        assert dropped["rating"] == 2.0
+        assert dropped["rating_blocked"] is True
+        kept = next(w for w in recent if w["title"] == "Movie 04")
+        assert kept["rating"] is None and kept["rating_blocked"] is False
+
+
+class TestPlexRatingsCannotReachSharedRows:
+    """One person's rating must never reshape a row everyone sees.
+
+    Added after review: the exclusion was real (the shared-row `derive_seeds` call simply omits the
+    kwarg) but NOTHING pinned it — adding the kwarg back left the entire suite green while one
+    person's 1-star quietly deleted a title from a public row. This is the cell of the matrix that
+    was missing, and it is the one with the widest blast radius in the whole feature.
+    """
+
+    SHARED_SHOW = 301  # sarah already watched it; `_watch` below gives it a second watcher
+
+    def test_a_shared_row_ignores_one_persons_rating(self, fakes, tmp_path):
+        state, pms_url, _ = fakes
+        _watch(state, 202, self.SHARED_SHOW)  # mike too, clearing the 2-watcher floor
+        state.rate(201, self.SHARED_SHOW, 2.0)  # ...and sarah rates it one star
+        plex = PlexClient(pms_url, state.owner_token)
+        plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+
+        _ctx, _users, report = _run(
+            plex,
+            plextv,
+            tmp_path,
+            [
+                RowSpec(slug="picked", name_template="", size=12),
+                RowSpec(slug="popular", name_template="Popular on this server", size=6, shared=True),
+            ],
+            state.owner_token,
+        )
+
+        assert report.ok, [(u.username, u.error) for u in report.users]
+        shared = next(u for u in report.users if u.slug == "shared_popular")
+        # Show 01 is the ONLY title two people share in this fixture (see
+        # `test_a_solo_watched_title_never_reaches_a_shared_row`: sarah/mike overlap is otherwise
+        # zero), so it is the single seed the shared row can be built from. If sarah's 1-star reached
+        # the aggregate, the row derives nothing and comes back empty — which makes "does it still
+        # have picks?" an exact test of the exclusion rather than a proxy for it.
+        assert shared.status == "ok", f"the shared row did not build: {shared.status} / {shared.reason}"
+        assert shared.picks, (
+            "sarah's 1-star emptied a row EVERYONE sees — an individual preference became a "
+            "server-wide edit nobody else can see or undo"
+        )
+
+    def test_her_own_row_still_honours_it(self, fakes, tmp_path):
+        """The other half of the same claim: scoping ratings out of shared rows must not quietly
+        scope them out of the per-person rows they exist for."""
+        state, pms_url, _ = fakes
+        _watch(state, 202, self.SHARED_SHOW)
+        state.rate(201, self.SHARED_SHOW, 2.0)
+        plex = PlexClient(pms_url, state.owner_token)
+        plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+        ctx = EngineContext(
+            config=EngineConfig(
+                row_size=12,
+                min_history=5,
+                candidates_pre_rank=40,
+                max_seeds=30,
+                dislike_threshold=2.0,
+                rows=[
+                    RowSpec(slug="picked", name_template="", size=12),
+                    RowSpec(slug="popular", name_template="Popular on this server", size=6, shared=True),
+                ],
+            ),
+            plex=plex,
+            plextv=plextv,
+            tmdb=TmdbClient("test-key"),
+            history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+            curator=NullCurator(),
+            snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        )
+        users = [
+            UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+            for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        ]
+
+        report = engine_run(ctx, users)
+
+        assert "Show 01" not in _seed_titles(report, "sarah"), "her own row must respect her rating"
+        # …while the shared row, whose only possible seed is that same title, still builds. A shared
+        # row records no seed trace of its own, so its contents are the observable (see the sibling
+        # test for why "has picks" is exact here rather than a proxy).
+        shared = next(u for u in report.users if u.slug == "shared_popular")
+        assert shared.status == "ok" and shared.picks
+
+
+class TestTrustIsJudgedPerPersonNotPerRow:
+    """Whether someone's ratings are believed is an ACCOUNT-level verdict, decided once.
+
+    Added after review, which reproduced the bug: `derive_seeds` is handed a row's SLICE of history
+    (narrowed by the row's media and libraries), and `ratings_are_trustworthy` abstains below five
+    ratings. Deriving the verdict inside `derive_seeds` therefore let a TV-only row see one whole
+    rating, abstain, and act on it — while the account as a whole (five fractional tool-written
+    values on the movie side) was correctly disbelieved. Kometa managing one library while the person
+    rates in another is the ordinary shape of this, not a corner case.
+    """
+
+    def test_a_tv_only_row_inherits_the_accounts_verdict(self, fakes, tmp_path):
+        state, pms_url, _ = fakes
+        # Tool-written values on her MOVIES (fractional — no person can enter these) …
+        for offset, value in enumerate([7.9, 8.8, 6.2, 5.4, 9.1]):
+            state.rate(201, 101 + offset, value)
+        # … and one whole low rating on a SHOW. Taken alone the show slice looks like a real rater.
+        state.rate(201, 301, 2.0)
+        plex = PlexClient(pms_url, state.owner_token)
+        plextv = PlexTvClient(state.owner_token, plex.machine_id, min_write_interval=0.0)
+        ctx = EngineContext(
+            config=EngineConfig(
+                row_size=12,
+                min_history=5,
+                candidates_pre_rank=40,
+                max_seeds=30,
+                dislike_threshold=2.0,
+                # A TV-ONLY row: its history slice holds a single rating, too few to judge.
+                rows=[RowSpec(slug="tv", name_template="TV", size=12, media="show")],
+                rows_defined=True,
+            ),
+            plex=plex,
+            plextv=plextv,
+            tmdb=TmdbClient("test-key"),
+            history_source=ShareTokenWatchSource(plex, plextv, owner_token=state.owner_token),
+            curator=NullCurator(),
+            snapshots=FileSnapshotStore(tmp_path / "snapshots"),
+        )
+        users = [
+            UserProfile(username=u.username, plex_account_id=u.id, user_type=UserType.SHARED)
+            for u in sorted(plextv.list_users(), key=lambda u: u.id)
+        ]
+
+        report = engine_run(ctx, users)
+
+        assert "Show 01" in _seed_titles(report, "sarah"), (
+            "the TV row judged its own slice, abstained, and acted on a rating the account-level "
+            "verdict rejects — the row and the person disagree about whose ratings are real"
+        )
+
+    def test_the_trace_agrees_with_what_the_row_actually_did(self, fakes, tmp_path):
+        """The trace reads the full history and the rows read slices, so a recomputed verdict could
+        make the explanation contradict the run in either direction."""
+        state, pms_url, _ = fakes
+        for offset, value in enumerate([7.9, 8.8, 6.2, 5.4, 9.1]):
+            state.rate(201, 101 + offset, value)
+        state.rate(201, 301, 2.0)
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=2.0)
+
+        report = engine_run(ctx, _users(plextv))
+
+        sarah = next(u for u in report.users if u.slug == "sarah")
+        seeds = {s["title"] for s in sarah.trace.get("seeds", [])}
+        for watch in sarah.trace["history"]["recent"]:
+            if watch["rating_blocked"]:
+                assert watch["title"] not in seeds, f"trace calls {watch['title']} blocked, but it seeded"
+            elif watch["title"] in ("Show 01",):
+                assert watch["title"] in seeds, "trace stayed silent about a title the run kept — consistent"

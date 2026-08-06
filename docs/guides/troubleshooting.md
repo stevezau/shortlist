@@ -5,6 +5,55 @@ heading: Troubleshooting and backups
 nav_order: 7
 ---
 
+## Start here: "Have an issue?"
+
+Before working through the list below, open **Have an issue?** in the sidebar. It runs twenty-one
+read-only checks against your own server and, for most of these problems, tells you the answer
+outright — which library refused someone's token, which setting actually applied, why a row is
+short, whether Plex matches what Shortlist thinks it delivered.
+
+Nothing on that page changes anything: not your Plex server, not your rows, not your settings.
+
+Three things worth knowing:
+
+- **The checks are off until you switch them on**, and they switch themselves off after 24 hours.
+  They read share filters and per-user tokens, so they stay closed on an install that isn't
+  currently debugging something.
+- **Every check has a "Copy for support" button.** What it copies is shown on screen first, so
+  there is nothing to be surprised by after pasting.
+- **The last section files the report.** It opens a pre-filled GitHub issue and gives you the full
+  diagnostic to attach — as a paste, or as a file when a chat app would truncate it.
+
+What leaves your server, and what doesn't:
+
+| Masked                                                                                                                                         | Kept                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Passwords, Plex tokens, API keys                                                                                                               | Library and row names, title names, error messages                                                   |
+| IP addresses and your server's machine id, in the report and in every log file — a URL keeps only its scheme and port (`https://<host>:32400`) | Counts, timings, settings values, migration state                                                    |
+| Nothing else. Everything below is in there                                                                                                     | The Plex usernames themselves. Replace them yourself before posting if you'd rather not publish them |
+|                                                                                                                                                | Nicknames and friendly names, **in the log files** — see below                                       |
+
+**Nicknames are not masked.** The report's own text never prints them — it prints Plex usernames and
+slugs — but the log files bundled alongside it are not filtered for names, and nothing masks them. If
+a row template contains `{user}` it renders as the nickname, and every delivery line in the log then
+carries it:
+
+```
+delivery:deliver - jsmith: delivered 'Picked for Dad' to 'Movies' (20 items, label shortlist_jsmith)
+```
+
+The same is true of **Logs → Download**, which is the same log files with the same filtering — this
+server's own address and machine id, and secrets. Not people's names.
+
+**Treat that as a good first pass, not a guarantee.** Logs are free text: they carry whatever a
+library, a plugin or an error message decided to print, and something unusual can still get through
+a filter written for the shapes we know about. Give the report a skim before posting it anywhere
+public — and if you find something that should have been masked and wasn't, that is worth an issue of
+its own.
+
+If someone is reporting a problem on a server you don't administer, sending them there is usually
+faster than a list of questions: _"open /issue, switch the checks on, type the title, press Copy."_
+
 ## Troubleshooting
 
 - **A run says "skipped" and no collections were made** — a skip is always a configuration
@@ -19,9 +68,24 @@ nav_order: 7
   didn't add), and confirm Plex Media Server is ≥ 1.43.2.10687 (older builds ignore the exclusion).
 - **Rows not appearing for anyone** — promoted rows land in Plex's hub order; users may
   need to scroll, or pin the row via "Manage Home Screen" on their client.
-- **A watched title keeps getting recommended** — the watched set is read per run, so a title you
-  mark watched _after_ the last run stays eligible until the next one. **Jobs → Sync history**
-  re-reads everyone's watched set immediately (writes nothing to Plex); any run after that drops it.
+- **A watched title keeps getting recommended** — run the **"They keep seeing something they've
+  watched"** check on the Have an issue? page; it names the cause. The three real ones, in order of
+  how often they turn out to be it:
+  1. _Shortlist has no watched record for that person at all_ — usually a library that has never
+     been readable with their token, which looks identical to someone who watches nothing. The check
+     says which library.
+  2. _You're looking at the wrong account._ Watched state in Plex is per person, so a title ticked
+     off on your account says nothing about theirs.
+  3. _Timing._ The watched set is read per run, so a title marked watched after the last run stays
+     eligible until the next one. **Jobs → Sync history** re-reads everyone's set immediately
+     (writes nothing to Plex); any run after that drops it. Note also that a row only re-picks its
+     titles on a refresh night — at the default freshness, roughly weekly — so a change can take
+     until then to show. The **"When does each row next rebuild?"** check gives the date.
+
+  Before 1.2 there was a fourth cause: a 0% row excluded only shows you had _finished_, so one you
+  were two episodes into could come back as a suggestion. It no longer can. See
+  [what "already watched" means for a show](../reference.md#what-already-watched-means-for-a-show).
+
 - **Everything broke, get me out** — Settings → Danger Zone → **Uninstall** restores every
   user's share filters from the pre-Shortlist snapshots and deletes every shortlist-labeled
   collection. Kometa and other tools' collections are never touched.

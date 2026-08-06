@@ -111,6 +111,11 @@ class RunService:
     def user_history(self, user_id: int, *, limit: int = 25) -> list[dict] | None:
         return self._ctx.user_history(user_id, limit=limit)
 
+    def user_watched(
+        self, user_id: int, *, q: str = "", media_type: str = "", limit: int = 25, offset: int = 0
+    ) -> dict | None:
+        return self._ctx.user_watched(user_id, q=q, media_type=media_type, limit=limit, offset=offset)
+
     # -- watch-cache orchestration (delegated to WatchSync) -------------------------------
 
     def refresh_watched(self, ctx, profile, *, incremental: bool = True, force_full: bool = False) -> list:

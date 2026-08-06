@@ -282,18 +282,24 @@ function LibraryFlow({ lib, userId }: { lib: LibraryView; userId?: number }) {
   // which is exactly what the old "what they watched" panel showed. So the two panels were identical
   // and are merged into one. Seeds are the richer object (they carry recency + drive the search), so
   // they lead; we fall back to the raw recent-watch sample only when nothing resolved to a seed.
-  const recentBody =
-    lib.seeds.length > 0 ? (
-      <SeedList seeds={lib.seeds} userId={userId} />
-    ) : lib.watched.length > 0 ? (
-      <WatchList watched={lib.watched} />
-    ) : (
-      <Muted>
-        {isCold
-          ? "Too little watch history here to search from — so we fell back to what's popular on the server (below)."
-          : "No recent watches recorded here — seeds may come from a shared media type."}
-      </Muted>
-    );
+  const recentBody = (
+    <>
+      {lib.seeds.length > 0 ? (
+        <SeedList seeds={lib.seeds} userId={userId} />
+      ) : lib.watched.length > 0 ? (
+        <WatchList watched={lib.watched} />
+      ) : (
+        <Muted>
+          {isCold
+            ? "Too little watch history here to search from — so we fell back to what's popular on the server (below)."
+            : "No recent watches recorded here — seeds may come from a shared media type."}
+        </Muted>
+      )}
+      {/* A watch that is silently ABSENT from the seed list above is the hardest thing to explain
+          about a run. When their own rating is the reason, say so here rather than leaving a gap. */}
+      <RatedOutList watched={lib.watched} />
+    </>
+  );
   // Steps are numbered by position so the ranking step can be omitted for cold start without leaving a
   // gap in the sequence.
   const defs: Omit<FlowStepDef, "n">[] = [
@@ -547,6 +553,37 @@ function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/** The watches their own Plex rating kept out of the seed list, and why.
+ *
+ *  Renders nothing when there are none, which is the overwhelmingly common case — and nothing on a
+ *  run recorded before ratings were read, where `rating_blocked` is simply absent rather than false.
+ */
+function RatedOutList({ watched }: { watched: TraceWatch[] }) {
+  const ratedOut = watched.filter((w) => w.rating_blocked);
+  if (ratedOut.length === 0) return null;
+  return (
+    <div className="mt-3 space-y-1.5 border-t pt-3">
+      <p className="text-xs text-muted-foreground">
+        Not used as seeds &mdash; they rated these low in Plex:
+      </p>
+      <ul className="flex flex-wrap gap-1.5">
+        {ratedOut.map((w, i) => (
+          <li key={`${w.title}-${i}`}>
+            <Badge
+              variant="secondary"
+              className="font-normal text-destructive-text"
+            >
+              {w.title}
+              {w.year ? ` (${w.year})` : ""}
+              {w.rating != null ? ` · ${w.rating / 2}★` : ""}
+            </Badge>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

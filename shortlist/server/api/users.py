@@ -141,6 +141,50 @@ class WatchItemOut(PassthroughModel):
     episode_title: str | None
 
 
+class WatchedTitleOut(PassthroughModel):
+    """One title from the cached watched set — the set recommendations are actually filtered against."""
+
+    title: str
+    tmdb_id: int | None
+    media_type: str
+    watched_at: str
+    year: int | None
+    watch_count: int
+    # A show's progress straight from Plex. Both None for movies and for anything reporting no
+    # episode totals — which is NOT the same claim as "none of it watched", so the UI must not
+    # render 0 of 0 for it.
+    viewed_leaf_count: int | None
+    leaf_count: int | None
+    # What THIS person rated it in Plex, 0..10, or None if they never did — which is almost always.
+    # Read with their own share token, so it is their rating and nobody else's.
+    user_rating: float | None
+
+
+class WatchedPageOut(PassthroughModel):
+    """A page of the watched set, plus how complete the set behind it is.
+
+    The freshness fields travel WITH the page on purpose: this list is a cache, and a page that
+    doesn't say when it was last filled invites "I watched that, why is it recommended?" — the exact
+    question this endpoint exists to answer.
+    """
+
+    items: list[WatchedTitleOut]
+    total: int
+    # None when any library has never had a full read — see `user_watched`.
+    last_full_sync_at: str | None
+    synced_titles: int
+    # At or below this 0..10 rating, a title stops seeding this person's rows. None = Plex ratings
+    # are switched off server-wide, so no rating is acting on anything.
+    dislike_threshold: float | None
+    # False when this account's ratings look tool-written (Kometa and friends sync IMDb scores into
+    # the same field) — none of them are used, whatever the threshold says. The page has to state
+    # this, or a row of visible low ratings that change nothing reads as a broken feature.
+    ratings_trusted: bool
+    # How many titles they have rated AT ALL, across the whole set rather than this page — the
+    # difference between "nobody rates things" and "you are looking at the wrong page".
+    rated_count: int
+
+
 class UserSyncOut(PassthroughModel):
     added: int
     updated: int
@@ -455,6 +499,27 @@ async def user_history(user_id: int, request: Request, limit: int = Query(25, ge
     if rows is None:
         raise HTTPException(status_code=404, detail="user not found")
     return rows
+
+
+@router.get("/{user_id}/watched", response_model=WatchedPageOut)
+async def user_watched(
+    user_id: int,
+    request: Request,
+    q: str = Query("", max_length=200, description="Case-insensitive substring of the title."),
+    media_type: str = Query("", pattern="^(movie|show)?$"),
+    limit: int = Query(25, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict:
+    """Search one person's watched set.
+
+    Reads the local `watched_titles` cache, so unlike `/history` it never touches Plex: it is a DB
+    query, it can search the WHOLE set rather than the page on screen, and it shows the same titles
+    the recommender excludes from.
+    """
+    page = request.app.state.run_service.user_watched(user_id, q=q, media_type=media_type, limit=limit, offset=offset)
+    if page is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    return page
 
 
 def _reject_display_name_clash(session: Session, user: User, nickname: str) -> None:
