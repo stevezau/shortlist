@@ -160,3 +160,10 @@ A few things worth knowing:
 
 You can see all of this on **Users → someone → Watch history**: what they rated each title, and
 which ones have stopped seeding as a result.
+
+**Per run, it's in the trace.** Open a run, then **How we picked** for a person: the "Watched
+recently" step says in one line what ratings did on that run — off, on but nothing rated low enough,
+on but the account's ratings were ignored as tool-written, or how many titles a rating dropped — and
+lists the ones it dropped. That line reports the setting as it was **when the run happened**, so
+changing it later doesn't rewrite the history of a run you're reading a fortnight after the fact.
+Runs from before v1.2.1 don't carry it and show only the dropped titles, as they always did.

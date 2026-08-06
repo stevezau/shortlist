@@ -44,6 +44,7 @@ import type {
   Pick,
   RunLibraryBreakdown,
   RunUserTraceResponse,
+  TraceRatings,
   TraceRequestOutcome,
   TraceReturn,
   TraceSeed,
@@ -162,7 +163,13 @@ export function TraceView({
               active={current?.key ?? ""}
               onSelect={setActive}
             />
-            {current && <LibraryFlow lib={current} userId={userId} />}
+            {current && (
+              <LibraryFlow
+                lib={current}
+                userId={userId}
+                ratings={data.trace?.history?.ratings}
+              />
+            )}
           </>
         )}
       </div>
@@ -268,7 +275,15 @@ interface FlowStepDef {
   body: ReactNode;
 }
 
-function LibraryFlow({ lib, userId }: { lib: LibraryView; userId?: number }) {
+function LibraryFlow({
+  lib,
+  userId,
+  ratings,
+}: {
+  lib: LibraryView;
+  userId?: number;
+  ratings?: TraceRatings;
+}) {
   const searchNoun = mediaLabel(lib.media).toLowerCase();
   const hasWeb = Boolean(lib.web || lib.webSource);
   const placesSearched = lib.sources.length + (hasWeb ? 1 : 0);
@@ -297,7 +312,7 @@ function LibraryFlow({ lib, userId }: { lib: LibraryView; userId?: number }) {
       )}
       {/* A watch that is silently ABSENT from the seed list above is the hardest thing to explain
           about a run. When their own rating is the reason, say so here rather than leaving a gap. */}
-      <RatedOutList watched={lib.watched} />
+      <RatedOutList watched={lib.watched} ratings={ratings} />
     </>
   );
   // Steps are numbered by position so the ranking step can be omitted for cold start without leaving a
@@ -556,33 +571,95 @@ function SeedList({ seeds, userId }: { seeds: TraceSeed[]; userId?: number }) {
   );
 }
 
-/** The watches their own Plex rating kept out of the seed list, and why.
+/** Plex's 0..10 scale as the stars the person actually clicked. */
+function stars(rating: number): string {
+  return `${rating / 2}★`;
+}
+
+/** What their Plex ratings did to this run, in one sentence.
  *
- *  Renders nothing when there are none, which is the overwhelmingly common case — and nothing on a
- *  run recorded before ratings were read, where `rating_blocked` is simply absent rather than false.
+ *  Always says something when the run recorded a policy, because the three ways ratings can do
+ *  nothing — off, nothing rated low, an account whose ratings are all tool-written — are invisible in
+ *  the outcome and only one of them means the feature is working. The distrusted case is the one this
+ *  exists for: it is a silent no-op that otherwise reads exactly like a healthy run.
  */
-function RatedOutList({ watched }: { watched: TraceWatch[] }) {
+export function ratingsSummary(ratings: TraceRatings): string {
+  if (!ratings.enabled)
+    return "Plex ratings are off for this run, so nothing they rated changed these picks.";
+  if (!ratings.trusted)
+    return "Plex ratings weren’t used: another tool is writing ratings on this account, so none of them count as opinions.";
+  const line = stars(ratings.threshold ?? 0);
+  if (ratings.rated === 0)
+    return "Plex ratings are on, but they haven’t rated anything — nothing was dropped.";
+  if (ratings.rated_human === 0)
+    return `Plex ratings are on, but none of their ${ratings.rated} ratings were typed in Plex — they carry decimals, so a tool wrote them and none were counted.`;
+  // A partly tool-written account stays "trusted" (the account-level check tolerates a fifth of them),
+  // so the skipped values have to be owned up to rather than folded into a clean-sounding total.
+  const uncounted = ratings.rated - ratings.rated_human;
+  const skipped =
+    uncounted === 1
+      ? " One more rating looks tool-written and wasn’t counted."
+      : uncounted > 1
+        ? ` ${uncounted} more ratings look tool-written and weren’t counted.`
+        : "";
+  // Both counts are account-wide, while the badge list under this line is only what's visible in ONE
+  // library's recent sample. The sentence names its own scope so the two never read as one number
+  // disagreeing with itself — a movie rated out years ago is counted here and shown nowhere.
+  if (ratings.blocked === 0)
+    return `Plex ratings are on. Across everything they’ve watched, none of their ${ratings.rated_human} ratings are ${line} or lower, so nothing was dropped.${skipped}`;
+  // "can't be used as seeds", not "stopped being seeds": most of these were never in the running.
+  // Seeds come from the most recent watches, so a title rated low years ago is excluded from a set it
+  // would never have reached — claiming it was removed would overstate what the run did.
+  const titles = ratings.blocked === 1 ? "title" : "titles";
+  return `Plex ratings are on. Across everything they’ve watched, ${ratings.blocked} ${titles} they rated ${line} or lower can’t be used as seeds.${skipped}`;
+}
+
+/** The rating policy this run used, plus the watches it actually kept out of the seed list.
+ *
+ *  `ratings` is absent on runs recorded before the policy was traced; those still show the badge list
+ *  alone, exactly as they always did, rather than inventing a policy they never recorded.
+ */
+function RatedOutList({
+  watched,
+  ratings,
+}: {
+  watched: TraceWatch[];
+  ratings?: TraceRatings;
+}) {
   const ratedOut = watched.filter((w) => w.rating_blocked);
-  if (ratedOut.length === 0) return null;
+  if (!ratings && ratedOut.length === 0) return null;
   return (
     <div className="mt-3 space-y-1.5 border-t pt-3">
-      <p className="text-xs text-muted-foreground">
-        Not used as seeds &mdash; they rated these low in Plex:
-      </p>
-      <ul className="flex flex-wrap gap-1.5">
-        {ratedOut.map((w, i) => (
-          <li key={`${w.title}-${i}`}>
-            <Badge
-              variant="secondary"
-              className="font-normal text-destructive-text"
-            >
-              {w.title}
-              {w.year ? ` (${w.year})` : ""}
-              {w.rating != null ? ` · ${w.rating / 2}★` : ""}
-            </Badge>
-          </li>
-        ))}
-      </ul>
+      {ratings && (
+        <p className="text-xs text-muted-foreground">
+          {ratingsSummary(ratings)}
+        </p>
+      )}
+      {ratedOut.length > 0 && (
+        <>
+          {/* The sentence above counts their WHOLE history; these are only the ones visible in this
+              library's recent sample, so it says "shown here" rather than repeating the number. */}
+          <p className="text-xs text-muted-foreground">
+            {ratings
+              ? "Dropped, among the watches shown here:"
+              : "Not used as seeds — they rated these low in Plex:"}
+          </p>
+          <ul className="flex flex-wrap gap-1.5">
+            {ratedOut.map((w, i) => (
+              <li key={`${w.title}-${i}`}>
+                <Badge
+                  variant="secondary"
+                  className="font-normal text-destructive-text"
+                >
+                  {w.title}
+                  {w.year ? ` (${w.year})` : ""}
+                  {w.rating != null ? ` · ${stars(w.rating)}` : ""}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }

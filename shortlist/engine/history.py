@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
@@ -294,6 +295,53 @@ def disliked_seed_keys(history: list[WatchedItem], threshold: float | None) -> s
         for item in history
         if item.tmdb_id is not None and item.is_human_rating and item.user_rating <= threshold
     }
+
+
+@dataclass(frozen=True)
+class RatingsPolicy:
+    """What this person's Plex ratings did to their seeds on one run — and, when nothing, why.
+
+    Exists because "nothing was dropped" has three causes that are indistinguishable from the outcome
+    alone: the setting is off, they rated nothing low, or their ratings are tool-written and were
+    disbelieved wholesale. The third is a silent no-op that looks exactly like a healthy run, so the
+    trace has to be able to say which one happened.
+    """
+
+    threshold: float | None  # rating at or below which a title stops seeding; None = feature off
+    trusted: bool  # False = tool-written ratings (`ratings_are_trustworthy`), so none of them counted
+    blocked: set[tuple[int, MediaType]] = field(default_factory=set)  # what actually stopped seeding
+    rated: int = 0  # how many of their watches carry any rating at all — "on, but they've rated nothing"
+    # ...of which these could have been typed by a person. The two differ on an account only PARTLY
+    # written by a tool: `ratings_are_trustworthy` tolerates a fifth of them being fractional, so the
+    # account stays trusted while `is_human_rating` still skips each fractional value one by one.
+    # Counting off `rated` there would report "none of their 10 ratings are 1 star or lower" over a
+    # set containing an uncounted 0.75 — the same silent no-op this whole summary exists to expose.
+    rated_human: int = 0
+
+    @property
+    def enabled(self) -> bool:
+        return self.threshold is not None
+
+
+def ratings_policy(history: list[WatchedItem], threshold: float | None) -> RatingsPolicy:
+    """Decide, ONCE over the whole history, what ratings do to this person's seeds.
+
+    One call site per user, for the reason spelled out on `disliked_seed_keys`: trust is an
+    account-level judgement, so anything deriving it from a slice can reach a different verdict than
+    the run did. The run filters with `blocked` and the trace explains itself from the same object,
+    which is what stops the explanation and the behaviour from drifting apart.
+
+    Args:
+        history: The person's COMPLETE watched titles, carrying their own `user_rating`.
+        threshold: 0..10 rating at or below which a title stops seeding, or None when the feature is off.
+    """
+    return RatingsPolicy(
+        threshold=threshold,
+        trusted=ratings_are_trustworthy(item.user_rating for item in history),
+        blocked=disliked_seed_keys(history, threshold),
+        rated=sum(1 for item in history if item.user_rating is not None),
+        rated_human=sum(1 for item in history if item.is_human_rating),
+    )
 
 
 def derive_seeds(

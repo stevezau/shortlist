@@ -2027,6 +2027,58 @@ class TestPlexRatingsEndToEnd:
         kept = next(w for w in recent if w["title"] == "Movie 04")
         assert kept["rating"] is None and kept["rating_blocked"] is False
 
+    def test_the_trace_records_the_policy_the_run_actually_used(self, fakes, tmp_path):
+        """Not just which titles dropped — the settings behind the drop, so a run read weeks later
+        explains itself without anyone inferring it from Settings as they read today."""
+        state, pms_url, _ = fakes
+        state.rate(201, self.DISLIKED, 2.0)
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=2.0)
+
+        report = engine_run(ctx, _users(plextv))
+
+        sarah = next(u for u in report.users if u.slug == "sarah")
+        assert sarah.trace["history"]["ratings"] == {
+            "enabled": True,
+            "threshold": 2.0,
+            "trusted": True,
+            "blocked": 1,
+            "rated": 1,
+            "rated_human": 1,
+        }
+
+    def test_the_trace_reports_a_tool_managed_account_rather_than_a_clean_run(self, fakes, tmp_path):
+        """The silent no-op this summary exists for. Kometa-style fractional ratings mean NOTHING is
+        dropped all run — outwardly identical to a healthy run, including the 1-star that would
+        otherwise have acted. Without `trusted` on the trace, nobody could tell the two apart."""
+        state, pms_url, _ = fakes
+        for movie_id in range(101, 107):  # sarah's watched movies, scored by a tool
+            state.rate(201, movie_id, 7.3)
+        state.rate(201, 107, 2.0)  # ...and one real 1-star among them
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=2.0)
+
+        report = engine_run(ctx, _users(plextv))
+
+        ratings = next(u for u in report.users if u.slug == "sarah").trace["history"]["ratings"]
+        assert ratings["enabled"] is True, "the setting WAS on — the trace must not read as switched off"
+        assert ratings["trusted"] is False
+        assert ratings["blocked"] == 0, "a distrusted account drops nothing, including its whole-number ratings"
+        assert ratings["rated"] == 7
+        assert ratings["rated_human"] == 1, "only the real 1-star could have been typed by a person"
+
+    def test_the_trace_says_the_feature_was_off_rather_than_staying_silent(self, fakes, tmp_path):
+        """Third indistinguishable silence: off. Same low rating, same empty drop list, different cause."""
+        state, pms_url, _ = fakes
+        state.rate(201, self.DISLIKED, 2.0)
+        ctx, plextv = _rating_ctx(state, pms_url, tmp_path, dislike_threshold=None)
+
+        report = engine_run(ctx, _users(plextv))
+
+        ratings = next(u for u in report.users if u.slug == "sarah").trace["history"]["ratings"]
+        assert ratings["enabled"] is False
+        assert ratings["threshold"] is None
+        assert ratings["blocked"] == 0
+        assert ratings["rated"] == 1, "the rating is still READ and shown — it just isn't acted on"
+
 
 class TestPlexRatingsCannotReachSharedRows:
     """One person's rating must never reshape a row everyone sees.

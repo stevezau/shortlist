@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from shortlist.engine import rows as rows_mod
 from shortlist.engine.candidates import GatherStats, gather_candidates
 from shortlist.engine.clients.search import SearchResult
+from shortlist.engine.history import ratings_policy
 from shortlist.engine.models import Candidate, MediaType, RowSpec, Seed, UserRunReport, WatchedItem
 
 
@@ -240,6 +241,108 @@ class TestRecordHistoryTrace:
         )
         assert report.trace["history"]["total"] == len(history)  # full count preserved
         assert len(report.trace["history"]["recent"]) == rows_mod._TRACE_HISTORY_SAMPLE  # sample bounded
+
+
+class TestRecordHistoryTraceRatings:
+    """The rating policy filed alongside the watches — the trace's answer to "was that setting doing
+    anything on this run?". Every cell matters because they all render as the same silence otherwise:
+    off, on-but-nothing-rated, on-but-nothing-low-enough, and on-but-the-account-is-tool-managed."""
+
+    def _rated(self, title: str, rating: float | None, tmdb_id: int, day: int = 5) -> WatchedItem:
+        return WatchedItem(
+            title=title,
+            media_type=MediaType.MOVIE,
+            watched_at=datetime(2026, 7, day, tzinfo=UTC),
+            tmdb_id=tmdb_id,
+            user_rating=rating,
+        )
+
+    def _record(self, history: list[WatchedItem], threshold: float | None) -> dict:
+        report = _report()
+        rows_mod._record_history_trace(
+            report,
+            history,
+            [_row_spec()],
+            seeds_for=lambda _spec: [],
+            watched_movies=set(),
+            watched_shows={},
+            ratings=ratings_policy(history, threshold),
+        )
+        return report.trace["history"]["ratings"]
+
+    def test_off_says_so_rather_than_reporting_a_clean_run(self):
+        history = [self._rated("Hated", 2.0, 1), self._rated("Loved", 10.0, 2)]
+
+        ratings = self._record(history, threshold=None)
+
+        assert ratings["enabled"] is False
+        assert ratings["threshold"] is None
+        # The low rating is REAL and still not acted on — the whole point of the flag.
+        assert ratings["blocked"] == 0
+        assert ratings["rated"] == 2
+
+    def test_on_reports_the_threshold_and_how_many_it_dropped(self):
+        history = [self._rated("Hated", 2.0, 1), self._rated("Fine", 8.0, 2), self._rated("Unrated", None, 3)]
+
+        ratings = self._record(history, threshold=2.0)
+
+        assert ratings == {
+            "enabled": True,
+            "threshold": 2.0,
+            "trusted": True,
+            "blocked": 1,
+            "rated": 2,
+            "rated_human": 2,
+        }
+
+    def test_a_partly_tool_written_account_separates_what_was_counted(self):
+        """The account-level check tolerates a minority of tool-written values, so `trusted` stays
+        True while `is_human_rating` skips them one at a time. Counting those as opinions is how a
+        summary ends up speaking for a 0.75-star rating nothing ever looked at."""
+        history = [self._rated(f"Real{i}", 8.0, i) for i in range(9)] + [self._rated("Tool", 1.5, 99)]
+
+        ratings = self._record(history, threshold=2.0)
+
+        assert ratings["trusted"] is True, "a single stray value must not condemn the account"
+        assert ratings["rated"] == 10
+        assert ratings["rated_human"] == 9
+        assert ratings["blocked"] == 0, "the 0.75-star value is below the line and STILL not acted on"
+
+    def test_on_with_nothing_low_enough_is_not_the_same_as_off(self):
+        history = [self._rated("Fine", 8.0, 1), self._rated("Great", 10.0, 2)]
+
+        ratings = self._record(history, threshold=2.0)
+
+        assert ratings["enabled"] is True  # it ran...
+        assert ratings["blocked"] == 0  # ...and correctly dropped nothing
+        assert ratings["rated"] == 2
+
+    def test_a_tool_managed_account_reports_distrust_not_a_clean_run(self):
+        # Fractional ratings are a tool's output (Plex writes whole numbers only), so the account is
+        # disbelieved wholesale — including the 1.0 that WOULD otherwise have been dropped.
+        history = [self._rated(f"T{i}", 7.3, i) for i in range(6)] + [self._rated("Hated", 1.0, 99)]
+
+        ratings = self._record(history, threshold=2.0)
+
+        assert ratings["enabled"] is True
+        assert ratings["trusted"] is False
+        assert ratings["blocked"] == 0
+        assert ratings["rated"] == 7
+
+    def test_no_policy_records_nothing_rather_than_inventing_off(self):
+        """ "We didn't record it" and "the setting was off" are different claims, and the UI prints the
+        second one as a sentence. A caller that forgets the kwarg must degrade to the legacy path the
+        UI already handles, not publish a confident false statement about a live run."""
+        report = _report()
+        rows_mod._record_history_trace(
+            report,
+            [self._rated("Hated", 2.0, 1)],
+            [_row_spec()],
+            seeds_for=lambda _spec: [],
+            watched_movies=set(),
+            watched_shows={},
+        )
+        assert "ratings" not in report.trace["history"]
 
 
 class TestRecordGatherTrace:
