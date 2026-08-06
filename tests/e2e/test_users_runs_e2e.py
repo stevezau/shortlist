@@ -259,9 +259,10 @@ class TestRuns:
             toggle.click()
         # Each pick renders its "because you…" reason inside its list item (the PickList now combines
         # title + reason + seed in one line). The reason names the seeding title from their own
-        # library — as "Because you liked <genres> like <seed>" when the candidate carries genres, or
-        # the bare "Because you watched <seed>" otherwise. sarah watches movies AND TV, so both appear.
-        reason_re = re.compile(r"Because you (?:liked [\w, ]+ like|watched) (?:Movie|Show) \d+")
+        # library — as "Because you watched <genres> like <seed>" when the candidate carries genres,
+        # or the bare "Because you watched <seed>" otherwise. sarah watches movies AND TV, so both
+        # appear.
+        reason_re = re.compile(r"Because you watched (?:[\w, ]+ like )?(?:Movie|Show) \d+")
         reasons = page.get_by_role("listitem").filter(has_text=reason_re)
         expect(reasons).to_have_count(len(sarah_picks))
         assert {p["title"].split()[0] for p in sarah_picks} == {"Movie", "Show"}, (
