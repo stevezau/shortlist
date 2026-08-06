@@ -30,10 +30,20 @@ What leaves your server, and what doesn't:
 | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Passwords, Plex tokens, API keys                                                                                                               | Library and row names, title names, error messages                                                   |
 | IP addresses and your server's machine id, in the report and in every log file — a URL keeps only its scheme and port (`https://<host>:32400`) | Counts, timings, settings values, migration state                                                    |
-| Nicknames and friendly names — the report prints Plex usernames and slugs instead                                                              | The Plex usernames themselves. Replace them yourself before posting if you'd rather not publish them |
+| Nothing else. Everything below is in there                                                                                                     | The Plex usernames themselves. Replace them yourself before posting if you'd rather not publish them |
+|                                                                                                                                                | Nicknames and friendly names, **in the log files** — see below                                       |
 
-The same masking covers **Logs → Download**, so a log zip attached straight to an issue gets the same
-treatment the report does.
+**Nicknames are not masked.** The report's own text never prints them — it prints Plex usernames and
+slugs — but the log files bundled alongside it are not filtered for names, and nothing masks them. If
+a row template contains `{user}` it renders as the nickname, and every delivery line in the log then
+carries it:
+
+```
+delivery:deliver - jsmith: delivered 'Picked for Dad' to 'Movies' (20 items, label shortlist_jsmith)
+```
+
+The same is true of **Logs → Download**, which is the same log files with the same filtering — this
+server's own address and machine id, and secrets. Not people's names.
 
 **Treat that as a good first pass, not a guarantee.** Logs are free text: they carry whatever a
 library, a plugin or an error message decided to print, and something unusual can still get through

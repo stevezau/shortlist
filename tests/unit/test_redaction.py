@@ -66,9 +66,8 @@ class TestRedactLiterals:
 
     def test_a_short_hostname_does_not_eat_the_words_around_it(self):
         """`plex` is the stock Docker Compose hostname for a PMS. A bare `str.replace` on it rewrites
-        the loguru source field, `com.plexapp`, `plex.tv`, and a user called `plexfan` — the last of
-        which then no longer matches the anonymiser, putting a mangled REAL username into an
-        anonymised report."""
+        the loguru source field, `com.plexapp`, `plex.tv`, and a user called `plexfan` — corrupting
+        unrelated text and leaving a mangled REAL username in the export."""
         text = "clients.plex_pms:_send - GET plex -> 200; com.plexapp; plex.tv; user plexfan"
 
         out = redact_literals(text, {"plex": "<host>"})

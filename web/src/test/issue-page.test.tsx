@@ -408,12 +408,12 @@ describe("IssuePage — filing the report", () => {
     expect(
       await screen.findByText(/plex usernames of people on your server/i),
     ).toBeTruthy();
+    // The teeth are here: no checkbox means the control is gone from the page. A companion
+    // assertion on the download href used to sit below this, and could not fail — the href it read
+    // came from this file's own `vi.mock` of `@/lib/api`, where `supportReportZipUrl` is a hardcoded
+    // string, so it was checking the mock rather than the page. `api.ts` losing the parameter is
+    // what actually matters, and that is a property of the un-mocked module.
     expect(screen.queryByRole("checkbox")).toBeNull();
-    expect(
-      screen
-        .getByRole("link", { name: /download everything \(with logs\)/i })
-        .getAttribute("href"),
-    ).not.toContain("anonymise");
   });
 });
 

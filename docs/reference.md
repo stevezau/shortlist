@@ -295,9 +295,16 @@ shape gets pinned.
 
 **People are named, deliberately.** The report prints each account's Plex username and slug — a
 maintainer cannot follow one person through a report otherwise, and the slug is what appears on Plex
-as `shortlist_<slug>`. Anyone who would rather not publish them can replace them before posting. It
-does NOT print nicknames or friendly names, which are free text and routinely someone's real name;
-that is a property of the renderers, pinned by `TestNoDisplayNameReachesTheReport`.
+as `shortlist_<slug>`. Anyone who would rather not publish them can replace them before posting. The
+report BODY does not print nicknames or friendly names, which are free text and routinely someone's
+real name; that is a property of the renderers, pinned by `TestNoDisplayNameReachesTheReport`.
+
+That guarantee stops at the report body. The LOG FILES bundled in `report.zip` are not filtered for
+names and nothing masks them — `redaction.py` knows about this server's own host and machine id, not
+about people. A row template containing `{user}` renders as the nickname (`UserProfile.display_name`),
+and the rendered title is logged verbatim on every delivery, so the nickname is in the logs. Say so
+in the UI and the guide rather than implying the whole artifact is covered: the previous wording put
+nicknames in a "Masked" column, which is exactly the overstatement that gets a zip pasted unread.
 
 (An `anonymise=true` mode existed briefly in 1.2 and was removed before release: it governed only
 these two endpoints, not the per-check `text` blocks beside them, so a tickbox reading "hide

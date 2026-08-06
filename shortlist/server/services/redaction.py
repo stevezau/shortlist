@@ -90,8 +90,8 @@ def redact_literals(s: str, literals: Mapping[str, str]) -> str:
     * A **host** is replaced only at a `[\\w.-]` boundary. A bare `str.replace` on a short hostname is
       destructive: the stock Docker Compose PMS is called `plex`, and replacing that everywhere turns
       `shortlist.engine.clients.plex_pms` into `…clients.<host>_pms`, `com.plexapp` into `com.<host>app`
-      and a user named `plexfan` into `<host>fan` — which the anonymiser then fails to match, putting a
-      mangled REAL username into an anonymised report.
+      and a user named `plexfan` into `<host>fan` — corrupting unrelated text and leaving a mangled
+      REAL username in the export.
 
     Args:
         s: Text bound for a client or an export.
