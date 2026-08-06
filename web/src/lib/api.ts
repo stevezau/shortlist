@@ -134,7 +134,8 @@ async function errorMessageFrom(response: Response): Promise<string> {
     // "Apache/2.4.66 (Ubuntu) Server at <host> Port 443" into the panel). Someone screenshotting
     // that into a public issue publishes their hostname, so the body is dropped and the status
     // explained instead.
-    if (/^\s*(<!doctype|<html)/i.test(text)) return proxyErrorMessage(response.status);
+    if (/^\s*(<!doctype|<html)/i.test(text))
+      return proxyErrorMessage(response.status);
     if (text.length > 0 && text.length <= 500) return text;
   } catch {
     // Unreadable body — fall through to the status line.
@@ -752,18 +753,15 @@ export const api = {
    *
    *  `supportReportZipUrl` is the one to offer: the text report PLUS every redacted log file. The
    *  `.txt` remains for anyone who wants only the pasteable part. */
-  supportReportZipUrl: (anonymise = false): string =>
-    apiUrl(`/api/support/report.zip${anonymise ? "?anonymise=true" : ""}`),
+  supportReportZipUrl: (): string => apiUrl("/api/support/report.zip"),
 
   supportBundleUrl: (): string => apiUrl("/api/support/bundle.txt"),
 
-  /** The pasteable report. `anonymise` replaces every account name with person1, person2… — for when
-   *  it is going somewhere public. Not `request()`: the response is text/plain. */
-  getSupportBundle: async (anonymise = false): Promise<string> => {
-    const response = await fetch(
-      apiUrl(`/api/support/bundle.txt${anonymise ? "?anonymise=true" : ""}`),
-      { headers: { Accept: "text/plain" } },
-    );
+  /** The pasteable report. Not `request()`: the response is text/plain. */
+  getSupportBundle: async (): Promise<string> => {
+    const response = await fetch(apiUrl("/api/support/bundle.txt"), {
+      headers: { Accept: "text/plain" },
+    });
     if (!response.ok) {
       throw new ApiError(response.status, await errorMessageFrom(response));
     }

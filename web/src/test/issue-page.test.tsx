@@ -60,9 +60,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
       supportLibraries: () => supportLibraries(),
       supportPerson: (slug: string) => supportPerson(slug),
       supportBundleUrl: () => "/api/support/bundle.txt",
-      supportReportZipUrl: (anon = false) =>
-        `/api/support/report.zip${anon ? "?anonymise=true" : ""}`,
-      getSupportBundle: (anon = false) => getSupportBundle(anon),
+      supportReportZipUrl: () => "/api/support/report.zip",
+      getSupportBundle: () => getSupportBundle(),
       supportSuggestions: () => supportSuggestions(),
     },
   };
@@ -264,7 +263,9 @@ describe("IssuePage — the title check", () => {
     await userEvent.click(screen.getByRole("button", { name: /^check$/i }));
 
     // The empty state is the SERVER's sentence, shown verbatim — the page never writes its own.
-    expect(await screen.findByText(/no watched record and no delivery/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/no watched record and no delivery/i),
+    ).toBeTruthy();
   });
 });
 
@@ -308,7 +309,9 @@ describe("IssuePage — every check is reachable", () => {
     // The six problem cards are the front door; the rest still have to be reachable, or building
     // them was pointless.
     renderPage();
-    const toggle = await screen.findByRole("button", { name: /show all 21 checks/i });
+    const toggle = await screen.findByRole("button", {
+      name: /show all 21 checks/i,
+    });
     await userEvent.click(toggle);
 
     expect(
@@ -323,16 +326,22 @@ describe("IssuePage — every check is reachable", () => {
     // Running with an empty name would return every person's data under a heading naming one.
     renderPage();
     await userEvent.click(
-      await screen.findByRole("button", { name: /one person's recommendations look wrong/i }),
+      await screen.findByRole("button", {
+        name: /one person's recommendations look wrong/i,
+      }),
     );
 
-    expect(screen.getByRole("button", { name: /^check$/i }).hasAttribute("disabled")).toBe(true);
+    expect(
+      screen.getByRole("button", { name: /^check$/i }).hasAttribute("disabled"),
+    ).toBe(true);
     expect(supportPerson).not.toHaveBeenCalled();
 
     await userEvent.type(screen.getByLabelText(/plex username/i), "chris35352");
     await userEvent.click(screen.getByRole("button", { name: /^check$/i }));
 
-    await waitFor(() => expect(supportPerson).toHaveBeenCalledWith("chris35352"));
+    await waitFor(() =>
+      expect(supportPerson).toHaveBeenCalledWith("chris35352"),
+    );
   });
 
   it("shows the exact text that will be copied, so a paste holds no surprises", async () => {
@@ -358,45 +367,48 @@ describe("IssuePage — filing the report", () => {
     // diagnostics attached and that the other button is where they come from.
     renderPage();
 
-    const link = await screen.findByRole("link", { name: /report a bug on github/i });
+    const link = await screen.findByRole("link", {
+      name: /report a bug on github/i,
+    });
     expect(link.getAttribute("href")).toContain("github.com");
-    expect(screen.getByRole("button", { name: /copy the summary/i })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /download everything \(with logs\)/i })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /copy the summary/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: /download everything \(with logs\)/i }),
+    ).toBeTruthy();
   });
 
-  it("says what the report does AND does not contain", async () => {
+  it("says what the report masks, what it keeps, and that masking is not a guarantee", async () => {
     // Someone is about to paste this into a public GitHub issue. "No passwords or tokens" was true
     // and misleading — it sat beside a button that publishes, and it said nothing about the fact
-    // that the report names every person on the server.
+    // that the report names every person on the server. The absolute framing was then dropped
+    // outright: three separate leaks reached a real report while that sentence was on screen, and a
+    // promise the code cannot keep is what gets a report pasted unread.
     renderPage();
 
     expect(
-      await screen.findByText(/no passwords, tokens or api keys/i),
+      await screen.findByText(/passwords, tokens, api keys, ip addresses/i),
     ).toBeTruthy();
-    expect(screen.getByText(/plex usernames of people on your server/i)).toBeTruthy();
+    expect(screen.getByText(/rather than a guarantee/i)).toBeTruthy();
+    expect(
+      screen.getByText(/skim before\s+posting anywhere public/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/plex usernames of people on your server/i),
+    ).toBeTruthy();
   });
 
-  it("hides names by default, because the button beside it publishes", async () => {
+  it("offers no name-hiding toggle, and says so rather than implying one", async () => {
+    // Removed at the owner's request (2026-08-06): a person who wants names out can take them out,
+    // and a tickbox that governed only the report — not the per-check Copy buttons beside it — read
+    // like a page-wide privacy setting it never was. The copy now states plainly that names are in.
     renderPage();
 
-    const toggle = await screen.findByRole("checkbox", {
-      name: /hide everyone's names/i,
-    });
-    expect((toggle as HTMLInputElement).checked).toBe(true);
-
-    // And the download carries that choice through.
-    const link = screen.getByRole("link", {
-      name: /download everything \(with logs\)/i,
-    });
-    expect(link.getAttribute("href")).toContain("anonymise=true");
-  });
-
-  it("lets you send real names deliberately", async () => {
-    renderPage();
-    await userEvent.click(
-      await screen.findByRole("checkbox", { name: /hide everyone's names/i }),
-    );
-
+    expect(
+      await screen.findByText(/plex usernames of people on your server/i),
+    ).toBeTruthy();
+    expect(screen.queryByRole("checkbox")).toBeNull();
     expect(
       screen
         .getByRole("link", { name: /download everything \(with logs\)/i })
@@ -415,7 +427,9 @@ describe("IssuePage — the report copy can fail two ways", () => {
   });
 
   it("copies the report on success", async () => {
-    getSupportBundle.mockResolvedValue("=== Shortlist support · full diagnostic ===");
+    getSupportBundle.mockResolvedValue(
+      "=== Shortlist support · full diagnostic ===",
+    );
     renderPage();
 
     await userEvent.click(
@@ -498,7 +512,9 @@ describe("IssuePage — the inputs help you get them right", () => {
     );
 
     // "Chris" is a display name, not the slug — the exact mistake this catches.
-    expect(await screen.findByText(/no one on this server is called/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/no one on this server is called/i),
+    ).toBeTruthy();
     expect(supportPerson).not.toHaveBeenCalled();
   });
 

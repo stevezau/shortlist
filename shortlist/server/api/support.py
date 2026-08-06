@@ -908,60 +908,8 @@ async def rows(request: Request) -> dict:
 # --------------------------------------------------------------------------------------------
 
 
-def _anonymiser(session, extra_names: set[str] | None = None) -> dict[str, str]:
-    """`{plex_username: "person1"}` for every account, longest name first.
-
-    Longest first matters: replacing "sam" before "samantha" would leave "person3antha" behind.
-    Deterministic (ordered by id) so two reports from the same server use the same labels and can be
-    compared, and so the owner can tell you privately which person is which.
-    """
-    people = session.query(User).order_by(User.id).all()
-    mapping = {u.username: f"person{i}" for i, u in enumerate(people, start=1)}
-    mapping.update({u.slug: mapping[u.username] for u in people if u.slug and u.slug != u.username})
-    # Names the report can print that our own roster does not know.
-    #
-    # `sharing` renders `account.username` straight from the LIVE plex.tv roster, so a share added
-    # since the last user sync appears in the report while being absent here — and such an account is
-    # GUARANTEED to be named, because with no `shortlist_*` excludes yet it is always flagged. A
-    # DB-derived mapping cannot be correct for a tool whose whole point is reading live plex.tv, so
-    # the renderer hands over the names it actually printed.
-    for name in sorted(extra_names or (), key=lambda n: -len(n)):
-        if name and name not in mapping:
-            mapping[name] = f"person{len(set(mapping.values())) + 1}"
-    # Usernames and slugs ONLY — deliberately not nicknames or friendly names.
-    #
-    # Those are free text an owner types, so they are routinely ordinary words ("Dad", "Home", "TV").
-    # Substituting them would corrupt unrelated prose the same way a bare `str.replace` does, and the
-    # boundary matching cannot help: "Home" as a nickname is indistinguishable from "Home" in "their
-    # Home screen". The report is safe because it renders SLUGS and never display names — which is a
-    # property of the renderers, so `test_no_display_name_reaches_the_report` pins it rather than
-    # leaving it to hold by luck.
-    return dict(sorted(mapping.items(), key=lambda kv: -len(kv[0])))
-
-
-def _anonymise(text: str, mapping: dict[str, str]) -> str:
-    """Replace every account name in the report, INCLUDING inside quoted log lines.
-
-    Bounded on LETTERS AND DIGITS ONLY, not `\b`, and that distinction is the whole function:
-
-    * plain `str.replace` corrupts the report — a person called "sam" turns every "same" into
-      "person3e", and someone called "a" destroys it outright;
-    * `\b` counts `_` as a word character, so it would miss `shortlist_sarah` — the label form these
-      names appear in throughout the privacy sections, which is exactly where hiding them matters.
-
-    So the boundary is "not adjacent to another alphanumeric", which matches `sarah` inside
-    `shortlist_sarah` and leaves `same` alone. Longest-first ordering (see `_anonymiser`) then stops
-    a short name pre-empting a longer one that contains it.
-    """
-    names = [n for n in mapping if n]
-    if not names:
-        return text
-    pattern = re.compile(r"(?<![A-Za-z0-9])(" + "|".join(re.escape(n) for n in names) + r")(?![A-Za-z0-9])")
-    return pattern.sub(lambda m: mapping[m.group(1)], text)
-
-
 @_tool.get("/support/bundle.txt", response_class=PlainTextResponse)
-async def bundle(request: Request, anonymise: bool = False) -> str:
+async def bundle(request: Request) -> str:
     """Every tool's block in one file, for when a paste would be truncated.
 
     Discord collapses long messages and Reddit truncates them, so past a certain size the right
@@ -1026,32 +974,7 @@ async def bundle(request: Request, anonymise: bool = False) -> str:
             failed.line(f"THIS SECTION FAILED: {_fail(e)}")
             parts.append(failed.render())
 
-    text = "\n\n".join(parts)
-    if anonymise:
-        # Applied to the FINISHED text, once, rather than per section: every section quotes names in
-        # its own way (a table cell, a log line, a `shortlist_<slug>` label), and a per-section pass
-        # would have to know each of them.
-        with request.app.state.sessions() as session:
-            mapping = _anonymiser(session, _names_rendered(findings))
-        header = _stamp(_Block("names hidden"))
-        header.line("Everyone is shown as person1, person2 and so on.")
-        header.line("The same label every time, in the logs too, so this still hangs together.")
-        header.line("The owner can tell you who is who privately.")
-        header.line("Library names and title names are NOT hidden.")
-        text = _anonymise(text, mapping) + "\n\n" + header.render()
-    return text
-
-
-def _names_rendered(findings: dict[str, dict]) -> set[str]:
-    """Account names the report printed that may not be in our `users` table.
-
-    Only `sharing` reads the live plex.tv roster, so only it can name someone we have never synced.
-    """
-    return {
-        str(account.get("user", ""))
-        for account in findings.get("sharing", {}).get("accounts", []) or []
-        if account.get("user")
-    }
+    return "\n\n".join(parts)
 
 
 #: How many flagged people get their own section. A cap, because a server where every share token is
@@ -2234,7 +2157,7 @@ async def recent_runs(request: Request) -> dict:
 
 
 @_tool.get("/support/report.zip")
-async def report_zip(request: Request, anonymise: bool = False) -> Response:
+async def report_zip(request: Request) -> Response:
     """The whole report AND every redacted log file, as one attachment.
 
     The text report is deliberately capped so it can be pasted into a chat window — newest 40
@@ -2252,15 +2175,11 @@ async def report_zip(request: Request, anonymise: bool = False) -> Response:
 
     from shortlist.server.services import log_reader
 
-    text = await bundle(request, anonymise=anonymise)
+    text = await bundle(request)
     config_dir = request.app.state.config_dir
-    mapping: dict[str, str] = {}
     # `require_support_mode` already read these from the same DB for this request; querying again
     # would be a second source of truth for one value, which is the drift this module exists to end.
     literals = _KNOWN.get()
-    if anonymise:
-        with request.app.state.sessions() as session:
-            mapping = _anonymiser(session)
 
     def _build() -> bytes:
         """Decompress, rewrite and recompress the log set OFF the event loop.
@@ -2277,18 +2196,11 @@ async def report_zip(request: Request, anonymise: bool = False) -> Response:
             # addresses and known literals — and the vanished-under-rotation handling. This function
             # used to shape hosts itself on top, which is how the machine id survived: the copy here
             # lacked the literal pass that `_scrub` had, and the pattern could not match a
-            # URL-encoded id. Anonymisation is the one thing left here, because it is the only pass
-            # that belongs to a report rather than to a log file.
+            # URL-encoded id. Nothing is rewritten here now, so there is nothing left to drift.
             try:
                 with zipfile.ZipFile(io.BytesIO(log_reader.build_zip(config_dir, literals))) as logs:
                     for name in logs.namelist():
-                        body = logs.read(name).decode("utf-8", "replace")
-                        if mapping:
-                            # The logs name people constantly ("watch cache: chris35352 ..."), so
-                            # hiding names in the report but not in the logs beside it achieves
-                            # nothing.
-                            body = _anonymise(body, mapping)
-                        archive.writestr(name, body.encode())
+                        archive.writestr(name, logs.read(name))
             except Exception as e:
                 archive.writestr("logs/UNAVAILABLE.txt", f"Logs could not be read: {_fail(e)}")
         return buffer.getvalue()

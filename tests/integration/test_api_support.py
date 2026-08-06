@@ -1486,9 +1486,11 @@ class TestWhatTheReportDiscloses:
         assert "http://<host>:32400" in body["text"], body["text"]
         assert "https://<host>:8181" in body["text"]
 
-    def test_names_are_hidden_when_asked_consistently_and_everywhere(self, client):
-        """One label per person, the same every time — otherwise the report stops hanging together and
-        a maintainer cannot follow one person through it."""
+    def test_the_report_names_people_and_the_copy_beside_it_says_so(self, client):
+        """Name-hiding was REMOVED at the owner's request (2026-08-06): a person who wants names out
+        can take them out, and the tickbox governed only the report — not the per-check Copy buttons
+        beside it — so it read like a page-wide privacy setting it never was. What matters now is that
+        the page does not imply otherwise, which `issue-page.test.tsx` pins on the copy."""
         logs = client.app.state.config_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         (logs / "shortlist.log").write_text(
@@ -1497,35 +1499,10 @@ class TestWhatTheReportDiscloses:
         _seed_teacup(client.app, viewed=None, total=None, delivered=True)
         _enable(client)
 
-        plain = client.get("/api/support/bundle.txt").text
-        hidden = client.get("/api/support/bundle.txt", params={"anonymise": "true"}).text
+        text = client.get("/api/support/bundle.txt").text
 
-        assert "sarah" in plain, "the default still names people — a maintainer needs that"
-        assert "sarah" not in hidden
-        assert "person" in hidden
-        # The same label throughout, including where it appears as a label (`shortlist_sarah`).
-        label = next(w for w in hidden.split() if w.startswith("person"))
-        assert hidden.count(label) >= 2, hidden
-        assert "names hidden" in hidden, "it must say that it did this"
-
-    def test_the_zip_hides_names_in_the_logs_too(self, client):
-        """Hiding names in the report and not in the logs beside it would achieve nothing — the logs
-        name people constantly."""
-        import io
-        import zipfile
-
-        logs = client.app.state.config_dir / "logs"
-        logs.mkdir(parents=True, exist_ok=True)
-        (logs / "shortlist.log").write_text(
-            "2026-08-05 03:31:02.000 | WARNING | a:b:1 - watch cache: sarah section 2 failed\n"
-        )
-        _enable(client)
-
-        response = client.get("/api/support/report.zip", params={"anonymise": "true"})
-
-        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            blob = b"".join(archive.read(n) for n in archive.namelist())
-        assert b"sarah" not in blob, "the logs still named them"
+        assert "sarah" in text
+        assert "names hidden" not in text, "no anonymised mode exists to announce"
 
     def test_the_zip_does_not_carry_this_servers_machine_id_in_its_logs(self, client):
         """Found by a positive-control audit of a real 88 MB report: the machine id was still in two of
@@ -1554,12 +1531,12 @@ class TestWhatTheReportDiscloses:
         )
         _enable(client)
 
-        for params in ({}, {"anonymise": "true"}):
-            with zipfile.ZipFile(io.BytesIO(client.get("/api/support/report.zip", params=params).content)) as archive:
-                blob = b"".join(archive.read(n) for n in archive.namelist())
-            assert machine_id.encode() not in blob, f"machine id survived with params={params}"
-            assert b"172.16.10.240" not in blob, f"address survived with params={params}"
-            assert b"<machine-id>" in blob
+        with zipfile.ZipFile(io.BytesIO(client.get("/api/support/report.zip").content)) as archive:
+            blob = b"".join(archive.read(n) for n in archive.namelist())
+
+        assert machine_id.encode() not in blob, "machine id survived"
+        assert b"172.16.10.240" not in blob, "address survived"
+        assert b"<machine-id>" in blob
 
     def test_the_errors_check_shapes_addresses_in_its_json_not_only_its_text(self, client):
         """`read_lines` serves the live Logs view, which is allowed to show the owner their own
@@ -1602,36 +1579,19 @@ class TestWhatTheReportDiscloses:
         assert machine_id.encode() not in blob
         assert b"172.16.10.240" not in blob
 
-    def test_the_replacement_is_bounded_and_ordered(self):
-        """Two ways this corrupts a report, both asserted on the function itself.
-
-        * Ordering: `sam` replaced before `samantha` leaves `person1antha` behind.
-        * Boundary: plain `str.replace` turns every "same" into "person1e", and a person called "a"
-          destroys the report outright. `\b` is not the answer either — it counts `_` as a word
-          character, so it would MISS `shortlist_sarah`, which is where hiding a name matters most.
-        """
-        from shortlist.server.api.support import _anonymise
-
-        mapping = dict(sorted({"samantha": "person2", "sam": "person1"}.items(), key=lambda kv: -len(kv[0])))
-
-        out = _anonymise("sam and samantha watched the same show; label!=shortlist_sam", mapping)
-
-        assert "person1 and person2 watched the same show" in out, out
-        assert "shortlist_person1" in out, "a name in label form must still be hidden"
-        assert "antha" not in out
-
 
 class TestNoDisplayNameReachesTheReport:
-    """The anonymiser maps usernames and slugs, not nicknames or friendly names.
+    """The report renders SLUGS, never the display names an owner types.
 
-    That is deliberate — those are free text and routinely ordinary words ("Dad", "Home", "TV"), so
-    substituting them would corrupt unrelated prose. It is only safe because the report renders slugs
-    and never display names, which is a property of the RENDERERS. Checked on the real 50-user server
-    (2026-08-05: 47 such names existed, none appeared) — this pins it so a future check that prints a
-    display name fails here rather than in someone's public GitHub issue.
+    A slug is the identifier the privacy system already keys on and it appears in Plex as
+    `shortlist_<slug>`, so a maintainer can act on it. A nickname or friendly name is free text and
+    routinely someone's real name — "Aaron Shays Partner" on the maintainer's own server — which
+    identifies a person far beyond what the report needs. Checked there (2026-08-05: 47 such names
+    existed, none appeared); this pins it so a future check that prints a display name fails here
+    rather than in someone's public GitHub issue.
     """
 
-    def test_a_nickname_never_appears_in_the_report_anonymised_or_not(self, client):
+    def test_a_nickname_never_appears_in_the_report(self, client):
         with client.app.state.sessions() as session:
             user = session.query(User).filter(User.slug == "sarah").one()
             user.nickname = "Zaphod"
@@ -1640,12 +1600,10 @@ class TestNoDisplayNameReachesTheReport:
         _seed_teacup(client.app, viewed=None, total=None, delivered=True)
         _enable(client)
 
-        plain = client.get("/api/support/bundle.txt").text
-        hidden = client.get("/api/support/bundle.txt", params={"anonymise": "true"}).text
+        text = client.get("/api/support/bundle.txt").text
 
         for name in ("Zaphod", "Beeblebrox"):
-            assert name not in plain, f"{name} reached the report — add it to _anonymiser or stop rendering it"
-            assert name not in hidden, f"{name} survived anonymisation"
+            assert name not in text, f"{name} reached the report — render the slug instead"
 
 
 class TestTheFindingsFromTheFifthReviewPass:
@@ -1689,10 +1647,10 @@ class TestTheFindingsFromTheFifthReviewPass:
 
         assert _scrub("GET https://pms.example:32400/library") == "GET https://<host>:32400/library"
 
-    def test_a_plextv_account_we_have_never_synced_is_still_anonymised(self, client, monkeypatch):
-        """HIGH. `_anonymiser` was built from the `users` table, but `sharing` prints usernames from
-        the LIVE plex.tv roster. A share added since the last user sync is absent from the table — and
-        is GUARANTEED to be named, because with no excludes yet it is always flagged."""
+    def test_a_share_added_since_the_last_sync_still_reaches_the_report(self, client, monkeypatch):
+        """`sharing` prints usernames from the LIVE plex.tv roster, so a share added since the last
+        user sync is absent from our `users` table — and is GUARANTEED to be flagged, because with no
+        excludes yet it can see everyone's rows. It must still appear, which is the whole point."""
         from types import SimpleNamespace
 
         import shortlist.server.api.support as support
@@ -1702,10 +1660,9 @@ class TestTheFindingsFromTheFifthReviewPass:
         monkeypatch.setattr(support, "_machine_id", lambda _s: "m1")
         _enable(client)
 
-        hidden = client.get("/api/support/bundle.txt", params={"anonymise": "true"}).text
+        text = client.get("/api/support/bundle.txt").text
 
-        assert "NewFriendBob" not in hidden, "the banner promises everyone is hidden"
-        assert "person" in hidden
+        assert "NewFriendBob" in text
 
     def test_a_privacy_fault_yields_a_person_section_when_username_differs_from_slug(self, client, monkeypatch):
         """HIGH. `sharing` returned usernames; `person()` keys on slugs, and `slugify` lowercases and

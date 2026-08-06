@@ -26,13 +26,20 @@ Three things worth knowing:
 
 What leaves your server, and what doesn't:
 
-| Removed always                                                                                                                            | Removed on request                                                                                                                                         | Kept                                               |
-| ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| Passwords, Plex tokens, API keys                                                                                                          | People's names — tick **Hide everyone's names**, which is on by default and relabels everyone `person1`, `person2`… the same way throughout, logs included | Library and row names, title names, error messages |
-| Your server's address and machine id, in the report and in every log file — a URL keeps only its scheme and port (`https://<host>:32400`) |                                                                                                                                                            | Counts, timings, settings values, migration state  |
+| Masked                                                                                                                                         | Kept                                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Passwords, Plex tokens, API keys                                                                                                               | Library and row names, title names, error messages                                                   |
+| IP addresses and your server's machine id, in the report and in every log file — a URL keeps only its scheme and port (`https://<host>:32400`) | Counts, timings, settings values, migration state                                                    |
+| Nicknames and friendly names — the report prints Plex usernames and slugs instead                                                              | The Plex usernames themselves. Replace them yourself before posting if you'd rather not publish them |
 
-The same redaction covers **Logs → Download**, so a log zip attached straight to an issue carries
-the same guarantee the report does.
+The same masking covers **Logs → Download**, so a log zip attached straight to an issue gets the same
+treatment the report does.
+
+**Treat that as a good first pass, not a guarantee.** Logs are free text: they carry whatever a
+library, a plugin or an error message decided to print, and something unusual can still get through
+a filter written for the shapes we know about. Give the report a skim before posting it anywhere
+public — and if you find something that should have been masked and wasn't, that is worth an issue of
+its own.
 
 If someone is reporting a problem on a server you don't administer, sending them there is usually
 faster than a list of questions: _"open /issue, switch the checks on, type the title, press Copy."_

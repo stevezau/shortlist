@@ -44,16 +44,17 @@ your rows are set to 0% already-watched, which is the default.
   they read share filters and per-user tokens. Every check has a **Copy for support** button, and
   what it copies is shown on screen first so a paste holds no surprises. The last section files the
   report: a pre-filled GitHub issue plus a diagnostic to attach, as a paste or a file. That
-  diagnostic never carries credentials, your server's address or its machine id, and a **Hide
-  everyone's names** tick — on by default — relabels every account `person1`, `person2`… the same way
-  throughout, log files included.
+  diagnostic masks credentials, IP addresses and your server's machine id. It is a good first pass
+  rather than a guarantee: logs carry whatever a dependency decided to print, so give the report a
+  skim before posting it publicly. It does name the people on your server by their Plex username —
+  replace those yourself if you'd rather not publish them.
 
   If someone reports a problem on a server you don't administer, sending them there is usually faster
   than a list of questions.
 
 ### Fixed
 
-- **A downloaded log zip no longer carries your server's address or machine id.**
+- **A downloaded log zip no longer carries your server's IP address or machine id.**
   `Logs → Download` calls itself "the attachment for a bug report" and had only ever removed
   credentials — so it shipped your Plex server's address on every line that recorded a call to it
   (17,234 of them in one real export) and, where a collection write was logged, the machine id that

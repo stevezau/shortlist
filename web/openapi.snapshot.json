@@ -7779,18 +7779,6 @@
       "get": {
         "description": "Every tool's block in one file, for when a paste would be truncated.\n\nDiscord collapses long messages and Reddit truncates them, so past a certain size the right\nanswer is an attachment rather than a paste. Deliberately over-collects: a second round trip\nwith a non-technical reporter costs a day, and redundant text costs nothing.",
         "operationId": "bundle_api_support_bundle_txt_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "anonymise",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Anonymise",
-              "type": "boolean"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -7801,16 +7789,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Bundle",
@@ -8352,18 +8330,6 @@
       "get": {
         "description": "The whole report AND every redacted log file, as one attachment.\n\nThe text report is deliberately capped so it can be pasted into a chat window \u2014 newest 40\nwarnings, five runs. That is enough to name most problems and not enough for one that needs\nhistory, and asking someone to then find the Logs page and export separately is a step that does\nnot happen. This is the one button for \"give them everything\".\n\nLog files are redacted by `log_reader.build_zip`, file by file, because an export is the single\nmost likely thing to end up in a public issue tracker.",
         "operationId": "report_zip_api_support_report_zip_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "anonymise",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Anonymise",
-              "type": "boolean"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -8372,16 +8338,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Report Zip",

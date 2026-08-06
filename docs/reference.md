@@ -270,22 +270,33 @@ GET  /api/support/jobs -> {jobs[], counts{}, failed, text}
 GET  /api/support/clocks -> {tz, local_now, utc_now, offset_hours, scheduled[], text}
 GET  /api/support/database -> {head, tables_present, tables_expected, missing_tables[], indexes, size_mb, text}
 GET  /api/support/config -> {settings[{env, key, env_set, secret, value, has_value}], text}
-GET  /api/support/bundle.txt?anonymise= -> text/plain; every server-wide block in one downloadable file
-GET  /api/support/report.zip?anonymise= -> the bundle plus every log file, redacted, as one attachment
-GET  /api/support/suggestions -> {users[], titles[], libraries[]} (type-ahead for the inputs above; owner-only, never part of a report, so it is not anonymised)
+GET  /api/support/bundle.txt -> text/plain; every server-wide block in one downloadable file
+GET  /api/support/report.zip -> the bundle plus every log file, redacted, as one attachment
+GET  /api/support/suggestions -> {users[], titles[], libraries[]} (type-ahead for the inputs above; owner-only, never part of a report)
 ```
 
-**What a report never contains.** Credentials (rule 9), and this server's address and machine id —
-in the report body, in every quoted exception, and in every log file inside `report.zip`. A URL keeps
-only its scheme and port (`https://<host>:32400`), which are the parts with diagnostic value. The
-machine id is additionally removed by exact match rather than by pattern alone, because it reaches a
-log line URL-encoded (`uri=server%3A%2F%2F<id>%2F…`) where a word-boundary pattern cannot see it.
+**What a report masks.** Credentials (rule 9), IP addresses, and this server's machine id — in the
+report body, in every quoted exception, and in every log file inside `report.zip`. A URL keeps only
+its scheme and port (`https://<host>:32400`), which are the parts with diagnostic value. The machine
+id is additionally removed by exact match rather than by pattern alone, because it reaches a log line
+URL-encoded (`uri=server%3A%2F%2F<id>%2F…`) where a word-boundary pattern cannot see it.
 
-**`anonymise=true` hides people, not the server.** Every account becomes `person1`, `person2`… by a
-stable mapping, applied to the report and to the log files beside it. It maps usernames and slugs
-only: nicknames and friendly names are free text and routinely ordinary words ("Dad", "Home", "TV"),
-so substituting them would corrupt unrelated prose — the report is safe because its renderers print
-slugs and never display names.
+This is a filter for the shapes we know about, not a proof of absence, and the docs should not claim
+otherwise — a promise the code cannot keep is what gets a report pasted unread. Log files are the
+weak spot: they carry whatever a dependency chose to print. Every leak found so far arrived in an
+escaping nobody had thought of (`%2F`, then `%252F`, then a `plex.direct` hostname with the id
+embedded), so assume the next one will too. `tests/unit/test_redaction.py` is where a newly found
+shape gets pinned.
+
+**People are named, deliberately.** The report prints each account's Plex username and slug — a
+maintainer cannot follow one person through a report otherwise, and the slug is what appears on Plex
+as `shortlist_<slug>`. Anyone who would rather not publish them can replace them before posting. It
+does NOT print nicknames or friendly names, which are free text and routinely someone's real name;
+that is a property of the renderers, pinned by `TestNoDisplayNameReachesTheReport`.
+
+(An `anonymise=true` mode existed briefly in 1.2 and was removed before release: it governed only
+these two endpoints, not the per-check `text` blocks beside them, so a tickbox reading "hide
+everyone's names" covered less than it appeared to.)
 
 **`read-as` runs against an allowlist, never a URL you supply.** `endpoint` is one of `libraries`,
 `watched-movies`, `watched-shows`, `home-rows`, and `section` is validated against the keys the PMS

@@ -998,9 +998,6 @@ function HealthStrip() {
 function ReportSection() {
   const version = useVersion();
   const { state, copy } = useCopy(2500);
-  // Defaults to hiding names: the button beside this one posts to a public tracker, so the safe
-  // choice has to be the one you get without thinking about it.
-  const [hideNames, setHideNames] = useState(true);
 
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4">
@@ -1009,30 +1006,6 @@ function ReportSection() {
         Open an issue, then attach the report below so whoever picks it up
         already has the answers to the first three questions they'd ask.
       </p>
-
-      <label className="flex items-start gap-2.5 rounded-md border border-border bg-elevated p-3">
-        <input
-          type="checkbox"
-          // Explicit: the wrapping label holds a heading AND a paragraph, so the computed name would
-          // be the whole block — unhelpful to a screen reader and to anything matching on it.
-          aria-label="Hide everyone's names"
-          checked={hideNames}
-          onChange={(event) => setHideNames(event.target.checked)}
-          className="mt-0.5 h-4 w-4 accent-primary"
-        />
-        <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium">
-            Hide everyone&rsquo;s names
-          </span>
-          <span className="text-xs text-muted-foreground">
-            Replaces each person with “person1”, “person2” and so on — the same
-            label every time, in the logs too, so the report still makes sense.
-            Leave this on for a public GitHub issue. Turn it off only if
-            you&rsquo;re sending the report privately and it&rsquo;s easier to
-            talk about real names.
-          </span>
-        </span>
-      </label>
 
       <div className="flex flex-wrap gap-2">
         <Button asChild>
@@ -1047,10 +1020,7 @@ function ReportSection() {
         </Button>
         {/* Both the fetch (a 500 building the report) and the clipboard write can fail — useCopy
             surfaces either as an error state rather than a silently dead button. */}
-        <Button
-          variant="outline"
-          onClick={() => copy(api.getSupportBundle(hideNames))}
-        >
+        <Button variant="outline" onClick={() => copy(api.getSupportBundle())}>
           {state === "copied" ? (
             <Check className="mr-2 h-4 w-4" aria-hidden="true" />
           ) : (
@@ -1065,32 +1035,34 @@ function ReportSection() {
           </span>
         </Button>
         <Button asChild variant="outline">
-          <a
-            href={api.supportReportZipUrl(hideNames)}
-            download="shortlist-report.zip"
-          >
+          <a href={api.supportReportZipUrl()} download="shortlist-report.zip">
             <Download className="mr-2 h-4 w-4" aria-hidden="true" />
             Download everything (with logs)
           </a>
         </Button>
       </div>
-      {/* Specific about what IS and ISN'T in there. "No passwords or tokens" was true and
-          misleading — it sat next to a button that posts publicly, and someone reading it would
-          reasonably conclude the whole thing was safe to publish. */}
+      {/* Specific about what IS and ISN'T in there, and honest that it is best effort. "No passwords
+          or tokens" was true and misleading — it sat next to a button that posts publicly, so someone
+          reading it would reasonably conclude the whole thing was safe to publish and paste without
+          looking. A promise this text cannot keep is worse than no promise: the machine id survived
+          three rounds of exactly that confidence before an audit of a real report found it. */}
       <p className="text-xs text-muted-foreground">
         <strong className="font-medium text-foreground">
-          No passwords, tokens or API keys
+          Passwords, tokens, API keys, IP addresses and your server&rsquo;s
+          machine id are masked
         </strong>{" "}
-        — those are stripped from the report and from the logs, along with your
-        server&rsquo;s machine id and its address, which is reduced to{" "}
-        <code className="font-mono">http://&lt;host&gt;</code>. It{" "}
+        — in the report and in the logs, with a URL reduced to{" "}
+        <code className="font-mono">http://&lt;host&gt;:32400</code>. Treat that
+        as a good first pass rather than a guarantee: logs are free text, and
+        something unusual can still slip through, so give it a skim before
+        posting anywhere public. It{" "}
         <strong className="font-medium text-foreground">does</strong> include
-        your library names, the titles involved, and — unless you leave the box
-        above ticked — the Plex usernames of people on your server. On a busy
-        server the summary runs to tens of kilobytes, which is more than a chat
-        message holds — attach it as a file if the paste gets cut off. The
-        download adds the full logs and can take a few seconds to build, so give
-        it a moment before clicking again.
+        your library names, the titles involved, and the Plex usernames of
+        people on your server — replace those yourself before posting if that
+        matters to you. On a busy server the summary runs to tens of kilobytes,
+        which is more than a chat message holds — attach it as a file if the
+        paste gets cut off. The download adds the full logs and can take a few
+        seconds to build, so give it a moment before clicking again.
       </p>
     </section>
   );
