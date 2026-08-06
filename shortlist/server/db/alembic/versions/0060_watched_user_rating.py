@@ -10,10 +10,12 @@ NULL means "never rated", and that is almost every row — 0.27% of watched titl
 the server this was measured against. So NULL must stay distinguishable from 0.0, which is a real
 rating someone can give; the column is nullable and no backfill is attempted.
 
-Existing rows get NULL and stay NULL until the next FULL watch re-read. That is not an oversight:
-rating a title does not move its `lastViewedAt`, and the incremental read walks by that stamp, so an
-incremental sync can never see a rating at all. `sync.watch_full_days` (default 7) is what refreshes
-them, which is also the ceiling on how quickly a new rating changes anyone's row.
+Existing rows get NULL and are filled in as each is next read. Rating a title does not move its
+`lastViewedAt`, and the incremental read walks by that stamp — but every row it returns is upserted
+with its current rating, so a title watched since the last sync picks one up immediately. Only a
+rating on something older than the cursor waits for the full re-read (`sync.watch_full_days`,
+default 7). Verified on a live server after this migration ran: two of three rated accounts landed
+on an ordinary incremental sync.
 """
 
 import sqlalchemy as sa
