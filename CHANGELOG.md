@@ -4,6 +4,35 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] - 2026-08-07
+
+### Added
+
+- **A run now says what Plex ratings did to it.** Open a run → **How we picked** for a person, and
+  the "Watched recently" step states the rating policy that run used in one line: off, on but nobody
+  rated anything low enough, on but the account's ratings were disbelieved as tool-written, or how
+  many titles a rating dropped. Until now all four looked identical — the trace listed dropped
+  titles when there were any and said nothing at all when there weren't, so a run where the feature
+  silently did nothing read exactly like a healthy one. The distrusted case is the one worth
+  catching: a Kometa rating sync on that account means every rating is ignored, all run, invisibly.
+
+  The line reports the setting **as it was when the run happened**, not as Settings reads today, so
+  changing it later doesn't rewrite the history of a run you open a fortnight afterwards. Runs
+  recorded before this release don't carry it and still show just the dropped titles.
+
+  It also catches the half-case the account-level check is designed to let through: if a tool has
+  written _some_ of someone's ratings but not enough to condemn the account, the counted ratings and
+  the skipped ones are reported separately, rather than a single total that quietly speaks for values
+  nothing ever looked at.
+
+### Fixed
+
+- **A pick's "why" said "Because you liked…" when it only ever knew what someone watched.** Every
+  pick with a genre in common with its seed claimed a preference nobody had expressed — seeds are
+  weighted purely by how recently something was watched, and a Plex rating can only ever _remove_ a
+  seed, never mark one as liked. It now reads "Because you watched…", which is the fact we have.
+  Reasons are written into each run as it happens, so runs already recorded keep the old wording.
+
 ## [1.2.0] - 2026-08-05
 
 A minor release with **one behaviour change** — read the first item below before upgrading if any of

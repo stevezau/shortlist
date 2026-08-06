@@ -533,6 +533,24 @@ export interface TraceWatch {
   rating_blocked?: boolean;
 }
 
+/** The rating policy one run used, as recorded at run time — not what Settings says today. */
+export interface TraceRatings {
+  /** "Respect Plex ratings" was on for this run. */
+  enabled: boolean;
+  /** Rating (0..10) at or below which a title stopped seeding; null when the feature was off. */
+  threshold: number | null;
+  /** False when the account's ratings look tool-written, so every one of them was ignored. */
+  trusted: boolean;
+  /** How many titles the rating actually dropped, across their whole history. */
+  blocked: number;
+  /** How many of their watches carry any rating at all — tells "on but never rated" from "on but fine". */
+  rated: number;
+  /** ...of which look typed by a person. Lower than `rated` on an account a tool has PARTLY written:
+   *  the account stays trusted while the fractional values are skipped one by one, so any "none of
+   *  their N are low" sentence has to count off this, not `rated`, or it speaks for uncounted values. */
+  rated_human: number;
+}
+
 /** A seed derived from history — a history title used to find candidates. */
 export interface TraceSeed {
   title: string;
@@ -628,6 +646,10 @@ export interface RunUserTrace {
     /** True distinct-title watched totals per library NAME, split by media type — exact per library
      *  even when several libraries share a media type. Absent on runs recorded before this was added. */
     watched_by_library?: Record<string, { movie: number; show: number }>;
+    /** What Plex ratings did to this person's seeds on THIS run — recorded because the outcome can't
+     *  be read back from the watch list: no dropped titles means the setting was off, or nothing was
+     *  rated low, or the account's ratings were tool-written and disbelieved. Absent on older runs. */
+    ratings?: TraceRatings;
   };
   seeds?: TraceSeed[];
   gathers?: TraceGather[];

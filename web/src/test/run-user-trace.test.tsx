@@ -1,9 +1,13 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { TraceView } from "@/pages/run-user-trace";
-import type { RunUserTraceResponse } from "@/lib/types";
+import type {
+  RunUserTraceResponse,
+  TraceRatings,
+  TraceWatch,
+} from "@/lib/types";
 
 /** A run that reached delivery for a movie library, with a second (4K) movie library sharing the
  *  same by-taste search. Covers: real library-name tabs, seed "why", per-title fates, delivery. */
@@ -447,5 +451,192 @@ describe("TraceView", () => {
 
     expect(screen.getByText(/heads up about this run/i)).toBeTruthy();
     expect(screen.getByText(/Where we searched/)).toBeTruthy();
+  });
+});
+
+/** The rating policy line. Every "nothing was dropped" cell needs its own wording: from the outcome
+ *  alone, a switched-off feature, a person who rates nothing, and an account whose ratings are all
+ *  tool-written are the same silence — and only one of those means the feature is working. */
+describe("TraceView · what Plex ratings did", () => {
+  const policy = (patch: Partial<TraceRatings> = {}): TraceRatings => ({
+    enabled: true,
+    threshold: 2,
+    trusted: true,
+    blocked: 0,
+    rated: 6,
+    rated_human: 6,
+    ...patch,
+  });
+
+  function withRatings(
+    ratings: TraceRatings,
+    recent: TraceWatch[] = [],
+  ): RunUserTraceResponse {
+    const base = okTrace();
+    return {
+      ...base,
+      trace: {
+        ...base.trace,
+        history: { ...base.trace.history!, recent, ratings },
+      },
+    };
+  }
+
+  const ratedOut: TraceWatch[] = [
+    {
+      title: "The Room",
+      media: "movie",
+      library: "Movies",
+      year: 2003,
+      watched_at: null,
+      rating: 2,
+      rating_blocked: true,
+    },
+  ];
+
+  it("says the setting was off rather than implying a clean run", () => {
+    render(
+      <TraceView
+        data={withRatings(policy({ enabled: false, threshold: null }))}
+      />,
+    );
+
+    expect(screen.getByText(/Plex ratings are off for this run/)).toBeTruthy();
+  });
+
+  it("names the threshold and the count when ratings actually dropped titles", () => {
+    render(
+      <TraceView
+        data={withRatings(
+          policy({ blocked: 3, rated: 9, rated_human: 9 }),
+          ratedOut,
+        )}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        /Across everything they.ve watched, 3 titles they rated 1★ or lower can.t be used as seeds/,
+      ),
+    ).toBeTruthy();
+    // The badge list is this library's visible subset — a different scope, so it must not repeat the
+    // number, and the sentence must not read as a claim about the tab it happens to be sitting on.
+    expect(
+      screen.getByText(/Dropped, among the watches shown here/),
+    ).toBeTruthy();
+    expect(screen.getByText(/The Room \(2003\) · 1★/)).toBeTruthy();
+  });
+
+  it("scopes its count to the whole account, not the library tab it renders in", () => {
+    // The number is account-wide and the badges are one library's recent sample. On a TV tab with no
+    // dropped shows in view, an unscoped "3 titles were dropped" reads as three SHOWS — sending
+    // whoever is asking "why is that show missing" after an answer that was never about TV.
+    const base = okTrace();
+    const data: RunUserTraceResponse = {
+      ...base,
+      trace: {
+        ...base.trace,
+        history: {
+          ...base.trace.history!,
+          recent: ratedOut,
+          watched_by_library: {
+            Movies: { movie: 18, show: 0 },
+            "TV Shows": { movie: 0, show: 9 },
+          },
+          ratings: policy({ blocked: 3, rated: 9, rated_human: 9 }),
+        },
+        seeds: [
+          ...(base.trace.seeds ?? []),
+          {
+            title: "The Pitt",
+            media: "show",
+            library: "TV Shows",
+            tmdb_id: 1,
+            weight: 1,
+          },
+        ],
+      },
+    };
+
+    render(<TraceView data={data} />);
+    fireEvent.click(screen.getByRole("tab", { name: /TV Shows/ }));
+
+    expect(screen.getByText(/Across everything they.ve watched/)).toBeTruthy();
+    // ...and no movie's badge leaks onto the TV tab to be read as a dropped show.
+    expect(screen.queryByText(/The Room/)).toBeNull();
+  });
+
+  it("distinguishes 'on, nothing low enough' from 'on, nothing rated at all'", () => {
+    const { unmount } = render(<TraceView data={withRatings(policy())} />);
+    expect(
+      screen.getByText(/none of their 6 ratings are 1★ or lower/),
+    ).toBeTruthy();
+    unmount();
+
+    render(
+      <TraceView data={withRatings(policy({ rated: 0, rated_human: 0 }))} />,
+    );
+    expect(screen.getByText(/they haven.t rated anything/)).toBeTruthy();
+  });
+
+  it("counts only the ratings a person could have typed, and owns up to the rest", () => {
+    // A PARTLY tool-written account stays trusted, so the fractional values are skipped one by one
+    // while the account looks healthy. Counting them would let the line speak for a 0.75★ rating that
+    // nothing ever looked at — the same silent no-op this summary exists to expose.
+    render(
+      <TraceView data={withRatings(policy({ rated: 10, rated_human: 9 }))} />,
+    );
+
+    expect(
+      screen.getByText(/none of their 9 ratings are 1★ or lower/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/One more rating looks tool-written and wasn.t counted/),
+    ).toBeTruthy();
+  });
+
+  it("says so when every rating on the account was written by a tool", () => {
+    render(
+      <TraceView data={withRatings(policy({ rated: 3, rated_human: 0 }))} />,
+    );
+
+    expect(
+      screen.getByText(/none of their 3 ratings were typed in Plex/),
+    ).toBeTruthy();
+  });
+
+  it("says a tool-managed account was disbelieved — the silent no-op this exists for", () => {
+    render(
+      <TraceView
+        data={withRatings(
+          policy({ trusted: false, rated: 40, rated_human: 4 }),
+        )}
+      />,
+    );
+
+    expect(
+      screen.getByText(/another tool is writing ratings on this account/),
+    ).toBeTruthy();
+    // It must not also claim the feature was doing its job.
+    expect(screen.queryByText(/can.t be used as seeds/)).toBeNull();
+  });
+
+  it("invents no policy for a run recorded before one was traced", () => {
+    const base = okTrace();
+    const data: RunUserTraceResponse = {
+      ...base,
+      trace: {
+        ...base.trace,
+        history: { ...base.trace.history!, recent: ratedOut },
+      },
+    };
+
+    render(<TraceView data={data} />);
+
+    expect(screen.queryByText(/Plex ratings are/)).toBeNull();
+    // ...but the old list still explains the gap in the seeds, exactly as it always did.
+    expect(
+      screen.getByText(/Not used as seeds — they rated these low in Plex/),
+    ).toBeTruthy();
   });
 });

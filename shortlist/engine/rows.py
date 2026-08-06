@@ -32,7 +32,7 @@ from shortlist.engine.delivery import (
     sections_for_keys,
     target_sections,
 )
-from shortlist.engine.history import derive_seeds, disliked_seed_keys
+from shortlist.engine.history import RatingsPolicy, derive_seeds, ratings_policy
 from shortlist.engine.models import (
     SHARED_SLUG_PREFIX,
     Candidate,
@@ -807,7 +807,7 @@ def _record_history_trace(
     watched_shows: dict[int, tuple[int, int | None]],
     library_of_watch=lambda _item: "",
     library_of_seed=lambda _seed: "",
-    disliked: set[tuple[int, MediaType]] | None = None,
+    ratings: RatingsPolicy | None = None,
 ) -> None:
     """File the history/seeds/watched stage of the trace: the most recent watches, the seeds derived
     from them (the widest set any row uses), and a watched summary. Display only.
@@ -817,16 +817,28 @@ def _record_history_trace(
     names, so grouping by media type alone would be wrong. Both default to "" (unknown), which the UI
     falls back to a media-type label for.
 
-    ``disliked`` is recorded, not applied — the seeds handed in were already filtered by it. It is
+    ``ratings`` is recorded, not applied — the seeds handed in were already filtered by it. It is
     here so a watch that did NOT become a seed can say why: a title silently missing from the seed
     list is the single hardest thing to explain about a run, and "they rated it 1 star" is the whole
-    answer. It must be the SAME set the run filtered with, passed in rather than recomputed here:
+    answer. It must be the SAME verdict the run filtered with, passed in rather than recomputed here:
     recomputing it from a threshold made the trace answer over the full history while the rows
     answered over their slices, so the explanation could name a title the run had kept, or stay
     silent about one it had dropped.
+
+    Its summary is filed whole (`history.ratings`) because the OUTCOME cannot be read backwards from
+    the watch list: no rated-out titles means the setting is off, or nobody rated anything low, or
+    every rating on the account was tool-written and disbelieved — three very different runs that
+    otherwise render as the same silence. Omitted entirely when no policy is passed, because the UI
+    already degrades gracefully on a run that predates this: recording a DEFAULT there would publish
+    "ratings were off" — a confident, possibly false statement — in place of "we didn't record it".
+
+    Only ever per-person rows reach here. Shared rows are built by `_run_shared` from several people's
+    pooled history, deliberately without `disliked` (one person's rating must not reshape a row
+    everyone sees), and record no `history` stage at all (only `gathers`) — so this summary can never
+    appear on one.
     """
     recent = sorted(history, key=lambda i: i.watched_at, reverse=True)[:_TRACE_HISTORY_SAMPLE]
-    disliked = disliked or set()
+    disliked = ratings.blocked if ratings else set()
     seeds = max((seeds_for(spec) for spec in specs), key=len, default=[])
     # True per-library watched totals over the FULL history — NOT the recent sample. The sample is
     # time-ordered and capped, so a heavy-TV watcher's Movies tab would sample only a handful of recent
@@ -864,6 +876,20 @@ def _record_history_trace(
             lib: {"movie": len(b["movie"]), "show": len(b["show"])} for lib, b in by_library.items()
         },
     }
+    if ratings is not None:
+        # The rating policy this run actually used — not what Settings says now. A run is read weeks
+        # later, and a setting changed since would otherwise rewrite the history of what happened.
+        report.trace["history"]["ratings"] = {
+            "enabled": ratings.enabled,
+            "threshold": ratings.threshold,
+            "trusted": ratings.trusted,
+            # Both counted over the WHOLE history, unlike `rating_blocked` above, which can only speak
+            # for the bounded recent sample. The UI has to say which scope it is quoting: the two
+            # numbers on that card do not describe the same set of titles.
+            "blocked": len(ratings.blocked),
+            "rated": ratings.rated,
+            "rated_human": ratings.rated_human,
+        }
     report.trace["seeds"] = [
         {
             "title": s.title,
@@ -1116,16 +1142,22 @@ class RowPolicy:
     seed_cache: dict[tuple, list] = field(default_factory=dict)
 
     @cached_property
-    def disliked(self) -> set[tuple[int, MediaType]]:
-        """Titles this person rated low in Plex, decided ONCE over their whole history.
+    def ratings(self) -> RatingsPolicy:
+        """What Plex ratings do to this person's seeds tonight — the verdict AND the reasons behind it.
 
-        Once, and over everything, is the load-bearing part. `seeds_for` hands `derive_seeds` a row's
-        SLICE of history (narrowed by the row's media and libraries), and whether a person's ratings
-        can be trusted at all is an account-level judgement that abstains on a small sample — so
-        deciding it per row let a movies-only row and a TV-only row reach opposite verdicts about the
-        same person, and the run trace (which reads the full history) disagree with both.
+        Decided ONCE over their whole history. Once, and over everything, is the load-bearing part.
+        `seeds_for` hands `derive_seeds` a row's SLICE of history (narrowed by the row's media and
+        libraries), and whether a person's ratings can be trusted at all is an account-level judgement
+        that abstains on a small sample — so deciding it per row let a movies-only row and a TV-only
+        row reach opposite verdicts about the same person, and the run trace (which reads the full
+        history) disagree with both.
         """
-        return disliked_seed_keys(self.user.history, self.cfg.dislike_threshold)
+        return ratings_policy(self.user.history, self.cfg.dislike_threshold)
+
+    @property
+    def disliked(self) -> set[tuple[int, MediaType]]:
+        """Titles this person rated low in Plex — the seeds `ratings` says to drop."""
+        return self.ratings.blocked
 
     def load_watched_breakdown(self) -> None:
         """Fill ``watched_movies``/``watched_shows`` from this person's history.
@@ -1386,7 +1418,7 @@ def _cold_start(
         policy.watched_shows,
         library_of_watch=library_of_watch,
         library_of_seed=library_of_seed,
-        disliked=policy.disliked,
+        ratings=policy.ratings,
     )
     _record_cold_start_trace(report, base_cold)
     _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": 0})
@@ -1421,7 +1453,7 @@ def _warm_start(
         policy.watched_shows,
         library_of_watch=library_of_watch,
         library_of_seed=library_of_seed,
-        disliked=policy.disliked,
+        ratings=policy.ratings,
     )
     _emit(ctx, user.slug, "candidates", {"history": len(user.history), "seeds": report.counts.seeds})
     for spec in specs:  # build every row's pool up front so counts and demand see them all

@@ -459,10 +459,16 @@ class WatchedTitle(Base):
     # overwhelming majority (0.27% of watched rows carried one on a real 50-account server). NULL is
     # therefore the load-bearing value and must stay distinguishable from 0.0, an actual rating.
     #
-    # A rating change does NOT move `lastViewedAt`, so the incremental read cannot see one: the walk
-    # is ordered by that stamp and stops at the cursor. Only the periodic full re-read
-    # (`sync.watch_full_days`) refreshes this column, which caps how quickly a new rating takes
-    # effect. See `docs/reference.md`.
+    # A rating change does NOT move `lastViewedAt`, which decides how soon it lands — but only for an
+    # OLD title. The incremental walk is ordered by that stamp and stops at the cursor, and every row
+    # it does return is upserted with its current `userRating`, so rating something watched since the
+    # last sync arrives on the next one. It is a rating on a title older than the cursor that waits
+    # for the full re-read (`sync.watch_full_days`).
+    #
+    # Measured on a live server after the 1.2.0 upgrade: of three accounts with ratings, two landed
+    # on an ordinary incremental sync and only the third — an older watch — needed the full pass. An
+    # earlier version of this comment claimed the incremental read "cannot see one", which is wrong
+    # and undersold the common case: people rate what they just finished watching.
     user_rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

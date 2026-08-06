@@ -17,11 +17,11 @@ class TestReasonFor:
     def test_genres_are_preferred_when_the_candidate_has_them(self):
         """The primary reason format: name the shared tastes AND the seeding title."""
         candidate = make_candidate(2, "Arrival", seeds=[_seed()], genres=["Sci-Fi", "Drama"])
-        assert reason_for(candidate) == "Because you liked sci-fi, drama like Dune"
+        assert reason_for(candidate) == "Because you watched sci-fi, drama like Dune"
 
     def test_at_most_two_genres_are_named(self):
         candidate = make_candidate(2, "Arrival", seeds=[_seed()], genres=["Sci-Fi", "Drama", "Action"])
-        assert reason_for(candidate) == "Because you liked sci-fi, drama like Dune"
+        assert reason_for(candidate) == "Because you watched sci-fi, drama like Dune"
 
     def test_bare_seed_when_no_genres(self):
         candidate = make_candidate(2, "Arrival", seeds=[_seed()], genres=[])

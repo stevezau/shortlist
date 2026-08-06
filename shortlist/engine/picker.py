@@ -33,9 +33,13 @@ _SEEDLESS_REASON_DEFAULT = "Matched to your taste"
 def reason_for(candidate: Candidate) -> str:
     """A one-line "why you're seeing this" built from the candidate's own data.
 
-    Prefers the genres it shares with the seeding title ("Because you liked sci-fi, action like
+    Prefers the genres it shares with the seeding title ("Because you watched sci-fi, action like
     Dune"), falls back to the bare seed title, and — for a seedless pick (discover / web /
     cold-start) — to a per-source line that matches how it was actually found.
+
+    "Watched", never "liked": a seed is a title from their history, weighted by watch count and
+    recency. Ratings only ever REMOVE a seed (`history.disliked_seed_keys`) — nothing in the engine
+    marks a title as liked, so claiming it would be a guess dressed up as a fact.
     """
     seed = candidate.top_seed
     if not seed:
@@ -45,7 +49,7 @@ def reason_for(candidate: Candidate) -> str:
         return _SEEDLESS_REASON_DEFAULT
     if candidate.genres:
         genres = ", ".join(candidate.genres[:2]).lower()
-        return f"Because you liked {genres} like {seed.title}"
+        return f"Because you watched {genres} like {seed.title}"
     return f"Because you watched {seed.title}"
 
 
