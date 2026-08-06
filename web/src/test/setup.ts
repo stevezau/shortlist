@@ -22,3 +22,20 @@ if (typeof globalThis.EventSource === "undefined") {
   // @ts-expect-error minimal stub — jsdom ships no EventSource at all
   globalThis.EventSource = NoopEventSource;
 }
+
+// Run animation frames SYNCHRONOUSLY. jsdom schedules `requestAnimationFrame` on a real timer, so a
+// callback can still be queued when a test file finishes and vitest tears the jsdom environment
+// down — it then runs in a world with no `window` and vitest fails the ENTIRE run with an unhandled
+// `ReferenceError: window is not defined`, while reporting every individual test as passed. That is
+// a maximally confusing failure: nothing is red except the run.
+//
+// It bit the v1.2.0 tag build, on a commit whose web suite had already passed three times, so it is
+// a genuine race rather than a broken test. `issue.tsx` is the only rAF caller in the app (its check
+// panel defers a frame so the scroll target has real geometry), and in jsdom that deferral buys
+// nothing — there is no layout, `matchMedia` doesn't exist, and `scrollIntoView` is optional-chained
+// away. Running the callback inline removes the window in which it can outlive its environment.
+globalThis.requestAnimationFrame = (cb: FrameRequestCallback): number => {
+  cb(performance.now());
+  return 0;
+};
+globalThis.cancelAnimationFrame = (): void => {};
