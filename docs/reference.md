@@ -111,12 +111,17 @@ POST /api/users/{id}/blocked-seeds {tmdb_id, title?, media_type?, year?} · DELE
      Titles that must never SEED this person's recommendations. The watch stays in their history, it just stops shaping their picks.
      Stored on `users.prefs`; an install that predates the richer shape holds bare TMDB ids and keeps working unchanged.
 GET  /api/users/{id}/history (recent watches read LIVE from Plex; each item carries `title`, `media_type`, `year`, plus `season`/`episode`/`episode_title` for TV)
-GET  /api/users/{id}/watched?q=&media_type=movie|show&limit=&offset= -> {items, total, last_full_sync_at, synced_titles}
+GET  /api/users/{id}/watched?q=&media_type=movie|show&limit=&offset= -> {items, total, last_full_sync_at, synced_titles, dislike_threshold, ratings_trusted, rated_count}
      Search this person's CACHED watched set — the same set recommendations are filtered against, so
      it can answer "I watched that, why was it recommended?". Unlike `/history` it never touches Plex,
      so it searches the whole set rather than the newest page, and each item carries `watch_count`
      plus `viewed_leaf_count`/`leaf_count` (null for movies) for the "3 of 8 episodes" progress.
      `last_full_sync_at` is null while ANY library has never had a full read — the set is incomplete.
+     Each item also carries `user_rating` — what THIS person rated it in Plex, 0–10, or null if they
+     never did (nearly always). The three page-level rating fields say whether that rating is acting:
+     `dislike_threshold` is the cutoff in force (null = `recommendations.use_plex_ratings` is off),
+     and `ratings_trusted` is false when this account's ratings look tool-written, in which case none
+     of them are used whatever the threshold says. `rated_count` counts the whole set, not the page.
 ```
 
 ### Watching account (the owner's escape from seeing everyone's rows)
