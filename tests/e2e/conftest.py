@@ -237,6 +237,14 @@ def reset_fake_plex(fake_plex) -> Iterator[FakePlexState]:
     state.users.clear()
     state.users.update(fresh.users)
     state.history.clear()
+    # Every mutable collection on the state needs a line here, and this list is maintained BY HAND —
+    # deliberately, because a blanket copy from `fresh` would clobber the fields the harness owns
+    # (`pms_url`, set only once the fake server has a port). That makes it the kind of fixture a new
+    # field silently escapes: `user_ratings` was added without one of these lines, so a test that
+    # rated something left the rating in place for whatever ran next, and the test asserting "nobody
+    # has rated anything" failed depending purely on execution order. It passed locally and failed in
+    # CI. If you add a field to FakePlexState that a test can write, add its reset here.
+    state.user_ratings.clear()
     for account_id, keys in (
         (201, SARAH_WATCHED),
         (202, MIKE_WATCHED),
