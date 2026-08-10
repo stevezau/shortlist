@@ -105,8 +105,8 @@ export function freshnessBadgeLabel(pct: number): string {
  * still fill with 1990s titles; that combination is what this setting is for.
  *
  * Defaults to 50 to match the server (`recommendations.recency`) — the seed used only until settings
- * load. Every install gets this, existing servers included (0062 pinned them to 0; 0063 released
- * them again at the owner's call), so it is never a value only new servers see.
+ * load. Every install gets this, existing servers included — no migration pins an older value,
+ * so an upgraded server ranks exactly like a fresh one unless someone moves the slider.
  */
 export const RECENCY_DEFAULT = 50;
 

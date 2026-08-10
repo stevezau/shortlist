@@ -33,7 +33,7 @@ def _alembic(config_dir: Path) -> AlembicConfig:
 def _write_setting(config_dir: Path, key: str, value) -> None:
     """Write a setting exactly as the app does — the `{"v": ...}` envelope `SettingsStore` reads
     back, and the NOT NULL `updated_at` its ORM default fills in. A bare value here would test a
-    shape the product never writes, and would have hidden both bugs 0062 shipped with."""
+    shape the product never writes — the "fake must be no easier than the real server" rule."""
     con = sqlite3.connect(config_dir / "shortlist.db")
     try:
         con.execute(
@@ -508,17 +508,16 @@ class TestUpgradingAnOldInstall:
 class TestRecencyDefaultAppliesToEveryInstall:
     """`recommendations.recency` defaults to 0.5 for EVERY install, new or existing.
 
-    0062 originally pinned 0.0 for servers already in use so an upgrade could not re-rank them. The
-    owner chose the opposite (2026-08-11): the old default is the bug, so every server should get
-    the corrected one and opt out with the slider rather than opt in. 0063 removes that pin.
-
-    0062 is left in the chain rather than deleted — a database that already stamped it would fail to
-    migrate if the revision vanished — so a server upgrading through both writes the pin and then
-    drops it, ending where a fresh install starts.
+    No migration is involved, and that is the point worth pinning. An earlier pair of migrations
+    pinned 0.0 for servers already in use so an upgrade could not re-rank them; the owner chose the
+    opposite (2026-08-11) — age-blind ranking is the behaviour the setting exists to correct, so
+    every server adopts the corrected default and opts OUT with the slider. With nothing to pin, the
+    `DEFAULTS` entry does the whole job, and a database migrated to head must carry no row for the
+    key at all.
     """
 
     def _value(self, config_dir: Path) -> tuple[bool, object]:
-        """(has_row, effective value) — the distinction the whole migration turns on."""
+        """(has_row, effective value) — a stored row would mean something is pinning this again."""
         from shortlist.server.db.session import make_session_factory
         from shortlist.server.services.secrets import SecretBox
         from shortlist.server.settings_store import SettingsStore
@@ -528,51 +527,28 @@ class TestRecencyDefaultAppliesToEveryInstall:
             store = SettingsStore(session, SecretBox(config_dir))
             return store.has_row("recommendations.recency"), store.get("recommendations.recency")
 
-    def test_a_server_already_in_use_also_gets_the_new_default(self, tmp_path: Path):
-        """The owner's call: an existing server adopts the corrected default too, rather than
-        keeping age-blind ranking until someone finds the slider."""
-        command.upgrade(_alembic(tmp_path), "0061")
-        _write_setting(tmp_path, "setup.completed", True)
-
-        run_migrations(tmp_path)
-
-        has_row, value = self._value(tmp_path)
-        assert not has_row, "no pin should survive — an existing server follows DEFAULTS like a new one"
-        assert value == 0.5
-
-    def test_a_server_that_stamped_the_old_pin_is_released_from_it(self, tmp_path: Path):
-        """The upgrade path that actually matters: a :dev server that already ran 0062 carries the
-        pin row on disk. 0063 has to remove it, or that server alone stays age-blind for ever."""
-        command.upgrade(_alembic(tmp_path), "0062")
-        _write_setting(tmp_path, "setup.completed", True)
-        _write_setting(tmp_path, "recommendations.recency", 0.0)
-
+    def test_a_fresh_install_gets_it(self, tmp_path: Path):
         run_migrations(tmp_path)
 
         assert self._value(tmp_path) == (False, 0.5)
 
-    def test_a_fresh_install_gets_the_new_default(self, tmp_path: Path):
+    def test_a_server_already_in_use_gets_it_too(self, tmp_path: Path):
+        """Nothing may write a row behind the owner's back: an upgraded server has to reach the same
+        effective value a new one does, or the default silently means two different things."""
+        command.upgrade(_alembic(tmp_path), "0061")
+        _write_setting(tmp_path, "setup.completed", True)
+
         run_migrations(tmp_path)
 
         has_row, value = self._value(tmp_path)
-        assert not has_row, "a fresh install must follow DEFAULTS, not carry a pinned row"
+        assert not has_row, "a migration is pinning this again — an upgrade must not stash a value"
         assert value == 0.5
 
-    def test_a_half_configured_install_counts_as_fresh(self, tmp_path: Path):
-        """Installed but never finished the wizard: no rows have ever been built, so there is no
-        behaviour to preserve and the new default is the right one."""
-        command.upgrade(_alembic(tmp_path), "0061")
-
-        run_migrations(tmp_path)
-
-        assert not self._value(tmp_path)[0]
-
     def test_an_explicit_choice_is_never_overwritten(self, tmp_path: Path):
-        """Someone on :dev who already moved the slider keeps exactly what they chose."""
+        """Someone who turned it down keeps exactly what they chose, upgrade or not."""
         command.upgrade(_alembic(tmp_path), "0061")
-        _write_setting(tmp_path, "setup.completed", True)
-        _write_setting(tmp_path, "recommendations.recency", 0.8)
+        _write_setting(tmp_path, "recommendations.recency", 0.0)
 
         run_migrations(tmp_path)
 
-        assert self._value(tmp_path)[1] == 0.8
+        assert self._value(tmp_path) == (True, 0.0)

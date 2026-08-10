@@ -163,7 +163,7 @@ describe("RecommendationsSection", () => {
   });
 
   it("shows a fresh install at the shipped default", () => {
-    // No stored row: a new server follows DEFAULTS (0.5), which is the whole point of 0062's split.
+    // No stored row: every server, new or upgraded, follows DEFAULTS (0.5).
     renderSection({});
     expect(
       screen.getByRole("slider", { name: /release date counts/i }),

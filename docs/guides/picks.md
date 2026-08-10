@@ -57,10 +57,10 @@ Settings → Finding titles has four more dials, each of which a row can overrid
   looks like: a library holds decades of catalog against a trickle of new releases, so a ranker with
   no opinion about age just inherits that skew.
 
-  **This applies to existing servers too.** Upgrading to the release that raised the default shifts
-  each row towards newer titles on its next refresh night — staggered by each row's freshness rather
-  than all at once. Nothing about who can see what changes. If you preferred the old behaviour, set
-  the slider back to `0` and ranking ignores release date exactly as it used to.
+  **This applies to existing servers too.** Upgrading to the release that introduced it shifts each
+  row towards newer titles on its next refresh night — staggered by each row's freshness rather than
+  all at once. Nothing about who can see what changes. If you preferred the old behaviour, set the
+  slider to `0` and ranking ignores release date exactly as it used to.
 
   It is a preference, not a filter. Nothing is excluded for being old — an older title simply has
   to be a better match to win a slot, so a classic three of someone's watches point at still beats a
