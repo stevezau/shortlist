@@ -126,6 +126,56 @@ describe("ConnectionCard", () => {
     expect(putSettings.mock.calls[0]?.[0]).toEqual({ "tmdb.apikey": "abc123" });
   });
 
+  it("puts a cost on its own badge instead of burying it mid-paragraph", async () => {
+    // Trakt's copy read as one five-line block, and "needs a paid VIP subscription" sat in the
+    // middle of it — so people went looking for a key they could not create (issue #73). The thing
+    // that stops you has to be the thing you see first.
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ConnectionCard
+          service="trakt"
+          title="Trakt"
+          requires="Needs paid Trakt VIP"
+          purpose="Trakt is a site where people log what they watch."
+          next="Switch the Trakt source on once the key is saved."
+          glyph={<span>logo</span>}
+          settings={{}}
+          summary=""
+          fields={[
+            { key: "trakt.client_id", label: "API key", kind: "password" },
+          ]}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Needs paid Trakt VIP")).toBeInTheDocument();
+    expect(screen.getByText("Optional")).toBeInTheDocument();
+    // ...and the three parts are separate elements, not one run-on string.
+    expect(
+      screen.getByText(/Trakt is a site where people log/),
+    ).not.toHaveTextContent("Needs paid Trakt VIP");
+  });
+
+  it("marks a connection Shortlist cannot run without as Required", async () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ConnectionCard
+          service="tmdb"
+          title="TMDB"
+          need="required"
+          purpose="The catalogue Shortlist looks titles up in."
+          glyph={<span>logo</span>}
+          settings={{}}
+          summary=""
+          fields={[{ key: "tmdb.apikey", label: "API key", kind: "password" }]}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.queryByText("Optional")).not.toBeInTheDocument();
+  });
+
   it("re-tests a REPLACED key, not just a first-time one", async () => {
     // The auto-test fires once per mount, so an already-configured card had already used it up by
     // the time someone edits it. Saving a new key then left the status dot showing the OLD key's

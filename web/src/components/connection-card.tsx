@@ -1,8 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
-import { ExternalLink, PlugZap, Trash2 } from "lucide-react";
+import { ExternalLink, PlugZap, Trash2, TriangleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { Segmented } from "@/components/segmented";
+import { Badge } from "@/components/ui/badge";
 import { TestResult } from "@/components/test-result";
 import { Button } from "@/components/ui/button";
 import {
@@ -61,7 +62,10 @@ export type ConnectionField =
 export function ConnectionCard({
   service,
   title,
+  need = "optional",
+  requires,
   purpose,
+  next,
   glyph,
   settings,
   fields,
@@ -70,8 +74,18 @@ export function ConnectionCard({
 }: {
   service: TestableService;
   title: string;
-  /** Plain-English, non-technical explanation of what this connection is for. */
+  /** Whether Shortlist works without this. Shown as a badge, so it is answerable at a glance
+      instead of being the first clause of a paragraph on every card. */
+  need?: "required" | "optional";
+  /** A cost or precondition worth seeing BEFORE going to get a key — "Needs paid Trakt VIP". Given
+      its own warning-toned line, because buried mid-sentence is exactly how someone ends up hunting
+      for a key they cannot create (issue #73). */
+  requires?: string;
+  /** What the service is and what Shortlist does with it. One or two sentences. */
   purpose: string;
+  /** What to do once it is connected, or when it matters — kept out of `purpose` so the card reads
+      as "what is this" then "what do I do", rather than one undifferentiated block. */
+  next?: string;
   /** The service's brand mark, shown in the logo tile. */
   glyph: ReactNode;
   settings: Settings;
@@ -279,7 +293,24 @@ export function ConnectionCard({
               </div>
             ))}
         </CardTitle>
-        <CardDescription>{purpose}</CardDescription>
+        {/* Four separate things, four separate lines: is it needed, what does it cost, what is it,
+            what do I do next. As one paragraph they all read at the same weight, and the one that
+            stops you (a paid subscription) was the easiest to skim past. */}
+        <CardDescription className="space-y-2">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <Badge variant={need === "required" ? "default" : "secondary"}>
+              {need === "required" ? "Required" : "Optional"}
+            </Badge>
+            {requires && (
+              <Badge variant="warning">
+                <TriangleAlert aria-hidden className="h-3 w-3" />
+                {requires}
+              </Badge>
+            )}
+          </span>
+          <span className="block">{purpose}</span>
+          {next && <span className="block">{next}</span>}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {editing ? (

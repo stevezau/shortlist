@@ -60,7 +60,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="plex"
           title="Plex"
-          purpose="Your media server — the source of each person's watch history, and where the personalized rows appear."
+          need="required"
+          purpose="Your media server. Shortlist reads each person’s watch history from it, and builds their row back into it."
           settings={settings}
           summary={settingString(settings, "plex.url")}
           glyph={<PlexGlyph />}
@@ -77,7 +78,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="tautulli"
           title="Tautulli"
-          purpose="Optional. Tautulli is the monitoring dashboard many people run alongside Plex. Shortlist only reads the friendlier names it knows your users by, so rows say “Sarah” rather than an email address."
+          purpose="Tautulli is the monitoring dashboard many people run alongside Plex."
+          next="Shortlist reads nothing but the friendlier names it knows your users by, so rows say “Sarah” rather than an email address."
           settings={settings}
           summary={settingString(settings, "tautulli.url")}
           glyph={<TautulliGlyph />}
@@ -94,7 +96,9 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="tmdb"
           title="TMDB"
-          purpose="Required. TMDB (The Movie Database) is the free film and TV catalogue Shortlist looks titles up in — it is where “people who watched this also watched…” comes from. Signing up for a key is free."
+          need="required"
+          purpose="TMDB (The Movie Database) is the free catalogue Shortlist looks titles up in. It is where “people who watched this also watched…” comes from."
+          next="A key is free — sign up, then paste it here."
           settings={settings}
           summary={
             settingString(settings, "tmdb.apikey") ? "API key saved" : ""
@@ -112,7 +116,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="llm"
           title="AI provider"
-          purpose="Optional. Finds new titles by searching the web for your tastes. Shortlist works fully with no AI at all — this only adds the web-search source."
+          purpose="An AI provider lets Shortlist search the web for titles that match someone’s taste, and explain why it picked each one."
+          next="Shortlist works fully without it. This only adds the web-search source."
           settings={settings}
           summary={
             // Show the provider's friendly label ("Claude", "None"), never the raw id or a
@@ -187,7 +192,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="radarr"
           title="Radarr"
-          purpose="Optional. Radarr is the app that fetches films for your library. Connect it and Shortlist can ask it for a film it wanted to recommend but couldn’t find on your server."
+          purpose="Radarr is the app that fetches films for your library."
+          next="Connect it and Shortlist can ask for a film it wanted to recommend but couldn’t find on your server."
           settings={settings}
           summary={settingString(settings, "requests.radarr.url")}
           glyph={<Film aria-hidden className="text-primary" />}
@@ -208,7 +214,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="sonarr"
           title="Sonarr"
-          purpose="Optional. Sonarr is Radarr’s equivalent for TV. Connect it and Shortlist can ask it for a show it wanted to recommend but couldn’t find on your server."
+          purpose="Sonarr is Radarr’s equivalent for TV."
+          next="Connect it and Shortlist can ask for a show it wanted to recommend but couldn’t find on your server."
           settings={settings}
           summary={settingString(settings, "requests.sonarr.url")}
           glyph={<Tv aria-hidden className="text-primary" />}
@@ -229,9 +236,12 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="trakt"
           title="Trakt"
-          // Trakt made API keys VIP-only, so people were following our instructions, finding no way
-          // to create a key, and reporting it as a Shortlist bug (issue #73). Say it before they go.
-          purpose="Optional, and Trakt now charges for this. Trakt is a site where people log what they watch, and its “related titles” are a second place to look for suggestions that often catches things TMDB misses. Creating an API key needs a paid Trakt VIP subscription — everything in Shortlist works without it. Switch the Trakt source on under Finding titles once the key is saved."
+          // Trakt made API keys VIP-only, so people followed our instructions, found no way to
+          // create a key, and reported it as a Shortlist bug (issue #73). The badge says it before
+          // they go looking, rather than burying it mid-paragraph where it was skimmed past.
+          requires="Needs paid Trakt VIP"
+          purpose="Trakt is a site where people log what they watch. Its “related titles” often catch suggestions TMDB misses."
+          next="Creating an API key needs a paid Trakt VIP subscription. Once the key is saved, switch the Trakt source on under Finding titles."
           settings={settings}
           summary={
             settingString(settings, "trakt.client_id") ? "API key saved" : ""
@@ -251,7 +261,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           // Two consumers, not one: `requests.rating_source` gates what gets requested, and
           // `recommendations.rating_source` orders any row set to "Highest rated". Naming only
           // Requests left the row-ordering setting looking like it needed nothing.
-          purpose="Optional. MDBList fetches a title’s IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. Needed if you sort a row by “Highest rated” on anything but TMDB, or judge request candidates by those scores. Free key."
+          purpose="MDBList fetches a title’s IMDb, Rotten Tomatoes, Metacritic and Trakt scores in one lookup. The key is free."
+          next="Needed only if you sort a row by “Highest rated” on anything but TMDB, or judge requests by those scores."
           settings={settings}
           summary={
             settingString(settings, "requests.mdblist.apikey")
@@ -272,7 +283,8 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="exa"
           title="Exa (web search)"
-          purpose="Optional. Exa is a web search built for AI to read. Shortlist searches it for each of a person’s recent watches, then hands the results to your AI provider to pick from. Works with any provider — and it is the only way a local model like Ollama can search the web at all."
+          purpose="Exa is a web search built for AI to read. Shortlist searches it for each of a person’s recent watches, then hands the results to your AI provider to pick from."
+          next="Works with any provider, and it is the only way a local model like Ollama can search the web at all."
           settings={settings}
           summary={settingString(settings, "exa.apikey") ? "API key saved" : ""}
           glyph={<Globe aria-hidden className="text-primary" />}
