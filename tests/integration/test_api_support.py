@@ -1340,6 +1340,30 @@ class TestSharingCountsLabelsNotClauses:
         assert sarah["missing"] == []
         assert body["missing_excludes_for"] == [], "a correct server must not be reported as short"
 
+    def test_an_exclusion_written_percent_encoded_is_not_reported_missing(self, client, monkeypatch):
+        """This report must decide "is that label present" exactly the way the engine does.
+
+        plex.tv stores filter strings byte-for-byte, so a value comes back in whatever encoding the
+        last writer used, and `privacy` therefore compares them URL-DECODED (issue #77). This tool
+        compared raw — so an excluded label written in the encoded form read as absent here, and the
+        one question the report exists to answer ("can anyone see a row that isn't theirs") would be
+        answered with a leak that isn't there. Our own slugs are `[a-z0-9_]` and never need encoding,
+        which is what keeps this latent rather than live; the two comparisons still must not disagree.
+        """
+        with client.app.state.sessions() as session:
+            session.query(User).filter(User.slug == "sarah").one().plex_account_id = 1000
+            session.commit()
+
+        self._accounts(monkeypatch, {"sarah": {"filterMovies": "label!=%73hortlist_mike"}})
+        _rows_on_plex(monkeypatch, ["mike"])
+        _enable(client)
+
+        body = client.get("/api/support/sharing").json()
+
+        sarah = next(a for a in body["accounts"] if a["user"] == "sarah")
+        assert sarah["missing"] == []
+        assert body["missing_excludes_for"] == []
+
     def test_an_enabled_user_with_no_row_yet_is_not_reported_as_a_leak(self, client, monkeypatch):
         """Issue #76. The engine only excludes labels it FOUND on the PMS, so a user who has never
         received a row (cold start, zero picks, a delivery that failed) has no label in anybody's

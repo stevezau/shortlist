@@ -29,6 +29,7 @@ from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
 from typing import Any
+from urllib.parse import unquote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -88,6 +89,17 @@ _ERROR_LINES = 40
 #: The label prefix every Shortlist exclusion carries, lowercased. Plex title-cases new labels, so
 #: comparisons are always case-insensitive.
 _LABEL_PREFIX = "shortlist_"
+
+
+def _is_ours(value: str) -> bool:
+    """Is this filter value one of Shortlist's own labels?
+
+    Matched URL-DECODED, the same way `privacy` matches them: plex.tv stores whatever encoding the
+    last writer used, so the same label reaches us written more than one way. Comparing raw bytes
+    here would report a label this account already excludes as missing — the opposite of the one
+    question this report exists to answer.
+    """
+    return unquote(value).lower().startswith(_LABEL_PREFIX)
 
 
 # --------------------------------------------------------------------------------------------
@@ -1934,8 +1946,8 @@ async def sharing(request: Request) -> dict:
                             theirs.append(f"{name}: {raw} (unparseable)")
                             continue
                         for condition in conditions:
-                            mine = [v for v in condition.values if v.lower().startswith(_LABEL_PREFIX)]
-                            others = [v for v in condition.values if not v.lower().startswith(_LABEL_PREFIX)]
+                            mine = [v for v in condition.values if _is_ours(v)]
+                            others = [v for v in condition.values if not _is_ours(v)]
                             if mine:
                                 ours.setdefault(name, []).extend(sorted(mine))
                             if others or not mine:
@@ -1964,7 +1976,7 @@ async def sharing(request: Request) -> dict:
                             # that would hide them from their own row (see `privacy.py`).
                             "should_hide": sorted(all_labels - {labelled.get(account.id, "")}),
                             "missing": sorted(
-                                (all_labels - {labelled.get(account.id, "")}) - {v.lower() for v in ours_flat}
+                                (all_labels - {labelled.get(account.id, "")}) - {unquote(v).lower() for v in ours_flat}
                             ),
                         }
                     )
