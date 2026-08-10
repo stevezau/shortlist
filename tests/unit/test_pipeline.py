@@ -4676,3 +4676,82 @@ class TestUnstartedOnlyIsRecheckedOnCarryForward:
         """The bug: the configuration the editor recommends for this toggle."""
         self._ctx(ctx, pct=0.5)
         assert 50 not in self._delivered(ctx, mock_plextv), "a started series survived carry-forward"
+
+
+class TestTheTraceExplainsWhatHappenedToTheRow:
+    """The run page could say what a row HOLDS but never why it holds it.
+
+    Most nights a row is redelivered untouched, and the report looked identical to a rebuild — so
+    "I changed a setting and nothing moved" was unanswerable without querying the database. It came
+    up three times in one afternoon on a real server.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+    KEY = ("sarah", "picked", "1")
+
+    def _ctx(self, ctx: EngineContext, *, freshness: float) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 16)}}
+        pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 16)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=3, media="movie", freshness=freshness, recency=0.75)
+        ]
+        ctx.config.min_history = 1
+        ctx.run_day = self.RUN_DAY
+
+    def _selection(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        entries = report.users[0].trace.get("selection") or []
+        assert entries, "the trace recorded no selection at all"
+        return entries[0]
+
+    def _prior(self):
+        return [
+            Pick(
+                tmdb_id=t, rating_key=2000 + t, title=f"T{t}", rank=i + 1, reason="kept",
+                media_type=MediaType.MOVIE, collection_slug="picked", section_key="1",
+                library="Movies", recipe="same",
+            )
+            for i, t in enumerate([10, 11, 12])
+        ]
+
+    def test_a_first_build_is_recorded_as_rebuilt(self, ctx: EngineContext, mock_plextv):
+        self._ctx(ctx, freshness=1.0)
+        assert self._selection(ctx, mock_plextv)["decision"] == "rebuilt"
+
+    def test_a_row_left_alone_says_so(self, ctx: EngineContext, mock_plextv):
+        """The line that would have saved three rounds of confusion: this row was NOT re-picked."""
+        self._ctx(ctx, freshness=0.0)
+        ctx.previous_picks = {self.KEY: self._prior()}
+        ctx.previous_recipes = {}  # unknown recipe = "nothing to compare", so no forced rebuild
+
+        entry = self._selection(ctx, mock_plextv)
+
+        assert entry["decision"] == "carried_forward"
+        assert entry["refresh_night"] is False
+
+    def test_a_settings_change_is_named_as_the_reason(self, ctx: EngineContext, mock_plextv):
+        """Distinct from a plain rebuild — this is the row the owner's edit actually moved."""
+        self._ctx(ctx, freshness=0.0)
+        ctx.previous_picks = {self.KEY: self._prior()}
+        ctx.previous_recipes = {self.KEY: "a-different-recipe"}
+
+        assert self._selection(ctx, mock_plextv)["decision"] == "settings_changed"
+
+    def test_it_carries_the_settings_that_decided_the_row(self, ctx: EngineContext, mock_plextv):
+        """The settings are reported from the values the branch itself used, so the trace cannot
+        claim one thing while the engine did another."""
+        self._ctx(ctx, freshness=1.0)
+
+        entry = self._selection(ctx, mock_plextv)
+
+        assert entry["recency"] == 0.75
+        assert entry["freshness"] == 1.0
+        assert entry["size"] == 3
+        assert entry["candidates"] >= entry["delivered"] > 0
+        assert entry["cut_cap"] == ctx.config.candidates_pre_rank

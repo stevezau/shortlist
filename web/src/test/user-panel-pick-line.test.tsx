@@ -92,3 +92,59 @@ describe("run report pick line", () => {
     expect(screen.getByText("The Matrix")).toBeInTheDocument();
   });
 });
+
+describe("run report pick line — look-it-up links", () => {
+  it("links a pick to TMDB, IMDb and Trakt", () => {
+    render(
+      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+    );
+    expect(screen.getByRole("link", { name: "TMDB" })).toHaveAttribute(
+      "href",
+      "https://www.themoviedb.org/movie/603",
+    );
+    expect(screen.getByRole("link", { name: "Trakt" })).toHaveAttribute(
+      "href",
+      "https://trakt.tv/search/tmdb/603?id_type=movie",
+    );
+  });
+
+  it("searches IMDb by title, since a delivered pick carries no IMDb id", () => {
+    render(
+      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+    );
+    expect(screen.getByRole("link", { name: "IMDb" })).toHaveAttribute(
+      "href",
+      "https://www.imdb.com/find/?q=The%20Matrix&s=tt",
+    );
+  });
+
+  it("uses the tv path for a show", () => {
+    render(
+      <UserPanel
+        run={RUN}
+        result={result([{ ...BASE, media_type: "show", year: 2008, rating: 9.4 }])}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "TMDB" })).toHaveAttribute(
+      "href",
+      "https://www.themoviedb.org/tv/603",
+    );
+  });
+
+  it("shows no links at all for a pick with no TMDB id", () => {
+    // A cold-start pick comes from the library, not TMDB. A link to /movie/undefined is worse than
+    // no link — it looks like a working link and 404s.
+    const { tmdb_id: _omitted, ...noId } = BASE;
+    render(<UserPanel run={RUN} result={result([{ ...noId, year: 1999 }])} />);
+    expect(screen.queryByRole("link", { name: "TMDB" })).not.toBeInTheDocument();
+  });
+
+  it("opens them in a new tab without leaking the referrer", () => {
+    render(
+      <UserPanel run={RUN} result={result([{ ...BASE, year: 1999, rating: 8.2 }])} />,
+    );
+    const link = screen.getByRole("link", { name: "TMDB" });
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+});

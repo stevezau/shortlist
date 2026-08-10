@@ -5,6 +5,7 @@ import { PickList } from "@/components/pick-list";
 import { Segmented } from "@/components/segmented";
 import { Button } from "@/components/ui/button";
 import { provenanceLabel } from "@/lib/pick-provenance";
+import { titleLinks } from "@/lib/title-links";
 import { friendlyError, rankClass } from "@/lib/run-format";
 import { githubIssueSnippet } from "@/lib/github";
 import { STAGE_LABELS } from "@/lib/run-stages";
@@ -62,6 +63,7 @@ function ratingLabel(pick: Pick): string {
 /** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
  *  came from. */
 function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
+  const links = titleLinks(pick);
   return (
     <li className="flex items-baseline gap-3 py-1.5">
       <span
@@ -96,11 +98,24 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
         {/* Where it came from. This page has its own pick renderer rather than using PickList, so
             the provenance line has to be repeated here — it is the page people open to ask exactly
             this question. */}
-        {(ratingLabel(pick) || provenanceLabel(pick)) && (
-          <span className="block truncate text-xs text-muted-foreground/80">
-            {[ratingLabel(pick), provenanceLabel(pick)]
-              .filter(Boolean)
-              .join(" · ")}
+        {(ratingLabel(pick) || provenanceLabel(pick) || links.length > 0) && (
+          <span className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground/80">
+            <span className="truncate">
+              {[ratingLabel(pick), provenanceLabel(pick)]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+            {links.map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline"
+              >
+                {link.label}
+              </a>
+            ))}
           </span>
         )}
       </span>

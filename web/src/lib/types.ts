@@ -219,6 +219,9 @@ export function blockedSeeds(prefs: UserPrefs | undefined): BlockedSeed[] {
  * module — use an explicit object literal here rather than the utility type.
  */
 export type Pick = Schemas["PickOut"] & {
+  /** Present on breakdown picks (delivery stamps it); absent on the flat `picks` list. Used for the
+   *  look-it-up links, which are omitted rather than broken when it is missing. */
+  tmdb_id?: number;
   /** Which row this pick belongs to (Collection slug). */
   collection_slug?: Schemas["UserPickOut"]["collection_slug"];
   library?: Schemas["UserPickOut"]["library"];
@@ -653,6 +656,38 @@ export interface RunUserTrace {
   };
   seeds?: TraceSeed[];
   gathers?: TraceGather[];
+  /** What happened to each (row, library) tonight and the settings that decided it. Absent on runs
+   *  recorded before this was added, which the UI renders as nothing rather than as "rebuilt". */
+  selection?: TraceSelection[];
+}
+
+/** One row+library's outcome for a run: which branch the engine took, and the settings behind it. */
+export interface TraceSelection {
+  row: string;
+  library: string;
+  /** `rebuilt` (built fresh) · `carried_forward` (redelivered untouched — not its refresh night) ·
+   *  `refreshed` (kept the strongest two-thirds, swapped the rest) · `settings_changed` (rebuilt
+   *  early because a setting that decides contents was edited) · `cold_start`. */
+  decision:
+    | "rebuilt"
+    | "carried_forward"
+    | "refreshed"
+    | "settings_changed"
+    | "cold_start";
+  size: number;
+  delivered: number;
+  candidates?: number;
+  cut_cap?: number;
+  carried?: number;
+  new?: number;
+  freshness?: number;
+  refresh_night?: boolean;
+  rebuild_every_days?: number | null;
+  recency?: number;
+  watched_pct?: number;
+  pick_order?: string;
+  rewatch?: boolean;
+  unstarted_only?: boolean;
 }
 
 // --- SSE payloads (GET /api/events) ---

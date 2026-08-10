@@ -1724,6 +1724,19 @@ def _build_section_picks(
             section_picks[section.key] = _apply_order(
                 ranked_cold, spec.pick_order, row_slug=spec.slug, user_slug=user.slug, run_day=ctx.run_day
             )
+            # Recorded here too: the cold branch returns early, and a row missing from the trace
+            # reads as "not built" rather than "built from the server's top-rated".
+            policy.report.trace.setdefault("selection", []).append(
+                {
+                    "row": spec.slug,
+                    "library": getattr(section, "title", str(section.key)),
+                    "decision": "cold_start",
+                    "size": k,
+                    "delivered": len(ranked_cold),
+                    "candidates": len(cands),
+                    "pick_order": spec.pick_order,
+                }
+            )
             continue
         sec_idx = ctx.section_index.get(section.key, {})
         pct = policy.effective_watched_pct(spec)
@@ -1755,6 +1768,17 @@ def _build_section_picks(
         # Hoisted out of the refresh branch because the `new_first` order needs it on every path: a
         # pick is "new" if this row was not already carrying it, whichever branch produced it.
         prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
+
+        # Decided here, before the clearing below rewrites `prior_valid` — after it, a settings
+        # change is indistinguishable from a first build.
+        if not prior_valid:
+            decision = "rebuilt"
+        elif recipe_changed:
+            decision = "settings_changed"
+        elif not refresh:
+            decision = "carried_forward"
+        else:
+            decision = "refreshed"
 
         if prior_valid and recipe_changed:
             # The owner changed a setting that decides this row's CONTENTS, so rebuild it now
@@ -1857,6 +1881,33 @@ def _build_section_picks(
         # watched cap and the rewatch reordering above can both backfill titles from `sub` that the
         # branch never saw — those are new to the row too, and `new_first` has to lead with them.
         new_keys = {(p.tmdb_id, p.media_type) for p in ranked if (p.tmdb_id, p.media_type) not in prior_ids}
+        # What happened to this row tonight, and the settings that decided it. Without this the run
+        # page can say what a row HOLDS but never why it holds it — and the commonest question ("I
+        # changed a setting, why did nothing move?") is answered by a line that was not recorded
+        # anywhere: most nights a row is redelivered untouched and the report looked identical to a
+        # rebuild. Cheap to write (a dict per row per library) and read straight from the values the
+        # branch above already computed, so it cannot drift from what actually happened.
+        policy.report.trace.setdefault("selection", []).append(
+            {
+                "row": spec.slug,
+                "library": getattr(section, "title", str(section.key)),
+                "decision": decision,
+                "size": k,
+                "delivered": len(ranked),
+                "candidates": len(sub),
+                "cut_cap": ctx.config.candidates_pre_rank,
+                "carried": len(prior_valid),
+                "new": len(new_keys),
+                "freshness": fresh,
+                "refresh_night": refresh,
+                "rebuild_every_days": _refresh_period_days(fresh) if fresh > 0 else None,
+                "recency": policy.effective_recency(spec),
+                "watched_pct": pct,
+                "pick_order": spec.pick_order,
+                "rewatch": bool(spec.rewatch),
+                "unstarted_only": bool(spec.unstarted_only),
+            }
+        )
         # "best" is a no-op, which is what keeps the rewatch/watched-cap orderings above intact
         # unless the owner explicitly asked for a different one.
         section_picks[section.key] = _apply_order(

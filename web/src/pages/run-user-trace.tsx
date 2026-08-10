@@ -52,6 +52,7 @@ import type {
   TraceSource,
   TraceWatch,
   TraceWeb,
+  TraceSelection,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -164,17 +165,134 @@ export function TraceView({
               onSelect={setActive}
             />
             {current && (
-              <LibraryFlow
-                lib={current}
-                userId={userId}
-                ratings={data.trace?.history?.ratings}
-              />
+              <>
+                <SelectionSummary
+                  entries={data.trace?.selection ?? []}
+                  library={current.label}
+                />
+                <LibraryFlow
+                  lib={current}
+                  userId={userId}
+                  ratings={data.trace?.history?.ratings}
+                />
+              </>
             )}
           </>
         )}
       </div>
     </RequestsContext.Provider>
   );
+}
+
+/** What the engine DID with this library's rows tonight, and the settings that decided it.
+ *
+ *  The gap this closes: on most nights a row is redelivered untouched, and the run page looked
+ *  identical to a rebuild — so "I changed a setting, why did nothing move?" could only be answered
+ *  by querying the database. It was asked three times in one afternoon on a real server.
+ *
+ *  Rendered before the flow below because it frames it: if the row was carried forward, the seeds
+ *  and searches shown underneath are what tonight's gather found, NOT what is in the row. */
+function SelectionSummary({
+  entries,
+  library,
+}: {
+  entries: TraceSelection[];
+  library: string;
+}) {
+  const mine = entries.filter((e) => e.library === library);
+  if (mine.length === 0) return null;
+
+  return (
+    <section className="space-y-2">
+      <h2 className="text-sm font-semibold">What happened to this row</h2>
+      <ul className="space-y-2">
+        {mine.map((entry) => (
+          <li
+            key={`${entry.row}:${entry.library}`}
+            className="rounded-md border bg-card p-3 text-sm"
+          >
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="font-medium">{entry.row}</span>
+              <span className="text-muted-foreground">
+                {decisionLine(entry)}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {countsLine(entry)}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {settingChips(entry).map((chip) => (
+                <span
+                  key={chip}
+                  className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+                >
+                  {chip}
+                </span>
+              ))}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Says what happened in the owner's words, and — for the case that causes the confusion — what to
+ *  do about it. A row that was not re-picked is the answer to "why didn't my change show up". */
+function decisionLine(entry: TraceSelection): string {
+  const every = entry.rebuild_every_days;
+  switch (entry.decision) {
+    case "carried_forward":
+      return `— not re-picked tonight. Last run's titles were redelivered unchanged${
+        every ? `; this row rebuilds about every ${every} days` : ""
+      }. Raise Freshness, or change a setting, to rebuild it sooner.`;
+    case "settings_changed":
+      return "— rebuilt now because a setting that decides its titles changed.";
+    case "refreshed":
+      return "— refresh night: the strongest picks stayed, the weakest were swapped.";
+    case "cold_start":
+      return "— too little watch history, so it was filled from the server's top-rated titles.";
+    default:
+      return "— built fresh.";
+  }
+}
+
+function countsLine(entry: TraceSelection): string {
+  const parts = [`${entry.delivered} of ${entry.size} titles`];
+  if (entry.candidates != null) {
+    parts.push(
+      `chosen from ${entry.candidates} candidates${
+        entry.cut_cap ? ` (pool capped at ${entry.cut_cap} per type)` : ""
+      }`,
+    );
+  }
+  if (entry.carried) parts.push(`${entry.carried} carried over`);
+  if (entry.new) parts.push(`${entry.new} new`);
+  return parts.join(" · ");
+}
+
+/** Only the settings that ACTED. A chip for every dial would bury the one that explains the row. */
+function settingChips(entry: TraceSelection): string[] {
+  const chips: string[] = [];
+  if (entry.recency != null) {
+    chips.push(
+      entry.recency > 0
+        ? `Recent releases ${Math.round(entry.recency * 100)}%`
+        : "Recent releases off",
+    );
+  }
+  if (entry.freshness != null) {
+    chips.push(`Freshness ${Math.round(entry.freshness * 100)}%`);
+  }
+  if (entry.watched_pct) {
+    chips.push(`Already-watched ≤${Math.round(entry.watched_pct * 100)}%`);
+  }
+  if (entry.pick_order && entry.pick_order !== "best") {
+    chips.push(`Order: ${entry.pick_order}`);
+  }
+  if (entry.rewatch) chips.push("Watch it again");
+  if (entry.unstarted_only) chips.push("Never started only");
+  return chips;
 }
 
 function ErrorBanner({ error }: { error: string }) {
