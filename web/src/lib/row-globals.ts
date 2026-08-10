@@ -1,5 +1,9 @@
 import { asColdStart, COLD_START_LABELS } from "@/lib/cold-start";
-import { FRESHNESS_DEFAULT, WATCHED_PCT_DEFAULT } from "@/lib/constants";
+import {
+  FRESHNESS_DEFAULT,
+  RECENCY_DEFAULT,
+  WATCHED_PCT_DEFAULT,
+} from "@/lib/constants";
 import type { Settings } from "@/lib/types";
 
 /** Mirrors the server's `recommendations.*` defaults (shortlist/server/settings_store.py) — used
@@ -63,6 +67,24 @@ export function freshnessGlobal(settings: Settings | undefined): string | null {
   return `${pct}% — refreshes about every ${days} days`;
 }
 
+export function recencyGlobalValue(
+  settings: Settings | undefined,
+): number | null {
+  return num(settings, "recommendations.recency");
+}
+
+/** 0..1 fraction → "50% — leans towards recent releases". */
+export function recencyGlobal(settings: Settings | undefined): string | null {
+  const fraction = num(settings, "recommendations.recency");
+  if (fraction === null) return null;
+  const pct = Math.round(fraction * 100);
+  // "Any era" rather than a bare "0%": the number alone reads as a setting that is doing something
+  // faint, when 0 means release date is not consulted at all.
+  if (pct <= 0) return "Any era — release date ignored";
+  if (pct >= 100) return "100% — strongly prefers new releases";
+  return `${pct}% — leans towards recent releases`;
+}
+
 export function recentCountGlobal(
   settings: Settings | undefined,
 ): string | null {
@@ -95,6 +117,10 @@ export function watchedPctSeed(settings: Settings | undefined): number {
 
 export function freshnessSeed(settings: Settings | undefined): number {
   return num(settings, "recommendations.freshness") ?? FRESHNESS_DEFAULT / 100;
+}
+
+export function recencySeed(settings: Settings | undefined): number {
+  return num(settings, "recommendations.recency") ?? RECENCY_DEFAULT / 100;
 }
 
 export function recentCountSeed(settings: Settings | undefined): number {

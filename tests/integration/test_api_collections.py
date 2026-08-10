@@ -41,6 +41,7 @@ COLLECTION_KEYS = {
     "rewatch",
     "unstarted_only",
     "freshness",
+    "recency",
     "recent_count",
     "max_seeds",
     "cold_start",
@@ -273,6 +274,47 @@ class TestCollectionsSeed:
         with client.app.state.sessions() as session:
             specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
         assert next(s for s in specs if s.slug == "fresh_row").freshness == 0.75
+
+    def test_per_row_recency_round_trips_and_reaches_the_spec(self, client: TestClient):
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "New Row", "recency": 0.8})
+        assert created.status_code == 201 and created.json()["recency"] == 0.8
+        assert client.post("/api/collections", json={"name": "X", "recency": 1.5}).status_code == 422
+        assert client.post("/api/collections", json={"name": "X", "recency": -0.1}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.recency": 2.0}}).status_code == 422
+        assert client.put("/api/settings", json={"values": {"recommendations.recency": 0.4}}).status_code == 200
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            store = SettingsStore(session, client.app.state.secrets)
+            specs = builder._build_rows(session, store)
+            assert builder._engine_config(session, store).recency == 0.4
+        assert next(s for s in specs if s.slug == "new_row").recency == 0.8
+
+    def test_a_row_left_at_the_default_inherits_rather_than_pinning_zero(self, client: TestClient):
+        """NULL, not 0.0. A row created before this setting existed — or one the owner never touched
+        — must follow the global. Storing 0.0 for "unset" would freeze every existing row at "ignore
+        release date" and make raising the global do nothing, which is indistinguishable from the
+        feature being broken."""
+        from shortlist.server.services.context_builder import ContextBuilder
+        from shortlist.server.services.sse import EventBus
+
+        created = client.post("/api/collections", json={"name": "Plain Row"})
+        assert created.status_code == 201 and created.json()["recency"] is None
+
+        builder = ContextBuilder(client.app.state.sessions, client.app.state.secrets, EventBus())
+        with client.app.state.sessions() as session:
+            specs = builder._build_rows(session, SettingsStore(session, client.app.state.secrets))
+        assert next(s for s in specs if s.slug == "plain_row").recency is None
+
+    def test_an_explicit_zero_is_stored_and_not_swallowed_as_unset(self, client: TestClient):
+        """The falsy-vs-None trap this codebase has hit before: `body.recency or None` would turn a
+        deliberate "ignore release date on THIS row" into "inherit the global", so a Hidden Gems row
+        on a modern-leaning server would quietly stop being one."""
+        created = client.post("/api/collections", json={"name": "Gems Row", "recency": 0.0})
+        assert created.status_code == 201 and created.json()["recency"] == 0.0
 
     def test_per_row_max_seeds_round_trips_and_reaches_the_spec(self, client: TestClient):
         from shortlist.server.services.context_builder import ContextBuilder

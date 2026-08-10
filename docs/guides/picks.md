@@ -36,7 +36,7 @@ the libraries you pick.
 
 ### Freshness, already-watched, and cost
 
-Settings → Finding titles has three more dials, each of which a row can override:
+Settings → Finding titles has four more dials, each of which a row can override:
 
 - **How often it changes**, called **Freshness** in Settings where the global lives. This sets how
   often a row's picks change, and it is a pace rather than a nightly shuffle. `1.0` refreshes every
@@ -47,6 +47,21 @@ Settings → Finding titles has three more dials, each of which a row can overri
   strongest two-thirds or so of the picks stay and the weakest third rotates out. The default is
   `0.5`, about weekly. If you trigger two runs the same day, a row that isn't due won't change. That
   is expected.
+
+- **Recent releases.** How much a title's **release date** counts when Shortlist ranks it. Left at
+  `0.0`, the default, release date is ignored entirely: a well-rated 1996 film and a well-rated 2024
+  one are judged the same, which is why rows can fill up with older titles. Turn it up and newer
+  titles rank higher.
+
+  It is a preference, not a filter. Nothing is excluded for being old — an older title simply has
+  to be a better match to win a slot, so a classic three of someone's watches point at still beats a
+  forgettable new release. At `1.0`, roughly every 8 years of age halves a title's ranking weight;
+  at `0.5` it takes about 16 years. The slider shows a live strip of what each era is worth so you
+  can see the trade before you save it.
+
+  This is **not** Freshness. Freshness is how often a row re-picks; this is which titles win when it
+  does. A row can rebuild every night and still be full of 1990s films — that pairing is exactly
+  what this dial is for.
 
 - **Already-watched titles.** How much of a partly-watched title still counts as watched and gets
   filtered out. The default keeps anything finished out of the picks.
@@ -82,12 +97,15 @@ Settings → Finding titles sets what a row uses **unless the row says otherwise
 | **Recommendation sources**                           | Switch to "Choose for this row" and tick its own sources                                  |
 | **Libraries**                                        | Which Plex libraries it builds in, which also sets what it recommends                     |
 | **How often it changes**, **Already-watched titles** | How often it refreshes, and how much already-watched it allows                            |
+| **Recent releases**                                  | How much release date counts for this row — a “new and notable” shelf, or one that digs up older films |
 | **Row size**, **Audience**                           | How many titles, and who gets it                                                          |
 | **Watches the AI web search looks up**               | How many recent watches AI web search looks up for this row (shown only on rows using it) |
 | **Request tag**                                      | The Radarr or Sonarr tag on titles requested for this row's audience                      |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can use AI web search alone
-pointed at just your 4K library, and your default "Picked for You" can stay on the global settings.
+pointed at just your 4K library with **Recent releases** turned all the way down, a "New & notable"
+row can turn the same dial all the way up, and your default "Picked for You" can stay on the global
+settings.
 All on the same server, all at once. The Rows list shows each row's overrides on its card, so you can
 see at a glance which rows differ.
 

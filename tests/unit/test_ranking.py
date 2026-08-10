@@ -1,9 +1,18 @@
 from types import SimpleNamespace
+from typing import ClassVar
 
+import pytest
 from loguru import logger
 
 from shortlist.engine.models import Candidate, MediaType, Pick, RowSpec, Seed, UserProfile, UserType
-from shortlist.engine.ranking import diversify_by_seed, pre_rank, score
+from shortlist.engine.ranking import (
+    RECENCY_HALF_LIFE_YEARS,
+    cut_for_recency,
+    diversify_by_seed,
+    pre_rank,
+    recency_factor,
+    score,
+)
 from tests.conftest import make_candidate
 
 
@@ -92,6 +101,133 @@ class TestPreRank:
         """Candidates built by hand (cold start, tests) carry no source tag and must not vanish."""
         pool = [make_candidate(i, f"m{i}", rating=float(i)) for i in range(1, 6)]
         assert len(pre_rank(pool, keep=3)) == 3
+
+
+NOW = 2026  # every recency test states the year explicitly — the engine never reads a wall clock
+
+
+class TestRecencyFactor:
+    """The release-date weight: `0.5 ** (age / HALF_LIFE * recency)`. Multiplied into `score`, so it
+    scales a candidate's standing rather than filtering it — an old title is never banned, it just
+    has to be a better match to win the slot."""
+
+    def test_off_by_default_so_ranking_is_unchanged(self):
+        """recency 0.0 must be EXACTLY 1.0, not merely close: it is what every existing install runs
+        at, and a 0.999 here would silently re-order every row on the server."""
+        assert recency_factor(1994, NOW, 0.0) == 1.0
+
+    def test_a_title_from_this_year_is_never_penalised(self):
+        assert recency_factor(NOW, NOW, 1.0) == 1.0
+
+    def test_one_half_life_of_age_halves_the_weight(self):
+        assert recency_factor(NOW - int(RECENCY_HALF_LIFE_YEARS), NOW, 1.0) == pytest.approx(0.5)
+
+    def test_two_half_lives_quarter_it(self):
+        assert recency_factor(NOW - int(RECENCY_HALF_LIFE_YEARS) * 2, NOW, 1.0) == pytest.approx(0.25)
+
+    def test_half_strength_doubles_the_effective_half_life(self):
+        """The slider stretches the curve rather than clipping it — 50% means 16 years to half, so
+        the control has usable range instead of being a soft on/off."""
+        assert recency_factor(NOW - int(RECENCY_HALF_LIFE_YEARS) * 2, NOW, 0.5) == pytest.approx(0.5)
+
+    def test_a_title_with_no_release_year_is_neutral(self):
+        """Same convention as the unrated-gets-5.0 prior: a missing signal must not be read as a bad
+        one. TMDB returns candidates with no release_date, and penalising them would quietly drop
+        every one of them out of every row."""
+        assert recency_factor(None, NOW, 1.0) == 1.0
+
+    def test_an_unreleased_title_gets_no_bonus_over_a_current_one(self):
+        """A 2027 title in 2026 has NEGATIVE age. Unclamped, `0.5 ** negative` is > 1 — so an
+        announced-but-unreleased title would outrank everything actually watchable tonight."""
+        assert recency_factor(NOW + 3, NOW, 1.0) == 1.0
+
+    def test_an_unknown_run_year_disables_the_weight(self):
+        """`run_day` is 0 for a direct engine call, so year_now can arrive as 0. Ranking every title
+        as ~2000 years old would be worse than doing nothing."""
+        assert recency_factor(1994, 0, 1.0) == 1.0
+
+    def test_stronger_settings_penalise_the_same_old_title_harder(self):
+        weights = [recency_factor(1994, NOW, r) for r in (0.0, 0.25, 0.5, 0.75, 1.0)]
+        assert weights == sorted(weights, reverse=True)
+        assert weights[0] > weights[-1]
+
+    def test_the_weight_is_clamped_to_full_strength(self):
+        """A hand-edited config or an API caller can send 2.0; the curve must not go off a cliff."""
+        assert recency_factor(1994, NOW, 2.0) == recency_factor(1994, NOW, 1.0)
+
+
+class TestScoreWithRecency:
+    def test_score_is_untouched_when_recency_is_off(self):
+        old = make_candidate(1, "Old", year=1994)
+        assert score(old, recency=0.0, year_now=NOW) == score(old)
+
+    def test_a_newer_title_outranks_an_identical_older_one(self):
+        """The whole point. These two differ ONLY in release year, so today (no age term at all in
+        `score`) they tie and the alphabetical tiebreak decides — which is how 1990s titles lead."""
+        old = make_candidate(1, "Old", rating=8.0, year=1996)
+        new = make_candidate(2, "New", rating=8.0, year=2024)
+        assert score(old) == score(new)  # today's behaviour: age is invisible
+        assert score(new, recency=0.5, year_now=NOW) > score(old, recency=0.5, year_now=NOW)
+
+    def test_a_much_better_old_title_still_beats_a_weak_new_one(self):
+        """`recency` must stay a WEIGHT, not a filter. The UI promises "older titles still reach
+        rows; they just have to earn it" — this is the test that keeps that promise true."""
+        classic = make_candidate(1, "Classic", rating=9.0, year=1994, seeds=[seed(1, 1.0), seed(2, 1.0)])
+        forgettable = make_candidate(2, "Forgettable", rating=4.0, year=2025, seeds=[])
+        assert score(classic, recency=0.5, year_now=NOW) > score(forgettable, recency=0.5, year_now=NOW)
+
+
+class TestCutForRecency:
+    """The per-media truncation, taken at a row's own release-date weight.
+
+    `pre_rank` does two jobs — a source-fair round-robin that decides MEMBERSHIP, then a score sort.
+    Recency participates in both, so a newer title below the cap is promoted INTO the cut rather
+    than merely reordered once it is too late."""
+
+    MOVIES: ClassVar[list] = [MediaType.MOVIE]
+
+    def test_the_cut_falls_back_to_the_base_score_when_off(self):
+        pool = [make_candidate(i, f"m{i}", year=1990 + i) for i in range(1, 6)]
+        assert cut_for_recency(pool, self.MOVIES, 10, 0.0, NOW) == pre_rank(pool, 10)
+
+    def test_newer_titles_rise_to_the_front(self):
+        pool = [
+            make_candidate(1, "Nineties", rating=8.0, year=1996),
+            make_candidate(2, "Noughties", rating=8.0, year=2006),
+            make_candidate(3, "Modern", rating=8.0, year=2024),
+        ]
+        assert [c.tmdb_id for c in cut_for_recency(pool, self.MOVIES, 10, 1.0, NOW)] == [3, 2, 1]
+
+    def test_a_newer_title_below_the_cap_is_promoted_into_the_cut(self):
+        """The whole reason this replaced a post-cut re-rank. With `keep=2` and the base score
+        favouring the old titles, only a recency-aware CUT can let the 2024 one through at all."""
+        pool = [
+            make_candidate(1, "Old A", rating=9.0, year=1994),
+            make_candidate(2, "Old B", rating=8.9, year=1996),
+            make_candidate(3, "Modern", rating=8.0, year=2024),
+        ]
+        assert 3 not in {c.tmdb_id for c in cut_for_recency(pool, self.MOVIES, 2, 0.0, NOW)}
+        assert 3 in {c.tmdb_id for c in cut_for_recency(pool, self.MOVIES, 2, 1.0, NOW)}
+
+    def test_each_media_type_gets_its_own_cap(self):
+        """A `both` row must not truncate one type away because the other flooded the pool — the
+        per-media cut is why a mostly-TV watcher still gets a full movie row."""
+        pool = [
+            *[make_candidate(i, f"movie{i}", year=2000 + i) for i in range(1, 6)],
+            *[make_candidate(100 + i, f"show{i}", media_type=MediaType.SHOW, year=2000 + i) for i in range(1, 6)],
+        ]
+        cut = cut_for_recency(pool, [MediaType.MOVIE, MediaType.SHOW], 2, 1.0, NOW)
+        assert len([c for c in cut if c.media_type is MediaType.MOVIE]) == 2
+        assert len([c for c in cut if c.media_type is MediaType.SHOW]) == 2
+
+    def test_undated_titles_keep_their_earned_place_among_the_new(self):
+        """A neutral factor means an undated title ranks on its merits alone — it must not be swept
+        to the back with the old ones, which is what a `year or 0` fallback would do."""
+        pool = [
+            make_candidate(1, "Undated", rating=9.0, year=None),
+            make_candidate(2, "Old", rating=9.0, year=1994),
+        ]
+        assert [c.tmdb_id for c in cut_for_recency(pool, self.MOVIES, 10, 1.0, NOW)] == [1, 2]
 
 
 class TestDiversifyBySeed:

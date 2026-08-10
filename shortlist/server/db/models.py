@@ -165,6 +165,11 @@ class Collection(Base):
     # Per-row day-to-day variability, as a fraction (0.0 stable .. 1.0 fresh). NULL -> inherit the
     # global recommendations.freshness.
     freshness: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # Per-row weight on a title's RELEASE DATE when ranking it (0.0 ignore age .. 1.0 strongly prefer
+    # new). NULL -> inherit the global recommendations.recency. Nullable rather than defaulting to
+    # 0.0 because "never touched" and "deliberately off" must stay distinguishable: every row that
+    # predates this column reads NULL and follows the global, while a Hidden Gems row can pin 0.0.
+    recency: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # How many of a person's most recent watches the web-search source searches for this row (one
     # cached search each). NULL -> inherit the global recommendations.recent_count.
     recent_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

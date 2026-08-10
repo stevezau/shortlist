@@ -142,6 +142,38 @@ describe("RecommendationsSection", () => {
     expect(body).toHaveProperty("candidates.sources");
   });
 
+  it("auto-saves the recent-releases weight as a 0..1 fraction", async () => {
+    renderSection({ "recommendations.recency": 0.5 });
+    const slider = screen.getByRole("slider", { name: /release date counts/i });
+    expect(slider).toHaveValue("50");
+    fireEvent.change(slider, { target: { value: "75" } });
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(putSettings.mock.calls.at(-1)?.[0]?.["recommendations.recency"]).toBe(
+      0.75,
+    );
+  });
+
+  it("ships the recent-releases control off, so an upgrade re-orders nobody's rows", () => {
+    // The server default is 0.0 for the same reason. If this ever renders non-zero for a server
+    // that has never saved the setting, the UI is advertising ranking the engine is not doing.
+    renderSection({});
+    expect(
+      screen.getByRole("slider", { name: /release date counts/i }),
+    ).toHaveValue("0");
+  });
+
+  it("keeps recent releases and freshness as two separate controls", () => {
+    // They are near-synonyms in English and completely different settings here. If one ever
+    // replaces the other in this card, the owner silently loses a control.
+    renderSection({});
+    expect(
+      screen.getByRole("slider", { name: /release date counts/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("slider", { name: /how often the row refreshes/i }),
+    ).toBeInTheDocument();
+  });
+
   it("saves the cold-start choice, and says what it will actually do", async () => {
     renderSection({ "recommendations.cold_start": "popular" });
     const select = screen.getByLabelText(/hasn’t watched enough/i);

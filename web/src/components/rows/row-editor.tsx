@@ -19,6 +19,7 @@ import {
 import { TemplateVarsHint } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
+import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +53,8 @@ import {
   freshnessGlobal,
   freshnessGlobalValue,
   freshnessSeed,
+  recencyGlobal,
+  recencySeed,
   maxSeedsGlobal,
   recentCountGlobal,
   recentCountSeed,
@@ -731,6 +734,27 @@ export function RowEditor({
                 />
               </InheritableField>
             )}
+
+            {/* Shown for EVERY row, including one that follows a watch — unlike freshness above,
+                whose cadence those rows have forced. Which titles win is still a free choice there:
+                "Because you watched X" can lean modern or not, independently of rebuilding nightly. */}
+            <InheritableField
+              label="Recent releases"
+              labelFor="row-recency"
+              description="How much a title’s release date counts when ranking it for this row — turn it up for a “new and notable” shelf, or all the way down for one that digs up older films. Old titles are never excluded; they just have to be a better match. Leave it on the global default to use the figure from Settings → Finding titles."
+              ariaLabel="Use the global recent-releases default"
+              inheriting={input.recency === null}
+              globalValue={recencyGlobal(settings.data)}
+              onToggle={(on) =>
+                set({ recency: on ? null : recencySeed(settings.data) })
+              }
+            >
+              <RecencySlider
+                id="row-recency"
+                value={Math.round((input.recency ?? 0) * 100)}
+                onChange={(pct) => set({ recency: pct / 100 })}
+              />
+            </InheritableField>
 
             {usesWebSearch && (
               <InheritableField

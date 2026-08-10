@@ -595,6 +595,19 @@
           "poster": {
             "$ref": "#/components/schemas/PosterIn"
           },
+          "recency": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recency"
+          },
           "recent_count": {
             "anyOf": [
               {
@@ -841,6 +854,17 @@
           "poster": {
             "$ref": "#/components/schemas/PosterOut"
           },
+          "recency": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recency"
+          },
           "recent_count": {
             "anyOf": [
               {
@@ -917,6 +941,7 @@
           "rewatch",
           "unstarted_only",
           "freshness",
+          "recency",
           "recent_count",
           "max_seeds",
           "cold_start",

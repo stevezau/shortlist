@@ -7,6 +7,7 @@ import { SaveStatus } from "@/components/save-status";
 import { AiWebSearchCard } from "@/components/settings/ai-web-search-card";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
 import { InlineKeyField } from "@/components/settings/inline-key-field";
+import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,7 +27,11 @@ import {
   RATING_SOURCES,
 } from "@/lib/rating-sources";
 import { useAutosavedSettings } from "@/lib/autosave";
-import { FRESHNESS_DEFAULT, WATCHED_PCT_DEFAULT } from "@/lib/constants";
+import {
+  FRESHNESS_DEFAULT,
+  RECENCY_DEFAULT,
+  WATCHED_PCT_DEFAULT,
+} from "@/lib/constants";
 import { hasTrakt, SOURCES, webSearchProvider } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
 
@@ -83,6 +88,9 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
   const [freshness, setFreshness] = useState<number>(() =>
     readPercent(settings, "recommendations.freshness", FRESHNESS_DEFAULT),
   );
+  const [recency, setRecency] = useState<number>(() =>
+    readPercent(settings, "recommendations.recency", RECENCY_DEFAULT),
+  );
   const [recentCount, setRecentCount] = useState<number>(() => {
     const value = Number(settings["recommendations.recent_count"]);
     return Number.isFinite(value) ? Math.min(25, Math.max(1, value)) : 10;
@@ -124,6 +132,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       enabled,
       watchedPct,
       freshness,
+      recency,
       recentCount,
       maxSeeds,
       searchBackend,
@@ -141,6 +150,7 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       "recommendations.dislike_threshold": dislikeThreshold,
       "recommendations.watched_pct": watchedPct / 100,
       "recommendations.freshness": freshness / 100,
+      "recommendations.recency": recency / 100,
       "recommendations.recent_count": recentCount,
       "recommendations.max_seeds": maxSeeds,
       "recommendations.rating_source": ratingSource,
@@ -276,6 +286,24 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
                 id="freshness"
                 value={freshness}
                 onChange={setFreshness}
+              />
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              <Label htmlFor="recency">Recent releases</Label>
+              <p className="text-sm text-muted-foreground">
+                How much a title’s <strong>release date</strong> counts when
+                ranking it. Without this, a well-rated 1996 film beats a 2024
+                one every time, and rows fill up with older titles. It’s a
+                preference, not a filter — old titles still reach rows, they
+                just have to be a better match. Distinct from{" "}
+                <strong>Freshness</strong> above, which is how often a row
+                re-picks rather than which titles win. The default every row
+                inherits; any row can choose its own.
+              </p>
+              <RecencySlider
+                id="recency"
+                value={recency}
+                onChange={setRecency}
               />
             </div>
             {/* The BROADER knob first. These two were the other way round, which gave no clue that

@@ -101,6 +101,12 @@ DEFAULTS: dict[str, Any] = {
     # every other night the row is reused unchanged (no re-curation, no Plex write). Default weekly so
     # rows feel curated and stable instead of churning completely every night. Per-row overridable.
     "recommendations.freshness": 0.5,
+    # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = every ~8 years
+    # of age halves a title's weight. A weight, never a filter — an old title is only asked to be a
+    # better match. Distinct from freshness above, which is the refresh CADENCE, not the preference.
+    # Defaults to 0.0: any other value would re-order every row on every existing server the first
+    # night after an upgrade, which is not something a point release may do silently.
+    "recommendations.recency": 0.0,
     # How many of a person's most recent watches the web-search source searches per row (one cached
     # Exa search each). Row-overridable. Fewer = tighter/cheaper; the DbCache dedups shared titles.
     "recommendations.recent_count": 10,

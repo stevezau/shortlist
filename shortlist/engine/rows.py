@@ -12,6 +12,7 @@ import time
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import date
 from functools import cached_property
 
 from loguru import logger
@@ -91,6 +92,20 @@ def effective_seed_window(spec: RowSpec) -> int:
     return max(1, spec.seed_window or 1)
 
 
+def _run_year(run_day: int) -> int:
+    """The calendar year this run belongs to — what "how old is this title" is measured against.
+
+    Derived from ``run_day`` rather than read from the clock so ranking stays reproducible and the
+    whole run agrees with itself: a run that starts at 23:59 on 31 December must not age half the
+    roster's candidates against one year and half against the next.
+
+    ``run_day`` is 0 for a direct engine call (the server always sets it). Falling back to today
+    rather than to 0 keeps the setting working for CLI and library callers — `recency_factor` reads
+    a 0 as "no opinion", which would have made this silently do nothing there.
+    """
+    return date.fromordinal(run_day).year if run_day > 0 else date.today().year
+
+
 def seed_cycle_offset(row_slug: str, owner_slug: str, run_day: int) -> int:
     """Which step of the cycle a row is on tonight.
 
@@ -100,6 +115,21 @@ def seed_cycle_offset(row_slug: str, owner_slug: str, run_day: int) -> int:
     re-derive every cycling row on the same night.
     """
     return run_day + zlib.crc32(f"{row_slug}|{owner_slug}".encode())
+
+
+def effective_recency(spec: RowSpec, cfg: EngineConfig) -> float:
+    """How much this row weights a title's release date: its own value, else the run's.
+
+    Module-level for exactly the reason ``effective_max_seeds`` is. The shared-row path resolves its
+    dials independently of the per-person one, and this setting shipped resolved on ONE of them: a
+    shared row read the global and silently ignored its own stored value, in both directions — an
+    override did nothing, and an explicit 0.0 "Hidden Gems" opt-out was overridden back to new — while
+    the editor still offered the control and the row card still badged the override.
+
+    ``is not None``, not truthiness: a stored 0.0 is a choice ("ignore release date on THIS row"),
+    not an absent one, and collapsing the two is what makes a high global silently win.
+    """
+    return spec.recency if spec.recency is not None else cfg.recency
 
 
 def effective_recent_count(spec: RowSpec, cfg: EngineConfig) -> int:
@@ -591,6 +621,14 @@ def _stamp_disposition(
     ``lost_ranking_cutoff``; one that made the pre-rank is ``kept`` (whether or not it ends in the
     final row — the per-library row build, downstream of here, decides that and is traced separately
     by the delivered-picks stage).
+
+    KNOWN GAP: this is stamped once per POOL, at the server's ``recommendations.recency``. A row that
+    OVERRIDES that weight re-takes its own cut (``RowPolicy.cut_at_recency``) after this has run, so
+    for that row the two disagree — a title it delivers can read ``lost_ranking_cutoff`` here. Every
+    row that inherits the global (the default, and every row on a server that never overrides it) is
+    stamped exactly right. Fixing it properly means stamping per row, which needs ``dropped`` carried
+    past the gather; until then the delivered-picks stage remains the authority on what actually
+    landed in a row.
     """
     ranked_ids = {(c.tmdb_id, c.media_type) for c in ranked}
     in_library_ids = {(c.tmdb_id, c.media_type) for c in in_library}
@@ -661,6 +699,7 @@ def _candidate_pool(
     media: str = "both",
     watched_exclusions: set[tuple[int, MediaType]] | None = None,
     recent_count: int | None = None,
+    recency: float = 0.0,
 ) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
     """Gather TMDB candidates for ``seeds`` and intersect them with the library.
 
@@ -717,7 +756,11 @@ def _candidate_pool(
     # per-media curate ever sees it, and that library's collection comes up empty.
     kinds = [MediaType.MOVIE, MediaType.SHOW] if media == "both" else [MediaType(media)]
     cap = ctx.config.candidates_pre_rank
-    ranked = [c for kind in kinds for c in ranking.pre_rank([x for x in in_library if x.media_type is kind], cap)]
+    # `recency` is the weight the CALLER resolved, not `ctx.config.recency`. The per-person path
+    # passes the server's value so every row that inherits it shares one cached cut (and re-cuts only
+    # when it overrides); the shared-row path — which has no such cache — passes the row's own
+    # `effective_recency` and gets the right cut first time.
+    ranked = ranking.cut_for_recency(in_library, kinds, cap, recency, _run_year(ctx.run_day))
     # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
     # entirely from the lists selection already produced above — so the trace can follow every title
     # in and out without altering a single delivered pick.
@@ -1138,6 +1181,9 @@ class RowPolicy:
     # sources (the common case — every row inheriting the global set) reuse one pool; a row that
     # picks its own sources gets its own. Keyed by `pool_key`, memoised across the user.
     pool_cache: dict[tuple, Pool] = field(default_factory=dict)
+    # (pool_key, recency) -> that pool re-cut at a row's overridden release-date weight. Empty on a
+    # server where every row inherits the global, which is the default shape.
+    recency_cuts: dict[tuple, list[Candidate]] = field(default_factory=dict)
     pool_failures: dict[tuple, str] = field(default_factory=dict)  # pool key -> why every source for it failed
     seed_cache: dict[tuple, list] = field(default_factory=dict)
 
@@ -1251,6 +1297,33 @@ class RowPolicy:
         if _names_a_seed(spec, self.user, self.cfg) or effective_seed_window(spec) > 1:
             return 1.0
         return spec.freshness if spec.freshness is not None else self.cfg.freshness
+
+    def effective_recency(self, spec: RowSpec) -> float:
+        """How much this row weights a title's release date. Row's own value, else the global.
+
+        Delegates to the module-level helper rather than re-inlining the expression, so the
+        per-person and shared paths cannot resolve it differently — they already did once, and the
+        shared row was the one that lost.
+
+        No forcing clause (unlike ``effective_freshness``): every row is free to hold any value,
+        including an explicit 0.0 on a server whose global is high — that is how one person gets a
+        "New & Notable" row and a "Hidden Gems" row at the same time.
+        """
+        return effective_recency(spec, self.cfg)
+
+    def cut_at_recency(self, spec: RowSpec, in_library: list[Candidate], recency: float) -> list[Candidate]:
+        """This row's own ``candidates_pre_rank`` cut, taken at its overridden release-date weight.
+
+        Memoised per (pool, recency) because rows commonly agree: two "New & Notable" rows sharing a
+        gather and a setting should sort the list once, not once each.
+        """
+        key = (self.pool_key(spec), recency)
+        if key not in self.recency_cuts:
+            kinds = [MediaType.MOVIE, MediaType.SHOW] if spec.media == "both" else [MediaType(spec.media)]
+            self.recency_cuts[key] = ranking.cut_for_recency(
+                in_library, kinds, self.cfg.candidates_pre_rank, recency, _run_year(self.ctx.run_day)
+            )
+        return self.recency_cuts[key]
 
     def effective_recent_count(self, spec: RowSpec) -> int:
         # This person's per-row override wins, then the row's own setting, then the global default —
@@ -1373,6 +1446,10 @@ class RowPolicy:
                     # See `pool_exclusions` for the full rules (0% vs >0, rewatch, unstarted-only) and
                     # for what the None sentinel means here.
                     watched_exclusions=self.pool_exclusions(spec),
+                    # The SERVER's value, deliberately: this pool is shared between rows (`pool_key`
+                    # does not split on recency, so the gather is paid for once), and a row that
+                    # overrides it re-cuts the cached `in_library` in `cut_at_recency`.
+                    recency=self.cfg.recency,
                 )
             except Exception as e:
                 self.pool_failures[key] = f"{type(e).__name__}: {e}"
@@ -1467,7 +1544,12 @@ def _warm_start(
     pools = policy.pool_cache.values()
     report.counts.candidates = len({(c.tmdb_id, c.media_type) for p in pools for c in p[0]})
     report.counts.in_library = len({(c.tmdb_id, c.media_type) for p in pools for c in p[1]})
-    report.counts.pre_ranked = len({(c.tmdb_id, c.media_type) for p in pools for c in p[2]})
+    # Union the per-row re-cuts in too: a row overriding the release-date weight reaches titles the
+    # shared cut dropped, and counting only `pools` under-reports what was actually pre-ranked.
+    report.counts.pre_ranked = len(
+        {(c.tmdb_id, c.media_type) for p in pools for c in p[2]}
+        | {(c.tmdb_id, c.media_type) for cut in policy.recency_cuts.values() for c in cut}
+    )
     if demand is not None:
         _record_demand(policy, demand)
     report.status = "ok"
@@ -1886,7 +1968,15 @@ def _run_user(
             pools = policy.pools_for(spec)
             if pools is None:
                 continue  # every source this row uses is down; its siblings still deliver
-            _pool, _in_library, pool_for_row = pools
+            _pool, in_library, pool_for_row = pools
+            # A row that overrides the server's release-date weight needs its OWN truncation, not
+            # just its own ordering: the cut decides which candidates a row may select from at all,
+            # so re-ordering what the global's cut left would cap the setting at whatever survived
+            # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
+            # another gather. A row that inherits reuses the pool's cut untouched.
+            recency = policy.effective_recency(spec)
+            if recency != ctx.config.recency:
+                pool_for_row = policy.cut_at_recency(spec, in_library, recency)
             row_label = spec.name_template or spec.slug
             _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
         section_picks = _build_section_picks(
@@ -2114,6 +2204,7 @@ def _shared_row(
         sources=list(effective_row_sources(spec, cfg.candidate_sources)),
         media=spec.media,
         recent_count=effective_recent_count(spec, cfg),
+        recency=effective_recency(spec, cfg),
     )
     _record_gather(user_report, gather_stats)  # shared-row gather AI cost (llm_web + Exa)
     k = spec.size

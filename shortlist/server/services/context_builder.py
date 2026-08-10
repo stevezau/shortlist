@@ -165,48 +165,7 @@ class ContextBuilder:
             render_modes = {"text", "ai", "generate"}
             wants_studio = any((c.poster or {}).get("mode") in render_modes for c in session.query(Collection).all())
             poster_artist = make_studio(store, self._sessions) if wants_studio else None
-            config = EngineConfig(
-                row_size=int(store.get("row.size")),
-                row_name_template=store.get("row.name_template"),
-                # Fallback matches the seeded default and the UI's, so a never-saved setting behaves
-                # the same everywhere (gather_candidates still floors an explicit [] at tmdb_similar).
-                candidate_sources=list(store.get("candidates.sources") or ["tmdb_similar", "tmdb_discover"]),
-                blocked_shared_seeds={
-                    tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
-                },
-                web_search_provider=store.get("llm_web.search_provider") or "auto",
-                hub_anchors=self._build_hub_anchors(store),
-                manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
-                watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
-                freshness=float(store.get("recommendations.freshness") or 0.0),
-                recent_count=int(store.get("recommendations.recent_count") or 10),
-                max_seeds=int(store.get("recommendations.max_seeds") or 30),
-                rating_source=store.get("recommendations.rating_source") or "tmdb",
-                min_history=int(store.get("recommendations.min_history") or 10),
-                cold_start=store.get("recommendations.cold_start") or "popular",
-                # The switch collapses into the threshold rather than travelling beside it: the
-                # engine's one question is "at or below what?", and None answers "never". Two fields
-                # would let the config express "off, but with a threshold of 2", which is not a state
-                # and would only ever be a bug waiting for someone to read the wrong one.
-                dislike_threshold=(
-                    _dislike_threshold(store) if store.get("recommendations.use_plex_ratings") else None
-                ),
-                hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
-                dry_run=dry_run,
-                rows=self._build_rows(session, store),
-                # The server owns the row list: an empty one means every row is DISABLED, not
-                # 'unconfigured' — so nothing new is delivered, rather than the legacy default row
-                # being resurrected behind a Rows page that shows it switched off.
-                rows_defined=True,
-                # ...and a row switched off has its already-built collection removed from its owner's
-                # Home on this run, so "off" means gone, not merely "not refreshed". Runs stay full
-                # here even when scoped: retiring a DISABLED row on any run is always correct.
-                retired_rows=self._retired_rows(session, store),
-                # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
-                # delivery only — classification/sync/sweep/promotion above still see the full list.
-                build_only=self._build_only_slugs(session, collection_ids),
-                requests=self._build_requests(store),
-            )
+            config = self._engine_config(session, store, dry_run=dry_run, collection_ids=collection_ids)
             previous = self._previous_picks(session)
             delivered_keys = self._delivered_keys(session)
             # Opted-out accounts: with hide_shared_from_disabled, even public shared rows are hidden
@@ -698,6 +657,63 @@ class ContextBuilder:
         rows = session.query(Collection).filter(Collection.id.in_(collection_ids), Collection.enabled).all()
         return frozenset(row.slug for row in rows)
 
+    def _engine_config(
+        self,
+        session: Session,
+        store: SettingsStore,
+        *,
+        dry_run: bool = False,
+        collection_ids: list[int] | None = None,
+    ) -> EngineConfig:
+        """Every stored setting, as the engine's config dataclass.
+
+        Its own method rather than inline in ``build`` so the settings -> engine seam can be asserted
+        without a live Plex server. Every line here is "read one setting, hand it to the engine", and
+        a field forgotten here is invisible: the setting saves, the UI shows it, and the engine simply
+        never sees it.
+        """
+        return EngineConfig(
+            row_size=int(store.get("row.size")),
+            row_name_template=store.get("row.name_template"),
+            # Fallback matches the seeded default and the UI's, so a never-saved setting behaves
+            # the same everywhere (gather_candidates still floors an explicit [] at tmdb_similar).
+            candidate_sources=list(store.get("candidates.sources") or ["tmdb_similar", "tmdb_discover"]),
+            blocked_shared_seeds={
+                tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
+            },
+            web_search_provider=store.get("llm_web.search_provider") or "auto",
+            hub_anchors=self._build_hub_anchors(store),
+            manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
+            watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
+            freshness=float(store.get("recommendations.freshness") or 0.0),
+            recency=float(store.get("recommendations.recency") or 0.0),
+            recent_count=int(store.get("recommendations.recent_count") or 10),
+            max_seeds=int(store.get("recommendations.max_seeds") or 30),
+            rating_source=store.get("recommendations.rating_source") or "tmdb",
+            min_history=int(store.get("recommendations.min_history") or 10),
+            cold_start=store.get("recommendations.cold_start") or "popular",
+            # The switch collapses into the threshold rather than travelling beside it: the
+            # engine's one question is "at or below what?", and None answers "never". Two fields
+            # would let the config express "off, but with a threshold of 2", which is not a state
+            # and would only ever be a bug waiting for someone to read the wrong one.
+            dislike_threshold=(_dislike_threshold(store) if store.get("recommendations.use_plex_ratings") else None),
+            hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
+            dry_run=dry_run,
+            rows=self._build_rows(session, store),
+            # The server owns the row list: an empty one means every row is DISABLED, not
+            # 'unconfigured' — so nothing new is delivered, rather than the legacy default row
+            # being resurrected behind a Rows page that shows it switched off.
+            rows_defined=True,
+            # ...and a row switched off has its already-built collection removed from its owner's
+            # Home on this run, so "off" means gone, not merely "not refreshed". Runs stay full
+            # here even when scoped: retiring a DISABLED row on any run is always correct.
+            retired_rows=self._retired_rows(session, store),
+            # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
+            # delivery only — classification/sync/sweep/promotion above still see the full list.
+            build_only=self._build_only_slugs(session, collection_ids),
+            requests=self._build_requests(store),
+        )
+
     def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
         """Build the engine's row specs from the enabled collections.
 
@@ -737,6 +753,7 @@ class ContextBuilder:
                     rewatch=bool(collection.rewatch),
                     unstarted_only=bool(collection.unstarted_only),
                     freshness=collection.freshness,  # None -> inherit the global freshness
+                    recency=collection.recency,  # None -> inherit the global recency
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
                     cold_start=collection.cold_start,  # None -> inherit the global recommendations.cold_start

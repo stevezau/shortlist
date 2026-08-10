@@ -328,6 +328,14 @@ class RowSpec:
     # best quality), 1.0 = fresh (rotate the whole row + reach deep for novelty). None -> inherit
     # EngineConfig.freshness.
     freshness: float | None = None
+    # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = strongly prefer
+    # new. None -> inherit EngineConfig.recency.
+    #
+    # Not the same axis as `freshness` despite the neighbouring names, and the pair is the reason the
+    # UI label is "Recent releases" rather than "Newness": freshness is a CADENCE (how often this row
+    # re-picks), this is a PREFERENCE (which titles win when it does). A row can rebuild nightly and
+    # still fill with 1990s titles — that combination is exactly what this setting exists for.
+    recency: float | None = None
     # How many of this person's most recent watched titles the WEB-SEARCH source searches for this row
     # — one cached search per title ("what to watch if you liked X"). Fewer = tighter/cheaper, more =
     # broader reach. Only affects the llm_web source; TMDB/Trakt still use the full seed set. None ->
@@ -671,6 +679,15 @@ class EngineConfig:
     # Day-to-day variability, as a fraction: 0.0 (default) = stable (the strongest picks every day);
     # 1.0 = fresh (rotate the whole row daily and reach deep down the ranked list). Overridable per row.
     freshness: float = 0.0
+    # How much a title's release date counts when ranking it: 0.0 (default) = ignore age entirely,
+    # which is how this ranked before the setting existed; 1.0 = every ~8 years of age halves a
+    # title's weight. A WEIGHT, never a filter — an old title is only ever asked to be a better
+    # match. Overridable per row (see RowSpec.recency for why it is not `freshness`).
+    #
+    # Defaults to 0.0 rather than something opinionated because it re-orders every row on the
+    # server: a non-zero default would silently rewrite every existing install's collections on the
+    # first run after upgrading.
+    recency: float = 0.0
     # Which candidate sources to pool (see engine/candidates.py). Empty/default = TMDB similar only,
     # preserving legacy behaviour; owners widen recall by enabling more.
     candidate_sources: list[str] = field(default_factory=lambda: ["tmdb_similar"])
