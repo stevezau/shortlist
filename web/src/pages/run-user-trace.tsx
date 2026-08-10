@@ -14,6 +14,7 @@ import {
   Clock,
   Globe,
   History,
+  Filter,
   ListOrdered,
   Search,
   X,
@@ -165,17 +166,14 @@ export function TraceView({
               onSelect={setActive}
             />
             {current && (
-              <>
-                <SelectionSummary
-                  entries={data.trace?.selection ?? []}
-                  library={current.label}
-                />
-                <LibraryFlow
+              <LibraryFlow
                   lib={current}
                   userId={userId}
                   ratings={data.trace?.history?.ratings}
+                  selection={(data.trace?.selection ?? []).filter(
+                    (e) => e.library === current.label,
+                  )}
                 />
-              </>
             )}
           </>
         )}
@@ -184,115 +182,101 @@ export function TraceView({
   );
 }
 
-/** What the engine DID with this library's rows tonight, and the settings that decided it.
+/** How many searches actually ran for this library, across every source.
  *
- *  The gap this closes: on most nights a row is redelivered untouched, and the run page looked
- *  identical to a rebuild — so "I changed a setting, why did nothing move?" could only be answered
- *  by querying the database. It was asked three times in one afternoon on a real server.
- *
- *  Rendered before the flow below because it frames it: if the row was carried forward, the seeds
- *  and searches shown underneath are what tonight's gather found, NOT what is in the row. */
-function SelectionSummary({
-  entries,
-  library,
-}: {
-  entries: TraceSelection[];
-  library: string;
-}) {
-  const mine = entries.filter((e) => e.library === library);
-  if (mine.length === 0) return null;
+ *  From each source's `searched` count, never from `queries.length`: that list is a capped display
+ *  sample, so counting it reported a 30-seed run as "searched 12". */
+function searchesRun(lib: LibraryView): number {
+  return lib.sources.reduce((n, src) => n + mediaSearches(src, lib.media), 0);
+}
 
+/** A tab's media is one string, and "both" means it covers every type — so sum the lot there. */
+function mediaSearches(src: TraceSource, media: string): number {
+  const per = src.searched ?? {};
+  if (media && media !== "both" && per[media] != null) return per[media];
+  return Object.values(per).reduce((n, v) => n + v, 0);
+}
+
+/** True when any source ran more searches than the trace kept a record of, so the step can say
+ *  "showing 12 of 30" instead of quietly presenting the sample as the whole. */
+function searchesSampled(lib: LibraryView): boolean {
+  return lib.sources.some((src) => {
+    const shown = (src.queries ?? []).length;
+    return shown > 0 && mediaSearches(src, lib.media) > shown;
+  });
+}
+
+/** What the release-date weight and the pool cap did to this library's shortlist. */
+function shortlistBody(entries: TraceSelection[]): ReactNode {
+  if (entries.length === 0) return null;
   return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-semibold">What happened to this row</h2>
-      <ul className="space-y-2">
-        {mine.map((entry) => (
-          <li
-            key={`${entry.row}:${entry.library}`}
-            className="rounded-md border bg-card p-3 text-sm"
-          >
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="font-medium">{entry.row}</span>
-              <span className="text-muted-foreground">
-                {decisionLine(entry)}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {countsLine(entry)}
-            </p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {settingChips(entry).map((chip) => (
-                <span
-                  key={chip}
-                  className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-                >
-                  {chip}
-                </span>
-              ))}
-            </div>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <ul className="space-y-3">
+      {entries.map((entry) => (
+        <li key={entry.row} className="space-y-1 text-sm">
+          <p>
+            <span className="font-medium">{entry.row}</span>
+            {entry.candidates != null && (
+              <>
+                {" — "}
+                {entry.candidates} candidates survived filtering
+                {entry.cut_cap
+                  ? `, and the strongest ${entry.cut_cap} per media type were kept. Anything below that line could not reach the row.`
+                  : "."}
+              </>
+            )}
+          </p>
+          <p className="text-muted-foreground">
+            {entry.recency
+              ? `Release date counted for ${Math.round(entry.recency * 100)}% here, so newer titles ranked above equally good older ones — and it applied to the cut itself, not just the order, so a newer title below the line could still get in.`
+              : "Release date was ignored — a 1996 title and a 2024 one were judged the same."}
+          </p>
+        </li>
+      ))}
+    </ul>
   );
 }
 
-/** Says what happened in the owner's words, and — for the case that causes the confusion — what to
- *  do about it. A row that was not re-picked is the answer to "why didn't my change show up". */
+/** Whether the row was actually re-picked tonight, and what to do if it wasn't. This is the fact
+ *  that was missing entirely: most nights a row is redelivered untouched and the page looked
+ *  identical to a rebuild, so "I changed a setting and nothing moved" was unanswerable. */
+function deliveryNote(entries: TraceSelection[]): ReactNode {
+  if (entries.length === 0) return null;
+  return (
+    <ul className="mb-3 space-y-1.5 text-sm">
+      {entries.map((entry) => (
+        <li key={entry.row}>
+          <span className="font-medium">{entry.row}</span>{" "}
+          <span
+            className={
+              entry.decision === "carried_forward"
+                ? "text-muted-foreground"
+                : "text-foreground"
+            }
+          >
+            {decisionLine(entry)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function decisionLine(entry: TraceSelection): string {
   const every = entry.rebuild_every_days;
   switch (entry.decision) {
     case "carried_forward":
-      return `— not re-picked tonight. Last run's titles were redelivered unchanged${
-        every ? `; this row rebuilds about every ${every} days` : ""
-      }. Raise Freshness, or change a setting, to rebuild it sooner.`;
+      return `— not re-picked tonight; last run's titles were redelivered unchanged${
+        every ? `. This row rebuilds about every ${every} days` : ""
+      }. Raise Freshness, or change a setting that decides its titles, to rebuild it sooner.`;
     case "settings_changed":
       return "— rebuilt now because a setting that decides its titles changed.";
     case "refreshed":
-      return "— refresh night: the strongest picks stayed, the weakest were swapped.";
+      return "— refresh night: the strongest picks stayed, the weakest were swapped for new ones.";
     case "cold_start":
       return "— too little watch history, so it was filled from the server's top-rated titles.";
     default:
       return "— built fresh.";
   }
-}
-
-function countsLine(entry: TraceSelection): string {
-  const parts = [`${entry.delivered} of ${entry.size} titles`];
-  if (entry.candidates != null) {
-    parts.push(
-      `chosen from ${entry.candidates} candidates${
-        entry.cut_cap ? ` (pool capped at ${entry.cut_cap} per type)` : ""
-      }`,
-    );
-  }
-  if (entry.carried) parts.push(`${entry.carried} carried over`);
-  if (entry.new) parts.push(`${entry.new} new`);
-  return parts.join(" · ");
-}
-
-/** Only the settings that ACTED. A chip for every dial would bury the one that explains the row. */
-function settingChips(entry: TraceSelection): string[] {
-  const chips: string[] = [];
-  if (entry.recency != null) {
-    chips.push(
-      entry.recency > 0
-        ? `Recent releases ${Math.round(entry.recency * 100)}%`
-        : "Recent releases off",
-    );
-  }
-  if (entry.freshness != null) {
-    chips.push(`Freshness ${Math.round(entry.freshness * 100)}%`);
-  }
-  if (entry.watched_pct) {
-    chips.push(`Already-watched ≤${Math.round(entry.watched_pct * 100)}%`);
-  }
-  if (entry.pick_order && entry.pick_order !== "best") {
-    chips.push(`Order: ${entry.pick_order}`);
-  }
-  if (entry.rewatch) chips.push("Watch it again");
-  if (entry.unstarted_only) chips.push("Never started only");
-  return chips;
 }
 
 function ErrorBanner({ error }: { error: string }) {
@@ -397,10 +381,12 @@ function LibraryFlow({
   lib,
   userId,
   ratings,
+  selection = [],
 }: {
   lib: LibraryView;
   userId?: number;
   ratings?: TraceRatings;
+  selection?: TraceSelection[];
 }) {
   const searchNoun = mediaLabel(lib.media).toLowerCase();
   const hasWeb = Boolean(lib.web || lib.webSource);
@@ -453,7 +439,7 @@ function LibraryFlow({
       id: `${lib.key}-searched`,
       icon: Search,
       rail: isCold ? "Popular titles" : "Searched",
-      count: isCold ? deliveredCount : placesSearched,
+      count: isCold ? deliveredCount : searchesRun(lib) || placesSearched,
       title: isCold
         ? `What we pulled for ${lib.label}`
         : "Where we searched, and every title in and out",
@@ -461,7 +447,11 @@ function LibraryFlow({
         ? "With too little history to search from, we pulled the highest-rated titles on this server."
         : lib.sharedSearch
           ? `Each title above fans out to every place we look for ${searchNoun}s. We search by taste, not by library, so these results are shared across your ${searchNoun} libraries — each title shows whether it made this library's shortlist or why it fell out.`
-          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.`,
+          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.${
+              searchesSampled(lib)
+                ? " The per-search detail below is a sample; the count above is every search that ran."
+                : ""
+            }`,
       body: (
         <SourcesFlow
           sources={lib.sources}
@@ -471,6 +461,22 @@ function LibraryFlow({
         />
       ),
     },
+    // What SURVIVED, and what the release-date weight did to it. Between search and order because
+    // that is where it happens: filtering and the pool cut decide what can be ordered at all.
+    ...(isCold || selection.length === 0
+      ? []
+      : [
+          {
+            id: `${lib.key}-shortlisted`,
+            icon: Filter,
+            rail: "Shortlisted",
+            count: selection[0]?.candidates,
+            title: "What survived, and what release date did to it",
+            subtitle:
+              "Everything found above is filtered (already watched, wrong library, excluded genres) and then cut to the strongest few per media type. Release date is part of that cut, not applied after it.",
+            body: shortlistBody(selection),
+          },
+        ]),
     // How the shortlist was ORDERED — the step that used to be missing entirely. Not shown for cold
     // start (no taste ranking runs; the picks are just the top-rated titles, in rating order).
     ...(isCold
@@ -494,7 +500,10 @@ function LibraryFlow({
       title: `What we put in ${lib.label}, and why`,
       body:
         lib.delivered.length > 0 ? (
-          <DeliveredList delivered={lib.delivered} />
+          <>
+            {deliveryNote(selection)}
+            <DeliveredList delivered={lib.delivered} />
+          </>
         ) : (
           <Muted>Nothing was delivered to this library this run.</Muted>
         ),
@@ -1149,7 +1158,7 @@ function WebSourceCard({
   const kept =
     [...fateByTitle.values()].filter((f) => f === "kept").length ||
     (source?.disposition?.kept ?? 0);
-  const mech = webMechanism(web?.mode ?? "", searches.length > 0);
+  const mech = webMechanism(web?.mode ?? "", searches.length > 0, web?.provider);
   // Exa bills per search, so a title many users watched is searched once and reused from a shared
   // cache for the rest. Surface how many actually hit Exa vs came back cached — it's the difference
   // between a costly run and a cheap one.

@@ -484,7 +484,9 @@ export interface RunStats {
   llm_tokens?: number;
   /** That total split by where it went: { curate, llm_web, llm_library }. */
   llm_tokens_by_step?: Record<string, number>;
-  /** Exa web searches run this run (billed per search, not per token — shown separately). */
+  /** External web searches run this run, whichever backend ran them (Exa or SearXNG). Counted per
+   *  REQUEST rather than per token — that is what Exa bills and what SearXNG rate-limits — so it is
+   *  shown separately. The key keeps its original `exa_` name so historic runs stay readable. */
   exa_searches?: number;
   /** Searches served from the shared 14-day cache instead of billed — "1 searched · N from cache". */
   exa_cache_hits?: number;
@@ -594,6 +596,9 @@ export interface TraceSource {
   queries?: TraceSeedQuery[];
   /** Fate tally across this source's returned sample: {kept, already_watched, ...} counts. */
   disposition?: Record<string, number>;
+  /** How many searches this source REALLY ran, per media. `queries` above is a capped display
+   *  sample, so counting it and calling that the number of searches understates the run. */
+  searched?: Record<string, number>;
 }
 
 /** One Exa search: the query sent for a seed and the titles it returned. */
@@ -617,6 +622,10 @@ export interface TraceWebProposal {
 /** The web-search (llm_web) detail of a gather: what was searched and what the LLM proposed. */
 export interface TraceWeb {
   mode: string;
+  /** Which external backend actually ran ("exa" | "searxng"). Absent when the native tool did the
+   *  searching, and on runs recorded before the trace carried it. Under `mode: "auto"` this is the
+   *  only thing that says which of the two externals was used. */
+  provider?: string;
   searches?: TraceWebSearch[];
   rag_system?: string;
   rag_user?: string;
@@ -725,7 +734,8 @@ export type TestableService =
   | "sonarr"
   | "mdblist"
   | "trakt"
-  | "exa";
+  | "exa"
+  | "searxng";
 
 /** Alias kept short for the components that render one line of this. */
 export type UserRun = UserRunSummary;

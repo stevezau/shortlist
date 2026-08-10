@@ -641,7 +641,7 @@ describe("TraceView · what Plex ratings did", () => {
   });
 });
 
-describe("TraceView — what happened to this row", () => {
+describe("TraceView — the flow explains freshness, the cut and release date", () => {
   /** The trace's `selection` entry for the Movies library, which okTrace()'s tabs land on. */
   const entry = (patch: Record<string, unknown> = {}) => ({
     row: "picked",
@@ -669,8 +669,9 @@ describe("TraceView — what happened to this row", () => {
       trace: { ...okTrace().trace, selection: [entry(patch)] },
     } as Partial<RunUserTraceResponse>);
 
-  it("tells the owner a row was NOT re-picked, and what to do about it", () => {
-    // The question this whole section exists to answer: "I changed a setting and nothing moved."
+  it("tells the owner a row was NOT re-picked, in the delivered step", () => {
+    // The question the whole section exists for: "I changed a setting and nothing moved." It belongs
+    // beside what was delivered, because that is the thing the owner is looking at and doubting.
     render(
       <TraceView
         data={withSelection({ decision: "carried_forward", refresh_night: false })}
@@ -683,33 +684,35 @@ describe("TraceView — what happened to this row", () => {
 
   it("names a settings change as the reason a row rebuilt early", () => {
     render(<TraceView data={withSelection({ decision: "settings_changed" })} />);
-    expect(screen.getByText(/a setting that decides its titles changed/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/a setting that decides its titles changed/i),
+    ).toBeInTheDocument();
   });
 
-  it("shows the counts behind the row, including the cut", () => {
+  it("has a shortlisted step showing the cut", () => {
+    // Between search and order, because that is where it happens: the cut decides what can be
+    // ordered at all, so explaining ordering without it describes half the mechanism.
     render(<TraceView data={withSelection()} />);
-    expect(screen.getByText(/15 of 15 titles/)).toBeInTheDocument();
-    expect(screen.getByText(/62 candidates/)).toBeInTheDocument();
-    expect(screen.getByText(/capped at 40 per type/)).toBeInTheDocument();
+    expect(screen.getByText(/62 candidates survived filtering/i)).toBeInTheDocument();
+    expect(screen.getByText(/strongest 40 per media type/i)).toBeInTheDocument();
   });
 
-  it("chips only the settings that acted", () => {
-    render(<TraceView data={withSelection({ pick_order: "newest", rewatch: true })} />);
-    expect(screen.getByText("Recent releases 50%")).toBeInTheDocument();
-    expect(screen.getByText("Order: newest")).toBeInTheDocument();
-    expect(screen.getByText("Watch it again")).toBeInTheDocument();
-    // "best" is the default and means nothing happened — a chip for it would bury the ones that did.
-    expect(screen.queryByText("Order: best")).not.toBeInTheDocument();
+  it("says release date applied to the CUT, not merely to the order", () => {
+    render(<TraceView data={withSelection()} />);
+    expect(screen.getByText(/Release date counted for 50%/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/applied to the cut itself, not just the order/i),
+    ).toBeInTheDocument();
   });
 
-  it("says the release-date weight is off rather than showing 0%", () => {
+  it("says release date was ignored rather than showing 0%", () => {
     render(<TraceView data={withSelection({ recency: 0 })} />);
-    expect(screen.getByText("Recent releases off")).toBeInTheDocument();
+    expect(screen.getByText(/Release date was ignored/i)).toBeInTheDocument();
   });
 
-  it("renders nothing at all for a run recorded before this existed", () => {
-    // Absent must read as "not recorded", never as "rebuilt".
+  it("adds no shortlisted step for a run recorded before this existed", () => {
+    // Absent must read as "not recorded", never as a stage with empty numbers.
     render(<TraceView data={okTrace()} />);
-    expect(screen.queryByText(/What happened to this row/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/survived filtering/i)).not.toBeInTheDocument();
   });
 });
