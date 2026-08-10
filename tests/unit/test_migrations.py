@@ -8,7 +8,9 @@ a NULL production accepted was unreachable in a test.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -26,6 +28,21 @@ def _alembic(config_dir: Path) -> AlembicConfig:
     cfg.set_main_option("script_location", str(ALEMBIC_DIR))
     cfg.set_main_option("sqlalchemy.url", db_url(config_dir))
     return cfg
+
+
+def _write_setting(config_dir: Path, key: str, value) -> None:
+    """Write a setting exactly as the app does — the `{"v": ...}` envelope `SettingsStore` reads
+    back, and the NOT NULL `updated_at` its ORM default fills in. A bare value here would test a
+    shape the product never writes, and would have hidden both bugs 0062 shipped with."""
+    con = sqlite3.connect(config_dir / "shortlist.db")
+    try:
+        con.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+            (key, json.dumps({"v": value}), datetime.now(UTC).isoformat(sep=" ")),
+        )
+        con.commit()
+    finally:
+        con.close()
 
 
 def _diffs(config_dir: Path) -> list:
@@ -486,3 +503,61 @@ class TestUpgradingAnOldInstall:
         run_migrations(tmp_path)
 
         assert _diffs(tmp_path) == []
+
+
+class TestRecencyDefaultOnlyChangesForFreshInstalls:
+    """0062 raises the shipped `recommendations.recency` default to 0.5, which every install with no
+    stored row would otherwise pick up — silently re-ranking every row on an existing server the
+    first night after an upgrade. The migration pins the OLD behaviour for servers already in use.
+
+    "Already in use" = setup completed. A fresh database runs every migration too, so writing the
+    pin unconditionally would defeat the whole point and hand new installs the value the change
+    exists to move them off.
+    """
+
+    def _value(self, config_dir: Path) -> tuple[bool, object]:
+        """(has_row, effective value) — the distinction the whole migration turns on."""
+        from shortlist.server.db.session import make_session_factory
+        from shortlist.server.services.secrets import SecretBox
+        from shortlist.server.settings_store import SettingsStore
+
+        sessions = make_session_factory(make_engine(config_dir))
+        with sessions() as session:
+            store = SettingsStore(session, SecretBox(config_dir))
+            return store.has_row("recommendations.recency"), store.get("recommendations.recency")
+
+    def test_a_server_already_in_use_keeps_the_old_behaviour(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0061")
+        _write_setting(tmp_path, "setup.completed", True)
+
+        run_migrations(tmp_path)
+
+        has_row, value = self._value(tmp_path)
+        assert has_row, "an existing server must be PINNED, not left to follow the new default"
+        assert value == 0.0, f"an upgrade re-ranked every row on a live server: {value}"
+
+    def test_a_fresh_install_gets_the_new_default(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        has_row, value = self._value(tmp_path)
+        assert not has_row, "a fresh install must follow DEFAULTS, not carry a pinned row"
+        assert value == 0.5
+
+    def test_a_half_configured_install_counts_as_fresh(self, tmp_path: Path):
+        """Installed but never finished the wizard: no rows have ever been built, so there is no
+        behaviour to preserve and the new default is the right one."""
+        command.upgrade(_alembic(tmp_path), "0061")
+
+        run_migrations(tmp_path)
+
+        assert not self._value(tmp_path)[0]
+
+    def test_an_explicit_choice_is_never_overwritten(self, tmp_path: Path):
+        """Someone on :dev who already moved the slider keeps exactly what they chose."""
+        command.upgrade(_alembic(tmp_path), "0061")
+        _write_setting(tmp_path, "setup.completed", True)
+        _write_setting(tmp_path, "recommendations.recency", 0.8)
+
+        run_migrations(tmp_path)
+
+        assert self._value(tmp_path)[1] == 0.8

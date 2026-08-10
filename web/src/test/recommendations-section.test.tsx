@@ -153,13 +153,22 @@ describe("RecommendationsSection", () => {
     );
   });
 
-  it("ships the recent-releases control off, so an upgrade re-orders nobody's rows", () => {
-    // The server default is 0.0 for the same reason. If this ever renders non-zero for a server
-    // that has never saved the setting, the UI is advertising ranking the engine is not doing.
-    renderSection({});
+  it("shows a server pinned by the upgrade as off, not as the new default", () => {
+    // Migration 0062 writes an explicit 0.0 for every install already in use, so THIS is what an
+    // upgraded server renders. If it showed 50 the UI would advertise ranking the engine is not
+    // doing — the setting reads from the stored value, never from the shipped default.
+    renderSection({ "recommendations.recency": 0 });
     expect(
       screen.getByRole("slider", { name: /release date counts/i }),
     ).toHaveValue("0");
+  });
+
+  it("shows a fresh install at the shipped default", () => {
+    // No stored row: a new server follows DEFAULTS (0.5), which is the whole point of 0062's split.
+    renderSection({});
+    expect(
+      screen.getByRole("slider", { name: /release date counts/i }),
+    ).toHaveValue("50");
   });
 
   it("keeps recent releases and freshness as two separate controls", () => {

@@ -104,10 +104,11 @@ export function freshnessBadgeLabel(pct: number): string {
  * row re-picks. This is a PREFERENCE — which titles win when it does. A row can rebuild nightly and
  * still fill with 1990s titles; that combination is what this setting is for.
  *
- * Defaults to 0 to match the server (`recommendations.recency`): any other default would re-order
- * every row on every existing install the first night after an upgrade.
+ * Defaults to 50 to match the server (`recommendations.recency`) — the seed used only until settings
+ * load. Installs already in use are pinned to 0 by migration 0062, so this is what a NEW server
+ * starts at, not something applied to an existing one.
  */
-export const RECENCY_DEFAULT = 0;
+export const RECENCY_DEFAULT = 50;
 
 /**
  * Years of age that halve a title's weight at full strength.

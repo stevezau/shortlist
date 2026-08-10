@@ -48,10 +48,16 @@ Settings → Finding titles has four more dials, each of which a row can overrid
   `0.5`, about weekly. If you trigger two runs the same day, a row that isn't due won't change. That
   is expected.
 
-- **Recent releases.** How much a title's **release date** counts when Shortlist ranks it. Left at
-  `0.0`, the default, release date is ignored entirely: a well-rated 1996 film and a well-rated 2024
-  one are judged the same, which is why rows can fill up with older titles. Turn it up and newer
-  titles rank higher.
+- **Recent releases.** How much a title's **release date** counts when Shortlist ranks it. At
+  `0.0` release date is ignored entirely: a well-rated 1996 film and a well-rated 2024 one are
+  judged the same, which is why rows can fill up with older titles. Turn it up and newer titles rank
+  higher.
+
+  New installs start at `0.5` — "leans towards recent releases". Age-blind is not the neutral
+  setting it looks like: a library holds decades of catalog against a trickle of new releases, so a
+  ranker with no opinion about age just inherits that skew. **A server that was already running when
+  this default was raised keeps `0.0`** and is never re-ranked by the upgrade; move the slider when
+  you want it.
 
   It is a preference, not a filter. Nothing is excluded for being old — an older title simply has
   to be a better match to win a slot, so a classic three of someone's watches point at still beats a

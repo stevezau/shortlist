@@ -150,6 +150,8 @@ describe("row-globals", () => {
   });
 
   it("seeds from the shipped default when settings are missing", () => {
-    expect(recencySeed(undefined)).toBe(0);
+    // Mirrors the server's DEFAULTS. Only reached before settings load; a real server always
+    // answers, and one pinned by migration 0062 answers 0.
+    expect(recencySeed(undefined)).toBeCloseTo(0.5, 10);
   });
 });

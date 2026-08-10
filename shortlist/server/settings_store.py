@@ -104,9 +104,11 @@ DEFAULTS: dict[str, Any] = {
     # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = every ~8 years
     # of age halves a title's weight. A weight, never a filter — an old title is only asked to be a
     # better match. Distinct from freshness above, which is the refresh CADENCE, not the preference.
-    # Defaults to 0.0: any other value would re-order every row on every existing server the first
-    # night after an upgrade, which is not something a point release may do silently.
-    "recommendations.recency": 0.0,
+    # 0.5 = "leans towards recent releases", the phrasing the UI uses for this value. NOT 0.0:
+    # age-blind is not neutral, it is the status quo, and the status quo is a pool of mostly-old
+    # candidates deciding the row. Migration 0062 pins 0.0 for installs already in use, so raising
+    # this changes NEW installs only and no running server is re-ranked by an upgrade.
+    "recommendations.recency": 0.5,
     # How many of a person's most recent watches the web-search source searches per row (one cached
     # Exa search each). Row-overridable. Fewer = tighter/cheaper; the DbCache dedups shared titles.
     "recommendations.recent_count": 10,
