@@ -380,6 +380,10 @@ export function RowEditor({
     if (mine) return "You only";
     return "Hidden from every shelf";
   })();
+  // A shared row is built once for the whole server from aggregate history, so the per-person dials
+  // have no meaning on it — and `_shared_row` ignores them regardless. Hidden rather than shown and
+  // ignored, following `request_tag`, which has always been hidden here for the same reason.
+  const isSharedRow = input.build === "shared";
   const requestSummary = input.request_tag
     ? `Tagged “${input.request_tag}”`
     : "No tag";
@@ -619,6 +623,11 @@ export function RowEditor({
               onChange={(candidate_sources) => set({ candidate_sources })}
             />
 
+            {/* Hidden for a shared row, like the request tag below. `_shared_row` never calls
+                `_apply_watched_cap` or `_prefer_watched` — and more to the point, "how much of this
+                row may be things they have already seen" has no answer for a row nobody owns. A
+                control the engine ignores is worse than no control: it promises a behaviour. */}
+            {!isSharedRow && (
             <InheritableField
               label="Already-watched titles"
               labelFor="row-watched-pct"
@@ -712,10 +721,12 @@ export function RowEditor({
               />
             </InheritableField>
 
-            {/* Nothing at all for a row that follows a watch. The cadence is fixed for those rows, so
-                a heading and a paragraph explaining a control that isn't there is just something else
-                to read past — the section summary already says "refreshes nightly". */}
-            {!followsAWatch && (
+            )}
+
+            {/* Nothing at all for a row that follows a watch, nor for a shared one: the cadence is
+                fixed for the first, and `_shared_row` rebuilds every run regardless for the second.
+                A heading explaining a control that isn't there is just something else to read past. */}
+            {!followsAWatch && !isSharedRow && (
               <InheritableField
                 label="How often it changes"
                 labelFor="row-freshness"
@@ -841,6 +852,7 @@ export function RowEditor({
               />
             </InheritableField>
 
+            {!isSharedRow && (
             <InheritableField
               label="When someone hasn’t watched enough"
               labelFor="row-cold-start"
@@ -892,6 +904,7 @@ export function RowEditor({
                 {COLD_START_HINTS[asColdStart(input.cold_start)]}
               </p>
             </InheritableField>
+            )}
 
             {/* Only for a row that builds from one or two watches. Above that it is blending a whole
                 history and "which watch does it follow" has no answer, so asking would be noise. */}

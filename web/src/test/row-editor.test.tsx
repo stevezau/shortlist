@@ -1391,3 +1391,44 @@ describe("RowEditor — recent releases", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("RowEditor — a shared row hides the dials that do not apply to it", () => {
+  beforeEach(() => {
+    settingsData.current = {};
+  });
+
+  const perPersonOnly = [
+    /global already-watched default/i,
+    /global freshness default/i,
+    /watch it again/i,
+    /not started/i,
+    /global setting for people without enough watch history/i,
+  ];
+
+  it("offers them on a per-person row", () => {
+    // The control: without it, the shared-row assertions below could pass on a broken editor.
+    renderEditor(row({ build: "per_person" }));
+    for (const name of perPersonOnly) {
+      expect(screen.getByRole("switch", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("hides them on a shared row, rather than promising what the engine ignores", () => {
+    // `_shared_row` never calls `_apply_watched_cap`, `_prefer_watched` or `_is_refresh_night`, and
+    // cold-start is meaningless for a row built from aggregate history. Showing a control the
+    // engine drops is worse than showing none — it states a behaviour.
+    renderEditor(row({ build: "shared", min_watchers: 2 }));
+    for (const name of perPersonOnly) {
+      expect(screen.queryByRole("switch", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps the controls a shared row DOES honour", () => {
+    // Sources, libraries, seed budget, release-date weight and display order all work on the
+    // shared path — hiding those would remove real function.
+    renderEditor(row({ build: "shared", min_watchers: 2 }));
+    expect(
+      screen.getByRole("switch", { name: /global recent-releases default/i }),
+    ).toBeInTheDocument();
+  });
+});

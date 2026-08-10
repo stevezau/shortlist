@@ -2288,7 +2288,17 @@ def _shared_row(
         if len(sec_picks) < k:
             # Backfill from this library's ranked pool so a thin build never SHRINKS the row.
             sec_picks = _pad_picks(sec_picks, sub, k)
-        section_picks[section.key] = sec_picks
+        # Rank from the SELECTION order, then apply the row's display order — the same two steps, in
+        # the same order, as the per-person path. Shipped missing entirely: every dial that lives in
+        # `_build_section_picks` is invisible to a shared row, so "Shuffled" and "Highest rated" did
+        # nothing at all while the editor went on offering them. `pick_order` is the one that both
+        # applies to an aggregate row and needs no per-user state, so it is honoured here; the rest
+        # (`watched_pct`, `rewatch`, `unstarted_only`, `cold_start`, `freshness`) are hidden in the
+        # editor instead, because they have no coherent meaning for a row nobody owns.
+        sec_picks = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
+        section_picks[section.key] = _apply_order(
+            sec_picks, spec.pick_order, row_slug=spec.slug, user_slug="", run_day=ctx.run_day
+        )
     # Force aggregate framing: a shared row is nobody's "because you watched", and the seed is
     # dropped so a {top_seed} name template can never surface one person's title.
     # Stamp the library too, so a shared row spanning >1 library splits per library in the report.

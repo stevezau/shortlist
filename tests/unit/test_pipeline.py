@@ -4466,3 +4466,62 @@ class TestASettingsChangeRebuildsTheRow:
         recipes = {p.recipe for p in report.users[0].picks}
         assert recipes and "stale" not in recipes, f"picks kept the old recipe: {recipes}"
         assert len(recipes) == 1, f"one row delivered two recipes: {recipes}"
+
+
+class TestSharedRowHonoursPickOrder:
+    """A shared row's display order must work. `_apply_order` lived only in the per-person path, so
+    a shared row set to "Shuffled" or "Highest rated" delivered ranking order regardless — while the
+    editor went on offering the control."""
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _ctx(self, ctx: EngineContext, order: str) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010, 20: 2020}
+        ctx.tmdb.suggestions.return_value = [
+            ({"id": 10, "title": "Old", "genre_ids": [], "vote_average": 9.0, "release_date": "1990-01-01"}, 1.0),
+            ({"id": 20, "title": "New", "genre_ids": [], "vote_average": 7.0, "release_date": "2024-01-01"}, 0.9),
+        ]
+        ctx.history_source.fetch.return_value = [
+            make_watched("Fargo", days_ago=1, rating_key=999),
+            make_watched("Fargo", days_ago=2, rating_key=999),
+        ]
+        ctx.config.rows = [
+            RowSpec(
+                slug="popular",
+                name_template="Popular",
+                size=2,
+                media="movie",
+                shared=True,
+                min_watchers=2,
+                pick_order=order,
+            )
+        ]
+        ctx.config.min_history = 1
+        ctx.run_day = self.RUN_DAY
+
+    def _delivered(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+        # DELIVERED order, i.e. list order — never sorted by rank. Rank is the selection order and
+        # `_apply_order` deliberately leaves it alone, so re-sorting on it would undo the very thing
+        # under test.
+        entries = [e for u in report.users for e in u.breakdown if e["row_slug"] == "popular"]
+        assert entries, "the shared row delivered nothing — fixture problem, not the feature"
+        seen: list[int] = []
+        for pick in entries[0]["picks"]:
+            if pick["tmdb_id"] not in seen:
+                seen.append(pick["tmdb_id"])
+        return seen
+
+    def test_newest_first_actually_reorders_a_shared_row(self, ctx: EngineContext, mock_plextv):
+        """10 is the better-ranked title, so ranking order leads with it; "newest" must not."""
+        self._ctx(ctx, "newest")
+        assert self._delivered(ctx, mock_plextv)[0] == 20
+
+    def test_best_match_order_is_still_the_ranking(self, ctx: EngineContext, mock_plextv):
+        """The control — "best" is a no-op, so this proves the reorder above came from the setting."""
+        self._ctx(ctx, "best")
+        assert self._delivered(ctx, mock_plextv)[0] == 10
