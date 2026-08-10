@@ -640,3 +640,76 @@ describe("TraceView · what Plex ratings did", () => {
     ).toBeTruthy();
   });
 });
+
+describe("TraceView — what happened to this row", () => {
+  /** The trace's `selection` entry for the Movies library, which okTrace()'s tabs land on. */
+  const entry = (patch: Record<string, unknown> = {}) => ({
+    row: "picked",
+    library: "Movies",
+    decision: "rebuilt" as const,
+    size: 15,
+    delivered: 15,
+    candidates: 62,
+    cut_cap: 40,
+    carried: 0,
+    new: 15,
+    freshness: 0.5,
+    refresh_night: true,
+    rebuild_every_days: 8,
+    recency: 0.5,
+    watched_pct: 0,
+    pick_order: "best",
+    rewatch: false,
+    unstarted_only: false,
+    ...patch,
+  });
+
+  const withSelection = (patch: Record<string, unknown> = {}) =>
+    okTrace({
+      trace: { ...okTrace().trace, selection: [entry(patch)] },
+    } as Partial<RunUserTraceResponse>);
+
+  it("tells the owner a row was NOT re-picked, and what to do about it", () => {
+    // The question this whole section exists to answer: "I changed a setting and nothing moved."
+    render(
+      <TraceView
+        data={withSelection({ decision: "carried_forward", refresh_night: false })}
+      />,
+    );
+    expect(screen.getByText(/not re-picked tonight/i)).toBeInTheDocument();
+    expect(screen.getByText(/rebuilds about every 8 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/Raise Freshness/i)).toBeInTheDocument();
+  });
+
+  it("names a settings change as the reason a row rebuilt early", () => {
+    render(<TraceView data={withSelection({ decision: "settings_changed" })} />);
+    expect(screen.getByText(/a setting that decides its titles changed/i)).toBeInTheDocument();
+  });
+
+  it("shows the counts behind the row, including the cut", () => {
+    render(<TraceView data={withSelection()} />);
+    expect(screen.getByText(/15 of 15 titles/)).toBeInTheDocument();
+    expect(screen.getByText(/62 candidates/)).toBeInTheDocument();
+    expect(screen.getByText(/capped at 40 per type/)).toBeInTheDocument();
+  });
+
+  it("chips only the settings that acted", () => {
+    render(<TraceView data={withSelection({ pick_order: "newest", rewatch: true })} />);
+    expect(screen.getByText("Recent releases 50%")).toBeInTheDocument();
+    expect(screen.getByText("Order: newest")).toBeInTheDocument();
+    expect(screen.getByText("Watch it again")).toBeInTheDocument();
+    // "best" is the default and means nothing happened — a chip for it would bury the ones that did.
+    expect(screen.queryByText("Order: best")).not.toBeInTheDocument();
+  });
+
+  it("says the release-date weight is off rather than showing 0%", () => {
+    render(<TraceView data={withSelection({ recency: 0 })} />);
+    expect(screen.getByText("Recent releases off")).toBeInTheDocument();
+  });
+
+  it("renders nothing at all for a run recorded before this existed", () => {
+    // Absent must read as "not recorded", never as "rebuilt".
+    render(<TraceView data={okTrace()} />);
+    expect(screen.queryByText(/What happened to this row/i)).not.toBeInTheDocument();
+  });
+});

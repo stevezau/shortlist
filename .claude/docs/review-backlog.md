@@ -521,7 +521,19 @@ The shape worth remembering: **a chooser must not be limited by the page you hap
 at.** The filter was always able to reach the whole history; the list of things to choose from was
 the part that could not.
 
-## Pipeline order-of-operations audit (2026-08-11) — OPEN
+## Pipeline order-of-operations audit (2026-08-11) — CLOSED
+
+All seven findings fixed on 2026-08-11 (`f64795c`, `da31cda`, `950ddc6`, `005eb4a`), plus the trace
+work they exposed (`cc302be`, `a1d46ab`). Each fix has a test that was verified to FAIL against the
+reintroduced bug — twice that mattered: the first refresh-collapse test re-implemented the
+composition rule instead of driving the branch and passed against the bug, and the first attempt at
+that fix silently broke the "strongest two-thirds survive" guarantee while fixing the collapse.
+
+The findings are kept below in full: the reproductions are the record of what these code paths do
+wrong when they are got wrong, and two of them (shared-row parity, settings that decide contents)
+are shapes this codebase keeps producing.
+
+### Original findings
 
 Architecture Review of the whole pick pipeline, prompted by the owner asking whether every setting
 acts at the right point. Findings below in the order they should be fixed. Two HIGH, three MED, two
