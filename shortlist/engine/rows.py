@@ -562,6 +562,39 @@ def _shuffle_key(row_slug: str, user_slug: str, run_day: int, tmdb_id: int) -> i
     return int.from_bytes(digest, "big")
 
 
+def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
+    """A fingerprint of the settings that decide a row's CONTENTS, for change detection.
+
+    Freshness exists to suppress churn when nothing has changed — not to delay a change the owner
+    deliberately made. Without this, editing a setting that decides which titles a row holds waits
+    behind that cadence: on a real server, raising "Recent releases" left 36 of 42 rows redelivering
+    byte-identical picks for up to a fortnight, which is indistinguishable from the feature not
+    working. `_seed_moved` already sets the precedent — the row's premise changed, so rebuild it.
+
+    Contents only. `pick_order` decides presentation and `freshness` is the cadence itself, so
+    neither belongs here: reordering a row must not force a rebuild, and changing the cadence must
+    not trigger the very rebuild the cadence is there to schedule. Row NAME, poster and placement are
+    likewise excluded — they change what a row looks like, never which titles are in it.
+
+    EFFECTIVE values, not stored ones, so raising a global invalidates every row that inherits it.
+    """
+    return "|".join(
+        str(part)
+        for part in (
+            spec.media,
+            ",".join(sorted(str(k) for k in spec.library_keys)),
+            ",".join(policy.effective_sources(spec)),
+            policy.effective_recency(spec),
+            policy.effective_watched_pct(spec),
+            bool(spec.rewatch),
+            bool(spec.unstarted_only),
+            effective_max_seeds(spec, policy.cfg),
+            effective_seed_window(spec),
+            effective_cold_start(spec, policy.cfg),
+        )
+    )
+
+
 def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
     """Re-rank a refresh night's survivors and newcomers together, by the pool's CURRENT order.
 
@@ -1676,10 +1709,27 @@ def _build_section_picks(
             pct,
             keep_watched=spec.rewatch,
         )
+        recipe = row_recipe(policy, spec)
+        was = ctx.previous_recipes.get((user.slug, spec.slug, str(section.key)), "")
+        recipe_changed = bool(was) and was != recipe
         refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, fresh)
         # Hoisted out of the refresh branch because the `new_first` order needs it on every path: a
         # pick is "new" if this row was not already carrying it, whichever branch produced it.
         prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
+
+        if prior_valid and recipe_changed:
+            # The owner changed a setting that decides this row's CONTENTS, so rebuild it now
+            # whatever the cadence says. Freshness suppresses churn when nothing changed; a
+            # deliberate edit is not churn, and making it wait up to a fortnight reads as the setting
+            # being broken — on a real server, raising "Recent releases" left 36 of 42 rows
+            # redelivering byte-identical picks. Unknown (a row built before recipes were recorded)
+            # is deliberately NOT a mismatch — see `EngineContext.previous_recipes`.
+            #
+            # Dropping the prior entirely rather than setting `refresh`: the refresh branch keeps
+            # two-thirds of the OLD row, so a row switched to "prefer recent releases" would carry
+            # most of its old titles forward and look like the change half-worked.
+            prior_valid = []
+            prior_ids = set()
 
         if prior_valid and not refresh:
             # Not this row's refresh night: redeliver last run's picks unchanged, so delivery's
@@ -1761,7 +1811,7 @@ def _build_section_picks(
         # Ordering last WITHOUT this made both of those answer "whichever pick sorted first tonight":
         # a `{top_seed}` row ordered by rating renamed itself after a different seed, and a shuffled
         # one re-derived `_seed_moved` off an arbitrary pick and rebuilt itself every refresh night.
-        ranked = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
+        ranked = [replace(p, rank=i + 1, recipe=recipe) for i, p in enumerate(sec_picks[:k])]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
         # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the

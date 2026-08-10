@@ -210,6 +210,10 @@ class Pick:
     # candidate pool already holds, so ordering by them costs no extra lookups.
     rating: float = 0.0
     year: int | None = None
+    # The `row_recipe` this pick was built under. Compared against tonight's on the next run: a
+    # mismatch means the owner changed a setting that decides row contents, so the row rebuilds
+    # instead of waiting for its freshness cadence.
+    recipe: str = ""
 
 
 @dataclass

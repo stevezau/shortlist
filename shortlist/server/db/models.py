@@ -343,6 +343,9 @@ class PickRow(Base):
     # keep their relative order until the row next rebuilds.
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The row_recipe (settings fingerprint) this pick was built under; NULL on picks written
+    # before recipes existed, which reads as "unknown" and does not force a rebuild.
+    recipe: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     # Both indexed: the effectiveness report is windowed, so every aggregate on it filters by one of
     # these two, over the largest table in this schema (retention prunes it, but only by whole runs).
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

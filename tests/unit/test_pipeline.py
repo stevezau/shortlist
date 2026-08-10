@@ -4350,3 +4350,119 @@ class TestRefreshNightVariety:
 
         ids = {p["tmdb_id"] for p in self._movies(report)}
         assert {10, 11, 12, 30} <= ids, f"the strongest two-thirds did not survive: {sorted(ids)}"
+
+
+class TestASettingsChangeRebuildsTheRow:
+    """Changing a setting that decides row contents must take effect on the next run.
+
+    Freshness suppresses churn when nothing changed. It was also delaying changes made on purpose:
+    raising "Recent releases" on a real server left 36 of 42 rows redelivering byte-identical picks
+    for up to a fortnight, which reads as the setting being broken.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+    KEY = ("sarah", "picked", "1")
+
+    def _ctx(self, ctx: EngineContext, *, recency: float) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": 8.0,
+                "release_date": f"{1970 + (i - 10) * 6}-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        # freshness 0.0 = frozen. Nothing but a recipe change may rebuild this row.
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=4, media="movie", freshness=0.0, recency=recency)
+        ]
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        ctx.run_day = self.RUN_DAY
+
+    def _prior(self, recipe: str):
+        return [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                recipe=recipe,
+            )
+            for i, t in enumerate([10, 11, 12, 13])
+        ]
+
+    def _run(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        return [p["tmdb_id"] for p in picks]
+
+    def test_a_frozen_row_still_redelivers_unchanged_when_nothing_changed(self, ctx, mock_plextv):
+        """The control. Same settings, frozen row — freshness must still do its job."""
+        self._ctx(ctx, recency=0.0)
+        from shortlist.engine.rows import RowPolicy, _rating_key_resolver, row_recipe
+
+        policy = RowPolicy(
+            ctx=ctx,
+            user=make_profile("sarah", account_id=100),
+            cfg=ctx.config,
+            specs=ctx.config.rows,
+            library_index={},
+            report=MagicMock(),
+            resolve=_rating_key_resolver({}),
+        )
+        same = row_recipe(policy, ctx.config.rows[0])
+        ctx.previous_picks = {self.KEY: self._prior(same)}
+        ctx.previous_recipes = {self.KEY: same}
+
+        assert self._run(ctx, mock_plextv) == [10, 11, 12, 13]
+
+    def test_changing_a_setting_rebuilds_a_frozen_row_immediately(self, ctx, mock_plextv):
+        """The fix. The stored row was built at recency 0; tonight the row is at 1.0, so it must
+        rebuild now rather than wait — and a frozen row would otherwise wait for ever."""
+        self._ctx(ctx, recency=1.0)
+        ctx.previous_picks = {self.KEY: self._prior("media=movie|recency=0.0|stale")}
+        ctx.previous_recipes = {self.KEY: "media=movie|recency=0.0|stale"}
+
+        delivered = self._run(ctx, mock_plextv)
+
+        assert delivered != [10, 11, 12, 13], "a changed setting did not rebuild the row"
+        assert delivered == [19, 18, 17, 16], f"expected the newest four at full recency, got {delivered}"
+
+    def test_a_row_with_no_recorded_recipe_is_left_alone(self, ctx, mock_plextv):
+        """Picks predating this feature carry no recipe. Treating unknown as a mismatch would
+        rebuild every row on every server the first night after an upgrade — the exact churn
+        freshness exists to prevent."""
+        self._ctx(ctx, recency=1.0)
+        ctx.previous_picks = {self.KEY: self._prior("")}
+        ctx.previous_recipes = {}
+
+        assert self._run(ctx, mock_plextv) == [10, 11, 12, 13]
+
+    def test_the_delivered_picks_carry_tonights_recipe(self, ctx, mock_plextv):
+        """Without this the row rebuilds on every run for ever, because the stored recipe never
+        catches up with the settings."""
+        self._ctx(ctx, recency=1.0)
+        ctx.previous_picks = {self.KEY: self._prior("stale")}
+        ctx.previous_recipes = {self.KEY: "stale"}
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        recipes = {p.recipe for p in report.users[0].picks}
+        assert recipes and "stale" not in recipes, f"picks kept the old recipe: {recipes}"
+        assert len(recipes) == 1, f"one row delivered two recipes: {recipes}"

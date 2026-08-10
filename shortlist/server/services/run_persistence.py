@@ -403,6 +403,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
                     seed_title=pick.seed_title,
                     rating=pick.rating,
                     year=pick.year,
+                    recipe=pick.recipe,
                 )
             )
     _add_event(

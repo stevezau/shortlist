@@ -167,6 +167,7 @@ class ContextBuilder:
             poster_artist = make_studio(store, self._sessions) if wants_studio else None
             config = self._engine_config(session, store, dry_run=dry_run, collection_ids=collection_ids)
             previous = self._previous_picks(session)
+            previous_recipes = self._previous_recipes(previous)
             delivered_keys = self._delivered_keys(session)
             # Opted-out accounts: with hide_shared_from_disabled, even public shared rows are hidden
             # from them, so disabling a user removes them from Shortlist entirely.
@@ -223,6 +224,7 @@ class ContextBuilder:
                 mdblist=self._build_mdblist(store),
                 concurrency=concurrency,
                 previous_picks=previous,
+                previous_recipes=previous_recipes,
                 delivered_keys=delivered_keys,
                 disabled_account_ids=disabled_account_ids,
                 known_slugs=known_slugs,
@@ -547,12 +549,25 @@ class ContextBuilder:
                     # its carried-forward picks every run, so these have to survive the round trip.
                     rating=r.rating or 0.0,
                     year=r.year,
+                    # The settings fingerprint this pick was built under. Carried so the engine can
+                    # tell "the owner changed the recipe" from "nothing changed" and rebuild rather
+                    # than wait out the freshness cadence.
+                    recipe=r.recipe or "",
                     collection_slug=r.collection_slug,
                     section_key=r.section_key,
                     library=r.library,
                 )
             )
         return out
+
+    def _previous_recipes(self, previous: dict[tuple[str, str, str], list[Pick]]) -> dict[tuple[str, str, str], str]:
+        """The recipe each stored row was built under, keyed like ``_previous_picks``.
+
+        Read from the picks themselves rather than queried again — they are the same rows. A row
+        whose picks disagree (a half-written run, or a mix of recipes after an upgrade) is reported
+        as its FIRST pick's recipe, which is the one the row's leading titles were chosen under.
+        """
+        return {key: picks[0].recipe for key, picks in previous.items() if picks and picks[0].recipe}
 
     def enabled_profiles(self, session: Session, user_ids: list[int] | None = None) -> list[UserProfile]:
         """Enabled users, optionally narrowed to user_ids — never widened past enabled=True.
