@@ -505,14 +505,16 @@ class TestUpgradingAnOldInstall:
         assert _diffs(tmp_path) == []
 
 
-class TestRecencyDefaultOnlyChangesForFreshInstalls:
-    """0062 raises the shipped `recommendations.recency` default to 0.5, which every install with no
-    stored row would otherwise pick up — silently re-ranking every row on an existing server the
-    first night after an upgrade. The migration pins the OLD behaviour for servers already in use.
+class TestRecencyDefaultAppliesToEveryInstall:
+    """`recommendations.recency` defaults to 0.5 for EVERY install, new or existing.
 
-    "Already in use" = setup completed. A fresh database runs every migration too, so writing the
-    pin unconditionally would defeat the whole point and hand new installs the value the change
-    exists to move them off.
+    0062 originally pinned 0.0 for servers already in use so an upgrade could not re-rank them. The
+    owner chose the opposite (2026-08-11): the old default is the bug, so every server should get
+    the corrected one and opt out with the slider rather than opt in. 0063 removes that pin.
+
+    0062 is left in the chain rather than deleted — a database that already stamped it would fail to
+    migrate if the revision vanished — so a server upgrading through both writes the pin and then
+    drops it, ending where a fresh install starts.
     """
 
     def _value(self, config_dir: Path) -> tuple[bool, object]:
@@ -526,15 +528,28 @@ class TestRecencyDefaultOnlyChangesForFreshInstalls:
             store = SettingsStore(session, SecretBox(config_dir))
             return store.has_row("recommendations.recency"), store.get("recommendations.recency")
 
-    def test_a_server_already_in_use_keeps_the_old_behaviour(self, tmp_path: Path):
+    def test_a_server_already_in_use_also_gets_the_new_default(self, tmp_path: Path):
+        """The owner's call: an existing server adopts the corrected default too, rather than
+        keeping age-blind ranking until someone finds the slider."""
         command.upgrade(_alembic(tmp_path), "0061")
         _write_setting(tmp_path, "setup.completed", True)
 
         run_migrations(tmp_path)
 
         has_row, value = self._value(tmp_path)
-        assert has_row, "an existing server must be PINNED, not left to follow the new default"
-        assert value == 0.0, f"an upgrade re-ranked every row on a live server: {value}"
+        assert not has_row, "no pin should survive — an existing server follows DEFAULTS like a new one"
+        assert value == 0.5
+
+    def test_a_server_that_stamped_the_old_pin_is_released_from_it(self, tmp_path: Path):
+        """The upgrade path that actually matters: a :dev server that already ran 0062 carries the
+        pin row on disk. 0063 has to remove it, or that server alone stays age-blind for ever."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "setup.completed", True)
+        _write_setting(tmp_path, "recommendations.recency", 0.0)
+
+        run_migrations(tmp_path)
+
+        assert self._value(tmp_path) == (False, 0.5)
 
     def test_a_fresh_install_gets_the_new_default(self, tmp_path: Path):
         run_migrations(tmp_path)

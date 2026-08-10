@@ -153,10 +153,9 @@ describe("RecommendationsSection", () => {
     );
   });
 
-  it("shows a server pinned by the upgrade as off, not as the new default", () => {
-    // Migration 0062 writes an explicit 0.0 for every install already in use, so THIS is what an
-    // upgraded server renders. If it showed 50 the UI would advertise ranking the engine is not
-    // doing — the setting reads from the stored value, never from the shipped default.
+  it("shows a server that chose to turn it off as off, not as the shipped default", () => {
+    // The control must render the STORED value, never the default — otherwise the UI advertises
+    // ranking the engine is not doing for anyone who deliberately turned it back down.
     renderSection({ "recommendations.recency": 0 });
     expect(
       screen.getByRole("slider", { name: /release date counts/i }),
