@@ -4525,3 +4525,154 @@ class TestSharedRowHonoursPickOrder:
         """The control — "best" is a no-op, so this proves the reorder above came from the setting."""
         self._ctx(ctx, "best")
         assert self._delivered(ctx, mock_plextv)[0] == 10
+
+
+class TestColdStartRowsAreFullSizeAndFromTheRightLibrary:
+    """A cold-start row is what a NEW user sees first, and it was arriving half empty.
+
+    `_cold_start_picks` split `k` across `sections_by_type()` — one representative library per media
+    type — while `_build_section_picks` then took only that library's own share. On any server with
+    both a movie and a TV library, every cold row came back at half its configured size. The picks
+    also came from the representative library rather than the row's own, so a library-pinned row
+    lost everything the pinned library didn't hold, and reported a green run.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _ctx(self, ctx: EngineContext, *, library_keys=None) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        kids = MagicMock(type="movie", key="2", title="Kids Movies")
+        shows = MagicMock(type="show", key="3", title="TV Shows")
+        ctx.plex.sections.return_value = [movies, kids, shows]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+        ctx.delivery_sections = [movies, kids, shows]
+        ctx.plex.build_library_index.return_value = {}
+
+        def top_rated(section, n):
+            base = {"1": 100, "2": 200, "3": 300}[str(section.key)]
+            return [(base + i, MagicMock(ratingKey=9000 + base + i, title=f"L{base}-{i}")) for i in range(n)]
+
+        ctx.plex.top_rated.side_effect = top_rated
+        ctx.history_source.fetch.return_value = []  # thin history -> cold start
+        ctx.config.min_history = 5
+        ctx.config.rows = [
+            RowSpec(
+                slug="picked",
+                name_template="Picked",
+                size=10,
+                media="both",
+                library_keys=library_keys or [],
+            )
+        ]
+        ctx.run_day = self.RUN_DAY
+
+    def _by_library(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        # From `picks`, not `breakdown`: the breakdown is assembled by delivery, which needs far more
+        # of the PMS mocked than this fixture provides. `picks` is what the engine actually chose.
+        out: dict[str, list[int]] = {}
+        for pick in report.users[0].picks:
+            out.setdefault(pick.library, []).append(pick.tmdb_id)
+        return out
+
+    def test_every_library_gets_a_full_row(self, ctx: EngineContext, mock_plextv):
+        """Not k split across media types — k per library, like a warm row."""
+        self._ctx(ctx)
+
+        by_library = self._by_library(ctx, mock_plextv)
+
+        assert by_library, "the cold-start row delivered nothing at all"
+        for title, ids in by_library.items():
+            assert len(ids) == 10, f"{title} got {len(ids)} of 10 cold-start picks"
+
+    def test_a_pinned_row_is_filled_from_the_library_it_is_pinned_to(self, ctx: EngineContext, mock_plextv):
+        """Library 2's titles are the 200s. A row pinned there must not be filled from library 1."""
+        self._ctx(ctx, library_keys=["2"])
+
+        by_library = self._by_library(ctx, mock_plextv)
+
+        assert set(by_library) == {"Kids Movies"}, f"delivered to the wrong libraries: {list(by_library)}"
+        ids = by_library["Kids Movies"]
+        assert all(200 <= i < 300 for i in ids), f"cold picks came from another library: {ids}"
+
+
+class TestUnstartedOnlyIsRecheckedOnCarryForward:
+    """An "only series they haven't started" row must drop a series the person has since begun, even
+    on a night it isn't rebuilt — and at ANY watched cap.
+
+    `_reusable_prior` only applied the started-shows filter when `pct <= 0`, but the row editor
+    recommends this toggle alongside `pct > 0` ("this only changes anything if you've allowed
+    already-watched titles above"). In its documented configuration, no filter ran at all.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+    KEY = ("sarah", "unstarted", "1")
+
+    def _ctx(self, ctx: EngineContext, *, pct: float) -> None:
+        shows = MagicMock(type="show", key="1", title="TV Shows")
+        ctx.plex.sections.return_value = [shows]
+        ctx.plex.sections_by_type.return_value = {MediaType.SHOW: shows}
+        ctx.plex.build_library_index.return_value = {900: 999, 50: 2050, 51: 2051}
+        ctx.tmdb.suggestions.return_value = [
+            ({"id": 50, "name": "Started", "genre_ids": [], "vote_average": 9.0}, 1.0),
+            ({"id": 51, "name": "Untouched", "genre_ids": [], "vote_average": 8.0}, 0.9),
+        ]
+        # `watched_shows` is filled from HISTORY (`load_watched_breakdown`), not from a plex call:
+        # show 50 has been STARTED since the last run — 1 episode of 40.
+        ctx.history_source.fetch.return_value = [
+            make_watched("Seed", days_ago=1, rating_key=999, media_type=MediaType.SHOW),
+            make_watched(
+                "Started",
+                days_ago=1,
+                tmdb_id=50,
+                media_type=MediaType.SHOW,
+                viewed_leaf_count=1,
+                leaf_count=40,
+            ),
+        ]
+        ctx.config.rows = [
+            RowSpec(
+                slug="unstarted",
+                name_template="Start something",
+                size=2,
+                media="show",
+                unstarted_only=True,
+                watched_pct=pct,
+                freshness=0.0,
+            )
+        ]
+        ctx.config.min_history = 1
+        ctx.run_day = self.RUN_DAY
+
+    def _prior(self):
+        return [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"S{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.SHOW,
+                collection_slug="unstarted",
+                section_key="1",
+                library="TV Shows",
+            )
+            for i, t in enumerate([50, 51])
+        ]
+
+    def _delivered(self, ctx, mock_plextv):
+        ctx.previous_picks = {self.KEY: self._prior()}
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return {p.tmdb_id for p in report.users[0].picks}
+
+    def test_a_started_series_is_dropped_at_a_zero_cap(self, ctx: EngineContext, mock_plextv):
+        """Already worked — the control that proves the fixture models 'started' correctly."""
+        self._ctx(ctx, pct=0.0)
+        assert 50 not in self._delivered(ctx, mock_plextv)
+
+    def test_a_started_series_is_dropped_above_zero_too(self, ctx: EngineContext, mock_plextv):
+        """The bug: the configuration the editor recommends for this toggle."""
+        self._ctx(ctx, pct=0.5)
+        assert 50 not in self._delivered(ctx, mock_plextv), "a started series survived carry-forward"

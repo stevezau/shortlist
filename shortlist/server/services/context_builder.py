@@ -699,6 +699,12 @@ class ContextBuilder:
             web_search_provider=store.get("llm_web.search_provider") or "auto",
             hub_anchors=self._build_hub_anchors(store),
             manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
+            # The `or` fallbacks below are safe only because the validators exclude the falsy
+            # value: `min_history` is bounded 1-100, `recent_count` 1-25, `max_seeds` 5-100
+            # (api/settings.py). For the three fractions the fallback IS the falsy value, so a
+            # stored 0.0 survives. Correct by coincidence of the bounds rather than by construction
+            # — lower any of those floors to 0 and several settings start silently reading as their
+            # default instead of as the zero the owner chose.
             watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
             freshness=float(store.get("recommendations.freshness") or 0.0),
             recency=float(store.get("recommendations.recency") or 0.0),

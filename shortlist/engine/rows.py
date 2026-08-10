@@ -359,6 +359,7 @@ def _reusable_prior(
     pct: float,
     *,
     keep_watched: bool = False,
+    started: frozenset[tuple[int, MediaType]] = frozenset(),
 ) -> list[Pick]:
     """Last run's picks for this library still valid to redeliver, in their original rank order: right
     media type, still in the library, and — for a 0%-watched row — not since watched.
@@ -372,12 +373,20 @@ def _reusable_prior(
     default `watched_pct` of 0.0, that was the normal case, not an edge one. The row then never took a
     carry-forward branch at all: its `freshness` was inoperative, the anti-immediate-repeat guard never
     ran, and it re-wrote to Plex on nights nothing had changed.
+
+    ``started`` drops shows the person has begun, and is checked at EVERY `pct`, unlike the rule
+    above. An "only series they haven't started" row above 0% took no filter at all here — and above
+    0% is exactly the configuration the row editor recommends for it ("this only changes anything if
+    you've allowed already-watched titles above"). So the row went on showing a series they had since
+    started, for up to a fortnight, in its documented setup.
     """
     out: list[Pick] = []
     for p in prior:
         if p.media_type is not kind or p.tmdb_id not in sec_idx:
             continue
         if pct <= 0 and not keep_watched and (p.tmdb_id, p.media_type) in watched:
+            continue
+        if (p.tmdb_id, p.media_type) in started:
             continue
         out.append(p)
     return out
@@ -406,7 +415,8 @@ def _seed_moved(
 ) -> bool:
     """Whether a row NAMED after its seed is now built from a different one than last run's picks.
 
-    A `{top_seed}` title renders from ``picks[0].seed_title`` (``delivery.render_row_name``), and the
+    A `{top_seed}` title renders from the LOWEST-RANKED pick's ``seed_title`` (``render_row_name``
+    takes ``min(picks, key=rank)``, never ``picks[0]`` — display order is not rank), and the
     refresh branch always carries pick #1 forward — so without this the title stays pinned to the seed
     of the very FIRST build while later refreshes quietly fill the row's tail from newer watches. The
     row then claims "Because you watched X" over contents mostly chosen for something else, which is
@@ -1681,9 +1691,31 @@ def _build_section_picks(
         # tmdb_id -> ratingKey for THIS library only; a candidate not in this library isn't a
         # valid pick for it, however well it ranks for the row overall.
         if cold:
-            # Cold picks already come FROM a library (plex.top_rated), so they're in-library by
-            # construction; delivery remaps each to the target library and drops any it lacks.
-            cands = [p for p in base_cold if p.media_type is kind][:k]
+            # Pulled from THIS library, at this row's full size. Two bugs lived in the old version,
+            # both invisible because they only hit users with too little history to notice:
+            #
+            #   * `_cold_start_picks` split `k` across `sections_by_type()` and each section then
+            #     took only its own share, so on any server with both a movie and a TV library —
+            #     nearly all — every cold row came back HALF SIZE.
+            #   * the picks came from the representative library for the media type, not the row's
+            #     own, so a library-pinned row kept only the intersection and could deliver nothing
+            #     at all, reported as a green run.
+            #
+            # `targets` already honours `library_keys`, so taking `k` from `section` fixes both.
+            cands = [
+                Pick(
+                    tmdb_id=tmdb_id,
+                    rating_key=item.ratingKey,
+                    title=item.title,
+                    rank=i + 1,
+                    reason="Popular on this server",
+                    media_type=kind,
+                    sources=["cold_start"],  # no history to work from — say so rather than imply a match
+                )
+                for i, (tmdb_id, item) in enumerate(ctx.plex.top_rated(section, k))
+            ]
+            if not cands:  # a library with nothing rated falls back to the per-user pull
+                cands = [p for p in base_cold if p.media_type is kind][:k]
             ranked_cold = [replace(p, rank=i + 1) for i, p in enumerate(cands)]
             # Ordered like any other row: a cold-start user who set their row to Shuffled expects it
             # to shuffle, and "their history is thin" is no reason to hand back a different feature.
@@ -1708,6 +1740,13 @@ def _build_section_picks(
             policy.zero_pct_exclusions(),
             pct,
             keep_watched=spec.rewatch,
+            # Independent of `pct`: see `_reusable_prior`. Movies are exempt because a movie with any
+            # view is already finished, so "started" is not a distinct state there.
+            started=(
+                frozenset(_started_shows(policy.watched_shows))
+                if spec.unstarted_only and spec.media != "movie"
+                else frozenset()
+            ),
         )
         recipe = row_recipe(policy, spec)
         was = ctx.previous_recipes.get((user.slug, spec.slug, str(section.key)), "")
