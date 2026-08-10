@@ -389,6 +389,11 @@ def deliver_rows(
                             # one screen built to answer it.
                             "sources": list(p.sources),
                             "affinity": p.affinity,
+                            # Release year and TMDB score, for the same reason as provenance above:
+                            # the run page renders this blob, and "is this an old title, and is it
+                            # any good?" is the first thing asked of a row that looks wrong.
+                            "year": p.year,
+                            "rating": p.rating,
                         }
                         for p in this_section
                     ],

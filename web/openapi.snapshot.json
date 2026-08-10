@@ -2286,6 +2286,17 @@
             "title": "Rank",
             "type": "integer"
           },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -2311,6 +2322,17 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
           }
         },
         "required": [
@@ -5024,6 +5046,17 @@
             "title": "Rank",
             "type": "integer"
           },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -5053,6 +5086,17 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
           }
         },
         "required": [
@@ -5065,7 +5109,9 @@
           "section_key",
           "seed_title",
           "sources",
-          "affinity"
+          "affinity",
+          "year",
+          "rating"
         ],
         "title": "UserPickOut",
         "type": "object"

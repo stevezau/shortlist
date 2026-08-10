@@ -110,28 +110,37 @@ async def clear_runs(request: Request) -> dict:
 
 
 def _with_provenance(breakdown: list[dict], picks: list) -> list[dict]:
-    """Fill in `sources`/`affinity` on breakdown picks from the picks table.
+    """Fill in `sources`/`affinity`/`year`/`rating` on breakdown picks from the picks table.
 
-    The run page renders the stored breakdown blob, which only started carrying provenance from the
-    run that introduced it — but the `picks` rows for those same runs have it. Joining on
+    The run page renders the stored breakdown blob, which only started carrying each of these from
+    the run that introduced it — but the `picks` rows for those same runs have them. Joining on
     (tmdb_id, media_type) means an existing run explains itself immediately instead of staying blank
-    until it is rebuilt. Entries that already carry provenance are left alone.
+    until it is rebuilt.
+
+    Each field is filled independently: provenance and release year arrived in different releases, so
+    a run carrying one but not the other must still gain the missing one. A key already present in
+    the blob always wins — the blob is what the engine actually delivered.
     """
     known = {(p.tmdb_id, p.media_type): p for p in picks}
     out = []
     for entry in breakdown:
         enriched = []
         for pick in entry.get("picks") or []:
-            if pick.get("sources"):
-                enriched.append(pick)
-                continue
             row = known.get((pick.get("tmdb_id"), pick.get("media_type")))
             if row is None:
                 enriched.append(pick)
                 continue
-            enriched.append(
-                {**pick, "sources": [s for s in (row.sources or "").split(",") if s], "affinity": row.affinity}
-            )
+            filled = dict(pick)
+            if not filled.get("sources"):
+                filled["sources"] = [s for s in (row.sources or "").split(",") if s]
+                filled["affinity"] = row.affinity
+            # `year` is legitimately None (a cold-start pick has no TMDB year), so presence of the
+            # KEY decides, not truthiness — otherwise every such pick is re-looked-up for ever.
+            if "year" not in filled:
+                filled["year"] = row.year
+            if "rating" not in filled:
+                filled["rating"] = row.rating
+            enriched.append(filled)
         out.append({**entry, "picks": enriched})
     return out
 
@@ -234,6 +243,8 @@ async def get_run(run_id: int, request: Request) -> dict:
                             "seed_title": p.seed_title,
                             "sources": [s for s in (p.sources or "").split(",") if s],
                             "affinity": p.affinity,
+                            "year": p.year,
+                            "rating": p.rating,
                         }
                         for p in picks
                     ],

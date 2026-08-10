@@ -59,6 +59,8 @@ PICK_KEYS = {
     "seed_title",
     "sources",
     "affinity",
+    "year",
+    "rating",
 }
 
 

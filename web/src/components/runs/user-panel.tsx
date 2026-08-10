@@ -47,6 +47,18 @@ function CopyForGitHubButton({
   );
 }
 
+/** The score recorded for a pick when it was chosen, e.g. "TMDB 7.4".
+ *
+ *  Always TMDB: `Candidate.rating` is TMDB's `vote_average`, and that is what is stamped onto the
+ *  pick. A server set to rank by IMDb/Trakt/Rotten Tomatoes fetches those through MDBList only to
+ *  ORDER a rating-sorted row — the number is never written back — so labelling this with the
+ *  configured source would put a name on a figure that did not come from it.
+ *
+ *  0 means "unrated at pick time", which is not a score and must not render as "TMDB 0.0". */
+function ratingLabel(pick: Pick): string {
+  return pick.rating ? `TMDB ${pick.rating.toFixed(1)}` : "";
+}
+
 /** One ranked pick: rank, a status dot (green = new this run), title + reason, and where it
  *  came from. */
 function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
@@ -71,6 +83,12 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
       <span className="min-w-0 flex-1 text-sm">
         <span className="block truncate">
           <span className="font-medium">{pick.title}</span>
+          {/* Release year sits with the TITLE, not on the metadata line: "is this an old film?" is
+              asked while reading the name, and the Recent releases setting is judged on it. Absent
+              on a cold-start pick, which comes from the library rather than a TMDB candidate. */}
+          {pick.year != null && (
+            <span className="text-muted-foreground tabular-nums"> ({pick.year})</span>
+          )}
           {pick.reason && (
             <span className="text-muted-foreground"> — {pick.reason}</span>
           )}
@@ -78,9 +96,11 @@ function PickLine({ pick, isNew }: { pick: Pick; isNew: boolean }) {
         {/* Where it came from. This page has its own pick renderer rather than using PickList, so
             the provenance line has to be repeated here — it is the page people open to ask exactly
             this question. */}
-        {provenanceLabel(pick) && (
+        {(ratingLabel(pick) || provenanceLabel(pick)) && (
           <span className="block truncate text-xs text-muted-foreground/80">
-            {provenanceLabel(pick)}
+            {[ratingLabel(pick), provenanceLabel(pick)]
+              .filter(Boolean)
+              .join(" · ")}
           </span>
         )}
       </span>

@@ -3399,6 +3399,8 @@ export interface components {
             affinity: number | null;
             /** Rank */
             rank: number;
+            /** Rating */
+            rating?: number | null;
             /** Reason */
             reason: string;
             /** Seed Title */
@@ -3407,6 +3409,8 @@ export interface components {
             sources: string[];
             /** Title */
             title: string;
+            /** Year */
+            year?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -4599,6 +4603,8 @@ export interface components {
             media_type: string;
             /** Rank */
             rank: number;
+            /** Rating */
+            rating: number | null;
             /** Reason */
             reason: string;
             /** Section Key */
@@ -4609,6 +4615,8 @@ export interface components {
             sources: string[];
             /** Title */
             title: string;
+            /** Year */
+            year: number | null;
         } & {
             [key: string]: unknown;
         };
