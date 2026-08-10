@@ -4713,9 +4713,16 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
     def _prior(self):
         return [
             Pick(
-                tmdb_id=t, rating_key=2000 + t, title=f"T{t}", rank=i + 1, reason="kept",
-                media_type=MediaType.MOVIE, collection_slug="picked", section_key="1",
-                library="Movies", recipe="same",
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                recipe="same",
             )
             for i, t in enumerate([10, 11, 12])
         ]
