@@ -845,3 +845,54 @@ class TestPoolKeyMatchesPoolExclusions:
         zero_pct = stub.zero_pct_exclusions()
 
         assert _started_shows(watched_shows) <= zero_pct
+
+
+class TestRankAgainstPoolOrdersOnly:
+    """`_rank_against_pool` orders; it must never decide membership. The refresh branch chooses the
+    row's `k` before calling it — see `TestRefreshNightVariety` in test_pipeline.py, which is the
+    test that actually catches a regression here."""
+
+    @staticmethod
+    def _pick(tmdb_id: int, seed_id: int, rank: int) -> Pick:
+        return Pick(
+            tmdb_id=tmdb_id,
+            rating_key=1000 + tmdb_id,
+            title=f"t{tmdb_id}",
+            rank=rank,
+            reason="",
+            media_type=MediaType.MOVIE,
+            seed_tmdb_id=seed_id,
+        )
+
+    @staticmethod
+    def _cand(tmdb_id: int, seed_id: int) -> Candidate:
+        return make_candidate(
+            tmdb_id,
+            f"t{tmdb_id}",
+            seeds=[Seed(tmdb_id=seed_id, title=f"s{seed_id}", media_type=MediaType.MOVIE, weight=1.0)],
+        )
+
+    def test_it_returns_every_pick_it_was_given(self):
+        """The property the refresh branch depends on: ordering cannot drop anyone."""
+        from shortlist.engine.rows import _rank_against_pool
+
+        sub = [self._cand(100, 1), self._cand(200, 2)]
+        picks = [self._pick(200, 2, 1), self._pick(100, 1, 2), self._pick(999, 9, 3)]
+
+        assert len(_rank_against_pool(picks, sub)) == 3
+
+    def test_tonights_ranking_decides_the_order_not_last_runs(self):
+        from shortlist.engine.rows import _rank_against_pool
+
+        sub = [self._cand(100, 1), self._cand(200, 2)]
+        picks = [self._pick(200, 2, 1), self._pick(100, 1, 2)]
+
+        assert [p.tmdb_id for p in _rank_against_pool(picks, sub)] == [100, 200]
+
+    def test_a_pick_the_pool_no_longer_holds_sorts_last(self):
+        from shortlist.engine.rows import _rank_against_pool
+
+        sub = [self._cand(100, 1), self._cand(200, 2)]
+        picks = [self._pick(999, 9, 1), self._pick(100, 1, 2), self._pick(200, 2, 3)]
+
+        assert _rank_against_pool(picks, sub)[-1].tmdb_id == 999

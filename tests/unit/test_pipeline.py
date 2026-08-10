@@ -4241,3 +4241,112 @@ class TestSeedCycling:
         # And two people's rows sit at different points in the cycle, so a server does not re-derive
         # every cycling row on the same night.
         assert seed_cycle_offset("picked", "sarah", 5) != seed_cycle_offset("picked", "mike", 5)
+
+
+class TestRefreshNightVariety:
+    """A row built varied must stay varied when it refreshes.
+
+    `pre_rank` output is pure score, and one heavily-watched title's look-alikes dominate it — which
+    is precisely why `diversify_by_seed` exists. If the refresh branch merges survivors and
+    newcomers and then truncates to `k` by pool order, it re-applies the ordering diversify just
+    defeated: the row collapses onto the dominant taste and never recovers, because the collapsed
+    row is what carries forward to the next refresh.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _ctx(self, ctx: EngineContext) -> None:
+        """Two watches, so two seeds. The first suggests 20 titles, the second only 4 — the lopsided
+        shape a real pool has when someone has watched one show far more than anything else."""
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {
+            900: 999,
+            901: 998,
+            **{i: 2000 + i for i in range(10, 34)},
+        }
+        dominant = [{"id": i, "title": f"D{i}", "genre_ids": [], "vote_average": 9.0} for i in range(10, 30)]
+        minority = [{"id": i, "title": f"M{i}", "genre_ids": [], "vote_average": 6.0} for i in range(30, 34)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(dominant if tid == 900 else minority)
+        ctx.history_source.fetch.return_value = [
+            make_watched("Heavy", days_ago=1, rating_key=999),
+            make_watched("Light", days_ago=2, rating_key=998),
+        ]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=6, media="movie", freshness=1.0)]
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        ctx.run_day = self.RUN_DAY
+
+    @staticmethod
+    def _seeds_of(picks) -> set:
+        return {p["seed_title"] for p in picks if p.get("seed_title")}
+
+    def _movies(self, report):
+        return next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+
+    def test_a_bootstrap_row_draws_on_both_tastes(self, ctx: EngineContext, mock_plextv):
+        """The control: without it, the refresh assertion below could pass on a row that was never
+        varied in the first place."""
+        self._ctx(ctx)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert len(self._seeds_of(self._movies(report))) >= 2
+
+    def test_a_refresh_night_does_not_collapse_the_row_onto_one_taste(self, ctx: EngineContext, mock_plextv):
+        """The regression. Last run's row held both tastes; tonight it refreshes."""
+        self._ctx(ctx)
+        prior = [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                seed_tmdb_id=900 if t < 30 else 901,
+                seed_title="Heavy" if t < 30 else "Light",
+            )
+            for i, t in enumerate([10, 11, 12, 30, 31, 32])
+        ]
+        ctx.previous_picks = {("sarah", "picked", "1"): prior}
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        picks = self._movies(report)
+        seeds = self._seeds_of(picks)
+        assert len(seeds) >= 2, f"the row collapsed onto {seeds}: {[p['title'] for p in picks]}"
+
+    def test_the_kept_two_thirds_still_survive_a_refresh(self, ctx: EngineContext, mock_plextv):
+        """Variety must not be bought by throwing away the stability guarantee — the strongest
+        two-thirds of last run's row still carry over."""
+        self._ctx(ctx)
+        prior = [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                seed_tmdb_id=900 if t < 30 else 901,
+                seed_title="Heavy" if t < 30 else "Light",
+            )
+            for i, t in enumerate([10, 11, 12, 30, 31, 32])
+        ]
+        ctx.previous_picks = {("sarah", "picked", "1"): prior}
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        ids = {p["tmdb_id"] for p in self._movies(report)}
+        assert {10, 11, 12, 30} <= ids, f"the strongest two-thirds did not survive: {sorted(ids)}"

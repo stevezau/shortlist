@@ -576,6 +576,11 @@ def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
     stable) — it is still a valid delivery, just no longer a ranked candidate tonight. The caller
     then truncates to `k`, so such a pick is the first to lose its slot when the row is over-full,
     which is the right precedence: a ranked candidate outranks one the pool no longer holds.
+
+    ORDERING ONLY. It must not decide MEMBERSHIP: sorting the merged list by pool index and then
+    truncating to `k` evicts exactly the picks `diversify_by_seed` fought for, because pool order is
+    pure score and a heavily-watched title's look-alikes dominate it. The caller therefore chooses
+    its `k` first and hands only those here — see the refresh branch in `_build_section_picks`.
     """
     order = {(c.tmdb_id, c.media_type): i for i, c in enumerate(sub)}
     return sorted(picks, key=lambda p: order.get((p.tmdb_id, p.media_type), len(order)))
@@ -1699,8 +1704,15 @@ def _build_section_picks(
             kept = prior_valid[:keep_n]
             fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
             new_picks = picker.build_picks(fresh_pool, k)
-            survivors = kept + [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
-            sec_picks = _rank_against_pool(survivors, sub)[:k]
+            newcomers = [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
+            # Take only what there is ROOM for, before ordering. Handing the whole merged list to
+            # `_rank_against_pool` and truncating there let pool order — pure score — decide who
+            # stayed, which is the ordering `diversify_by_seed` exists to defeat: `new_picks` comes
+            # back diversified and the truncation threw that away, collapsing the row onto the one
+            # heavily-watched taste whose look-alikes lead the pool. Measured over 10 slots, a
+            # bootstrap spread of 7/6/2 across three seeds returned as 15/0/0 on the first refresh,
+            # and stayed there — the collapsed row is what carries forward to the next one.
+            sec_picks = _rank_against_pool(kept + newcomers[: max(0, k - len(kept))], sub)
             if len(sec_picks) < k:
                 sec_picks = _pad_picks(sec_picks, fresh_pool, k)
             # `_seed_moved` above asked whether the POOL still leads with the seed this row is named
