@@ -229,7 +229,9 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         <ConnectionCard
           service="trakt"
           title="Trakt"
-          purpose="Optional. Trakt is a site where people log what they watch. Its “related titles” are a second place to look for suggestions, and often catch things TMDB misses. Switch the Trakt source on under Finding titles once the key is saved."
+          // Trakt made API keys VIP-only, so people were following our instructions, finding no way
+          // to create a key, and reporting it as a Shortlist bug (issue #73). Say it before they go.
+          purpose="Optional, and Trakt now charges for this. Trakt is a site where people log what they watch, and its “related titles” are a second place to look for suggestions that often catches things TMDB misses. Creating an API key needs a paid Trakt VIP subscription — everything in Shortlist works without it. Switch the Trakt source on under Finding titles once the key is saved."
           settings={settings}
           summary={
             settingString(settings, "trakt.client_id") ? "API key saved" : ""

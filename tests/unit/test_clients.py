@@ -1350,6 +1350,23 @@ class TestTraktClient:
             TraktClient("secret-cid").ping()
         assert "rejected the API key" in str(excinfo.value)
         assert "secret-cid" not in str(excinfo.value)
+        # Named as the likely cause, because Trakt made API keys VIP-only and a lapsed subscription
+        # takes a working key down with it — "rejected" alone sent a reporter checking a good key.
+        assert "VIP" in str(excinfo.value)
+
+    @respx.mock
+    def test_trakt_saying_not_vip_is_reported_as_that_and_not_as_a_bad_key(self):
+        """Issue #73. 426 is Trakt's own "you are not a VIP" signal (docs.trakt.tv/docs/vip-methods),
+        and it is the ONLY authoritative answer available to us: the endpoint that reports VIP status
+        needs an OAuth user token, and Shortlist is deliberately client-id-only. Reporting it as a bad
+        key would send someone to regenerate a key that is perfectly valid."""
+        respx.get("https://api.trakt.tv/movies/trending").mock(return_value=httpx.Response(426))
+        with pytest.raises(TraktError) as excinfo:
+            TraktClient("secret-cid").ping()
+        assert "426" in str(excinfo.value)
+        assert "VIP" in str(excinfo.value)
+        assert "rejected the API key" not in str(excinfo.value)
+        assert "secret-cid" not in str(excinfo.value)
 
     @respx.mock
     def test_related_is_cached_across_calls(self):

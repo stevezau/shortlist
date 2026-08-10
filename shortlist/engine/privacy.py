@@ -1,18 +1,29 @@
 """Share-filter parse/merge/serialize and restriction sync — the load-bearing wall.
 
 Every function here obeys plex-safety rule 3: writes are read-modify-write MERGES that leave
-every condition Shortlist didn't add byte-identical. Values are kept raw (never URL-decoded) so
-``serialize_filter(parse_filter(s)) == s`` holds for any filter Plex hands us.
+every condition Shortlist didn't add byte-identical. Values are kept raw (never URL-decoded) and the
+separators are kept as they were read, so ``serialize_filter(parse_filter(s)) == s`` holds for any
+filter Plex hands us. Values are COMPARED url-decoded and case-folded, because the same label reaches
+us written several ways.
 
 Live-validated against plex.tv on 2026-07-12 (Phase 0): `PUT /api/users/{id}` persists
 `filterMovies`/`filterTelevision` verbatim with no server-side normalization.
+
+Re-validated 2026-08-10 (`tests/fixtures/plextv_combined_filters.json`), and this is the part that
+matters: "verbatim" extends to the SEPARATORS. `|` and `&` between conditions, and `,` and `%2C`
+between values, all round-trip byte-identical. plex.tv normalizes nothing, so the shape we read is
+whichever writer last touched that account — Plex Web writes `&` with encoded values, plexapi writes
+`|` with `%2C`, Shortlist writes plain — and a parser that understands only its own dialect corrupts
+the other two (issue #77).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
+from urllib.parse import unquote
 
 from loguru import logger
 
@@ -29,61 +40,191 @@ class FilterParseError(ValueError):
     """A share filter didn't parse; refuse to touch it rather than risk clobbering it."""
 
 
+# Plex accepts BOTH separators between conditions, and plex.tv stores whatever it is given
+# byte-for-byte — live-verified on a real account 2026-08-10: `|`+plain, `|`+`%2C`, `&`+plain and
+# `&`+`%2C` all round-tripped identically, with no server-side normalization. So the form we read is
+# whichever writer last touched that account: Plex Web writes `&` with URL-encoded values, plexapi
+# writes `|` with `%2C` (myplex.py `_filterDictToStr`), and Shortlist writes plain. All three reach us.
+_CONDITION_SEP = re.compile(r"([|&])")
+# The fallback when `&` turns out to be part of a label rather than a separator — see _split_conditions.
+_PIPE_SEP = re.compile(r"([|])")
+# `%2C` is a comma that Plex Web encoded. Splitting on the bare comma alone left `A%2CB` as ONE value,
+# so a merge appended to it and produced a value no reader could split back apart.
+_VALUE_SEP = re.compile(r"(%2C|%2c|,)")
+
+
 @dataclass(frozen=True)
 class FilterCondition:
     field: str
     op: str  # "=" or "!="
     values: tuple[str, ...]
+    # The separators as they were READ, so `serialize_filter(parse_filter(s)) == s` holds for any
+    # filter Plex hands us — including one a third-party tool wrote in a form we would not choose.
+    # `sep` joins this condition to the PREVIOUS one and is ignored on the first. `value_seps[i]`
+    # joins `values[i]` to `values[i+1]`; empty means "use the default", which is what every
+    # hand-built condition gets.
+    sep: str = "|"
+    value_seps: tuple[str, ...] = ()
+
+    def joined_values(self) -> str:
+        """The value list re-joined with exactly the separators it was parsed with."""
+        if not self.values:
+            return ""
+        seps = self._padded_seps()
+        out = self.values[0]
+        for value, sep in zip(self.values[1:], seps, strict=True):
+            out += sep + value
+        return out
+
+    def _padded_seps(self) -> tuple[str, ...]:
+        """One separator per gap. A condition built by hand (or grown by a merge) carries fewer than
+        it needs, so the last known separator is repeated — which keeps an appended label in the same
+        encoding as the values already there rather than mixing the two."""
+        needed = max(0, len(self.values) - 1)
+        if len(self.value_seps) >= needed:
+            return self.value_seps[:needed]
+        fill = self.value_seps[-1] if self.value_seps else ","
+        return self.value_seps + (fill,) * (needed - len(self.value_seps))
+
+
+def _same_value(a: str, b: str) -> bool:
+    """Do two filter values name the same Plex label?
+
+    Compared URL-DECODED and case-folded, because the same label reaches us written both ways —
+    Plex Web percent-encodes (`Age%200`), Shortlist and plexapi do not (`Age 0`) — and Plex's own tag
+    matching is case-insensitive. Comparing raw bytes made an already-excluded label look absent, so
+    a merge appended a second copy of it in the other encoding.
+    """
+    return unquote(a).casefold() == unquote(b).casefold()
+
+
+def _split_conditions(raw: str) -> list[tuple[str, str]]:
+    """Split a filter into ``(condition, separator-before-it)``, choosing which separators are real.
+
+    ``&`` is a condition separator in the form Plex Web writes — but it is also a perfectly ordinary
+    character inside a LABEL: ``label!=Kids & Family`` is a filter a person can create in Plex, and
+    splitting it unconditionally leaves ``' Family'`` with no operator. Raising on that would be a
+    regression with a server-wide blast radius: `FilterParseError` reaches the blanket handler in
+    `_privacy_sync_phase`, which blocks promotion for EVERY user until somebody hand-edits that one
+    account's filter. That is the shape this codebase already has a scar from (#14).
+
+    So try the greedy split first, and if any piece comes out without an operator, treat ``&`` as
+    ordinary text and split on ``|`` alone — which is exactly how such a filter parsed before ``&``
+    was understood at all. Only genuinely unparseable input reaches the caller's error.
+    """
+    for pattern in (_CONDITION_SEP, _PIPE_SEP):
+        # `re.split` with a capturing group yields [part, sep, part, sep, part, ...].
+        chunks = pattern.split(raw)
+        parts = [(chunks[i], chunks[i - 1] if i else "|") for i in range(0, len(chunks), 2)]
+        if all("=" in part for part, _ in parts):
+            return parts
+    return parts
 
 
 def parse_filter(raw: str) -> list[FilterCondition]:
     """Parse ``'label!=a,b|contentRating=PG'`` into ordered conditions.
 
+    Conditions are separated by ``|`` OR ``&`` and values by ``,`` or ``%2C``; which one was used is
+    recorded on each condition so serializing gives the original bytes back. Splitting on ``|`` and
+    ``,`` alone silently mis-parsed the form Plex Web writes — ``label=Age%200%2CAge%203&label!=X``
+    became a single condition whose FIELD was ``'label=Age%200%2CAge%203&label'``, so the existing
+    exclude clause was invisible, a merge appended a second one, and the result was a three-fragment
+    string that Plex Web itself could not read: the affected user's Restrictions tab failed with
+    "Something went wrong" until the value was rewritten by hand (issue #77).
+
     Args:
-        raw: The pipe-separated filter string from plex.tv (may be empty).
+        raw: The filter string from plex.tv (may be empty).
 
     Returns:
         Ordered conditions; values are raw strings, never URL-decoded.
 
     Raises:
-        FilterParseError: If any condition has no operator — we must not rewrite
-            a filter we cannot fully represent.
+        FilterParseError: If any condition has no operator, or if a parsed field still contains a
+            separator — either means a form we cannot faithfully represent, and rewriting one of
+            those is how a filter gets corrupted rather than merged.
     """
     if not raw:
         return []
     conditions = []
-    for part in raw.split("|"):
+    for part, sep in _split_conditions(raw):
         for op in ("!=", "="):
-            head, sep, tail = part.partition(op)
-            if sep:
-                conditions.append(FilterCondition(head, op, tuple(tail.split(",")) if tail else ()))
-                break
+            head, found, tail = part.partition(op)
+            if not found:
+                continue
+            if any(c in head for c in "|&="):
+                raise FilterParseError(f"unparseable condition {part!r} in filter {raw!r}")
+            pieces = _VALUE_SEP.split(tail) if tail else []
+            conditions.append(
+                FilterCondition(
+                    head,
+                    op,
+                    tuple(pieces[0::2]),
+                    sep=sep,
+                    value_seps=tuple(pieces[1::2]),
+                )
+            )
+            break
         else:
             raise FilterParseError(f"unparseable condition {part!r} in filter {raw!r}")
     return conditions
 
 
 def serialize_filter(conditions: list[FilterCondition]) -> str:
-    return "|".join(f"{c.field}{c.op}{','.join(c.values)}" for c in conditions)
+    """Render conditions back to a filter string, reusing each one's own separators."""
+    return "".join((c.sep if i else "") + f"{c.field}{c.op}{c.joined_values()}" for i, c in enumerate(conditions))
+
+
+def _house_style(conditions: list[FilterCondition]) -> tuple[str, str]:
+    """The separators this particular filter already uses, so anything we add matches it.
+
+    Appending a `|` clause to a filter Plex Web wrote with `&` is precisely what produced the
+    unreadable three-fragment value in issue #77 — plex.tv stores whatever it is handed, so a string
+    mixing both separators is what the next reader (Plex Web) has to cope with, and it cannot.
+    """
+    condition_sep = "&" if any(c.sep == "&" for c in conditions[1:]) else "|"
+    value_seps = [s for c in conditions for s in c.value_seps]
+    value_sep = next((s for s in value_seps if s.casefold() == "%2c"), ",")
+    return condition_sep, value_sep
 
 
 def merge_label_excludes(raw: str, labels: set[str]) -> str:
     """Union `labels` into the first ``label!=`` condition, byte-preserving everything else.
 
-    Membership is case-insensitive (Plex tag matching is), so a case-variant of an already
-    excluded label is never appended as a duplicate.
+    Membership is case-insensitive (Plex tag matching is) and encoding-insensitive, so a case- or
+    percent-encoded variant of an already excluded label is never appended as a duplicate.
     """
     conditions = parse_filter(raw)
+    _, house_value_sep = _house_style(conditions)
     for i, cond in enumerate(conditions):
         if cond.field == "label" and cond.op == "!=":
-            present = {v.lower() for v in cond.values}
-            missing = [v for v in sorted(labels) if v.lower() not in present]
+            missing = [v for v in sorted(labels) if not any(_same_value(v, present) for present in cond.values)]
             if not missing:
                 return raw
-            conditions[i] = FilterCondition(cond.field, cond.op, cond.values + tuple(missing))
+            # Which separator to join the NEW labels with. The clause's own, when it has one. When it
+            # holds a single value it has none, and defaulting to a plain comma there put a `,` inside
+            # a filter written entirely with `%2C` — so fall back to the encoding the rest of this
+            # filter uses, not to ours. Existing gaps keep exactly the separators they were read with.
+            existing = cond._padded_seps()
+            fill = cond.value_seps[-1] if cond.value_seps else house_value_sep
+            grown = cond.values + tuple(missing)
+            conditions[i] = replace(
+                cond,
+                values=grown,
+                value_seps=existing + (fill,) * (len(grown) - 1 - len(existing)),
+            )
             return serialize_filter(conditions)
     if labels:
-        conditions.append(FilterCondition("label", "!=", tuple(sorted(labels))))
+        condition_sep, value_sep = _house_style(conditions)
+        ordered = tuple(sorted(labels))
+        conditions.append(
+            FilterCondition(
+                "label",
+                "!=",
+                ordered,
+                sep=condition_sep,
+                value_seps=(value_sep,) * max(0, len(ordered) - 1),
+            )
+        )
     return serialize_filter(conditions)
 
 
@@ -93,22 +234,37 @@ def remove_label_excludes(raw: str, labels: set[str]) -> str:
     out = []
     for cond in conditions:
         if cond.field == "label" and cond.op == "!=":
-            targets = {label.lower() for label in labels}
-            values = tuple(v for v in cond.values if v.lower() not in targets)
-            if not values:
+            seps = cond._padded_seps()
+            kept = [
+                (value, index)
+                for index, value in enumerate(cond.values)
+                if not any(_same_value(value, t) for t in labels)
+            ]
+            if not kept:
                 continue
-            cond = FilterCondition(cond.field, cond.op, values)
+            # Keep the separator that PRECEDED each surviving value (the first has none), so removing
+            # a value out of the middle cannot change the encoding of the ones left behind.
+            cond = replace(
+                cond,
+                values=tuple(value for value, _ in kept),
+                value_seps=tuple(seps[index - 1] for _, index in kept[1:]),
+            )
         out.append(cond)
     return serialize_filter(out)
 
 
 def shortlist_labels_in(raw: str, label_prefix: str) -> set[str]:
-    """Return the shortlist-owned labels currently excluded in a filter string."""
+    """Return the shortlist-owned labels currently excluded in a filter string.
+
+    Matched URL-DECODED: our own labels never need encoding (a slug is `[a-z0-9_]`), but a writer
+    that encodes everything still hands them back percent-encoded, and reading them as foreign made
+    Shortlist blind to its OWN excludes — so it could neither count them nor remove them at uninstall.
+    """
     prefix = f"{label_prefix}_".lower()
     found = set()
     for cond in parse_filter(raw):
         if cond.field == "label" and cond.op == "!=":
-            found.update(v for v in cond.values if v.lower().startswith(prefix))
+            found.update(v for v in cond.values if unquote(v).lower().startswith(prefix))
     return found
 
 

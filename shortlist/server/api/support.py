@@ -38,6 +38,7 @@ from sqlalchemy import text as sa_text
 
 import shortlist
 from shortlist.engine import privacy
+from shortlist.engine.models import LABEL_PREFIX, SHARED_LABEL_PREFIX
 from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
@@ -342,6 +343,47 @@ def _plex_client(store: SettingsStore):
     if not url or not token:
         return None
     return PlexClient(url, token, timeout=_PROBE_TIMEOUT_S)
+
+
+def _existing_row_labels(store: SettingsStore) -> tuple[set[str], str | None]:
+    """Lowercased labels of the PER-PERSON rows that exist on Plex right now, plus why not if unread.
+
+    The engine hides a row by excluding the label it found on the PMS (`privacy.desired_excludes`
+    works off `stored_labels`), so "which labels belong in everyone's filter" is a question only the
+    server can answer — the user table cannot, because a user with no row yet has no label anywhere.
+
+    Shared rows are left out. They are public (or audience-scoped) by design and are deliberately NOT
+    excluded from everyone, so counting them here would report every account as leaking one.
+
+    Returns ``(labels, error)``. An error means UNKNOWN, never "none": a read that failed must not be
+    reported as a clean bill of health, which is the same fail-safe the engine applies to this
+    enumeration (see `collections_known` in `pipeline._privacy_sync_phase`).
+
+    "No labels came back" is checked against the title MARKER, not just against exceptions. A read
+    that succeeds and returns nothing looks identical to a server with no rows — and on a server whose
+    rows have LOST their labels, which is the state this whole area exists to defend against, those
+    rows are visible to everyone. Printing "there is nothing for anyone to hide" there would be the
+    most reassuring possible lie. The marker is independent of the label, so the two disagreeing says
+    which of the two is true.
+    """
+    try:
+        plex = _plex_client(store)
+        if plex is None:
+            return set(), "Plex isn't connected."
+        owned = plex.owned_collections(LABEL_PREFIX)
+        shared_prefix = SHARED_LABEL_PREFIX.lower()
+        labels = {row.label.lower() for row in owned.values() if not row.label.lower().startswith(shared_prefix)}
+        if not labels:
+            # Same client, so the collection list is already cached — this costs no extra listing read.
+            marked = sum(1 for row in plex.owned_row_surfaces(flags=False) if row.get("marked"))
+            if marked:
+                return set(), f"{marked} collection(s) are ours by title but carry no label"
+    except Exception as e:
+        # Building the client is inside the guard too. It is documented never to raise, but this is
+        # the fail-safe path for the tool that reports leaks — one that raises here would take out
+        # the whole section instead of reporting "unknown".
+        return set(), _fail(e)
+    return labels, None
 
 
 def _counts_as_watched(
@@ -933,6 +975,7 @@ async def bundle(request: Request) -> str:
         "row schedule": row_schedule,
         "connection": connection,
         "sharing": sharing,
+        "surfaces": surfaces,
         "drift": drift,
         "jobs": jobs,
         "clocks": clocks,
@@ -1845,16 +1888,25 @@ async def sharing(request: Request) -> dict:
         store = SettingsStore(session, state.secrets)
         client = _plextv_client(store, _machine_id(session))
 
-        # Who actually HAS a row, from our own roster — the labels that need hiding.
+        # Which labels need hiding: the per-person rows that EXIST ON PLEX, read from the server.
         #
-        # Not `len(accounts) - 1`, which is wrong in both directions: the OWNER has a row but is
+        # NOT the enabled-user list, which is what this used to do. The engine only ever excludes
+        # labels it found on the PMS (`desired_excludes` <- `stored_labels`), so an enabled user who
+        # has never received a row — a cold start, zero picks, a delivery that failed — contributes a
+        # label that can never appear in anybody's filter. Every account then read as "missing" it,
+        # and this reported `0 of N accounts hide every row` on a perfectly healthy server. One
+        # reporter's server had 13 of 24 users on `picks=0`; the tool told them their privacy was
+        # entirely broken (issue #76).
+        #
+        # Nor `len(accounts) - 1`, which is wrong in both directions: the OWNER has a row but is
         # absent from the plex.tv roster (`list_users` returns shared + Home users only), so that
-        # undercounts and reports a correctly-configured server as short; and a DISABLED user is in
-        # the roster with no row, so it also overcounts. On the tool whose whole job is "is every row
-        # hidden from this person", either would be crying wolf.
-        enabled_users = session.query(User).filter(User.enabled.is_(True)).all()
-        labelled = {u.plex_account_id: f"{_LABEL_PREFIX}{u.slug}".lower() for u in enabled_users}
-        all_labels = set(labelled.values())
+        # undercounts; and a DISABLED user is in the roster with no row, so it also overcounts.
+        #
+        # Whose row is whose comes from ALL users, not just enabled ones: a paused or disabled person
+        # still owns their collection, and their own label must never count as something they should
+        # be hiding from themselves (see `privacy.desired_excludes`).
+        labelled = {u.plex_account_id: f"{_LABEL_PREFIX}{u.slug}".lower() for u in session.query(User).all()}
+        all_labels, rows_error = _existing_row_labels(store)
         # plex.tv gives us a USERNAME; `person()` and every other tool key on a SLUG, and `slugify`
         # lowercases and replaces punctuation — so they differ for essentially every real account
         # ("MooHouse" -> "moohouse", "Chris Smith" -> "chris_smith"). Passing a username on as if it
@@ -1938,9 +1990,18 @@ async def sharing(request: Request) -> dict:
         block.line(f"COULD NOT READ: {error}")
     elif not rows:
         block.line("No accounts came back from plex.tv.")
+    elif rows_error:
+        # The filters below are still worth printing, but nothing can be CHECKED against them: with
+        # no list of rows, every account trivially hides all zero of them. Saying so beats printing
+        # "19 of 19 accounts hide every row" off a failed read.
+        block.line(f"COULD NOT READ THE ROWS ON PLEX: {rows_error}")
+        block.line("The filters below are real, but there is nothing to check them against.")
+    elif not all_labels:
+        block.line("No per-person rows exist on Plex yet, so there is nothing for anyone to hide.")
     else:
         healthy = len(rows) - len(short)
         block.line(f"{healthy} of {len(rows)} accounts hide every row that is not theirs.")
+        block.line(f"({len(all_labels)} per-person row(s) exist on Plex right now.)")
         for row in (r for r in rows if r["missing"]):
             block.line(f"{row['user']} (#{row['account_id']})")
             block.line(f"  hides {len(row['shortlist_excludes'])} of {len(row['should_hide'])} other rows")
@@ -1957,6 +2018,130 @@ async def sharing(request: Request) -> dict:
         "missing_excludes_for": short if not error else [],
         # Slugs — what `_people_worth_including` feeds to `person()`.
         "missing_excludes_slugs": short_slugs if not error else [],
+        # What the verdict was measured AGAINST, so a caller can tell "everyone is covered" from
+        # "there was nothing to cover" — the two used to be the same empty answer.
+        "rows_on_plex": sorted(all_labels),
+        "rows_error": rows_error,
+        "error": error,
+        "text": block.render(),
+    }
+
+
+@_tool.get("/support/surfaces")
+async def surfaces(request: Request) -> dict:
+    """Where every Shortlist row is ACTUALLY showing on the server, versus where it should be.
+
+    The gap this closes: rows are hidden from other people by share filters, but the server OWNER has
+    no share filter (plex-safety rule 5), so the only thing keeping somebody else's row off the
+    owner's Home screen is the row's own ``promotedToOwnHome`` flag. Nothing reported those flags, so
+    "the admin can see another user's row" was uninvestigable (issue #75).
+
+    Two things are checked, and they are different in kind:
+
+    * An INVARIANT — a per-person row that is not the owner's must never claim the owner's Home.
+      No configuration makes that correct, so a violation is always a bug.
+    * A CONSEQUENCE — the Recommended shelf is one flag per collection, and the owner has no filter,
+      so a row set to show on friends' library shelves also appears on the OWNER's. That is a Plex
+      limitation (see `RowSpec.show_friends_library`), so it is reported as an explanation, not a
+      fault: the fix is a settings change, not a code change.
+    """
+    state = request.app.state
+    with state.sessions() as session:
+        store = SettingsStore(session, state.secrets)
+        owner = session.query(User).filter(User.user_type == "owner").one_or_none()
+        owner_label = f"{_LABEL_PREFIX}{owner.slug}".lower() if owner else None
+        placements = {
+            c.slug: (c.name, c.placement or "both", c.placement_friends or c.placement or "both")
+            for c in session.query(Collection).filter(Collection.enabled.is_(True)).all()
+        }
+        rows: list[dict] = []
+        error = None
+        try:
+            plex = _plex_client(store)
+            if plex is None:
+                error = "Plex isn't connected."
+            else:
+                rows = plex.owned_row_surfaces()
+        except Exception as e:
+            error = _fail(e)
+        _audit(session, "surfaces", {"rows": len(rows)})
+
+    shared_prefix = SHARED_LABEL_PREFIX.lower()
+
+    def is_someone_elses(row: dict) -> bool:
+        """A per-person row belonging to anyone but the owner. A SHARED row is public and may sit on
+        the owner's Home legitimately, so it is not a violation."""
+        label = (row.get("label") or "").lower()
+        if not label or label.startswith(shared_prefix):
+            return False
+        return label != owner_label
+
+    on_owner_home = [r for r in rows if r.get("own_home") and is_someone_elses(r)]
+    unlabelled = [r for r in rows if not r.get("label") and r.get("marked")]
+    on_owner_shelf = [r for r in rows if r.get("recommended") and is_someone_elses(r)]
+
+    block = _stamp(_Block("where each row is showing"))
+    block.rule()
+    if error:
+        block.line(f"COULD NOT READ: {error}")
+    elif not rows:
+        block.line("No Shortlist collections on the server.")
+    else:
+        if owner_label is None:
+            block.line("No owner recorded, so 'whose row is this' cannot be judged.")
+        block.line("R = library Recommended, H = owner's Home, S = friends' Home")
+        block.table(
+            ["row", "library", "flags"],
+            [
+                [
+                    # `.get`, not `[]`: this is a diagnostic, and a row missing a field must cost
+                    # that cell, never the whole section of the bundle someone is trying to send us.
+                    r.get("title", "?"),
+                    r.get("library", "?"),
+                    "".join(
+                        (
+                            "R" if r.get("recommended") else ".",
+                            "H" if r.get("own_home") else ".",
+                            "S" if r.get("shared_home") else ".",
+                        )
+                    )
+                    if "error" not in r
+                    else "?",
+                ]
+                for r in rows
+            ],
+            [34, 16, 5],
+        )
+        block.rule()
+        block.line("configured placement, per row:")
+        for slug, (name, own, friends) in sorted(placements.items()):
+            block.line(f"  {name or slug}: you={own}, everyone else={friends}")
+    if on_owner_home:
+        block.rule()
+        block.line(f"BUG: {len(on_owner_home)} row(s) that are not yours sit on YOUR Home screen.")
+        block.line("Nothing can hide these from you — no share filter applies to the owner.")
+        for r in on_owner_home[:8]:
+            block.line(f"  {r.get('title', '?')} ({r.get('library', '?')})")
+    if on_owner_shelf:
+        block.rule()
+        block.line(f"{len(on_owner_shelf)} row(s) that are not yours are on a Recommended shelf.")
+        block.line(
+            "Expected if a row is set to show on everyone else's library shelf: Plex has one "
+            "Recommended flag per collection and you have no filter, so you see them all. Set that "
+            "row's placement for everyone else to Home only."
+        )
+    if unlabelled:
+        block.rule()
+        block.line(f"BUG: {len(unlabelled)} collection(s) are ours but carry NO label.")
+        block.line("No share filter can hide an unlabelled row, so everyone can see it.")
+        for r in unlabelled[:8]:
+            block.line(f"  {r.get('title', '?')} ({r.get('library', '?')})")
+    return {
+        "rows": rows,
+        "owner_label": owner_label,
+        "on_owner_home": on_owner_home,
+        "on_owner_shelf": on_owner_shelf,
+        "unlabelled": unlabelled,
         "error": error,
         "text": block.render(),
     }
@@ -1978,6 +2163,12 @@ async def drift(request: Request) -> dict:
         store = SettingsStore(session, state.secrets)
         ledger = session.query(Delivery).all()
         on_plex: list[dict] = []
+        # Collections that are ours by TITLE MARKER, whatever their label says. `list_owned_collections`
+        # matches on the label alone, so "the rows were deleted" and "we could not read their labels"
+        # both come back as zero and are indistinguishable — which is exactly the ambiguity a reporter
+        # hit (issue #76: `in ledger 14 / on Plex 0`). The marker is independent of the label, so the
+        # two counts disagreeing says which of the two happened.
+        marked = 0
         error = None
         try:
             plex = _plex_client(store)
@@ -1985,6 +2176,9 @@ async def drift(request: Request) -> dict:
                 error = "Plex isn't connected."
             else:
                 on_plex = plex.list_owned_collections()
+                # `flags=False`: this only needs the count, and the surface flags cost a round-trip
+                # per collection — 91 of them on a real server, for a number nothing here reads.
+                marked = sum(1 for r in plex.owned_row_surfaces(flags=False) if r.get("marked"))
         except Exception as e:
             error = _fail(e)
 
@@ -2007,10 +2201,18 @@ async def drift(request: Request) -> dict:
     block = _stamp(_Block("drift check"))
     block.kv("in ledger", str(len(ledger)))
     block.kv("on plex", "unknown" if error else str(len(on_plex)))
+    block.kv("ours by marker", "unknown" if error else str(marked))
     block.rule()
     if error:
         block.line(f"COULD NOT READ PLEX: {error}")
         block.line("No comparison made — an unread server is not the same as an empty one.")
+    elif marked > len(on_plex):
+        # The two counts are read the same way except for what identifies a row, so this can only
+        # mean the labels went missing — not the rows. Worth saying loudly: an unlabelled row is one
+        # no share filter can hide, AND one the next run's sweep deletes as an orphan.
+        block.line(f"WARNING: {marked - len(on_plex)} collection(s) are ours but have lost their label.")
+        block.line("The rows are still there — Shortlist just cannot see them by label any more.")
+        block.line("Nothing can hide an unlabelled row, and the next run will delete it.")
     elif not missing and not orphans:
         block.line("Every delivered row exists on the server, and nothing extra is labelled ours.")
     for item in missing[:8]:
@@ -2020,6 +2222,7 @@ async def drift(request: Request) -> dict:
     return {
         "ledger_count": len(ledger),
         "plex_count": len(on_plex),
+        "marked_count": marked,
         "missing_on_plex": missing,
         "orphans_on_plex": orphans,
         "error": error,

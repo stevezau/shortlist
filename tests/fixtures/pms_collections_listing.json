@@ -1,0 +1,78 @@
+{
+  "_why": [
+    "A real PMS returns NO <Label> children in the collections LISTING. They appear only on the",
+    "per-collection detail read. Shortlist identifies every row by its label, so this is the single",
+    "assumption the whole privacy model rests on, and it was never recorded.",
+    "",
+    "It works in production only because plexapi auto-reloads behind the attribute: reading",
+    "`collection.labels` on a listing object finds [] and silently issues GET /library/collections/",
+    "<ratingKey> to fill it in (PlexPartialObject.__getattribute__, base.py:650-668). Nothing in",
+    "Shortlist asks for that. A re-read that FAILS raises; the dangerous case is one that SUCCEEDS",
+    "carrying no <Label>, which is indistinguishable from a genuinely unlabelled row.",
+    "",
+    "That matters because an empty label read is indistinguishable from 'this row has no label', and",
+    "sweep_broken_rows DELETES a marked collection with no label. delete_owned_collection accepts the",
+    "invisible title marker alone as proof of ownership, so one empty read would delete every row on",
+    "the server while the run reported success. Hence PlexClient.confirm_unlabelled: an explicit",
+    "second read before any delete, failing closed.",
+    "",
+    "The fake used to serve labels inline in the listing, so the entire suite proved label identity",
+    "against a server shape Plex does not produce. It now matches the shapes below."
+  ],
+  "recorded": "2026-08-10",
+  "pms_version": "1.43.3.10861-07dfddaeb",
+  "measured": {
+    "section_1_movies": {
+      "collections": 103,
+      "with_label_children": 0,
+      "collection_mode_0_hidden": 46
+    },
+    "section_2_tv": {
+      "collections": 110,
+      "with_label_children": 0,
+      "collection_mode_0_hidden": 45
+    }
+  },
+  "listing": {
+    "request": "GET /library/sections/1/all?includeGuids=1&type=18",
+    "_note": "Exactly what plexapi's LibrarySection.collections() issues. One Directory shown verbatim; the title's trailing zero-width marker is written as <marker> here.",
+    "directory_attributes": {
+      "addedAt": "1785864697",
+      "childCount": "15",
+      "collectionMode": "0",
+      "collectionSort": "2",
+      "guid": "collection://29a32816-e9bd-45e5-b8c4-e657fffbdc5b",
+      "index": "2209618",
+      "key": "/library/collections/575662/children",
+      "maxYear": "2026",
+      "minYear": "1957",
+      "ratingCount": "1",
+      "ratingKey": "575662",
+      "subtype": "movie",
+      "summary": "",
+      "thumb": "/library/metadata/575662/thumb/1786296858",
+      "title": "✨ Movies Picked for You<marker>",
+      "titleSort": " Movies Picked for You<marker>",
+      "type": "collection",
+      "updatedAt": "1786296858"
+    },
+    "child_elements": ["Image", "UltraBlurColors"],
+    "label_elements": 0
+  },
+  "detail": {
+    "request": "GET /library/collections/575662",
+    "_note": "plexapi strips '/children' from the listing key, so every reload and every collection mutation goes here — prefs, items, move, delete.",
+    "container_attributes": [
+      "allowSync",
+      "identifier",
+      "librarySectionID",
+      "librarySectionTitle",
+      "librarySectionUUID",
+      "mediaTagPrefix",
+      "mediaTagVersion",
+      "size"
+    ],
+    "child_elements": ["Field", "Image", "Label", "UltraBlurColors"],
+    "label_elements": ["Shortlist_cassiewhite610"]
+  }
+}

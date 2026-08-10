@@ -126,6 +126,23 @@ describe("ConnectionCard", () => {
     expect(putSettings.mock.calls[0]?.[0]).toEqual({ "tmdb.apikey": "abc123" });
   });
 
+  it("re-tests a REPLACED key, not just a first-time one", async () => {
+    // The auto-test fires once per mount, so an already-configured card had already used it up by
+    // the time someone edits it. Saving a new key then left the status dot showing the OLD key's
+    // green — worst exactly when it matters, because the reason people retype a key is that the
+    // previous one stopped working (a lapsed Trakt VIP, a rotated token). Issue #73.
+    renderCard({ "tmdb.apikey": "•••••" }, [
+      { key: "tmdb.apikey", label: "API key", kind: "password" },
+    ]);
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(1)); // the on-open auto-test
+
+    await userEvent.click(screen.getByRole("button", { name: /Edit/i }));
+    await userEvent.type(screen.getByLabelText("API key"), "a-brand-new-key");
+    await userEvent.click(screen.getByRole("button", { name: /^Save$/i }));
+
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2));
+  });
+
   it("skips an unchanged redacted secret so a save doesn't overwrite it", async () => {
     renderCard({ "tmdb.apikey": "•••••" }, [
       { key: "tmdb.apikey", label: "API key", kind: "password" },

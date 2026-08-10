@@ -8512,6 +8512,30 @@
         ]
       }
     },
+    "/api/support/surfaces": {
+      "get": {
+        "description": "Where every Shortlist row is ACTUALLY showing on the server, versus where it should be.\n\nThe gap this closes: rows are hidden from other people by share filters, but the server OWNER has\nno share filter (plex-safety rule 5), so the only thing keeping somebody else's row off the\nowner's Home screen is the row's own ``promotedToOwnHome`` flag. Nothing reported those flags, so\n\"the admin can see another user's row\" was uninvestigable (issue #75).\n\nTwo things are checked, and they are different in kind:\n\n* An INVARIANT \u2014 a per-person row that is not the owner's must never claim the owner's Home.\n  No configuration makes that correct, so a violation is always a bug.\n* A CONSEQUENCE \u2014 the Recommended shelf is one flag per collection, and the owner has no filter,\n  so a row set to show on friends' library shelves also appears on the OWNER's. That is a Plex\n  limitation (see `RowSpec.show_friends_library`), so it is reported as an explanation, not a\n  fault: the fix is a settings change, not a code change.",
+        "operationId": "surfaces_api_support_surfaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Surfaces Api Support Surfaces Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Surfaces",
+        "tags": [
+          "support"
+        ]
+      }
+    },
     "/api/support/timeline": {
       "get": {
         "description": "Runs, jobs and audited events on one axis, newest first.\n\nRendered in BOTH local and UTC. The database stores UTC and the log prints local, so a timeline\nthat picked one would be misread against the other \u2014 which is precisely the mistake this is here\nto stop someone making.\n\n``user`` is a PLAIN default, not ``Query(default=\"\")``. `bundle` calls these handlers directly,\nwhich bypasses FastAPI's dependency injection \u2014 so a `Query(...)` default arrives as a\n`fastapi.params.Query` OBJECT, which is truthy and then blows up on `in`. That silently cost the\ndownloaded diagnostic its whole runs/jobs/events section on every install. FastAPI still parses\n`?user=` from the query string for a plain str parameter, so nothing is lost by dropping it.",

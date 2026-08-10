@@ -172,7 +172,17 @@ export function ConnectionCard({
       }
       payload[field.key] = value;
     }
-    save.mutate(payload, { onSuccess: () => setEditing(false) });
+    save.mutate(payload, {
+      onSuccess: () => {
+        setEditing(false);
+        // Test what was just saved. The auto-test above fires once per mount, so it covers a
+        // FIRST-time setup but not a REPLACED key: the card was already configured when the page
+        // opened, so the dot kept showing the old key's green while the new one went untried. That
+        // is the case that matters most — someone re-entering a key precisely because the old one
+        // stopped working (a lapsed Trakt VIP, a rotated token) got no signal that it still doesn't.
+        test.mutate();
+      },
+    });
   };
 
   const clear = () => {

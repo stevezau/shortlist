@@ -21,6 +21,34 @@ def _enable(client) -> None:
     assert client.post("/api/support/enable").status_code == 200
 
 
+def _rows_on_plex(monkeypatch, slugs) -> None:
+    """The per-person rows that EXIST on the server — what `sharing` measures its verdict against.
+
+    Every sharing test has to say this, because "which labels belong in everyone's filter" is a
+    question only the PMS can answer. Measuring against the enabled-user list instead is the bug
+    this guards: a user with no row yet has no label anywhere, so expecting one made every account
+    read as leaking (issue #76).
+    """
+    from types import SimpleNamespace
+
+    import shortlist.server.api.support as support
+    from shortlist.engine.models import OwnedRow
+
+    owned = {slug: OwnedRow(label=f"shortlist_{slug}") for slug in slugs}
+    monkeypatch.setattr(
+        support,
+        "_plex_client",
+        lambda _store: SimpleNamespace(
+            owned_collections=lambda _prefix: owned,
+            # Consulted only when NO labels came back, to tell "no rows exist" from "the rows lost
+            # their labels" — an empty server has no marked collections either.
+            owned_row_surfaces=lambda *_a, **_k: [
+                {"marked": True, "title": s, "library": "Movies", "label": f"shortlist_{s}"} for s in slugs
+            ],
+        ),
+    )
+
+
 def _set_row_cap(app, pct: float | None) -> None:
     """Point the app's own seeded `picked` row at a cap. Updating rather than inserting, because a
     fresh app already ships that row and its slug is unique."""
@@ -878,7 +906,10 @@ class TestLivePlexTools:
                 {
                     "list_owned_collections": lambda self: [
                         {"rating_key": 999, "title": "Other", "label": "shortlist_x"}
-                    ]
+                    ],
+                    "owned_row_surfaces": lambda self, *a, **k: [
+                        {"rating_key": 999, "title": "Other", "label": "shortlist_x", "marked": True}
+                    ],
                 },
             )(),
         )
@@ -900,6 +931,140 @@ class TestLivePlexTools:
 
 #: Every no-argument tool. The class below asserts the properties that must hold for ALL of them, so
 #: a tool added later cannot quietly skip the gate or the paste-width limit.
+class TestSurfacesAnswersWhoCanSeeWhichRow:
+    """Issue #75: the admin could see another user's row and nothing in the app could say why.
+
+    The owner has no share filter (plex-safety rule 5), so a row's own promotion flags are the only
+    thing keeping it off their screen — and no tool reported those flags.
+    """
+
+    @staticmethod
+    def _surfaces(monkeypatch, rows):
+        from types import SimpleNamespace
+
+        import shortlist.server.api.support as support
+
+        monkeypatch.setattr(
+            support,
+            "_plex_client",
+            lambda _store: SimpleNamespace(
+                owned_row_surfaces=lambda *_a, **_k: rows,
+                list_owned_collections=lambda *_a, **_k: [],
+                owned_collections=lambda *_a, **_k: {},
+            ),
+        )
+
+    @staticmethod
+    def _owner(client, slug="mike"):
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter(User.slug == slug).one_or_none()
+            if user is None:
+                user = User(plex_account_id=1, username=slug, slug=slug)
+                session.add(user)
+            user.user_type, user.enabled = "owner", True
+            session.commit()
+
+    @staticmethod
+    def _row(label, **flags):
+        base = {
+            "library": "Movies",
+            "library_key": "1",
+            "title": f"Picked for You [acct {abs(hash(label)) % 999}]",
+            "label": label,
+            "marked": True,
+            "rating_key": 555,
+            "recommended": False,
+            "own_home": False,
+            "shared_home": True,
+        }
+        return base | flags
+
+    def test_someone_elses_row_on_the_owners_home_is_called_a_bug(self, client, monkeypatch):
+        """The invariant. No setting makes this correct: the owner cannot be filtered, so a
+        non-owner's row claiming `promotedToOwnHome` is visible to them with nothing able to hide it."""
+        self._owner(client)
+        self._surfaces(monkeypatch, [self._row("shortlist_sarah", own_home=True)])
+        _enable(client)
+
+        body = client.get("/api/support/surfaces").json()
+
+        assert len(body["on_owner_home"]) == 1
+        assert "BUG: 1 row(s) that are not yours sit on YOUR Home screen." in body["text"]
+
+    def test_the_owners_own_row_on_their_home_is_fine(self, client, monkeypatch):
+        self._owner(client)
+        self._surfaces(monkeypatch, [self._row("shortlist_mike", own_home=True)])
+        _enable(client)
+
+        body = client.get("/api/support/surfaces").json()
+
+        assert body["on_owner_home"] == []
+        assert "BUG:" not in body["text"]
+
+    def test_a_shared_row_may_sit_on_the_owners_home(self, client, monkeypatch):
+        """A shared row is ONE public collection for everybody, so the owner's Home is a legitimate
+        placement for it — flagging it would be crying wolf on a correct server."""
+        from shortlist.engine.models import SHARED_LABEL_PREFIX
+
+        self._owner(client)
+        self._surfaces(monkeypatch, [self._row(f"{SHARED_LABEL_PREFIX}popular", own_home=True)])
+        _enable(client)
+
+        body = client.get("/api/support/surfaces").json()
+
+        assert body["on_owner_home"] == []
+
+    def test_a_recommended_row_is_explained_not_blamed(self, client, monkeypatch):
+        """The other half of #75, and it is NOT a bug: Plex has one Recommended flag per collection
+        and the owner has no filter, so a row set to show on everyone else's library shelf lands on
+        the owner's too. The tool must say that is a settings change, not a fault."""
+        self._owner(client)
+        self._surfaces(monkeypatch, [self._row("shortlist_sarah", recommended=True)])
+        _enable(client)
+
+        body = client.get("/api/support/surfaces").json()
+
+        assert len(body["on_owner_shelf"]) == 1
+        assert body["on_owner_home"] == []
+        assert "BUG" not in body["text"]
+        assert "Recommended flag per collection" in body["text"]
+
+    def test_a_collection_of_ours_with_no_label_is_called_out(self, client, monkeypatch):
+        """Issue #76's shape: nothing can hide an unlabelled row, and the next run's sweep deletes it
+        as an orphan."""
+        self._owner(client)
+        self._surfaces(monkeypatch, [self._row("", marked=True)])
+        _enable(client)
+
+        body = client.get("/api/support/surfaces").json()
+
+        assert len(body["unlabelled"]) == 1
+        assert "carry NO label" in body["text"]
+
+    def test_drift_distinguishes_deleted_rows_from_unreadable_labels(self, client, monkeypatch):
+        """Both used to report `on plex: 0`. A reporter read that as "my rows were deleted" when the
+        rows were there and only their labels were invisible (issue #76)."""
+        from types import SimpleNamespace
+
+        import shortlist.server.api.support as support
+
+        monkeypatch.setattr(
+            support,
+            "_plex_client",
+            lambda _store: SimpleNamespace(
+                list_owned_collections=lambda *_a, **_k: [],  # nothing matches by LABEL
+                owned_row_surfaces=lambda *_a, **_k: [self._row("", marked=True)],  # but it is there
+            ),
+        )
+        _enable(client)
+
+        body = client.get("/api/support/drift").json()
+
+        assert body["plex_count"] == 0
+        assert body["marked_count"] == 1
+        assert "lost their label" in body["text"]
+
+
 ALL_TOOLS = [
     "/api/support/health",
     "/api/support/libraries",
@@ -913,6 +1078,7 @@ ALL_TOOLS = [
     "/api/support/settings-history",
     "/api/support/connection",
     "/api/support/sharing",
+    "/api/support/surfaces",
     "/api/support/drift",
 ]
 
@@ -1060,12 +1226,15 @@ class TestSharingCountsLabelsNotClauses:
                 }
             },
         )
+        # `zoe` exists on the server and is NOT in sarah's filter, so the per-account detail line
+        # prints — which is what carries the count being asserted.
+        _rows_on_plex(monkeypatch, ["mike", "dan", "ana", "zoe"])
         _enable(client)
 
         row = client.get("/api/support/sharing").json()["accounts"][0]
 
         assert row["shortlist_excludes"] == ["shortlist_ana", "shortlist_dan", "shortlist_mike"]
-        assert "hides 3 of" in client.get("/api/support/sharing").json()["text"]
+        assert "hides 3 of 4" in client.get("/api/support/sharing").json()["text"]
 
     def test_a_foreign_label_in_our_clause_is_not_attributed_to_shortlist(self, client, monkeypatch):
         """The owner's own restriction, sharing the condition we merged into. Reporting it as ours
@@ -1097,6 +1266,7 @@ class TestSharingCountsLabelsNotClauses:
                 existing.enabled = False
             session.add(User(plex_account_id=99, username="other", slug="other", enabled=True))
             session.commit()
+        _rows_on_plex(monkeypatch, ["other"])
         _enable(client)
 
         body = client.get("/api/support/sharing").json()
@@ -1133,6 +1303,7 @@ class TestSharingCountsLabelsNotClauses:
                 "dan": {"filterMovies": "label!=shortlist_mike"},
             },
         )
+        _rows_on_plex(monkeypatch, ["sarah", "mike", "dan"])
         _enable(client)
 
         body = client.get("/api/support/sharing").json()
@@ -1159,6 +1330,7 @@ class TestSharingCountsLabelsNotClauses:
 
         # Only sarah is in the roster; the owner (mike) is not — but mike has a row.
         self._accounts(monkeypatch, {"sarah": {"filterMovies": "label!=shortlist_mike"}})
+        _rows_on_plex(monkeypatch, ["mike"])
         _enable(client)
 
         body = client.get("/api/support/sharing").json()
@@ -1167,6 +1339,127 @@ class TestSharingCountsLabelsNotClauses:
         assert sarah["should_hide"] == ["shortlist_mike"], "the owner's row must be expected"
         assert sarah["missing"] == []
         assert body["missing_excludes_for"] == [], "a correct server must not be reported as short"
+
+    def test_an_enabled_user_with_no_row_yet_is_not_reported_as_a_leak(self, client, monkeypatch):
+        """Issue #76. The engine only excludes labels it FOUND on the PMS, so a user who has never
+        received a row (cold start, zero picks, a delivery that failed) has no label in anybody's
+        filter — correctly. Expecting one made every single account read as short, and this tool
+        told a reporter `0 of 19 accounts hide every row` on a server that was fine. One of their
+        servers had 13 of 24 users sitting on picks=0.
+        """
+        with client.app.state.sessions() as session:
+            for slug, account_id in (("mike", 1001), ("ghost", 1002)):
+                existing = session.query(User).filter(User.slug == slug).one_or_none()
+                if existing is None:
+                    session.add(User(plex_account_id=account_id, username=slug, slug=slug, enabled=True))
+                else:
+                    existing.plex_account_id, existing.enabled = account_id, True
+            session.query(User).filter(User.slug == "sarah").one().plex_account_id = 1000
+            session.commit()
+
+        # sarah hides mike's row — the only row that exists. `ghost` is enabled but has none.
+        self._accounts(monkeypatch, {"sarah": {"filterMovies": "label!=shortlist_mike"}})
+        _rows_on_plex(monkeypatch, ["mike"])
+        _enable(client)
+
+        body = client.get("/api/support/sharing").json()
+
+        assert body["missing_excludes_for"] == [], "a user with no row must not be expected in a filter"
+        sarah = next(a for a in body["accounts"] if a["user"] == "sarah")
+        assert "shortlist_ghost" not in sarah["should_hide"]
+        assert sarah["missing"] == []
+        assert "1 of 1 accounts hide every row that is not theirs." in body["text"]
+
+    def test_a_plex_read_that_failed_is_not_reported_as_a_healthy_server(self, client, monkeypatch):
+        """The fail-safe half: with no list of rows, every account trivially hides all zero of them.
+        Printing `N of N accounts hide every row` off a failed read is the most reassuring possible
+        lie, on the tool whose whole job is catching a leak."""
+        import shortlist.server.api.support as support
+
+        def boom(_store):
+            raise RuntimeError("PMS unreachable")
+
+        self._accounts(monkeypatch, {"sarah": {"filterMovies": "label!=shortlist_mike"}})
+        monkeypatch.setattr(support, "_plex_client", boom)
+        _enable(client)
+
+        body = client.get("/api/support/sharing").json()
+
+        assert body["rows_error"]
+        assert "COULD NOT READ THE ROWS ON PLEX" in body["text"]
+        assert "hide every row that is not theirs" not in body["text"]
+
+    def test_rows_that_lost_their_labels_are_not_reported_as_nothing_to_hide(self, client, monkeypatch):
+        """The state issue #76's reporter was actually in, and the most reassuring possible lie.
+
+        A label read that SUCCEEDS and returns nothing looks identical to a server with no rows. But
+        rows that exist without labels are visible to EVERYONE — no `label!=` can match them — so
+        printing "there is nothing for anyone to hide" is exactly backwards. The title marker is
+        independent of the label, so the two disagreeing says which of the two is true.
+        """
+        from types import SimpleNamespace
+
+        import shortlist.server.api.support as support
+
+        monkeypatch.setattr(
+            support,
+            "_plex_client",
+            lambda _store: SimpleNamespace(
+                owned_collections=lambda _prefix: {},  # no LABELS came back...
+                owned_row_surfaces=lambda *_a, **_k: [{"marked": True}, {"marked": True}],  # ...but rows are there
+            ),
+        )
+        self._accounts(monkeypatch, {"sarah": {"filterMovies": ""}})
+        _enable(client)
+
+        body = client.get("/api/support/sharing").json()
+
+        assert body["rows_error"], "an empty read beside marked rows is UNKNOWN, not 'nothing to hide'"
+        assert "2 collection(s) are ours by title but carry no label" in body["rows_error"]
+        assert "no per-person rows exist" not in body["text"].lower()
+        assert "COULD NOT READ THE ROWS ON PLEX" in body["text"]
+
+    def test_no_rows_on_the_server_says_so_rather_than_claiming_health(self, client, monkeypatch):
+        """A fresh install, or the window right after an uninstall — nothing exists to hide yet."""
+        self._accounts(monkeypatch, {"sarah": {"filterMovies": ""}})
+        _rows_on_plex(monkeypatch, [])
+        _enable(client)
+
+        body = client.get("/api/support/sharing").json()
+
+        assert body["rows_on_plex"] == []
+        assert "No per-person rows exist on Plex yet" in body["text"]
+
+    def test_a_shared_row_is_not_something_every_account_must_hide(self, client, monkeypatch):
+        """Shared rows are public (or audience-scoped) by design and are deliberately NOT excluded
+        from everyone, so counting them here would report every account as leaking one."""
+        from types import SimpleNamespace
+
+        import shortlist.server.api.support as support
+        from shortlist.engine.models import SHARED_LABEL_PREFIX, OwnedRow
+
+        owned = {
+            "mike": OwnedRow(label="shortlist_mike"),
+            "_shared_popular": OwnedRow(label=f"{SHARED_LABEL_PREFIX}popular"),
+        }
+        monkeypatch.setattr(
+            support, "_plex_client", lambda _store: SimpleNamespace(owned_collections=lambda _prefix: owned)
+        )
+        with client.app.state.sessions() as session:
+            existing = session.query(User).filter(User.slug == "mike").one_or_none()
+            if existing is None:
+                session.add(User(plex_account_id=1001, username="mike", slug="mike", enabled=True))
+            else:
+                existing.plex_account_id, existing.enabled = 1001, True
+            session.query(User).filter(User.slug == "sarah").one().plex_account_id = 1000
+            session.commit()
+        self._accounts(monkeypatch, {"sarah": {"filterMovies": "label!=shortlist_mike"}})
+        _enable(client)
+
+        body = client.get("/api/support/sharing").json()
+
+        assert body["rows_on_plex"] == ["shortlist_mike"]
+        assert body["missing_excludes_for"] == []
 
     def test_an_unparseable_filter_is_reported_rather_than_mis_attributed(self, client, monkeypatch):
         """The engine refuses to rewrite a filter it cannot fully represent; this refuses to judge one."""
@@ -1658,6 +1951,8 @@ class TestTheFindingsFromTheFifthReviewPass:
         roster = [SimpleNamespace(username="NewFriendBob", id=987654, filters={"filterMovies": ""})]
         monkeypatch.setattr(support, "_plextv_client", lambda _s, _m: SimpleNamespace(list_users=lambda: roster))
         monkeypatch.setattr(support, "_machine_id", lambda _s: "m1")
+        # A row has to EXIST for the new share to be leaking one — that is what flags them.
+        _rows_on_plex(monkeypatch, ["mike"])
         _enable(client)
 
         text = client.get("/api/support/bundle.txt").text
@@ -1683,6 +1978,8 @@ class TestTheFindingsFromTheFifthReviewPass:
         roster = [SimpleNamespace(username="Sarah_Plex", id=4242, filters={"filterMovies": ""})]
         monkeypatch.setattr(support, "_plextv_client", lambda _s, _m: SimpleNamespace(list_users=lambda: roster))
         monkeypatch.setattr(support, "_machine_id", lambda _s: "m1")
+        # `other`'s row exists on the server, so Sarah_Plex's empty filter really is a fault.
+        _rows_on_plex(monkeypatch, ["other"])
         _enable(client)
 
         sharing_body = client.get("/api/support/sharing").json()

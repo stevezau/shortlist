@@ -15,7 +15,9 @@ writes each pick's "why" in code. More sources means wider reach. Available toda
 - **TMDB, discover by taste.** Widens into popular, well-rated titles in the genres each person leans
   toward, derived from their watch history.
 - **Trakt, related titles.** Needs a Trakt API key, added in Connections. Uses Trakt's recommendation
-  graph, which often surfaces "what to watch next" picks that TMDB's similar list misses.
+  graph, which often surfaces "what to watch next" picks that TMDB's similar list misses. Trakt now
+  requires a paid **VIP** subscription to create an API key, so this source is only available if you
+  have one. Everything else here works without it.
 - **AI web search for what to watch next.** Searches the live web for current, well-reviewed titles,
   then resolves each against your library. This reaches beyond TMDB and Trakt to fresh releases and
   critics' lists.

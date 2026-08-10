@@ -21,6 +21,10 @@ globs: "tests/**/*.py"
 - Recorded real API responses live in `tests/fixtures/` (PMS XML, plex.tv XML, TMDB JSON) — prefer
   replaying a recorded fixture over hand-built mock return values.
 - Full-stack tests use `tests/fakes/fake_plex.py` (stub PMS + plex.tv server), not mocks.
+- **The fake must be no easier than the real server.** It served `<Label>` children inline in the
+  collections listing, where a real PMS serves none — so every test proved label identity against a
+  shape Plex does not produce, and the production path (plexapi silently re-reading each collection)
+  was exercised by nothing. When a fixture records a real response shape, the fake matches it.
 
 ## Markers
 

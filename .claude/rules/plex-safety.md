@@ -30,6 +30,21 @@ violate them.
 4. **Touch only what we own.** Only collections titled/labeled by Shortlist (`shortlist_*` label) may be
    modified or deleted. Detect and skip anything else — Kometa and other tools manage collections
    on the same servers; coexistence is mandatory.
+
+   **An empty label read never authorises a delete.** A real PMS returns NO `<Label>` children in
+   the collections listing (recorded: `tests/fixtures/pms_collections_listing.json`) — labels arrive
+   only because plexapi silently re-reads each collection behind `collection.labels`. A re-read that
+   FAILS raises; the dangerous case is one that SUCCEEDS carrying no `<Label>`, which is
+   indistinguishable from a genuinely unlabelled row. Since every row carries the invisible title
+   marker, and `delete_owned_collection` accepts the marker alone as proof of ownership, one empty
+   read would delete every Shortlist row on the server and the run would still report success.
+
+   Two guards, because one is not enough. Per collection: confirm with a fresh read
+   (`PlexClient.confirm_unlabelled`) before deleting, and a read that fails means leave it alone. In
+   aggregate: if rows of ours exist and NOT ONE reads as labelled, that is a failed read, not a
+   server full of orphans — a systemic empty answer would pass the per-collection check by agreeing
+   with itself.
+
 5. **Owner + managed users.** The server owner is never restricted (Plex limitation — skip, don't
    error). Managed users' restriction _profiles_ (parental controls) are never modified by Shortlist.
 6. **Throttle plex.tv adaptively.** Writes fire at a floor pace (`plextv.throttle_s`, default 0 = as
