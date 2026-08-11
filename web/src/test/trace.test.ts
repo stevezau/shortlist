@@ -365,12 +365,12 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
   const lib = (sources: unknown[]) =>
     ({ sources, webSource: null }) as unknown as LibraryView;
 
-  const src = (name: string, returned: unknown[]) => ({
+  const src = (name: string, returned: unknown[], media = "movie", total?: number) => ({
     source: name,
     status: "ok",
     contributed: 0,
     detail: "",
-    queries: [{ seed: "S", media: "movie", returned }],
+    queries: [{ seed: "S", media, returned, total: total ?? returned.length }],
   });
 
   it("groups every title by what happened to it", () => {
@@ -430,6 +430,28 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
       "lost_ranking_cutoff",
       "already_watched",
     ]);
+  });
+
+  it("keeps a movie and a show that share a tmdb id apart", () => {
+    // The pool dedupes by (tmdb_id, media) — the DB constraint is the pair — so keying on the id
+    // alone silently swallowed one of them and made the total disagree with the funnel.
+    const out = shortlistBreakdown(
+      lib([
+        src("tmdb_similar", [{ tmdb_id: 1396, title: "Movie 1396", fate: "kept" }], "movie"),
+        src("trakt", [{ tmdb_id: 1396, title: "Show 1396", fate: "kept" }], "show"),
+      ]),
+    );
+    expect(out.total).toBe(2);
+  });
+
+  it("reports what the sources really returned, not just what was sampled", () => {
+    // `returned` is a capped display sample (12 seeds x 25 returns). Calling it "all N candidates"
+    // makes an unsampled title read as one that was never a candidate.
+    const out = shortlistBreakdown(
+      lib([src("tmdb_similar", [{ tmdb_id: 1, title: "Sampled", fate: "kept" }], "movie", 40)]),
+    );
+    expect(out.total).toBe(1);
+    expect(out.recorded).toBe(40);
   });
 
   it("is empty for a legacy run that recorded no fates", () => {
@@ -511,10 +533,24 @@ describe("requestNote — what became of a wanted-but-missing title", () => {
     );
   });
 
-  it("calls out a title excluded on the Arr side", () => {
+  it("calls out an exclusion on a title that is still waiting", () => {
     expect(
       requestNote({ status: "pending", detail: "", excluded: true, arr_slug: null }),
-    ).toBe("not requested — on an Arr exclusion list");
+    ).toBe("waiting — on an Arr exclusion list");
+  });
+
+  it("reports a title the owner rejected", () => {
+    expect(
+      requestNote({ status: "rejected", detail: "", excluded: false, arr_slug: null }),
+    ).toBe("not requested");
+  });
+
+  it("does not call a SENT title excluded", () => {
+    // `excluded` is never cleared when a title is later sent by hand, so testing it first made one
+    // title read "requested" in one place on the page and "not requested" a few lines away.
+    expect(
+      requestNote({ status: "sent", detail: "added to Radarr and searching", excluded: true, arr_slug: null }),
+    ).toBe("requested — added to Radarr and searching");
   });
 
   it("is null for a title the request pass never considered", () => {

@@ -217,13 +217,26 @@ function searchesSampled(lib: LibraryView): boolean {
  *  step above it is the headline, not a list to scroll past. */
 function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
   const requests = useContext(RequestsContext);
-  const { total, groups } = shortlistBreakdown(lib);
+  const { total, recorded, groups } = shortlistBreakdown(lib);
   if (total === 0) return null;
+  // The per-seed returns are a display SAMPLE (12 seeds x 25 returns each), so "all N candidates"
+  // would be false on any user with more. A title missing from every group below would then read as
+  // never having been a candidate, which is the opposite of what this step is for.
+  const sampled = recorded > total;
   return (
     <div className="mt-3 space-y-2">
       <p className="text-sm font-medium">
-        What happened to all {total} candidates
+        {sampled
+          ? `What happened to ${total} of the ${recorded} candidates`
+          : `What happened to all ${total} candidates`}
       </p>
+      {sampled && (
+        <p className="text-xs text-muted-foreground">
+          The run records a sample of each source&rsquo;s returns, so this lists{" "}
+          {total} of {recorded}. A title missing here was not necessarily
+          rejected — it may simply not have been sampled.
+        </p>
+      )}
       {groups.map((group) => {
         const kept = group.fate === "kept";
         return (
@@ -265,12 +278,10 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
                   {/* This group IS the Radarr/Sonarr pool, so say what was asked for and what was
                       not — the two halves of the product were never joined up on screen. */}
                   {(() => {
-                    // Keyed "<tmdb_id>:<media>"; the breakdown carries no media per title, and a
-                    // tmdb_id belongs to one media type anyway, so either key resolves it.
-                    const note = requestNote(
-                      requests[`${t.tmdb_id}:movie`] ??
-                        requests[`${t.tmdb_id}:show`],
-                    );
+                    // Keyed "<tmdb_id>:<media>" — the pair, because a tmdb_id is NOT unique on
+                    // its own (`uq_request_candidate_title` is (tmdb_id, media_type)). Falling back
+                    // to the movie key would report a movie's request against a show of the same id.
+                    const note = requestNote(requests[`${t.tmdb_id}:${t.media}`]);
                     return note ? (
                       <span className="text-primary/80">{note}</span>
                     ) : null;
@@ -1510,7 +1521,9 @@ function RankingExplainer({ lib }: { lib: LibraryView }) {
           {" — "}spread across your tastes, not stacked on one.
         </p>
       )}
-      <OrderingEvidence picks={picks} />
+      {lib.delivered.map((b) => (
+        <OrderingEvidence key={`${b.row_slug}:${b.library_key}`} entry={b} />
+      ))}
       <p className="text-xs text-muted-foreground/80">
         No AI decides this order — it&rsquo;s all plain, inspectable code.
       </p>
@@ -1521,13 +1534,16 @@ function RankingExplainer({ lib }: { lib: LibraryView }) {
 /** The rank list with both rotations marked — the paragraph above claims each source and each
  *  watched title gets a turn, and this is where you can watch it happen. Without it the claim an
  *  owner most wants checked ("one favourite can't swallow the row") had to be taken on trust. */
-function OrderingEvidence({ picks }: { picks: Pick[] }) {
-  const rows = orderingRows(picks);
+function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
+  // ONE row's ranking. Every row ranks from 1 independently, so flattening a library's breakdown
+  // entries together produced 1,1,2,2 — duplicate React keys, and an "order" that never existed
+  // presented as the evidence for the fairness paragraph above it.
+  const rows = orderingRows(entry.picks);
   if (rows.length === 0) return null;
   return (
     <details className="rounded-md border bg-muted/30 px-3 py-2">
       <summary className="cursor-pointer text-sm font-medium">
-        The order it produced — {rows.length} picks
+        The order it produced for {entry.row_title} — {rows.length} picks
       </summary>
       <ol className="mt-2 space-y-0.5">
         {rows.map(({ pick, newSource, newSeed }) => (

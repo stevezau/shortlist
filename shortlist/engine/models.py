@@ -540,9 +540,11 @@ class MissingTitle:
     # and why". Accumulated across every user and row, deduplicated so one (person, row, seed) is
     # listed once.
     why: list[RequestWhy] = field(default_factory=list)
-    # Why the last send attempt didn't land (e.g. "Sonarr GET …/lookup returned HTTP 503"), so a
-    # FAILED auto-send is queued back to the inbox with the reason visible instead of vanishing and
-    # silently retrying every night. Empty for a title that was never attempted.
+    # Why this title is not on the server yet — either a real send failure ("Sonarr GET …/lookup
+    # returned HTTP 503"), so a FAILED auto-send is queued back to the inbox with the reason visible
+    # instead of vanishing and silently retrying every night, OR the threshold that kept it waiting
+    # ("rating below auto_min_rating (7.5)"). Both answer the inbox's one question; a failure detail
+    # outranks a threshold one when merging (`run_persistence._is_failure_detail`).
     detail: str = ""
     # A show's resolved TheTVDB id, cached once (Sonarr keys on TVDB) so the arr-presence check and
     # the eventual send don't each pay a separate TMDB lookup. None until resolved / for movies.

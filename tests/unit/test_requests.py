@@ -907,3 +907,10 @@ class TestWhyATitleWasNotSent:
             dry_run=True,
         )
         assert "auto-send is off" in report.queued[0].detail
+
+    def test_an_excluded_title_says_so(self):
+        cfg = _cfg(radarr=RADARR, auto_min_demand=1, auto_min_rating=0.0, min_rating=7.0)
+        title = MissingTitle(1, "Blocked", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=9)
+        title.excluded = True
+        report = requests_mod.request_missing(cfg, FakeTmdb(), self._demand(title), dry_run=True)
+        assert "exclusion list" in report.queued[0].detail

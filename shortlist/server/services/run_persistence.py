@@ -83,6 +83,19 @@ def _why_json(why) -> list[dict]:
     return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source} for w in why]
 
 
+def _is_failure_detail(detail: str | None) -> bool:
+    """Whether a detail describes a send that was ATTEMPTED and failed, rather than a threshold reason
+    for one that was never attempted.
+
+    The queue reasons are settings-derived and finite (`engine/requests.py`); anything else came from
+    an exception while actually talking to Radarr/Sonarr, and is the fact worth keeping.
+    """
+    if not detail:
+        return False
+    queued = ("auto-send is off", "on an Arr exclusion list", "demand below", "rating below", "max_per_run")
+    return not detail.startswith(queued)
+
+
 def _refresh_pending(row: RequestCandidate, m) -> None:
     """Update a still-pending inbox row with what this run now knows about the title."""
     row.title = m.title
@@ -97,7 +110,12 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     row.tags = sorted(m.tags)
     row.wanters = sorted(m.wanters)
     row.why = _why_json(m.why)
-    row.detail = m.detail or row.detail  # keep the last failure reason if this pass didn't set one
+    # A queued title now always carries a reason ("max_per_run (5) already filled"), so a plain
+    # `m.detail or row.detail` would overwrite yesterday's REAL failure ("Sonarr returned HTTP 503")
+    # with today's threshold note — erasing the only record that Sonarr was broken. A failure detail
+    # is the more important fact, so it survives until a send actually succeeds.
+    if m.detail and (not _is_failure_detail(row.detail) or _is_failure_detail(m.detail)):
+        row.detail = m.detail
     row.excluded = m.excluded  # refresh the exclusion flag each run (a removed exclusion clears it)
 
 

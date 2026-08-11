@@ -305,6 +305,9 @@ export function fateLabel(fate: TraceFate): string {
 /** One title as the shortlist step shows it: what it is, and the numbers its verdict rested on. */
 export interface ShortlistTitle {
   tmdb_id: number;
+  /** The media type this candidate was judged as. Required for the request lookup, which is keyed
+   *  `"<tmdb_id>:<media>"` — a tmdb_id is NOT unique on its own (the DB constraint is the pair). */
+  media: string;
   title: string;
   year?: number | null;
   rating?: number | null;
@@ -334,18 +337,26 @@ export interface ShortlistGroup {
  */
 export function shortlistBreakdown(lib: LibraryView): {
   total: number;
+  /** What the sources actually returned, which is MORE than the trace recorded — the per-seed
+   *  returns are a display sample (12 seeds x 25 returns). Presenting the sample as the whole is
+   *  precisely how a title that IS a candidate reads as never having been one. */
+  recorded: number;
   groups: ShortlistGroup[];
 } {
-  const seen = new Map<number, { fate: TraceFate; title: ShortlistTitle }>();
+  const seen = new Map<string, { fate: TraceFate; title: ShortlistTitle }>();
+  let recorded = 0;
   const sources = [...lib.sources, ...(lib.webSource ? [lib.webSource] : [])];
   for (const source of sources) {
     for (const query of source.queries ?? []) {
+      recorded += query.total ?? (query.returned ?? []).length;
       for (const ret of query.returned ?? []) {
-        if (ret.fate === undefined || seen.has(ret.tmdb_id)) continue;
-        seen.set(ret.tmdb_id, {
+        const key = `${ret.tmdb_id}:${query.media}`;
+        if (ret.fate === undefined || seen.has(key)) continue;
+        seen.set(key, {
           fate: ret.fate,
           title: {
             tmdb_id: ret.tmdb_id,
+            media: query.media,
             title: ret.title,
             year: ret.year,
             rating: ret.rating,
@@ -369,7 +380,7 @@ export function shortlistBreakdown(lib: LibraryView): {
     .sort((a, b) =>
       a.fate === "kept" ? -1 : b.fate === "kept" ? 1 : b.titles.length - a.titles.length,
     );
-  return { total: seen.size, groups };
+  return { total: seen.size, recorded, groups };
 }
 
 /** One delivered pick with the two rotations marked, so the ordering rules are visible rather than
@@ -421,11 +432,15 @@ export function requestNote(
   outcome: TraceRequestOutcome | undefined,
 ): string | null {
   if (!outcome) return null;
-  if (outcome.excluded) return "not requested — on an Arr exclusion list";
+  // Status first, exclusion only as a qualifier on a title still waiting — matching
+  // `RequestOutcomeTag` on the same page. `excluded` is never cleared when a title is later sent or
+  // rejected by hand, so testing it first made one title read "requested" in one place and "not
+  // requested — on an Arr exclusion list" a few lines away.
   if (outcome.status === "sent")
     return outcome.detail ? `requested — ${outcome.detail}` : "requested";
   if (outcome.status === "rejected")
     return outcome.detail ? `not requested — ${outcome.detail}` : "not requested";
+  if (outcome.excluded) return "waiting — on an Arr exclusion list";
   return outcome.detail
     ? `waiting for approval — ${outcome.detail}`
     : "waiting for approval";
