@@ -11,9 +11,15 @@ minimumReleaseAgeExclude:
   - jsdom
 
 overrides:
-  # GHSA-52cp-r559-cp3m: js-yaml < 4.3.0 burns quadratic CPU on YAML merge-key chains.
-  # Reached only via openapi-typescript -> @redocly/openapi-core, which pins js-yaml to an
-  # exact 4.2.0 and has no fixed release on that line. Build-time only (`pnpm gen:api`), but
-  # 4.2.0 -> 4.3.0 is a same-major minor, so forcing it is safe. Drop this once
-  # openapi-typescript ships a @redocly/openapi-core that no longer pins a vulnerable js-yaml.
-  js-yaml@>=4.0.0 <4.3.0: 4.3.0
+  # CVE-2026-59870 / GHSA-52cp-r559-cp3m: js-yaml burns quadratic CPU resolving `!!omap`, and the
+  # earlier merge-key variant of the same bug. Reached only via openapi-typescript ->
+  # @redocly/openapi-core, which pins js-yaml to an exact 4.2.0 and has no fixed release on that
+  # line. Build-time only (`pnpm gen:api`), so the runtime image never ships it — the Dockerfile
+  # copies web/dist, not node_modules.
+  #
+  # Bumped 4.3.0 -> 4.3.1 (2026-08-12): the first fix landed in 4.3.0, but the `!!omap` case was
+  # NOT backported to it, so the pin that closed the original advisory was itself vulnerable. Any
+  # future bound here needs the same check — "we already have an override" is not the same as "the
+  # version it forces is fixed". Drop the whole block once openapi-typescript ships a
+  # @redocly/openapi-core that no longer pins a vulnerable js-yaml.
+  js-yaml@>=4.0.0 <4.3.1: 4.3.1
