@@ -690,9 +690,9 @@ class EngineConfig:
     # title's weight. A WEIGHT, never a filter — an old title is only ever asked to be a better
     # match. Overridable per row (see RowSpec.recency for why it is not `freshness`).
     #
-    # Defaults to 0.0 rather than something opinionated because it re-orders every row on the
-    # server: a non-zero default would silently rewrite every existing install's collections on the
-    # first run after upgrading.
+    # The DATACLASS defaults to 0.0 so a library caller opts in rather than inheriting an opinion.
+    # The product does not: `settings_store` defaults `recommendations.recency` to 0.5 for every
+    # install, existing servers included, and each row adopts it on its next refresh night.
     recency: float = 0.0
     # Which candidate sources to pool (see engine/candidates.py). Empty/default = TMDB similar only,
     # preserving legacy behaviour; owners widen recall by enabling more.

@@ -13,8 +13,11 @@ All notable changes to this project are documented here. This project follows
   one every time and rows filled with catalog titles. **Settings → Finding titles → Recent releases**
   is a weight, never a filter: an older title still reaches a row, it just has to be a better match.
   It applies to the pool CUT as well as the order, so a newer title below the line can still get in.
-  New installs default to 0.5 ("leans towards recent"); existing servers were pinned to 0.0 by
-  migration so no running server was silently re-ranked by an upgrade.
+  **This applies to every install, existing servers included** — the default is 0.5 ("leans towards
+  recent releases"), and no migration pins the old age-blind behaviour. Nothing is rewritten at
+  upgrade: each row adopts it on its next refresh night, so rows shift towards newer titles over the
+  following days rather than all at once. Set **Recent releases** to 0 to rank as before, globally or
+  per row.
 
 - **Changing a setting rebuilds the row instead of waiting out freshness.** Freshness is a cadence
   for suppressing churn when nothing has changed — but nothing recorded WHICH settings a row's picks
@@ -22,6 +25,9 @@ All notable changes to this project are documented here. This project follows
   releases" left 36 of 42 rows redelivering byte-identical picks for up to a fortnight, which from
   the outside is indistinguishable from the setting not working. Each row now stores a fingerprint of
   the settings that decide its CONTENTS and rebuilds on a mismatch, whatever the cadence says.
+
+- **`/api/support/surfaces`** — a read-only diagnostic that reports which Plex surfaces each row is
+  actually on, included in the support bundle.
 
 - **A run says what year each pick is and how well rated it was.** "Why is this row full of old
   films?" was unanswerable on the one page built to answer it.
@@ -100,6 +106,18 @@ All notable changes to this project are documented here. This project follows
   `label=Age%200%2CAge%203&label!=X`. That parsed into one condition whose field swallowed the allow
   clause, so the existing exclude was invisible, the merge appended a second one, and the filter grew
   corrupt. This is the privacy machinery, so it is the most important fix in this release.
+
+  **It stops the corruption; it does not undo it.** An account whose filter already carries two
+  `label!=` clauses keeps both — future runs merge into the first and leave the second alone, and Plex
+  Web is unhappy with the pair. If you hit this before upgrading, open **Plex → Settings → Users →
+  that account → Restrictions** and delete the duplicate exclude line; Shortlist rebuilds what it
+  needs on the next run. Healing them automatically means rewriting a filter we only partly wrote,
+  which is how they got corrupted in the first place, so it is deliberately left as a manual step.
+
+- **The broken-row sweep asks twice before deleting.** It is the only destructive Plex path, and an
+  empty label read is indistinguishable from a genuinely unlabelled collection — so a collection is
+  now re-read to confirm before removal, and a sweep where NOT ONE of our rows reads as labelled is
+  treated as a failed read rather than a server full of orphans.
 
 - **A refresh night no longer collapses a row onto one taste.** The refresh branch merged survivors
   with newcomers and then truncated by pool order, re-applying the very ordering `diversify_by_seed`

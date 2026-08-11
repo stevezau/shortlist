@@ -162,6 +162,32 @@ class TestTheFormsPlexActuallyWrites:
         assert merged.startswith(raw), "the existing filter must survive byte-identical"
         assert "shortlist_new" in merged
 
+    def test_a_bare_ampersand_in_a_value_beside_an_ampersand_separator_is_refused(self):
+        """The one shape the `|`-only fallback cannot rescue, pinned deliberately.
+
+        `_split_conditions` retries on `|` alone when the greedy `[|&]` split leaves a piece with no
+        operator — which saves `label!=Kids & Family`. But when `&` is ALSO the separator, the retry
+        leaves `label=Kids & Family&label!=X`, whose head still carries both, and parsing refuses.
+
+        Refusing is the correct end state, not a gap to paper over: an account whose filter we cannot
+        read has no excludes we can trust, and promoting rows for the server while one account's
+        hiding is unknown is the leak this machinery exists to prevent (rule 1). It costs promotion
+        for everyone that night, which is loud, recoverable, and the safe direction.
+
+        Not believed reachable from real Plex data — Plex Web percent-encodes separators inside
+        values (`Age 0%2CAge 3`), so a literal `&` arrives as `%26` and parses fine, which the row
+        below asserts.
+        """
+        with pytest.raises(FilterParseError):
+            parse_filter("label=Kids & Family&label!=Shortlist_a")
+
+    def test_the_encoded_form_plex_actually_writes_parses_and_merges(self):
+        raw = "label=Kids %26 Family&label!=Shortlist_a"
+        assert serialize_filter(parse_filter(raw)) == raw
+        merged = merge_label_excludes(raw, {"shortlist_new"})
+        assert merged.startswith(raw) and "shortlist_new" in merged
+        assert merged.count("label!=") == 1
+
     def test_a_field_that_still_holds_a_separator_is_refused_not_rewritten(self):
         """Belt to the parser's braces. If Plex ever invents a fourth shape, refusing to touch it is
         the safe failure — rewriting one we only half-understand is how filters get corrupted."""

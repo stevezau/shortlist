@@ -38,7 +38,8 @@ def recency_factor(year: int | None, year_now: int, recency: float) -> float:
     weight and never a filter — an old title is only ever asked to be a better match, never excluded.
 
     Three inputs mean "no opinion", and all three return exactly ``1.0`` rather than a penalty:
-    ``recency <= 0`` (the default — every existing install must rank byte-identically), a title with
+    ``recency <= 0`` (age-blind — how ranking worked before this existed; the SERVER default is now
+    0.5 for every install, and only the engine dataclass still defaults to 0), a title with
     no known ``year`` (TMDB serves plenty; the unrated-gets-5.0 prior sets the precedent that a
     missing signal is not a bad one), and ``year_now <= 0`` (a direct engine call with no
     ``run_day``, where treating everything as two millennia old would be worse than doing nothing).

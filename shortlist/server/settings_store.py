@@ -118,8 +118,10 @@ DEFAULTS: dict[str, Any] = {
     # better match. Distinct from freshness above, which is the refresh CADENCE, not the preference.
     # 0.5 = "leans towards recent releases", the phrasing the UI uses for this value. NOT 0.0:
     # age-blind is not neutral, it is the status quo, and the status quo is a pool of mostly-old
-    # candidates deciding the row. Migration 0062 pins 0.0 for installs already in use, so raising
-    # this changes NEW installs only and no running server is re-ranked by an upgrade.
+    # candidates deciding the row. This default applies to EVERY install, existing servers
+    # included — the pin migrations were dropped deliberately (owner decision, 2026-08-11), because
+    # a default that means one thing on a new server and another on an old one is two products.
+    # Nothing is rewritten at upgrade: a row adopts it on its next refresh night.
     "recommendations.recency": 0.5,
     # How many of a person's most recent watches the web-search source searches per row (one cached
     # Exa search each). Row-overridable. Fewer = tighter/cheaper; the DbCache dedups shared titles.
