@@ -14,6 +14,7 @@ import {
   Clock,
   Globe,
   History,
+  Filter,
   ListOrdered,
   Search,
   X,
@@ -33,6 +34,9 @@ import { useBlockSeed, useRunUserTrace } from "@/lib/queries";
 import {
   buildLibraries,
   fateLabel,
+  orderingRows,
+  requestNote,
+  shortlistBreakdown,
   mediaLabel,
   sourceRole,
   watchedSummary,
@@ -52,6 +56,7 @@ import type {
   TraceSource,
   TraceWatch,
   TraceWeb,
+  TraceSelection,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -165,16 +170,204 @@ export function TraceView({
             />
             {current && (
               <LibraryFlow
-                lib={current}
-                userId={userId}
-                ratings={data.trace?.history?.ratings}
-              />
+                  lib={current}
+                  userId={userId}
+                  ratings={data.trace?.history?.ratings}
+                  selection={(data.trace?.selection ?? []).filter(
+                    (e) => e.library === current.label,
+                  )}
+                />
             )}
           </>
         )}
       </div>
     </RequestsContext.Provider>
   );
+}
+
+/** How many searches actually ran for this library, across every source.
+ *
+ *  From each source's `searched` count, never from `queries.length`: that list is a capped display
+ *  sample, so counting it reported a 30-seed run as "searched 12". */
+function searchesRun(lib: LibraryView): number {
+  return lib.sources.reduce((n, src) => n + mediaSearches(src, lib.media), 0);
+}
+
+/** A tab's media is one string, and "both" means it covers every type — so sum the lot there. */
+function mediaSearches(src: TraceSource, media: string): number {
+  const per = src.searched ?? {};
+  if (media && media !== "both" && per[media] != null) return per[media];
+  return Object.values(per).reduce((n, v) => n + v, 0);
+}
+
+/** True when any source ran more searches than the trace kept a record of, so the step can say
+ *  "showing 12 of 30" instead of quietly presenting the sample as the whole. */
+function searchesSampled(lib: LibraryView): boolean {
+  return lib.sources.some((src) => {
+    const shown = (src.queries ?? []).length;
+    return shown > 0 && mediaSearches(src, lib.media) > shown;
+  });
+}
+
+/** Every candidate this library saw, grouped by what became of it, with the numbers each verdict
+ *  rested on. This is the part that makes the step a trace rather than a summary: the counts alone
+ *  never answered "so why isn't X in my row", which is the only question worth opening this page for.
+ *
+ *  Long groups are collapsed behind a <details> — a filtered-out group can run to hundreds, and the
+ *  step above it is the headline, not a list to scroll past. */
+function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
+  const requests = useContext(RequestsContext);
+  const { total, sampled, groups } = shortlistBreakdown(lib);
+  if (total === 0) return null;
+  // The trace records a SAMPLE of each source's returns (12 seeds x 25 returns each), so "all N
+  // candidates" would be false on any user with more — a title missing from every group below would
+  // read as one that was never a candidate. `searchesSampled` catches the other half: seeds beyond
+  // the twelfth contribute no returns at all.
+  const partial = sampled || searchesSampled(lib);
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-sm font-medium">
+        {partial
+          ? `What happened to the ${total} candidates the run recorded`
+          : `What happened to all ${total} candidates`}
+      </p>
+      {partial && (
+        <p className="text-xs text-muted-foreground">
+          A run records only a sample of what each source returned, so a title
+          missing here was not necessarily rejected — it may simply not have
+          been recorded.
+        </p>
+      )}
+      {groups.map((group) => {
+        const kept = group.fate === "kept";
+        return (
+          <details
+            key={group.fate}
+            open={kept}
+            className="rounded-md border bg-muted/30 px-3 py-2"
+          >
+            <summary className="cursor-pointer text-sm">
+              <span className={cn("font-medium", kept && "text-success")}>
+                {kept ? "Made the shortlist" : fateLabel(group.fate)}
+              </span>{" "}
+              <span className="text-muted-foreground">
+                — {group.titles.length}
+              </span>
+            </summary>
+            <ul className="mt-2 space-y-0.5">
+              {group.titles.map((t) => (
+                <li
+                  key={t.tmdb_id}
+                  className="flex flex-wrap items-baseline gap-x-2 text-xs"
+                >
+                  <span className={cn(!kept && "text-muted-foreground")}>
+                    {t.title}
+                    {t.year ? ` (${t.year})` : ""}
+                  </span>
+                  {t.rating != null && (
+                    <span className="text-muted-foreground">
+                      rated {t.rating.toFixed(1)}
+                    </span>
+                  )}
+                  {/* The release-date multiplier actually applied — the answer to "why did a 2003
+                      title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
+                  {t.age_weight != null && t.age_weight !== 1 && (
+                    <span className="font-mono text-muted-foreground">
+                      release date &times;{t.age_weight.toFixed(2)}
+                    </span>
+                  )}
+                  {/* This group IS the Radarr/Sonarr pool, so say what was asked for and what was
+                      not — the two halves of the product were never joined up on screen. */}
+                  {(() => {
+                    // Keyed "<tmdb_id>:<media>" — the pair, because a tmdb_id is NOT unique on
+                    // its own (`uq_request_candidate_title` is (tmdb_id, media_type)). Falling back
+                    // to the movie key would report a movie's request against a show of the same id.
+                    const note = requestNote(requests[`${t.tmdb_id}:${t.media}`]);
+                    return note ? (
+                      <span className="text-primary/80">{note}</span>
+                    ) : null;
+                  })()}
+                </li>
+              ))}
+            </ul>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+/** What the release-date weight and the pool cap did to this library's shortlist. */
+function shortlistBody(entries: TraceSelection[]): ReactNode {
+  if (entries.length === 0) return null;
+  return (
+    <ul className="space-y-3">
+      {entries.map((entry) => (
+        <li key={entry.row} className="space-y-1 text-sm">
+          <p>
+            <span className="font-medium">{entry.row}</span>
+            {entry.candidates != null && (
+              <>
+                {" — "}
+                {entry.candidates} candidates survived filtering
+                {entry.cut_cap
+                  ? `, and the strongest ${entry.cut_cap} per media type were kept. Anything below that line could not reach the row.`
+                  : "."}
+              </>
+            )}
+          </p>
+          <p className="text-muted-foreground">
+            {entry.recency
+              ? `Release date counted for ${Math.round(entry.recency * 100)}% here, so newer titles ranked above equally good older ones — and it applied to the cut itself, not just the order, so a newer title below the line could still get in.`
+              : "Release date was ignored — a 1996 title and a 2024 one were judged the same."}
+          </p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Whether the row was actually re-picked tonight, and what to do if it wasn't. This is the fact
+ *  that was missing entirely: most nights a row is redelivered untouched and the page looked
+ *  identical to a rebuild, so "I changed a setting and nothing moved" was unanswerable. */
+function deliveryNote(entries: TraceSelection[]): ReactNode {
+  if (entries.length === 0) return null;
+  return (
+    <ul className="mb-3 space-y-1.5 text-sm">
+      {entries.map((entry) => (
+        <li key={entry.row}>
+          <span className="font-medium">{entry.row}</span>{" "}
+          <span
+            className={
+              entry.decision === "carried_forward"
+                ? "text-muted-foreground"
+                : "text-foreground"
+            }
+          >
+            {decisionLine(entry)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function decisionLine(entry: TraceSelection): string {
+  const every = entry.rebuild_every_days;
+  switch (entry.decision) {
+    case "carried_forward":
+      return `— not re-picked tonight; last run's titles were redelivered unchanged${
+        every ? `. This row rebuilds about every ${every} days` : ""
+      }. Raise Freshness, or change a setting that decides its titles, to rebuild it sooner.`;
+    case "settings_changed":
+      return "— rebuilt now because a setting that decides its titles changed.";
+    case "refreshed":
+      return "— refresh night: the strongest picks stayed, the weakest were swapped for new ones.";
+    case "cold_start":
+      return "— too little watch history, so it was filled from the server's top-rated titles.";
+    default:
+      return "— built fresh.";
+  }
 }
 
 function ErrorBanner({ error }: { error: string }) {
@@ -279,10 +472,12 @@ function LibraryFlow({
   lib,
   userId,
   ratings,
+  selection = [],
 }: {
   lib: LibraryView;
   userId?: number;
   ratings?: TraceRatings;
+  selection?: TraceSelection[];
 }) {
   const searchNoun = mediaLabel(lib.media).toLowerCase();
   const hasWeb = Boolean(lib.web || lib.webSource);
@@ -335,7 +530,7 @@ function LibraryFlow({
       id: `${lib.key}-searched`,
       icon: Search,
       rail: isCold ? "Popular titles" : "Searched",
-      count: isCold ? deliveredCount : placesSearched,
+      count: isCold ? deliveredCount : searchesRun(lib) || placesSearched,
       title: isCold
         ? `What we pulled for ${lib.label}`
         : "Where we searched, and every title in and out",
@@ -343,7 +538,11 @@ function LibraryFlow({
         ? "With too little history to search from, we pulled the highest-rated titles on this server."
         : lib.sharedSearch
           ? `Each title above fans out to every place we look for ${searchNoun}s. We search by taste, not by library, so these results are shared across your ${searchNoun} libraries — each title shows whether it made this library's shortlist or why it fell out.`
-          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.`,
+          : `Each title above fans out to every place we look. Below is each source, the exact queries we sent, and what came back — with whether each title made the shortlist or the reason it didn't.${
+              searchesSampled(lib)
+                ? " The per-search detail below is a sample; the count above is every search that ran."
+                : ""
+            }`,
       body: (
         <SourcesFlow
           sources={lib.sources}
@@ -353,6 +552,27 @@ function LibraryFlow({
         />
       ),
     },
+    // What SURVIVED, and what the release-date weight did to it. Between search and order because
+    // that is where it happens: filtering and the pool cut decide what can be ordered at all.
+    ...(isCold || selection.length === 0
+      ? []
+      : [
+          {
+            id: `${lib.key}-shortlisted`,
+            icon: Filter,
+            rail: "Shortlisted",
+            count: selection[0]?.candidates,
+            title: "What survived, and what release date did to it",
+            subtitle:
+              "Everything found above is filtered (already watched, wrong library, excluded genres) and then cut to the strongest few per media type. Release date is part of that cut, not applied after it.",
+            body: (
+              <>
+                {shortlistBody(selection)}
+                <ShortlistTitles lib={lib} />
+              </>
+            ),
+          },
+        ]),
     // How the shortlist was ORDERED — the step that used to be missing entirely. Not shown for cold
     // start (no taste ranking runs; the picks are just the top-rated titles, in rating order).
     ...(isCold
@@ -376,7 +596,10 @@ function LibraryFlow({
       title: `What we put in ${lib.label}, and why`,
       body:
         lib.delivered.length > 0 ? (
-          <DeliveredList delivered={lib.delivered} />
+          <>
+            {deliveryNote(selection)}
+            <DeliveredList delivered={lib.delivered} />
+          </>
         ) : (
           <Muted>Nothing was delivered to this library this run.</Muted>
         ),
@@ -958,7 +1181,30 @@ function ReturnRow({ ret, media }: { ret: TraceReturn; media: string }) {
         )}
       >
         {ret.title}
+        {/* The numbers the verdict was reached on. A fate alone says a title lost; these say why it
+            lost — which is the question "it picked a 2003 film over a 2024 one" is really asking. */}
+        {ret.year != null && (
+          <span className="ml-1 text-muted-foreground tabular-nums">
+            ({ret.year})
+          </span>
+        )}
       </span>
+      {ret.rating != null && ret.rating > 0 && (
+        <span className="shrink-0 tabular-nums text-muted-foreground/80">
+          {ret.rating.toFixed(1)}
+        </span>
+      )}
+      {/* Omitted at 1: "×1.0" is not information, it is the absence of it. */}
+      {ret.age_weight != null && ret.age_weight < 1 && (
+        <span
+          className="shrink-0 tabular-nums text-muted-foreground/80"
+          title={`Release date weighting scaled this title's score to ${Math.round(
+            ret.age_weight * 100,
+          )}% of an equivalent title from this year.`}
+        >
+          age ×{ret.age_weight.toFixed(2)}
+        </span>
+      )}
       {ret.fate !== undefined && !kept && (
         <span className="shrink-0 text-muted-foreground/80">
           {fateLabel(ret.fate)}
@@ -1031,7 +1277,7 @@ function WebSourceCard({
   const kept =
     [...fateByTitle.values()].filter((f) => f === "kept").length ||
     (source?.disposition?.kept ?? 0);
-  const mech = webMechanism(web?.mode ?? "", searches.length > 0);
+  const mech = webMechanism(web?.mode ?? "", searches.length > 0, web?.provider);
   // Exa bills per search, so a title many users watched is searched once and reused from a shared
   // cache for the rest. Surface how many actually hit Exa vs came back cached — it's the difference
   // between a costly run and a cheap one.
@@ -1199,12 +1445,6 @@ function WebSourceCard({
  *  this says exactly that and grounds it in THIS library's picks: how many sources and how many
  *  different watched titles fed the row, which is what the fair-share passes actually produce. */
 function RankingExplainer({ lib }: { lib: LibraryView }) {
-  const picks = lib.delivered.flatMap((b) => b.picks);
-  const sources = new Set<string>();
-  for (const p of picks) for (const s of p.sources ?? []) sources.add(s);
-  const seedTitles = new Set(
-    picks.map((p) => p.seed_title).filter((s): s is string => Boolean(s)),
-  );
   return (
     <div className="space-y-4 text-sm">
       <div className="space-y-2">
@@ -1256,30 +1496,89 @@ function RankingExplainer({ lib }: { lib: LibraryView }) {
           reach it.
         </p>
       </div>
-      {picks.length > 0 && (sources.size > 0 || seedTitles.size > 0) && (
-        <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-          In this row, {picks.length} pick{picks.length === 1 ? "" : "s"} came
-          from{" "}
-          <span className="font-medium text-foreground">
-            {sources.size} source{sources.size === 1 ? "" : "s"}
-          </span>
-          {seedTitles.size > 0 && (
-            <>
-              {" "}
-              and{" "}
-              <span className="font-medium text-foreground">
-                {seedTitles.size} different title
-                {seedTitles.size === 1 ? "" : "s"} you watched
-              </span>
-            </>
-          )}
-          {" — "}spread across your tastes, not stacked on one.
-        </p>
-      )}
+      {lib.delivered.map((b) => (
+        <OrderingEvidence key={`${b.row_slug}:${b.library_key}`} entry={b} />
+      ))}
       <p className="text-xs text-muted-foreground/80">
         No AI decides this order — it&rsquo;s all plain, inspectable code.
       </p>
     </div>
+  );
+}
+
+/** The rank list with both rotations marked — the paragraph above claims each source and each
+ *  watched title gets a turn, and this is where you can watch it happen. Without it the claim an
+ *  owner most wants checked ("one favourite can't swallow the row") had to be taken on trust. */
+function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
+  // ONE row's ranking. Every row ranks from 1 independently, so flattening a library's breakdown
+  // entries together produced 1,1,2,2 — duplicate React keys, and an "order" that never existed
+  // presented as the evidence for the fairness paragraph above it.
+  const rows = orderingRows(entry.picks);
+  if (rows.length === 0) return null;
+  // Counted from THIS row. The fair-share passes run per row, so a library fed by two rows of 10
+  // was claiming "In this row, 20 picks" — a number no row produced — over two correct lists of 10.
+  const sources = new Set<string>();
+  for (const p of entry.picks) for (const src of p.sources ?? []) sources.add(src);
+  const seedTitles = new Set(
+    entry.picks.map((p) => p.seed_title).filter((t): t is string => Boolean(t)),
+  );
+  return (
+    <details className="rounded-md border bg-muted/30 px-3 py-2">
+      <summary className="cursor-pointer text-sm font-medium">
+        The order it produced for {entry.row_title} — {rows.length} picks
+      </summary>
+      <p className="mt-2 text-xs text-muted-foreground">
+        These {rows.length} picks came from{" "}
+        <span className="font-medium text-foreground">
+          {sources.size} source{sources.size === 1 ? "" : "s"}
+        </span>{" "}
+        and{" "}
+        <span className="font-medium text-foreground">
+          {seedTitles.size} different title{seedTitles.size === 1 ? "" : "s"} you
+          watched
+        </span>{" "}
+        — spread across your tastes, not stacked on one.
+      </p>
+      <ol className="mt-2 space-y-0.5">
+        {rows.map(({ pick, newSource, newSeed }) => (
+          <li
+            key={pick.rank}
+            className="flex flex-wrap items-baseline gap-x-2 text-xs"
+          >
+            <span className="w-5 shrink-0 text-right tabular-nums text-muted-foreground">
+              {pick.rank}
+            </span>
+            <span>{pick.title}</span>
+            {pick.affinity != null && (
+              <span className="font-mono text-muted-foreground">
+                match {pick.affinity.toFixed(2)}
+              </span>
+            )}
+            {/* The rotations, marked only where they CHANGE — that is the fairness pass itself. */}
+            {(pick.sources ?? [])[0] && (
+              <span
+                className={cn(
+                  newSource ? "text-primary/80" : "text-muted-foreground/60",
+                )}
+              >
+                {newSource ? "→ " : ""}
+                {sourceLabel((pick.sources ?? [])[0] ?? "")}
+              </span>
+            )}
+            {pick.seed_title && (
+              <span
+                className={cn(
+                  newSeed ? "text-primary/80" : "text-muted-foreground/60",
+                )}
+              >
+                {newSeed ? "→ " : ""}
+                {pick.seed_title}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 

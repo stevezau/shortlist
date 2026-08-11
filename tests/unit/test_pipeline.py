@@ -4,7 +4,8 @@ and the leak-safe ordering (deliver unpromoted → sync filters → promote last
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from typing import ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -3833,6 +3834,324 @@ class TestRatingSource:
         assert mdblist.calls == 1, f"one failed call for the whole run, not one per row per user, got {mdblist.calls}"
 
 
+class TestRecency:
+    """The "Recent releases" weight — how a row resolves it, what it must not cost, and that it
+    actually reaches the delivered row. The curve itself is covered in test_ranking.py."""
+
+    # 2026-06-15. Fixed so the assertions below state real years instead of drifting with the clock —
+    # the engine reads the run's day, never `date.today()`.
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _policy(self, ctx: EngineContext, user) -> object:
+        from shortlist.engine.rows import RowPolicy, _rating_key_resolver
+
+        return RowPolicy(
+            ctx=ctx,
+            user=user,
+            cfg=ctx.config,
+            specs=[],
+            library_index={},
+            report=MagicMock(),
+            resolve=_rating_key_resolver({}),
+        )
+
+    @pytest.mark.parametrize(
+        ("stored", "global_value", "expected", "why"),
+        [
+            (None, 0.0, 0.0, "unset row + off globally = off, the shipped default"),
+            (None, 0.6, 0.6, "an unset row inherits the global"),
+            (0.9, 0.6, 0.9, "the row's own value beats the global"),
+            (0.0, 0.6, 0.0, "an explicit 0 is a CHOICE, not 'unset' — a Hidden Gems row must stay off"),
+        ],
+    )
+    def test_a_row_resolves_its_own_value_before_the_global(
+        self, ctx: EngineContext, stored, global_value, expected, why
+    ):
+        ctx.config = replace(ctx.config, recency=global_value)
+        policy = self._policy(ctx, make_profile("sarah", account_id=100))
+
+        assert policy.effective_recency(RowSpec(slug="r", name_template="R", size=5, recency=stored)) == expected, why
+
+    def test_two_rows_differing_only_in_recency_still_share_one_candidate_pool(self, ctx: EngineContext):
+        """The cost guarantee that decided WHERE this is applied.
+
+        Recency re-ranks each row's copy of the pool, downstream of the shared gather. Had it gone
+        into `pre_rank` instead, `pool_key` would have had to split on it — and every distinct value
+        a person's rows use would buy another full TMDB/Trakt/LLM gather, nightly, for a setting that
+        changes nothing about which candidates exist.
+        """
+        ctx.config = replace(ctx.config, recency=0.0)
+        policy = self._policy(ctx, make_profile("sarah", account_id=100))
+        gems = RowSpec(slug="gems", name_template="Hidden Gems", size=5, recency=0.0)
+        new = RowSpec(slug="new", name_template="New & Notable", size=5, recency=1.0)
+
+        assert policy.pool_key(gems) == policy.pool_key(new)
+
+    def _two_candidates_of_different_vintage(self, ctx: EngineContext) -> None:
+        """Candidate 10 = older but better rated; candidate 20 = newer. Ranking with no age term
+        leads with 10, so any run that leads with 20 did so because of recency and nothing else."""
+        ctx.tmdb.suggestions.return_value = [
+            (
+                {
+                    "id": 10,
+                    "title": "Nineties Classic",
+                    "genre_ids": [],
+                    "vote_average": 8.0,
+                    "release_date": "1996-03-01",
+                },
+                1.0,
+            ),
+            (
+                {"id": 20, "title": "Modern Pick", "genre_ids": [], "vote_average": 7.0, "release_date": "2024-03-01"},
+                1.0,
+            ),
+        ]
+
+    def test_without_recency_the_older_better_rated_title_still_leads(self, ctx: EngineContext, mock_plextv):
+        """The control arm. This is today's behaviour and the complaint that prompted the feature:
+        release date is invisible to ranking, so the 1996 title wins on rating alone."""
+        self._two_candidates_of_different_vintage(ctx)
+        ctx.run_day = self.RUN_DAY
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=2)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        assert delivered[0] == 10, f"expected the 1996 title to lead with recency off, got {delivered}"
+
+    def test_a_row_at_full_recency_leads_with_the_newer_title(self, ctx: EngineContext, mock_plextv):
+        """The feature, end to end: same pool, same ratings, only the setting differs."""
+        self._two_candidates_of_different_vintage(ctx)
+        ctx.run_day = self.RUN_DAY
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=2, recency=1.0)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        assert delivered[0] == 20, f"expected the 2024 title to lead at full recency, got {delivered}"
+
+    def test_the_older_title_is_demoted_not_dropped(self, ctx: EngineContext, mock_plextv):
+        """A weight, not a filter. If recency ever starts excluding titles, a thin library returns
+        short rows — and "older titles still reach rows" stops being true."""
+        self._two_candidates_of_different_vintage(ctx)
+        ctx.run_day = self.RUN_DAY
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=2, recency=1.0)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert {p.tmdb_id for p in report.users[0].picks} == {10, 20}, "both titles must still be delivered"
+
+    def test_the_global_default_reaches_a_row_that_sets_nothing(self, ctx: EngineContext, mock_plextv):
+        """Server-wide setting -> row. The per-row test above could pass with the global ignored."""
+        self._two_candidates_of_different_vintage(ctx)
+        ctx.run_day = self.RUN_DAY
+        ctx.config = replace(ctx.config, recency=1.0)
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=2)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        delivered = [p.tmdb_id for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        assert delivered[0] == 20, f"the global default never reached the row, got {delivered}"
+
+
+class TestRecencySweep:
+    """The setting across its whole RANGE, on a pool built so nothing else can explain the result.
+
+    Ten candidates, identical rating, identical affinity, one shared seed — only the release year
+    differs, spanning 1970..2025. Titles ascend with year ("A 1970" .. "J 2025"), so with the weight
+    OFF every score ties and `_sort_key`'s alphabetical tiebreak hands back the five OLDEST. Any run
+    that returns newer titles did so because of this setting and nothing else.
+
+    This exists because the e2e fake cannot show it: there, `seed_frequency` (8->1), `affinity`
+    (1.0->0.5) and year (1999->2008) are all inversely correlated by construction, so scores span
+    12x while a 9-year age gap can only swing 2.2x. A correct weight is invisible there.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+    YEARS: ClassVar[list[int]] = [1970, 1976, 1982, 1988, 1994, 2000, 2006, 2012, 2018, 2025]
+
+    def _pool(self, ctx: EngineContext) -> None:
+        library = {900: 999}
+        suggestions = []
+        for i, year in enumerate(self.YEARS):
+            tmdb_id = 100 + i
+            library[tmdb_id] = 2000 + i
+            suggestions.append(
+                (
+                    {
+                        "id": tmdb_id,
+                        "title": f"{chr(ord('A') + i)} {year}",
+                        "genre_ids": [],
+                        "vote_average": 7.5,  # identical, so rating can never explain an ordering
+                        "release_date": f"{year}-03-01",
+                    },
+                    1.0,  # identical affinity, likewise
+                )
+            )
+        ctx.tmdb.suggestions.return_value = suggestions
+        ctx.plex.build_library_index.return_value = library
+        ctx.run_day = self.RUN_DAY
+
+    def _delivered_years(self, ctx: EngineContext, mock_plextv, recency: float | None) -> list[int]:
+        self._pool(ctx)
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=5, recency=recency)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        picks = sorted(report.users[0].picks, key=lambda p: p.rank)
+        return [p.year for p in picks if p.year]
+
+    def test_with_the_weight_off_the_row_is_the_five_oldest(self, ctx: EngineContext, mock_plextv):
+        """The control. Establishes that the pool really is tied on everything but year — if this
+        ever stops returning the oldest five, every other case in this class is measuring noise."""
+        assert self._delivered_years(ctx, mock_plextv, 0.0) == [1970, 1976, 1982, 1988, 1994]
+
+    def test_at_full_strength_the_row_is_the_five_newest(self, ctx: EngineContext, mock_plextv):
+        """The complete inversion of the control — same pool, same run, one setting changed."""
+        assert self._delivered_years(ctx, mock_plextv, 1.0) == [2025, 2018, 2012, 2006, 2000]
+
+    @pytest.mark.parametrize("recency", [0.0, 0.25, 0.5, 0.75, 1.0])
+    def test_the_row_is_always_full_whatever_the_setting(self, ctx: EngineContext, mock_plextv, recency):
+        """A weight must never cost the row titles. If any setting can return a short row, it has
+        started behaving like a filter and the "old titles still reach rows" promise is broken."""
+        assert len(self._delivered_years(ctx, mock_plextv, recency)) == 5
+
+    def test_turning_the_dial_up_never_makes_a_row_older(self, ctx: EngineContext, mock_plextv):
+        """Monotonicity across the whole slider — the property the UI's era strip claims.
+
+        Asserted as non-decreasing rather than strictly increasing: with ten candidates and five
+        slots, neighbouring settings can legitimately agree. What must never happen is the mean
+        going DOWN as the owner asks for newer titles.
+        """
+        means = []
+        for recency in (0.0, 0.25, 0.5, 0.75, 1.0):
+            years = self._delivered_years(ctx, mock_plextv, recency)
+            means.append(sum(years) / len(years))
+        assert means == sorted(means), f"raising the setting made a row older: {means}"
+        assert means[-1] > means[0], f"the full range changed nothing: {means}"
+
+    def test_a_row_that_sets_nothing_follows_the_global_across_the_range(self, ctx: EngineContext, mock_plextv):
+        """The inherit path, swept — a row storing None must track the global, not sit at one value."""
+        ctx.config = replace(ctx.config, recency=1.0)
+        assert self._delivered_years(ctx, mock_plextv, None) == [2025, 2018, 2012, 2006, 2000]
+
+    def test_an_explicit_zero_beats_a_high_global(self, ctx: EngineContext, mock_plextv):
+        """A "Hidden Gems" row on a modern-leaning server. If `recency=0.0` were ever read as
+        "unset", this row would silently become a new-releases row like every other."""
+        ctx.config = replace(ctx.config, recency=1.0)
+        assert self._delivered_years(ctx, mock_plextv, 0.0) == [1970, 1976, 1982, 1988, 1994]
+
+    def test_titles_with_no_release_year_are_not_swept_to_the_back(self, ctx: EngineContext, mock_plextv):
+        """An undated title ranks on its merits. TMDB serves plenty with no release_date, and a
+        `year or 0` fallback would bury every one of them the moment the owner turns this up."""
+        self._pool(ctx)
+        ctx.config.candidates_pre_rank = 40  # else the 11th candidate loses the cut below, not the weight
+        undated = dict(ctx.tmdb.suggestions.return_value[0][0])
+        undated.update({"id": 300, "title": "Z Undated", "release_date": ""})
+        ctx.tmdb.suggestions.return_value = [*ctx.tmdb.suggestions.return_value, (undated, 1.0)]
+        ctx.plex.build_library_index.return_value = {**ctx.plex.build_library_index.return_value, 300: 3000}
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=5, recency=1.0)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert 300 in {p.tmdb_id for p in report.users[0].picks}, "an undated title was buried by the age weight"
+
+    def test_the_weight_decides_the_pre_rank_CUT_not_just_the_order_within_it(self, ctx: EngineContext, mock_plextv):
+        """The weight must reach PAST the `candidates_pre_rank` truncation, not merely reorder it.
+
+        The pool is capped per media type before a row selects from it. If that cut is taken on the
+        base score alone, a newer title ranking below the cap can never be rescued however high the
+        owner turns this — on a catalog-deep library the pool exceeds the cap routinely, so the
+        setting would quietly stop working exactly where it is needed most.
+
+        Cap of 3 against ten candidates makes it unmissable: the base-score cut keeps the three
+        alphabetically-first (= oldest, see the class docstring), so a row that returns the three
+        NEWEST proves the weight was applied before the truncation rather than after it.
+        """
+        self._pool(ctx)
+        ctx.config.candidates_pre_rank = 3
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=3, recency=1.0)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        years = [p.year for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        assert years == [2025, 2018, 2012], f"the weight never reached past the cut, got {years}"
+
+    def test_the_cut_still_falls_back_to_the_base_score_when_the_weight_is_off(self, ctx: EngineContext, mock_plextv):
+        """The other half: at 0 the truncation must be byte-identical to what it always was."""
+        self._pool(ctx)
+        ctx.config.candidates_pre_rank = 3
+        ctx.config.rows = [RowSpec(slug="picked", name_template="Picked", size=3, recency=0.0)]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        years = [p.year for p in sorted(report.users[0].picks, key=lambda p: p.rank)]
+        assert years == [1970, 1976, 1982], f"the base-score cut changed, got {years}"
+
+    def _shared_years(self, ctx: EngineContext, mock_plextv, recency: float | None, global_recency: float) -> list[int]:
+        self._pool(ctx)
+        ctx.config = replace(ctx.config, recency=global_recency)
+        ctx.config.rows = [
+            RowSpec(
+                slug="popular",
+                name_template="Popular here",
+                size=5,
+                shared=True,
+                min_watchers=1,  # one fake watcher is enough to clear the aggregate-privacy floor
+                recency=recency,
+            )
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+        picks = sorted(
+            (p for u in report.users for p in u.picks if p.collection_slug == "popular"), key=lambda p: p.rank
+        )
+        seen: list[int] = []
+        for pick in picks:  # the same shared row is reported per user; one copy is what we assert on
+            if pick.year and pick.year not in seen:
+                seen.append(pick.year)
+        return seen
+
+    def test_a_SHARED_row_honours_its_own_setting(self, ctx: EngineContext, mock_plextv):
+        """The matrix cell the per-person tests cannot reach — `build: shared` takes a different
+        code path (`_run_shared_row`) that resolves every dial separately. The editor offers this
+        control on a shared row and the card badges the override, so it has to mean something."""
+        assert self._shared_years(ctx, mock_plextv, 1.0, 0.0) == [2025, 2018, 2012, 2006, 2000]
+
+    def test_a_SHARED_row_pinned_to_zero_is_not_overridden_by_a_high_global(self, ctx: EngineContext, mock_plextv):
+        """The other direction, which a truthiness check would break: an explicit 0.0 on a shared
+        row must survive a server-wide 1.0."""
+        assert self._shared_years(ctx, mock_plextv, 0.0, 1.0) == [1970, 1976, 1982, 1988, 1994]
+
+    def test_a_SHARED_row_that_sets_nothing_follows_the_global(self, ctx: EngineContext, mock_plextv):
+        assert self._shared_years(ctx, mock_plextv, None, 1.0) == [2025, 2018, 2012, 2006, 2000]
+
+    def test_two_rows_at_different_settings_each_get_their_own_cut(self, ctx: EngineContext, mock_plextv):
+        """One person, one shared gather, two rows disagreeing about release date — each must get
+        the cut its OWN setting implies. This is the case a single shared truncation cannot serve."""
+        self._pool(ctx)
+        ctx.config.candidates_pre_rank = 3
+        ctx.config.rows = [
+            RowSpec(slug="gems", name_template="Hidden Gems", size=3, recency=0.0),
+            RowSpec(slug="new", name_template="New and Notable", size=3, recency=1.0),
+        ]
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        by_row: dict[str, list[int]] = {}
+        for pick in sorted(report.users[0].picks, key=lambda p: p.rank):
+            by_row.setdefault(pick.collection_slug, []).append(pick.year)
+        assert by_row["gems"] == [1970, 1976, 1982], by_row
+        assert by_row["new"] == [2025, 2018, 2012], by_row
+
+
 class TestSeedCycling:
     """`RowPolicy`'s side of seed cycling: what forces a nightly cadence, and what may share a
     derivation. The rotation itself is covered in test_history.py."""
@@ -3922,3 +4241,593 @@ class TestSeedCycling:
         # And two people's rows sit at different points in the cycle, so a server does not re-derive
         # every cycling row on the same night.
         assert seed_cycle_offset("picked", "sarah", 5) != seed_cycle_offset("picked", "mike", 5)
+
+
+class TestRefreshNightVariety:
+    """A row built varied must stay varied when it refreshes.
+
+    `pre_rank` output is pure score, and one heavily-watched title's look-alikes dominate it — which
+    is precisely why `diversify_by_seed` exists. If the refresh branch merges survivors and
+    newcomers and then truncates to `k` by pool order, it re-applies the ordering diversify just
+    defeated: the row collapses onto the dominant taste and never recovers, because the collapsed
+    row is what carries forward to the next refresh.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _ctx(self, ctx: EngineContext) -> None:
+        """Two watches, so two seeds. The first suggests 20 titles, the second only 4 — the lopsided
+        shape a real pool has when someone has watched one show far more than anything else."""
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {
+            900: 999,
+            901: 998,
+            **{i: 2000 + i for i in range(10, 34)},
+        }
+        dominant = [{"id": i, "title": f"D{i}", "genre_ids": [], "vote_average": 9.0} for i in range(10, 30)]
+        minority = [{"id": i, "title": f"M{i}", "genre_ids": [], "vote_average": 6.0} for i in range(30, 34)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(dominant if tid == 900 else minority)
+        ctx.history_source.fetch.return_value = [
+            make_watched("Heavy", days_ago=1, rating_key=999),
+            make_watched("Light", days_ago=2, rating_key=998),
+        ]
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=6, media="movie", freshness=1.0)]
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        ctx.run_day = self.RUN_DAY
+
+    @staticmethod
+    def _seeds_of(picks) -> set:
+        return {p["seed_title"] for p in picks if p.get("seed_title")}
+
+    def _movies(self, report):
+        return next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+
+    def test_a_bootstrap_row_draws_on_both_tastes(self, ctx: EngineContext, mock_plextv):
+        """The control: without it, the refresh assertion below could pass on a row that was never
+        varied in the first place."""
+        self._ctx(ctx)
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        assert len(self._seeds_of(self._movies(report))) >= 2
+
+    def test_a_refresh_night_does_not_collapse_the_row_onto_one_taste(self, ctx: EngineContext, mock_plextv):
+        """The regression. Last run's row held both tastes; tonight it refreshes."""
+        self._ctx(ctx)
+        prior = [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                seed_tmdb_id=900 if t < 30 else 901,
+                seed_title="Heavy" if t < 30 else "Light",
+            )
+            for i, t in enumerate([10, 11, 12, 30, 31, 32])
+        ]
+        ctx.previous_picks = {("sarah", "picked", "1"): prior}
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        picks = self._movies(report)
+        seeds = self._seeds_of(picks)
+        assert len(seeds) >= 2, f"the row collapsed onto {seeds}: {[p['title'] for p in picks]}"
+
+    def test_the_kept_two_thirds_still_survive_a_refresh(self, ctx: EngineContext, mock_plextv):
+        """Variety must not be bought by throwing away the stability guarantee — the strongest
+        two-thirds of last run's row still carry over."""
+        self._ctx(ctx)
+        prior = [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                seed_tmdb_id=900 if t < 30 else 901,
+                seed_title="Heavy" if t < 30 else "Light",
+            )
+            for i, t in enumerate([10, 11, 12, 30, 31, 32])
+        ]
+        ctx.previous_picks = {("sarah", "picked", "1"): prior}
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        ids = {p["tmdb_id"] for p in self._movies(report)}
+        assert {10, 11, 12, 30} <= ids, f"the strongest two-thirds did not survive: {sorted(ids)}"
+
+
+class TestASettingsChangeRebuildsTheRow:
+    """Changing a setting that decides row contents must take effect on the next run.
+
+    Freshness suppresses churn when nothing changed. It was also delaying changes made on purpose:
+    raising "Recent releases" on a real server left 36 of 42 rows redelivering byte-identical picks
+    for up to a fortnight, which reads as the setting being broken.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+    KEY = ("sarah", "picked", "1")
+
+    def _ctx(self, ctx: EngineContext, *, recency: float) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 20)}}
+        pool = [
+            {
+                "id": i,
+                "title": f"T{i}",
+                "genre_ids": [],
+                "vote_average": 8.0,
+                "release_date": f"{1970 + (i - 10) * 6}-01-01",
+            }
+            for i in range(10, 20)
+        ]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        # freshness 0.0 = frozen. Nothing but a recipe change may rebuild this row.
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=4, media="movie", freshness=0.0, recency=recency)
+        ]
+        ctx.config.min_history = 1
+        ctx.config.candidates_pre_rank = 50
+        ctx.run_day = self.RUN_DAY
+
+    def _prior(self, recipe: str):
+        return [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                recipe=recipe,
+            )
+            for i, t in enumerate([10, 11, 12, 13])
+        ]
+
+    def _run(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        picks = next(e for e in report.users[0].breakdown if e["library_title"] == "Movies")["picks"]
+        return [p["tmdb_id"] for p in picks]
+
+    def test_a_frozen_row_still_redelivers_unchanged_when_nothing_changed(self, ctx, mock_plextv):
+        """The control. Same settings, frozen row — freshness must still do its job."""
+        self._ctx(ctx, recency=0.0)
+        from shortlist.engine.rows import RowPolicy, _rating_key_resolver, row_recipe
+
+        policy = RowPolicy(
+            ctx=ctx,
+            user=make_profile("sarah", account_id=100),
+            cfg=ctx.config,
+            specs=ctx.config.rows,
+            library_index={},
+            report=MagicMock(),
+            resolve=_rating_key_resolver({}),
+        )
+        same = row_recipe(policy, ctx.config.rows[0])
+        ctx.previous_picks = {self.KEY: self._prior(same)}
+        ctx.previous_recipes = {self.KEY: same}
+
+        assert self._run(ctx, mock_plextv) == [10, 11, 12, 13]
+
+    def test_changing_a_setting_rebuilds_a_frozen_row_immediately(self, ctx, mock_plextv):
+        """The fix. The stored row was built at recency 0; tonight the row is at 1.0, so it must
+        rebuild now rather than wait — and a frozen row would otherwise wait for ever."""
+        self._ctx(ctx, recency=1.0)
+        ctx.previous_picks = {self.KEY: self._prior("media=movie|recency=0.0|stale")}
+        ctx.previous_recipes = {self.KEY: "media=movie|recency=0.0|stale"}
+
+        delivered = self._run(ctx, mock_plextv)
+
+        assert delivered != [10, 11, 12, 13], "a changed setting did not rebuild the row"
+        assert delivered == [19, 18, 17, 16], f"expected the newest four at full recency, got {delivered}"
+
+    def test_a_row_with_no_recorded_recipe_is_left_alone(self, ctx, mock_plextv):
+        """Picks predating this feature carry no recipe. Treating unknown as a mismatch would
+        rebuild every row on every server the first night after an upgrade — the exact churn
+        freshness exists to prevent."""
+        self._ctx(ctx, recency=1.0)
+        ctx.previous_picks = {self.KEY: self._prior("")}
+        ctx.previous_recipes = {}
+
+        assert self._run(ctx, mock_plextv) == [10, 11, 12, 13]
+
+    def test_the_delivered_picks_carry_tonights_recipe(self, ctx, mock_plextv):
+        """Without this the row rebuilds on every run for ever, because the stored recipe never
+        catches up with the settings."""
+        self._ctx(ctx, recency=1.0)
+        ctx.previous_picks = {self.KEY: self._prior("stale")}
+        ctx.previous_recipes = {self.KEY: "stale"}
+        mock_plextv.users = [plextv_user(100, "sarah")]
+
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+
+        recipes = {p.recipe for p in report.users[0].picks}
+        assert recipes and "stale" not in recipes, f"picks kept the old recipe: {recipes}"
+        assert len(recipes) == 1, f"one row delivered two recipes: {recipes}"
+
+
+class TestSharedRowHonoursPickOrder:
+    """A shared row's display order must work. `_apply_order` lived only in the per-person path, so
+    a shared row set to "Shuffled" or "Highest rated" delivered ranking order regardless — while the
+    editor went on offering the control."""
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _ctx(self, ctx: EngineContext, order: str) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010, 20: 2020}
+        ctx.tmdb.suggestions.return_value = [
+            ({"id": 10, "title": "Old", "genre_ids": [], "vote_average": 9.0, "release_date": "1990-01-01"}, 1.0),
+            ({"id": 20, "title": "New", "genre_ids": [], "vote_average": 7.0, "release_date": "2024-01-01"}, 0.9),
+        ]
+        ctx.history_source.fetch.return_value = [
+            make_watched("Fargo", days_ago=1, rating_key=999),
+            make_watched("Fargo", days_ago=2, rating_key=999),
+        ]
+        ctx.config.rows = [
+            RowSpec(
+                slug="popular",
+                name_template="Popular",
+                size=2,
+                media="movie",
+                shared=True,
+                min_watchers=2,
+                pick_order=order,
+            )
+        ]
+        ctx.config.min_history = 1
+        ctx.run_day = self.RUN_DAY
+
+    def _delivered(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah"), plextv_user(200, "mike")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100), make_profile("mike", account_id=200)])
+        # DELIVERED order, i.e. list order — never sorted by rank. Rank is the selection order and
+        # `_apply_order` deliberately leaves it alone, so re-sorting on it would undo the very thing
+        # under test.
+        entries = [e for u in report.users for e in u.breakdown if e["row_slug"] == "popular"]
+        assert entries, "the shared row delivered nothing — fixture problem, not the feature"
+        seen: list[int] = []
+        for pick in entries[0]["picks"]:
+            if pick["tmdb_id"] not in seen:
+                seen.append(pick["tmdb_id"])
+        return seen
+
+    def test_newest_first_actually_reorders_a_shared_row(self, ctx: EngineContext, mock_plextv):
+        """10 is the better-ranked title, so ranking order leads with it; "newest" must not."""
+        self._ctx(ctx, "newest")
+        assert self._delivered(ctx, mock_plextv)[0] == 20
+
+    def test_best_match_order_is_still_the_ranking(self, ctx: EngineContext, mock_plextv):
+        """The control — "best" is a no-op, so this proves the reorder above came from the setting."""
+        self._ctx(ctx, "best")
+        assert self._delivered(ctx, mock_plextv)[0] == 10
+
+
+class TestColdStartRowsAreFullSizeAndFromTheRightLibrary:
+    """A cold-start row is what a NEW user sees first, and it was arriving half empty.
+
+    `_cold_start_picks` split `k` across `sections_by_type()` — one representative library per media
+    type — while `_build_section_picks` then took only that library's own share. On any server with
+    both a movie and a TV library, every cold row came back at half its configured size. The picks
+    also came from the representative library rather than the row's own, so a library-pinned row
+    lost everything the pinned library didn't hold, and reported a green run.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _ctx(self, ctx: EngineContext, *, library_keys=None) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        kids = MagicMock(type="movie", key="2", title="Kids Movies")
+        shows = MagicMock(type="show", key="3", title="TV Shows")
+        ctx.plex.sections.return_value = [movies, kids, shows]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies, MediaType.SHOW: shows}
+        ctx.delivery_sections = [movies, kids, shows]
+        ctx.plex.build_library_index.return_value = {}
+
+        def top_rated(section, n):
+            base = {"1": 100, "2": 200, "3": 300}[str(section.key)]
+            return [(base + i, MagicMock(ratingKey=9000 + base + i, title=f"L{base}-{i}")) for i in range(n)]
+
+        ctx.plex.top_rated.side_effect = top_rated
+        ctx.history_source.fetch.return_value = []  # thin history -> cold start
+        ctx.config.min_history = 5
+        ctx.config.rows = [
+            RowSpec(
+                slug="picked",
+                name_template="Picked",
+                size=10,
+                media="both",
+                library_keys=library_keys or [],
+            )
+        ]
+        ctx.run_day = self.RUN_DAY
+
+    def _by_library(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        # From `picks`, not `breakdown`: the breakdown is assembled by delivery, which needs far more
+        # of the PMS mocked than this fixture provides. `picks` is what the engine actually chose.
+        out: dict[str, list[int]] = {}
+        for pick in report.users[0].picks:
+            out.setdefault(pick.library, []).append(pick.tmdb_id)
+        return out
+
+    def test_every_library_gets_a_full_row(self, ctx: EngineContext, mock_plextv):
+        """Not k split across media types — k per library, like a warm row."""
+        self._ctx(ctx)
+
+        by_library = self._by_library(ctx, mock_plextv)
+
+        assert by_library, "the cold-start row delivered nothing at all"
+        for title, ids in by_library.items():
+            assert len(ids) == 10, f"{title} got {len(ids)} of 10 cold-start picks"
+
+    def test_a_pinned_row_is_filled_from_the_library_it_is_pinned_to(self, ctx: EngineContext, mock_plextv):
+        """Library 2's titles are the 200s. A row pinned there must not be filled from library 1."""
+        self._ctx(ctx, library_keys=["2"])
+
+        by_library = self._by_library(ctx, mock_plextv)
+
+        assert set(by_library) == {"Kids Movies"}, f"delivered to the wrong libraries: {list(by_library)}"
+        ids = by_library["Kids Movies"]
+        assert all(200 <= i < 300 for i in ids), f"cold picks came from another library: {ids}"
+
+
+class TestUnstartedOnlyIsRecheckedOnCarryForward:
+    """An "only series they haven't started" row must drop a series the person has since begun, even
+    on a night it isn't rebuilt — and at ANY watched cap.
+
+    `_reusable_prior` only applied the started-shows filter when `pct <= 0`, but the row editor
+    recommends this toggle alongside `pct > 0` ("this only changes anything if you've allowed
+    already-watched titles above"). In its documented configuration, no filter ran at all.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+    KEY = ("sarah", "unstarted", "1")
+
+    def _ctx(self, ctx: EngineContext, *, pct: float) -> None:
+        shows = MagicMock(type="show", key="1", title="TV Shows")
+        ctx.plex.sections.return_value = [shows]
+        ctx.plex.sections_by_type.return_value = {MediaType.SHOW: shows}
+        ctx.plex.build_library_index.return_value = {900: 999, 50: 2050, 51: 2051}
+        ctx.tmdb.suggestions.return_value = [
+            ({"id": 50, "name": "Started", "genre_ids": [], "vote_average": 9.0}, 1.0),
+            ({"id": 51, "name": "Untouched", "genre_ids": [], "vote_average": 8.0}, 0.9),
+        ]
+        # `watched_shows` is filled from HISTORY (`load_watched_breakdown`), not from a plex call:
+        # show 50 has been STARTED since the last run — 1 episode of 40.
+        ctx.history_source.fetch.return_value = [
+            make_watched("Seed", days_ago=1, rating_key=999, media_type=MediaType.SHOW),
+            make_watched(
+                "Started",
+                days_ago=1,
+                tmdb_id=50,
+                media_type=MediaType.SHOW,
+                viewed_leaf_count=1,
+                leaf_count=40,
+            ),
+        ]
+        ctx.config.rows = [
+            RowSpec(
+                slug="unstarted",
+                name_template="Start something",
+                size=2,
+                media="show",
+                unstarted_only=True,
+                watched_pct=pct,
+                freshness=0.0,
+            )
+        ]
+        ctx.config.min_history = 1
+        ctx.run_day = self.RUN_DAY
+
+    def _prior(self):
+        return [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"S{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.SHOW,
+                collection_slug="unstarted",
+                section_key="1",
+                library="TV Shows",
+            )
+            for i, t in enumerate([50, 51])
+        ]
+
+    def _delivered(self, ctx, mock_plextv):
+        ctx.previous_picks = {self.KEY: self._prior()}
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        return {p.tmdb_id for p in report.users[0].picks}
+
+    def test_a_started_series_is_dropped_at_a_zero_cap(self, ctx: EngineContext, mock_plextv):
+        """Already worked — the control that proves the fixture models 'started' correctly."""
+        self._ctx(ctx, pct=0.0)
+        assert 50 not in self._delivered(ctx, mock_plextv)
+
+    def test_a_started_series_is_dropped_above_zero_too(self, ctx: EngineContext, mock_plextv):
+        """The bug: the configuration the editor recommends for this toggle."""
+        self._ctx(ctx, pct=0.5)
+        assert 50 not in self._delivered(ctx, mock_plextv), "a started series survived carry-forward"
+
+
+class TestTheTraceExplainsWhatHappenedToTheRow:
+    """The run page could say what a row HOLDS but never why it holds it.
+
+    Most nights a row is redelivered untouched, and the report looked identical to a rebuild — so
+    "I changed a setting and nothing moved" was unanswerable without querying the database. It came
+    up three times in one afternoon on a real server.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+    KEY = ("sarah", "picked", "1")
+
+    def _ctx(self, ctx: EngineContext, *, freshness: float) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, **{i: 2000 + i for i in range(10, 16)}}
+        pool = [{"id": i, "title": f"T{i}", "genre_ids": [], "vote_average": 8.0} for i in range(10, 16)]
+        ctx.tmdb.suggestions.side_effect = lambda tid, mt: _ranked(pool)
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        ctx.config.rows = [
+            RowSpec(slug="picked", name_template="", size=3, media="movie", freshness=freshness, recency=0.75)
+        ]
+        ctx.config.min_history = 1
+        ctx.run_day = self.RUN_DAY
+
+    def _selection(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        entries = report.users[0].trace.get("selection") or []
+        assert entries, "the trace recorded no selection at all"
+        return entries[0]
+
+    def _prior(self):
+        return [
+            Pick(
+                tmdb_id=t,
+                rating_key=2000 + t,
+                title=f"T{t}",
+                rank=i + 1,
+                reason="kept",
+                media_type=MediaType.MOVIE,
+                collection_slug="picked",
+                section_key="1",
+                library="Movies",
+                recipe="same",
+            )
+            for i, t in enumerate([10, 11, 12])
+        ]
+
+    def test_a_first_build_is_recorded_as_rebuilt(self, ctx: EngineContext, mock_plextv):
+        self._ctx(ctx, freshness=1.0)
+        assert self._selection(ctx, mock_plextv)["decision"] == "rebuilt"
+
+    def test_a_row_left_alone_says_so(self, ctx: EngineContext, mock_plextv):
+        """The line that would have saved three rounds of confusion: this row was NOT re-picked."""
+        self._ctx(ctx, freshness=0.0)
+        ctx.previous_picks = {self.KEY: self._prior()}
+        ctx.previous_recipes = {}  # unknown recipe = "nothing to compare", so no forced rebuild
+
+        entry = self._selection(ctx, mock_plextv)
+
+        assert entry["decision"] == "carried_forward"
+        assert entry["refresh_night"] is False
+
+    def test_a_settings_change_is_named_as_the_reason(self, ctx: EngineContext, mock_plextv):
+        """Distinct from a plain rebuild — this is the row the owner's edit actually moved."""
+        self._ctx(ctx, freshness=0.0)
+        ctx.previous_picks = {self.KEY: self._prior()}
+        ctx.previous_recipes = {self.KEY: "a-different-recipe"}
+
+        assert self._selection(ctx, mock_plextv)["decision"] == "settings_changed"
+
+    def test_it_carries_the_settings_that_decided_the_row(self, ctx: EngineContext, mock_plextv):
+        """The settings are reported from the values the branch itself used, so the trace cannot
+        claim one thing while the engine did another."""
+        self._ctx(ctx, freshness=1.0)
+
+        entry = self._selection(ctx, mock_plextv)
+
+        assert entry["recency"] == 0.75
+        assert entry["freshness"] == 1.0
+        assert entry["size"] == 3
+        assert entry["candidates"] >= entry["delivered"] > 0
+        assert entry["cut_cap"] == ctx.config.candidates_pre_rank
+
+
+class TestTheTraceShowsWhyATitleWonOrLost:
+    """A fate alone ("lost the ranking cut") does not answer "why this title over that one".
+
+    The numbers that decided it — the release year, the score it was judged on, and the age
+    multiplier the Recent releases setting applied — are what turn the trace from an outcome into an
+    explanation. Recorded next to each returned title, including the ones that were dropped.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _ctx(self, ctx: EngineContext, *, recency: float) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010, 20: 2020}
+        ctx.tmdb.suggestions.return_value = [
+            ({"id": 10, "title": "Old", "genre_ids": [], "vote_average": 8.6, "release_date": "1994-01-01"}, 1.0),
+            ({"id": 20, "title": "New", "genre_ids": [], "vote_average": 7.1, "release_date": "2024-01-01"}, 0.9),
+        ]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        # The GLOBAL, not a row override: the disposition is stamped once per shared pool, at
+        # `ctx.config.recency`. A row that overrides it re-cuts afterwards, and the trace still shows
+        # the pool's figures — the KNOWN GAP recorded on `_stamp_disposition`.
+        ctx.config = replace(ctx.config, recency=recency)
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=2, media="movie")]
+        ctx.config.min_history = 1
+        ctx.run_day = self.RUN_DAY
+
+    def _returns(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        out = {}
+        for gather in report.users[0].trace.get("gathers") or []:
+            for source in gather.get("sources") or []:
+                for query in source.get("queries") or []:
+                    for ret in query.get("returned") or []:
+                        out[ret["tmdb_id"]] = ret
+        assert out, "no returned titles recorded — fixture problem, not the feature"
+        return out
+
+    def test_each_returned_title_carries_its_year_and_rating(self, ctx: EngineContext, mock_plextv):
+        self._ctx(ctx, recency=0.0)
+
+        rets = self._returns(ctx, mock_plextv)
+
+        assert rets[10]["year"] == 1994
+        assert rets[20]["year"] == 2024
+        assert rets[10]["rating"] == 8.6
+
+    def test_the_age_multiplier_shows_what_the_setting_did_to_each_title(self, ctx, mock_plextv):
+        """The number that makes "why did the 1994 one win?" answerable: at full strength the older
+        title is scored at a fraction of the newer one."""
+        self._ctx(ctx, recency=1.0)
+
+        rets = self._returns(ctx, mock_plextv)
+
+        assert rets[20]["age_weight"] > rets[10]["age_weight"], rets
+        assert rets[10]["age_weight"] < 0.2, f"a 32-year-old title should be heavily weighted down: {rets[10]}"
+
+    def test_the_multiplier_is_one_when_the_setting_is_off(self, ctx: EngineContext, mock_plextv):
+        """Not absent, and not a made-up number — 1.0 is the truth when age was not consulted."""
+        self._ctx(ctx, recency=0.0)
+
+        rets = self._returns(ctx, mock_plextv)
+
+        assert rets[10]["age_weight"] == 1.0
+        assert rets[20]["age_weight"] == 1.0

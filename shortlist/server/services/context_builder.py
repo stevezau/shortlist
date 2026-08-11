@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
-from shortlist.engine.clients.search import ExaClient
+from shortlist.engine.clients.search import ExaClient, SearxngClient, WebSearchProvider
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.context import EngineContext
@@ -81,6 +81,39 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
     if get("curator.model"):
         kwargs["model"] = get("curator.model")
     return kwargs
+
+
+def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None:
+    """The external web-search backend for the ``llm_web`` source, or None when there isn't one.
+
+    Deciding WHICH provider belongs here rather than in the engine: the engine only knows "an
+    external backend" (``candidates.EXTERNAL_SEARCH_MODES``), so adding a provider never touches it.
+
+    The backend is whatever the owner chose, and ONLY that: an unconfigured ``exa``/``searxng``
+    yields None rather than falling through to the other. A fallback would be actively harmful in
+    both directions — it would send a self-hoster's watch history to a paid vendor they didn't pick,
+    or quietly downgrade a paying owner to a box that may be switched off.
+
+    Args:
+        get: A settings reader (``store.get``).
+
+    Returns:
+        A configured provider, or None when the backend is ``native`` or its own setup is missing.
+    """
+    mode = get("llm_web.search_provider") or "native"
+    if mode == "exa":
+        key = get("exa.apikey")
+        return ExaClient(key) if key else None
+    if mode == "searxng":
+        url = (str(get("searxng.url") or "")).strip()
+        if not url:
+            return None
+        return SearxngClient(
+            url,
+            username=str(get("searxng.username") or ""),
+            password=str(get("searxng.password") or ""),
+        )
+    return None  # native: the provider searches for itself, so there is no external client
 
 
 def _dislike_threshold(store: SettingsStore) -> float:
@@ -152,10 +185,9 @@ class ContextBuilder:
                 if store.get("trakt.client_id")
                 else None
             )
-            # External web-search backend for the llm_web source; None when no Exa key is set (the
+            # External web-search backend for the llm_web source; None when none is configured (the
             # native provider tools still work without it — only Ollama depends on it).
-            exa_key = store.get("exa.apikey")
-            search = ExaClient(exa_key) if exa_key else None
+            search = make_search_client(store.get)
             history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get))
@@ -165,49 +197,9 @@ class ContextBuilder:
             render_modes = {"text", "ai", "generate"}
             wants_studio = any((c.poster or {}).get("mode") in render_modes for c in session.query(Collection).all())
             poster_artist = make_studio(store, self._sessions) if wants_studio else None
-            config = EngineConfig(
-                row_size=int(store.get("row.size")),
-                row_name_template=store.get("row.name_template"),
-                # Fallback matches the seeded default and the UI's, so a never-saved setting behaves
-                # the same everywhere (gather_candidates still floors an explicit [] at tmdb_similar).
-                candidate_sources=list(store.get("candidates.sources") or ["tmdb_similar", "tmdb_discover"]),
-                blocked_shared_seeds={
-                    tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
-                },
-                web_search_provider=store.get("llm_web.search_provider") or "auto",
-                hub_anchors=self._build_hub_anchors(store),
-                manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
-                watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
-                freshness=float(store.get("recommendations.freshness") or 0.0),
-                recent_count=int(store.get("recommendations.recent_count") or 10),
-                max_seeds=int(store.get("recommendations.max_seeds") or 30),
-                rating_source=store.get("recommendations.rating_source") or "tmdb",
-                min_history=int(store.get("recommendations.min_history") or 10),
-                cold_start=store.get("recommendations.cold_start") or "popular",
-                # The switch collapses into the threshold rather than travelling beside it: the
-                # engine's one question is "at or below what?", and None answers "never". Two fields
-                # would let the config express "off, but with a threshold of 2", which is not a state
-                # and would only ever be a bug waiting for someone to read the wrong one.
-                dislike_threshold=(
-                    _dislike_threshold(store) if store.get("recommendations.use_plex_ratings") else None
-                ),
-                hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
-                dry_run=dry_run,
-                rows=self._build_rows(session, store),
-                # The server owns the row list: an empty one means every row is DISABLED, not
-                # 'unconfigured' — so nothing new is delivered, rather than the legacy default row
-                # being resurrected behind a Rows page that shows it switched off.
-                rows_defined=True,
-                # ...and a row switched off has its already-built collection removed from its owner's
-                # Home on this run, so "off" means gone, not merely "not refreshed". Runs stay full
-                # here even when scoped: retiring a DISABLED row on any run is always correct.
-                retired_rows=self._retired_rows(session, store),
-                # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
-                # delivery only — classification/sync/sweep/promotion above still see the full list.
-                build_only=self._build_only_slugs(session, collection_ids),
-                requests=self._build_requests(store),
-            )
+            config = self._engine_config(session, store, dry_run=dry_run, collection_ids=collection_ids)
             previous = self._previous_picks(session)
+            previous_recipes = self._previous_recipes(previous)
             delivered_keys = self._delivered_keys(session)
             # Opted-out accounts: with hide_shared_from_disabled, even public shared rows are hidden
             # from them, so disabling a user removes them from Shortlist entirely.
@@ -264,6 +256,7 @@ class ContextBuilder:
                 mdblist=self._build_mdblist(store),
                 concurrency=concurrency,
                 previous_picks=previous,
+                previous_recipes=previous_recipes,
                 delivered_keys=delivered_keys,
                 disabled_account_ids=disabled_account_ids,
                 known_slugs=known_slugs,
@@ -588,12 +581,25 @@ class ContextBuilder:
                     # its carried-forward picks every run, so these have to survive the round trip.
                     rating=r.rating or 0.0,
                     year=r.year,
+                    # The settings fingerprint this pick was built under. Carried so the engine can
+                    # tell "the owner changed the recipe" from "nothing changed" and rebuild rather
+                    # than wait out the freshness cadence.
+                    recipe=r.recipe or "",
                     collection_slug=r.collection_slug,
                     section_key=r.section_key,
                     library=r.library,
                 )
             )
         return out
+
+    def _previous_recipes(self, previous: dict[tuple[str, str, str], list[Pick]]) -> dict[tuple[str, str, str], str]:
+        """The recipe each stored row was built under, keyed like ``_previous_picks``.
+
+        Read from the picks themselves rather than queried again — they are the same rows. A row
+        whose picks disagree (a half-written run, or a mix of recipes after an upgrade) is reported
+        as its FIRST pick's recipe, which is the one the row's leading titles were chosen under.
+        """
+        return {key: picks[0].recipe for key, picks in previous.items() if picks and picks[0].recipe}
 
     def enabled_profiles(self, session: Session, user_ids: list[int] | None = None) -> list[UserProfile]:
         """Enabled users, optionally narrowed to user_ids — never widened past enabled=True.
@@ -698,6 +704,69 @@ class ContextBuilder:
         rows = session.query(Collection).filter(Collection.id.in_(collection_ids), Collection.enabled).all()
         return frozenset(row.slug for row in rows)
 
+    def _engine_config(
+        self,
+        session: Session,
+        store: SettingsStore,
+        *,
+        dry_run: bool = False,
+        collection_ids: list[int] | None = None,
+    ) -> EngineConfig:
+        """Every stored setting, as the engine's config dataclass.
+
+        Its own method rather than inline in ``build`` so the settings -> engine seam can be asserted
+        without a live Plex server. Every line here is "read one setting, hand it to the engine", and
+        a field forgotten here is invisible: the setting saves, the UI shows it, and the engine simply
+        never sees it.
+        """
+        return EngineConfig(
+            row_size=int(store.get("row.size")),
+            row_name_template=store.get("row.name_template"),
+            # Fallback matches the seeded default and the UI's, so a never-saved setting behaves
+            # the same everywhere (gather_candidates still floors an explicit [] at tmdb_similar).
+            candidate_sources=list(store.get("candidates.sources") or ["tmdb_similar", "tmdb_discover"]),
+            blocked_shared_seeds={
+                tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
+            },
+            web_search_provider=store.get("llm_web.search_provider") or "native",
+            hub_anchors=self._build_hub_anchors(store),
+            manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
+            # The `or` fallbacks below are safe only because the validators exclude the falsy
+            # value: `min_history` is bounded 1-100, `recent_count` 1-25, `max_seeds` 5-100
+            # (api/settings.py). For the three fractions the fallback IS the falsy value, so a
+            # stored 0.0 survives. Correct by coincidence of the bounds rather than by construction
+            # — lower any of those floors to 0 and several settings start silently reading as their
+            # default instead of as the zero the owner chose.
+            watched_pct=float(store.get("recommendations.watched_pct") or 0.0),
+            freshness=float(store.get("recommendations.freshness") or 0.0),
+            recency=float(store.get("recommendations.recency") or 0.0),
+            recent_count=int(store.get("recommendations.recent_count") or 10),
+            max_seeds=int(store.get("recommendations.max_seeds") or 30),
+            rating_source=store.get("recommendations.rating_source") or "tmdb",
+            min_history=int(store.get("recommendations.min_history") or 10),
+            cold_start=store.get("recommendations.cold_start") or "popular",
+            # The switch collapses into the threshold rather than travelling beside it: the
+            # engine's one question is "at or below what?", and None answers "never". Two fields
+            # would let the config express "off, but with a threshold of 2", which is not a state
+            # and would only ever be a bug waiting for someone to read the wrong one.
+            dislike_threshold=(_dislike_threshold(store) if store.get("recommendations.use_plex_ratings") else None),
+            hide_shared_from_disabled=bool(store.get("privacy.hide_shared_from_disabled")),
+            dry_run=dry_run,
+            rows=self._build_rows(session, store),
+            # The server owns the row list: an empty one means every row is DISABLED, not
+            # 'unconfigured' — so nothing new is delivered, rather than the legacy default row
+            # being resurrected behind a Rows page that shows it switched off.
+            rows_defined=True,
+            # ...and a row switched off has its already-built collection removed from its owner's
+            # Home on this run, so "off" means gone, not merely "not refreshed". Runs stay full
+            # here even when scoped: retiring a DISABLED row on any run is always correct.
+            retired_rows=self._retired_rows(session, store),
+            # A per-row scheduled run rebuilds ONLY these rows (by slug); None = every row. Scopes
+            # delivery only — classification/sync/sweep/promotion above still see the full list.
+            build_only=self._build_only_slugs(session, collection_ids),
+            requests=self._build_requests(store),
+        )
+
     def _build_rows(self, session: Session, store: SettingsStore) -> list[RowSpec]:
         """Build the engine's row specs from the enabled collections.
 
@@ -737,6 +806,7 @@ class ContextBuilder:
                     rewatch=bool(collection.rewatch),
                     unstarted_only=bool(collection.unstarted_only),
                     freshness=collection.freshness,  # None -> inherit the global freshness
+                    recency=collection.recency,  # None -> inherit the global recency
                     recent_count=collection.recent_count,  # None -> inherit the global recent_count
                     max_seeds=collection.max_seeds,  # None -> inherit the global recommendations.max_seeds
                     cold_start=collection.cold_start,  # None -> inherit the global recommendations.cold_start

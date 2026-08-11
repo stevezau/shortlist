@@ -1,0 +1,60 @@
+{
+  "_why": [
+    "plex.tv stores share-filter strings VERBATIM and hands them straight back — there is no",
+    "server-side normalization of either separator. Measured by writing each form to a real",
+    "account's filterMovies via PUT /api/users/{id} (params=, exactly as plextv.update_user_filters",
+    "does) and reading it back from GET /api/users. The account's original value was snapshotted",
+    "first and restored afterwards, verified byte-identical.",
+    "",
+    "The consequence is the whole of issue #77: the shape Shortlist reads is whichever writer last",
+    "touched that account, so all four of these reach parse_filter. Splitting only on '|' and ','",
+    "mis-parsed the Plex Web form into ONE condition whose field swallowed the allow clause, which",
+    "made the existing exclude clause invisible and caused a merge to append a second one.",
+    "",
+    "Note the httpx params= layer round-trips cleanly: '%' in a value goes out as '%25' and comes",
+    "back as '%', so a %2C-joined value survives as %2C rather than double-encoding."
+  ],
+  "recorded": "2026-08-10",
+  "endpoint_written": "PUT https://plex.tv/api/users/{id}?filterMovies=...",
+  "endpoint_read": "GET https://plex.tv/api/users",
+  "pms_version": "1.43.3.10861-07dfddaeb",
+  "known_writers": {
+    "plex_web": "'&' between conditions, values URL-encoded (per issue #77's devtools capture)",
+    "plexapi": "'|' between conditions, values joined with '%2C' (myplex.py _filterDictToStr)",
+    "shortlist": "'|' between conditions, values joined with a plain comma"
+  },
+  "round_trips": [
+    {
+      "form": "pipe + plain",
+      "sent": "label=ZZTestAllowA,ZZTestAllowB|label!=ZZTestExcludeC",
+      "read_back": "label=ZZTestAllowA,ZZTestAllowB|label!=ZZTestExcludeC",
+      "identical": true,
+      "http_status": 200
+    },
+    {
+      "form": "pipe + %2C",
+      "sent": "label=ZZTestAllowA%2CZZTestAllowB|label!=ZZTestExcludeC",
+      "read_back": "label=ZZTestAllowA%2CZZTestAllowB|label!=ZZTestExcludeC",
+      "identical": true,
+      "http_status": 200
+    },
+    {
+      "form": "ampersand + plain",
+      "sent": "label=ZZTestAllowA,ZZTestAllowB&label!=ZZTestExcludeC",
+      "read_back": "label=ZZTestAllowA,ZZTestAllowB&label!=ZZTestExcludeC",
+      "identical": true,
+      "http_status": 200
+    },
+    {
+      "form": "ampersand + %2C",
+      "sent": "label=ZZTestAllowA%2CZZTestAllowB&label!=ZZTestExcludeC",
+      "read_back": "label=ZZTestAllowA%2CZZTestAllowB&label!=ZZTestExcludeC",
+      "identical": true,
+      "http_status": 200
+    }
+  ],
+  "exclude_only_accounts_observed": {
+    "_note": "All 48 accounts on the recording server, written only ever by Shortlist, came back plain and single-clause — no '&', no '|', no percent-encoding, and no sign of double-encoding.",
+    "example": "label!=Shortlist_alexmastroianni,Shortlist_amic75,Shortlist_amyme76"
+  }
+}

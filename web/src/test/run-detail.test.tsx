@@ -205,7 +205,7 @@ describe("RunDetailPage — grouped by library", () => {
     expect(screen.getByText("+5/−3")).toBeInTheDocument();
     expect(screen.getByText("377,428")).toBeInTheDocument();
     expect(screen.getByText(/final picks 251,295/)).toBeInTheDocument();
-    expect(screen.getByText("Exa searches")).toBeInTheDocument();
+    expect(screen.getByText("Web searches")).toBeInTheDocument();
     expect(screen.getByText("46")).toBeInTheDocument();
   });
 
@@ -225,8 +225,8 @@ describe("RunDetailPage — grouped by library", () => {
 
     renderDetail("");
 
-    expect(await screen.findByText("Exa searches")).toBeInTheDocument();
-    expect(screen.getByText("1")).toBeInTheDocument(); // billed
+    expect(await screen.findByText("Web searches")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument(); // actually searched
     expect(screen.getByText(/793 from cache/)).toBeInTheDocument();
   });
 
@@ -248,7 +248,7 @@ describe("RunDetailPage — grouped by library", () => {
     expect(await screen.findByText("all succeeded")).toBeInTheDocument();
     // No AI this run → those tiles don't render at all (0-value tiles would be noise).
     expect(screen.queryByText("AI tokens")).not.toBeInTheDocument();
-    expect(screen.queryByText("Exa searches")).not.toBeInTheDocument();
+    expect(screen.queryByText("Web searches")).not.toBeInTheDocument();
   });
 
   it("falls back to a plain AI-tokens hint when there's no by-step breakdown", async () => {

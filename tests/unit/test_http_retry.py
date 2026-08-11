@@ -120,6 +120,16 @@ class TestRedact:
             ("SECRET", "{'X-Api-Key': 'SECRET'}"),
             # JSON form with a different credential field name.
             ("SECRETVALUE", '{"accessToken": "SECRETVALUE"}'),
+            # HTTP Basic — the reverse-proxy credential a SearXNG connection can carry. The ladder
+            # knew `Bearer` but not `Basic`, so a proxied instance's password probed through intact.
+            ("YWRtaW46aHVudGVyMg==", "Authorization: Basic YWRtaW46aHVudGVyMg=="),
+            # Credentials inline in a URL. The settings boundary now refuses this shape for
+            # `searxng.url`, but redaction is the backstop for every OTHER path a URL can travel —
+            # a client's exception text, a logged request line, an `events` row.
+            ("hunter2", "ConnectError for http://admin:hunter2@searx.local:8080/search"),
+            # Scheme/host case is whatever the owner typed — every sibling pattern uses re.I, and
+            # this one silently did not, so an uppercased URL walked straight through.
+            ("Hunter2", "HTTPS://Admin:Hunter2@Searx.local/search"),
         ],
     )
     def test_redacts_shapes_that_are_not_query_params(self, secret: str, text: str):

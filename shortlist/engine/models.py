@@ -210,6 +210,10 @@ class Pick:
     # candidate pool already holds, so ordering by them costs no extra lookups.
     rating: float = 0.0
     year: int | None = None
+    # The `row_recipe` this pick was built under. Compared against tonight's on the next run: a
+    # mismatch means the owner changed a setting that decides row contents, so the row rebuilds
+    # instead of waiting for its freshness cadence.
+    recipe: str = ""
 
 
 @dataclass
@@ -328,6 +332,14 @@ class RowSpec:
     # best quality), 1.0 = fresh (rotate the whole row + reach deep for novelty). None -> inherit
     # EngineConfig.freshness.
     freshness: float | None = None
+    # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = strongly prefer
+    # new. None -> inherit EngineConfig.recency.
+    #
+    # Not the same axis as `freshness` despite the neighbouring names, and the pair is the reason the
+    # UI label is "Recent releases" rather than "Newness": freshness is a CADENCE (how often this row
+    # re-picks), this is a PREFERENCE (which titles win when it does). A row can rebuild nightly and
+    # still fill with 1990s titles — that combination is exactly what this setting exists for.
+    recency: float | None = None
     # How many of this person's most recent watched titles the WEB-SEARCH source searches for this row
     # — one cached search per title ("what to watch if you liked X"). Fewer = tighter/cheaper, more =
     # broader reach. Only affects the llm_web source; TMDB/Trakt still use the full seed set. None ->
@@ -528,9 +540,11 @@ class MissingTitle:
     # and why". Accumulated across every user and row, deduplicated so one (person, row, seed) is
     # listed once.
     why: list[RequestWhy] = field(default_factory=list)
-    # Why the last send attempt didn't land (e.g. "Sonarr GET …/lookup returned HTTP 503"), so a
-    # FAILED auto-send is queued back to the inbox with the reason visible instead of vanishing and
-    # silently retrying every night. Empty for a title that was never attempted.
+    # Why this title is not on the server yet — either a real send failure ("Sonarr GET …/lookup
+    # returned HTTP 503"), so a FAILED auto-send is queued back to the inbox with the reason visible
+    # instead of vanishing and silently retrying every night, OR the threshold that kept it waiting
+    # ("rating below auto_min_rating (7.5)"). Both answer the inbox's one question; a failure detail
+    # outranks a threshold one when merging (`run_persistence._is_failure_detail`).
     detail: str = ""
     # A show's resolved TheTVDB id, cached once (Sonarr keys on TVDB) so the arr-presence check and
     # the eventual send don't each pay a separate TMDB lookup. None until resolved / for movies.
@@ -671,12 +685,22 @@ class EngineConfig:
     # Day-to-day variability, as a fraction: 0.0 (default) = stable (the strongest picks every day);
     # 1.0 = fresh (rotate the whole row daily and reach deep down the ranked list). Overridable per row.
     freshness: float = 0.0
+    # How much a title's release date counts when ranking it: 0.0 (default) = ignore age entirely,
+    # which is how this ranked before the setting existed; 1.0 = every ~8 years of age halves a
+    # title's weight. A WEIGHT, never a filter — an old title is only ever asked to be a better
+    # match. Overridable per row (see RowSpec.recency for why it is not `freshness`).
+    #
+    # The DATACLASS defaults to 0.0 so a library caller opts in rather than inheriting an opinion.
+    # The product does not: `settings_store` defaults `recommendations.recency` to 0.5 for every
+    # install, existing servers included, and each row adopts it on its next refresh night.
+    recency: float = 0.0
     # Which candidate sources to pool (see engine/candidates.py). Empty/default = TMDB similar only,
     # preserving legacy behaviour; owners widen recall by enabling more.
     candidate_sources: list[str] = field(default_factory=lambda: ["tmdb_similar"])
-    # How the llm_web source searches: 'native' (the provider's own web-search tool), 'exa' (the
-    # external search provider — the only path for Ollama), or 'auto' (native where supported, else Exa).
-    web_search_provider: str = "auto"
+    # Which backend the llm_web source searches with — exactly one: 'native' (the provider's own
+    # web-search tool, Claude/GPT/Gemini only), 'exa', or 'searxng'. Either external is the only path
+    # for a local Ollama model. ('auto', which unioned native with an external, was removed in 1.3.)
+    web_search_provider: str = "native"
     # Per-library placement of Shortlist's rows in Plex's Recommended shelf, keyed by section key
     # (str). Empty -> leave Plex's default order (rows land wherever they're created — last, under a
     # co-managing tool's collections). Applied at end of run, read-only against the anchor.

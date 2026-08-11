@@ -118,7 +118,7 @@ collections           id · slug · name · build(per_person|shared) · audience
                       · schedule (this row's OWN 5-field cron; "" = manual only — there is no global one)
                       · size · media(movie|show|both) · library_keys JSON · name_template · min_watchers
                       · placement / placement_friends (both|home|library|off) · pin_top BOOL · hub_anchor JSON
-                      · poster JSON · candidate_sources JSON · watched_pct · freshness · recent_count · max_seeds · pick_order
+                      · poster JSON · candidate_sources JSON · watched_pct · freshness · recency · recent_count · max_seeds · pick_order
 collection_audience   collection_id FK · user_id FK          (a `subset` row's members)
 collection_user_overrides  collection_id FK · user_id FK · muted BOOL · row_size · history_depth
 poster_assets         id · collection_id FK · kind(upload|preview) · bytes · created_at
@@ -134,6 +134,8 @@ jobs                  id · kind · payload JSON · status(queued|running|done|f
                         the trigger; this table is what survives a restart. See §5 of that doc.
 runs                  id · trigger(schedule|manual|wizard) · started_at · finished_at · status · dry_run BOOL · stats JSON
 run_users             run_id FK · user_id FK · status · error · reason · duration_ms · llm_tokens · exa_searches
+#                                                    ^ counts EVERY external web search (Exa or SearXNG);
+#                                                      the column keeps its original name so historic runs read back
                       · diff JSON (added/removed/kept) · breakdown JSON (per row+library: titles, ratingKey, picks)
                       · trace JSON (per-user pipeline trace: seeds, per-source queries/returns, web-search+RAG prompts; {} when none)
 picks                 id · run_id FK · user_id FK · tmdb_id · rating_key · rank · reason · seed_tmdb_id · seed_title

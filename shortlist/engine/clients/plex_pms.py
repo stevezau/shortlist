@@ -453,6 +453,88 @@ class PlexClient:
                 )
         return out
 
+    def confirm_unlabelled(self, collection: Collection, label_prefix: str = "shortlist") -> bool:
+        """Re-read ONE collection straight from the PMS and report whether it really has no label.
+
+        The guard on the only destructive decision Shortlist makes from a label read. A real PMS does
+        NOT return ``<Label>`` children in the section listing — verified on 1.43.3.10861: 103
+        collections, zero labels — so ``collection.labels`` is only ever populated because plexapi
+        silently re-reads each collection behind the attribute access. That is an implementation
+        detail of a third-party library sitting on the path to ``delete()``. A re-read that FAILS raises
+        and is caught; the dangerous case is a re-read that SUCCEEDS carrying no ``<Label>``, which is
+        indistinguishable from a genuinely unlabelled row.
+
+        Get it wrong in that direction and every Shortlist row on the server is an unlabelled orphan
+        — ``delete_owned_collection`` accepts our title marker alone as proof of ownership, so the
+        sweep would delete all of them and the run would report success.
+
+        So before deleting, ask the server again, explicitly. Returns True only when a fresh read
+        still shows no ``{label_prefix}_*`` label. A failed re-read returns False — refusing to
+        delete on an unreadable answer is the whole point.
+        """
+        try:
+            collection.reload()
+        except Exception as e:
+            logger.warning(
+                "{}: could not re-read labels before deleting — leaving it alone ({})",
+                log_title(collection.title),
+                type(e).__name__,
+            )
+            return False
+        prefix = f"{label_prefix}_".lower()
+        return not any(label.tag.lower().startswith(prefix) for label in collection.labels)
+
+    def owned_row_surfaces(self, label_prefix: str = "shortlist", *, flags: bool = True) -> list[dict]:
+        """Every Shortlist collection with the surfaces it is CURRENTLY claiming. Read-only.
+
+        The answer to a question nothing in the app could previously ask. ``promotedToOwnHome`` is the
+        one surface no share filter can hide — the owner is never restricted (rule 5) — so when
+        somebody reports seeing another person's row on their Home screen, these three flags ARE the
+        diagnosis. No tool reported them, so the report could not be investigated at all (issue #75).
+
+        A collection counts as ours if it carries our label OR our invisible title marker, and BOTH
+        are reported, because the two disagreeing is itself the finding: a marked collection with no
+        label is one that no ``label!=`` exclude can hide and that ``sweep_broken_rows`` deletes as an
+        orphan (issue #76). Anything with neither is somebody else's and is skipped (rule 4).
+
+        ``flags=False`` skips the surface read entirely, for a caller that only needs to know WHICH
+        collections are ours — the flags cost one ``visibility()`` round-trip each (91 of them on a
+        real 46-user server), which is worth paying to answer "where is this row showing" and not
+        worth paying to count rows.
+        """
+        prefix = f"{label_prefix}_".lower()
+        out: list[dict] = []
+        for section in self.sections():
+            for collection in self._section_collections(section):
+                label = next((lbl.tag for lbl in collection.labels if lbl.tag.lower().startswith(prefix)), None)
+                marked = _has_shortlist_marker(collection.title)
+                if label is None and not marked:
+                    continue
+                row = {
+                    "library": section.title,
+                    "library_key": str(section.key),
+                    # Marker stripped and the account id it encodes shown instead — two users' rows
+                    # are otherwise IMPOSSIBLE to tell apart by eye (see log_title).
+                    "title": log_title(collection.title),
+                    "label": label or "",
+                    "marked": marked,
+                    "rating_key": int(collection.ratingKey),
+                }
+                if flags:
+                    try:
+                        hub = collection.visibility()
+                        row |= {
+                            "recommended": bool(getattr(hub, "promotedToRecommended", False)),
+                            "own_home": bool(getattr(hub, "promotedToOwnHome", False)),
+                            "shared_home": bool(getattr(hub, "promotedToSharedHome", False)),
+                        }
+                    except Exception as e:
+                        # One unreadable hub must not cost the whole walk — this is the tool someone
+                        # reaches for when the server is already misbehaving.
+                        row["error"] = f"{type(e).__name__}: {e}"
+                out.append(row)
+        return out
+
     def matches_section(self, collection: Collection, section: LibrarySection) -> bool:
         """Whether this collection's type matches the library it lives in.
 

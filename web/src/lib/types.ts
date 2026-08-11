@@ -219,6 +219,9 @@ export function blockedSeeds(prefs: UserPrefs | undefined): BlockedSeed[] {
  * module — use an explicit object literal here rather than the utility type.
  */
 export type Pick = Schemas["PickOut"] & {
+  /** Present on breakdown picks (delivery stamps it); absent on the flat `picks` list. Used for the
+   *  look-it-up links, which are omitted rather than broken when it is missing. */
+  tmdb_id?: number;
   /** Which row this pick belongs to (Collection slug). */
   collection_slug?: Schemas["UserPickOut"]["collection_slug"];
   library?: Schemas["UserPickOut"]["library"];
@@ -481,10 +484,15 @@ export interface RunStats {
   llm_tokens?: number;
   /** That total split by where it went: { curate, llm_web, llm_library }. */
   llm_tokens_by_step?: Record<string, number>;
-  /** Exa web searches run this run (billed per search, not per token — shown separately). */
+  /** External web searches run this run, whichever backend ran them (Exa or SearXNG). Counted per
+   *  REQUEST rather than per token — that is what Exa bills and what SearXNG rate-limits — so it is
+   *  shown separately. The key keeps its original `exa_` name so historic runs stay readable. */
   exa_searches?: number;
   /** Searches served from the shared 14-day cache instead of billed — "1 searched · N from cache". */
   exa_cache_hits?: number;
+  /** Set the moment a cancel is accepted, so ANY client — including a freshly loaded page, which has
+   *  no mutation state — can show "Stopping…" instead of a live-looking Cancel that can only fail. */
+  cancel_requested?: boolean;
 }
 
 /**
@@ -570,6 +578,12 @@ export interface TraceReturn {
   title: string;
   /** Kept/dropped verdict (absent on legacy runs recorded before disposition tracking). */
   fate?: TraceFate;
+  /** The numbers this title was judged on. Absent on runs recorded before they were stamped, and
+   *  `year` is legitimately null for a title TMDB has no date for. */
+  year?: number | null;
+  rating?: number | null;
+  /** The release-date multiplier applied to it: 1 when the setting was off or the year unknown. */
+  age_weight?: number;
 }
 
 /** One seed's query against a source: what it searched for and a sample of what came back. */
@@ -591,6 +605,9 @@ export interface TraceSource {
   queries?: TraceSeedQuery[];
   /** Fate tally across this source's returned sample: {kept, already_watched, ...} counts. */
   disposition?: Record<string, number>;
+  /** How many searches this source REALLY ran, per media. `queries` above is a capped display
+   *  sample, so counting it and calling that the number of searches understates the run. */
+  searched?: Record<string, number>;
 }
 
 /** One Exa search: the query sent for a seed and the titles it returned. */
@@ -614,6 +631,10 @@ export interface TraceWebProposal {
 /** The web-search (llm_web) detail of a gather: what was searched and what the LLM proposed. */
 export interface TraceWeb {
   mode: string;
+  /** Which external backend actually ran ("exa" | "searxng"). Absent when the native tool did the
+   *  searching, and on runs recorded before the trace carried it. Under `mode: "auto"` this is the
+   *  only thing that says which of the two externals was used. */
+  provider?: string;
   searches?: TraceWebSearch[];
   rag_system?: string;
   rag_user?: string;
@@ -653,6 +674,38 @@ export interface RunUserTrace {
   };
   seeds?: TraceSeed[];
   gathers?: TraceGather[];
+  /** What happened to each (row, library) tonight and the settings that decided it. Absent on runs
+   *  recorded before this was added, which the UI renders as nothing rather than as "rebuilt". */
+  selection?: TraceSelection[];
+}
+
+/** One row+library's outcome for a run: which branch the engine took, and the settings behind it. */
+export interface TraceSelection {
+  row: string;
+  library: string;
+  /** `rebuilt` (built fresh) · `carried_forward` (redelivered untouched — not its refresh night) ·
+   *  `refreshed` (kept the strongest two-thirds, swapped the rest) · `settings_changed` (rebuilt
+   *  early because a setting that decides contents was edited) · `cold_start`. */
+  decision:
+    | "rebuilt"
+    | "carried_forward"
+    | "refreshed"
+    | "settings_changed"
+    | "cold_start";
+  size: number;
+  delivered: number;
+  candidates?: number;
+  cut_cap?: number;
+  carried?: number;
+  new?: number;
+  freshness?: number;
+  refresh_night?: boolean;
+  rebuild_every_days?: number | null;
+  recency?: number;
+  watched_pct?: number;
+  pick_order?: string;
+  rewatch?: boolean;
+  unstarted_only?: boolean;
 }
 
 // --- SSE payloads (GET /api/events) ---
@@ -690,7 +743,9 @@ export type TestableService =
   | "sonarr"
   | "mdblist"
   | "trakt"
-  | "exa";
+  | "exa"
+  | "searxng"
+  | "native_search";
 
 /** Alias kept short for the components that render one line of this. */
 export type UserRun = UserRunSummary;

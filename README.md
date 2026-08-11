@@ -63,7 +63,8 @@ account is told to hide that label, so only its owner ever sees it.
   **live web search** for current, well-reviewed titles.
 - 🔎 **Web search that works with _any_ model, even offline ones** — Shortlist runs the search
   itself, so your model never needs internet access. Works with a local Ollama box just as well as
-  with Claude — via your provider's own web search, an [Exa](https://exa.ai) key, or both at once.
+  with Claude — via your provider's own web search, an [Exa](https://exa.ai) key, your own
+  self-hosted [SearXNG](https://docs.searxng.org), or a combination.
   [How it works →](docs/guides/ai.md#the-one-ai-powered-source)
 - 💬 **Explains itself** — every pick says "Because you watched X".
 - 📚 **Watches whole shows, not episodes** — a 20-episode binge counts as one show, and it looks

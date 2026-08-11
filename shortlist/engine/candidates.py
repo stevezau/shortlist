@@ -9,7 +9,8 @@ recommendation engine is not locked to TMDB's per-seed similarity. Sources today
 * ``trakt`` — Trakt's related-titles graph for each seed.
 * ``llm_web`` — a live web search proposes titles to watch next, each resolved via TMDB search.
   Backed by the curator's own web-search tool (Claude/GPT/Gemini) or an external provider (Exa),
-  chosen by ``web_search_provider`` — Exa is the only path for a local Ollama model. This is the
+  chosen by ``web_search_provider`` — an external backend is the only path for a local Ollama
+  model, which cannot search on its own. This is the
   only AI-powered source: the providers are used to FIND titles, never to rank them.
 """
 
@@ -39,6 +40,10 @@ _WEB_SEARCH_RAG_CAP = 40  # cap the unioned results handed to the curator so the
 # (settings ``candidates.sources``) or per row (``collections.candidate_sources``); an unknown value
 # is simply ignored by ``gather_candidates``, but the API validates against this set for good errors.
 KNOWN_SOURCES = ("tmdb_similar", "tmdb_discover", "trakt", "llm_web")
+# `web_search_mode` values that mean "search through the external backend the context carries". The
+# engine deliberately does NOT distinguish Exa from SearXNG: which client to build is the server's
+# decision (context_builder), and every provider looks the same through `WebSearchProvider`.
+EXTERNAL_SEARCH_MODES = ("exa", "searxng")
 DEFAULT_SOURCES = ("tmdb_similar",)
 _DISCOVER_TOP_GENRES = 3  # how many of a person's dominant genres to widen into
 _LLM_WEB_K = 20  # how many titles the web-search LLM proposes (each resolved to TMDB, then verified)
@@ -80,15 +85,13 @@ class GatherStats:
 def _web_search_capable(curator, search, mode: str) -> bool:
     """Whether the ``llm_web`` source can actually run for this curator + search backend under ``mode``.
 
-    Gates ``attempted``: a source that CANNOT run (e.g. Ollama with no Exa key) must not register as
-    attempted, or the "every source failed" check would misread an incapable setup as a failure.
+    Gates ``attempted``: a source that CANNOT run (e.g. Ollama with no external backend) must not
+    register as attempted, or the "every source failed" check would misread an incapable setup as a
+    failure.
     """
-    native = getattr(curator, "supports_native_web_search", False)
-    if mode == "native":
-        return native
-    if mode == "exa":
+    if mode in EXTERNAL_SEARCH_MODES:
         return search is not None
-    return native or search is not None  # auto: native tool, else external search
+    return getattr(curator, "supports_native_web_search", False)
 
 
 def web_recommendations(
@@ -105,30 +108,25 @@ def web_recommendations(
 ) -> list[dict]:
     """Titles to watch next from a web search, as ``[{title, year, media}]`` for TMDB resolution.
 
-    ``mode`` chooses the search backend:
+    ``mode`` names the ONE backend to search with:
 
-    * ``native`` — the provider's own web-search tool only (Claude/GPT/Gemini).
-    * ``exa`` — the external Exa search only (the only path for a local Ollama model).
-    * ``auto`` (default) — use everything configured, UNIONED: the provider's own tool AND Exa when
-      both are set up, else whichever one. The two surface largely different titles (measured — barely
-      any overlap), so running both roughly doubles the usable pool. Duplicates cost nothing:
-      ``gather_candidates`` dedupes by ``(tmdb_id, media_type)`` downstream.
+    * ``native`` — the provider's own web-search tool (Claude/GPT/Gemini only).
+    * ``exa`` / ``searxng`` — the external backend the server built for us. Identical branches here;
+      which client it is was decided in ``context_builder.make_search_client``. Either is the only
+      path for a local Ollama model, which has no web search of its own.
+
+    There was a fourth mode, ``auto``, which unioned native with whichever external was configured.
+    It was removed in 1.3 (owner decision): it was the default, so it was what almost everyone ran,
+    and the name told them nothing about the only thing it uniquely did. Migration 0063 pins each
+    install to the backend it was actually using.
 
     ``recent_count`` caps how many recent titles the external path searches (one cached search each).
-    ``stats`` accumulates this source's token spend (and Exa searches) for per-run AI accounting —
+    ``stats`` accumulates this source's token spend (and searches) for per-run AI accounting —
     read ``last_tokens`` right after each LLM call, before the next one overwrites it.
     """
-    native = getattr(curator, "supports_native_web_search", False)
     web_trace: dict = {"mode": mode}
     stats.trace["web"] = web_trace
-    if mode == "native":
-        if not native:
-            return []
-        recs = curator.recommend_web(profile, seeds, k)
-        stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
-        web_trace["proposed"] = [_rec_label(r) for r in recs]
-        return recs
-    if mode == "exa":
+    if mode in EXTERNAL_SEARCH_MODES:
         return (
             _web_via_search(
                 curator, search, profile, seeds, k, stats, web_trace, cache=cache, recent_count=recent_count
@@ -136,16 +134,11 @@ def web_recommendations(
             if search is not None
             else []
         )
-    # auto: union of every available backend.
-    recs: list[dict] = []
-    if native:
-        recs += curator.recommend_web(profile, seeds, k)
-        stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
-        web_trace["native_proposed"] = [_rec_label(r) for r in recs]
-    if search is not None:
-        recs += _web_via_search(
-            curator, search, profile, seeds, k, stats, web_trace, cache=cache, recent_count=recent_count
-        )
+    if not getattr(curator, "supports_native_web_search", False):
+        return []
+    recs = curator.recommend_web(profile, seeds, k)
+    stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
+    web_trace["proposed"] = [_rec_label(r) for r in recs]
     return recs
 
 
@@ -178,10 +171,19 @@ def _web_via_search(
     """
     cache = cache or NullCache()
     trace_queries: list[dict] = []
-    results: list[SearchResult] = []
+    per_seed: list[list[SearchResult]] = []
     seen_urls: set[str] = set()
+    # The provider is part of the key: Exa returns page text and SearXNG returns engine snippets, so
+    # serving one from the other's entry would make a backend switch invisible for the whole 14-day
+    # TTL. (Pre-1.1 `exasearch:` keys simply age out — nothing reads them again.)
+    provider = getattr(search, "name", "exa")
+    per_query = getattr(search, "results_per_query", _WEB_SEARCH_PER_TITLE)
+    if web_trace is not None:
+        # Which backend actually ran. Under `auto` the mode alone can't say, so the trace would
+        # otherwise credit the wrong one on a server that configured the other.
+        web_trace["provider"] = provider
     for seed in seeds[: max(1, recent_count)]:
-        key = f"exasearch:{seed.media_type.value}:{seed.tmdb_id}"
+        key = f"websearch:{provider}:{seed.media_type.value}:{seed.tmdb_id}"
         query = build_web_query_for_title(seed.title)
         cached = cache.get(key)
         if cached is not None:
@@ -189,12 +191,13 @@ def _web_via_search(
             items = json.loads(cached)
         else:
             stats.exa_searches += 1  # a real (uncached) search — count the billable request
-            hits = search.search(query, num_results=_WEB_SEARCH_PER_TITLE)
+            hits = search.search(query, num_results=per_query)
             items = [{"title": r.title, "url": r.url, "text": r.text} for r in hits]
             cache.set(key, json.dumps(items), WEB_SEARCH_CACHE_TTL_S)
         trace_queries.append(
             {"seed": seed.title, "query": query, "cached": cached is not None, "returned": [i["title"] for i in items]}
         )
+        kept: list[SearchResult] = []
         for it in items:
             # Dedup by url, but only when there IS one — Exa maps a missing url to "", and deduping
             # on "" would collapse every url-less snippet to a single result, dropping usable context.
@@ -202,7 +205,9 @@ def _web_via_search(
                 continue
             if it["url"]:
                 seen_urls.add(it["url"])
-            results.append(SearchResult(title=it["title"], url=it["url"], text=it["text"]))
+            kept.append(SearchResult(title=it["title"], url=it["url"], text=it["text"]))
+        per_seed.append(kept)
+    results = _interleave(per_seed)
     if web_trace is not None:
         web_trace["searches"] = trace_queries
     if not results:
@@ -215,6 +220,24 @@ def _web_via_search(
         web_trace["rag_user"] = user
         web_trace["proposed"] = [_rec_label(t) for t in titles]
     return titles
+
+
+def _interleave(per_seed: list[list[SearchResult]]) -> list[SearchResult]:
+    """Round-robin the per-seed result lists into one, best-first within each seed.
+
+    The RAG prompt is capped (``_WEB_SEARCH_RAG_CAP``), and the cap used to fall on a list built by
+    appending each seed's results in turn — so the first few seeds consumed the whole budget and the
+    later ones were searched, cached, counted, then silently dropped before the curator saw them.
+    That got worse the MORE results a backend returned: at 10 per search only 4 of 10 recent watches
+    reached the prompt, against 8 at Exa's 5. Taking one result per seed per pass means the cap is
+    shared, so every seed is represented and a wider page adds depth instead of crowding others out.
+    """
+    merged: list[SearchResult] = []
+    for rank in range(max((len(s) for s in per_seed), default=0)):
+        for seed_results in per_seed:
+            if rank < len(seed_results):
+                merged.append(seed_results[rank])
+    return merged
 
 
 def _seed_genre_ids(tmdb: TmdbClient, seed: Seed) -> set[int]:
@@ -255,7 +278,7 @@ def gather_candidates(
     profile=None,
     trakt=None,
     search=None,
-    web_search_mode: str = "auto",
+    web_search_mode: str = "native",
     web_search_cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
     stats: GatherStats | None = None,
@@ -336,8 +359,14 @@ def gather_candidates(
     # its tmdb_id so the disposition pass (in _candidate_pool) can mark it kept/dropped precisely, not
     # by fuzzy title match. Bounded to a sample.
     seed_queries: dict[str, list[dict]] = {}
+    # How many searches each source ACTUALLY ran, per media — counted before the sample cap below.
+    # Without it the trace reported the size of its own display sample as the number of searches, so
+    # a run that queried 30 seeds could show "searched 12" and look like a much narrower run than it
+    # was. A trace that misstates the engine is worse than no trace.
+    searched: dict[tuple[str, str], int] = {}
 
     def _record_query(source: str, label: str, media: str, returned: list[tuple[int, str]]) -> None:
+        searched[(source, media)] = searched.get((source, media), 0) + 1
         rows = seed_queries.setdefault(source, [])
         if len(rows) >= _TRACE_SEEDS_SAMPLE:
             return
@@ -484,6 +513,9 @@ def gather_candidates(
             # Per-seed "searched for X → got these back" sample; only the seeded TMDB/Trakt sources
             # have one (discover queries by genre, llm_web records its own queries under `web`).
             "queries": seed_queries.get(source, []),
+            # The REAL number of searches this source ran, per media — `queries` above is a capped
+            # display sample, so the UI must not count it and call that the answer.
+            "searched": {media: n for (src, media), n in searched.items() if src == source},
         }
         for source in sorted(attempted)
     ]

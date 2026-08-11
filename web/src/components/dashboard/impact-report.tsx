@@ -645,11 +645,15 @@ function ReportBody({
           hint={`Of the picks delivered, the share watched within ${landing.matured_days} days.`}
         >
           {landing.rate === null ? (
+            // Deliberately NOT "try a longer window": no window reaches picks that do not exist
+            // yet, so that advice sends someone off to change a setting that cannot help. The
+            // cutoff date is already in the payload, so say which date it is waiting for.
             <p className="text-sm text-muted-foreground">
-              Not enough time has passed. A pick only counts as watched within{" "}
+              Nothing to measure yet. A pick counts as watched within{" "}
               {landing.matured_days} days of delivery, so this needs picks
-              delivered at least {landing.matured_days} days ago — try a longer
-              window.
+              delivered before {formatDate(landing.cohort_to)} — none are that
+              old yet. It fills in on its own as those picks mature; no setting
+              brings it forward.
             </p>
           ) : (
             <div className="space-y-1.5">

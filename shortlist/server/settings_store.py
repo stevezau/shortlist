@@ -88,10 +88,22 @@ DEFAULTS: dict[str, Any] = {
     "notifications.dismissed": [],
     # Which candidate sources feed recommendations (engine/candidates.py). More = wider recall.
     "candidates.sources": ["tmdb_similar", "tmdb_discover"],
-    # How the "AI — web search" (llm_web) source searches the web: 'native' (the curator provider's
-    # own web-search tool — Claude/GPT/Gemini), 'exa' (the Exa search API — works for every provider,
-    # the only path for local Ollama), or 'auto' (native where the provider supports it, else Exa).
-    "llm_web.search_provider": "auto",
+    # Which backend the "AI — web search" (llm_web) source searches with. Exactly one, always:
+    #   'native'  — the curator provider's own web-search tool (Claude/GPT/Gemini only)
+    #   'exa'     — the hosted Exa search API
+    #   'searxng' — the owner's own SearXNG instance. Self-hosted metasearch: no vendor account, key
+    #               or per-search bill, though it still FORWARDS each query to real engines
+    #               (Google/Brave/DDG), so it is not an air-gapped path.
+    # Either external works with every provider and is the only kind a local Ollama model can use.
+    # There was a fourth value, 'auto' (native UNIONED with whichever external was configured). It
+    # was the default and it was removed in 1.3 — the name described nothing, and owners could not
+    # tell what it was doing. Migration 0063 pins every existing install to what it was really using.
+    "llm_web.search_provider": "native",
+    # Self-hosted SearXNG for the llm_web source. Its JSON API must be enabled — a stock instance
+    # ships `search.formats: [html]` and answers `format=json` with a 403. Username/password are for
+    # a reverse proxy in front of it (SearXNG itself has no auth); the password is a SECRET_KEY.
+    "searxng.url": "",
+    "searxng.username": "",
     # Cap on already-finished titles in a row, as a fraction: 0.0 = all fresh (default), 1.0 = no
     # filtering, in between = at most that share of the row may be things already watched. Per-row.
     "recommendations.watched_pct": 0.0,
@@ -101,6 +113,16 @@ DEFAULTS: dict[str, Any] = {
     # every other night the row is reused unchanged (no re-curation, no Plex write). Default weekly so
     # rows feel curated and stable instead of churning completely every night. Per-row overridable.
     "recommendations.freshness": 0.5,
+    # How much a title's RELEASE DATE counts when ranking it: 0.0 = ignore age, 1.0 = every ~8 years
+    # of age halves a title's weight. A weight, never a filter — an old title is only asked to be a
+    # better match. Distinct from freshness above, which is the refresh CADENCE, not the preference.
+    # 0.5 = "leans towards recent releases", the phrasing the UI uses for this value. NOT 0.0:
+    # age-blind is not neutral, it is the status quo, and the status quo is a pool of mostly-old
+    # candidates deciding the row. This default applies to EVERY install, existing servers
+    # included — the pin migrations were dropped deliberately (owner decision, 2026-08-11), because
+    # a default that means one thing on a new server and another on an old one is two products.
+    # Nothing is rewritten at upgrade: a row adopts it on its next refresh night.
+    "recommendations.recency": 0.5,
     # How many of a person's most recent watches the web-search source searches per row (one cached
     # Exa search each). Row-overridable. Fewer = tighter/cheaper; the DbCache dedups shared titles.
     "recommendations.recent_count": 10,
@@ -192,6 +214,7 @@ SECRET_KEYS = {
     "requests.mdblist.apikey",  # MDBList key for IMDb/Trakt/RT/Metacritic rating gating
     "trakt.client_id",
     "exa.apikey",  # Exa web-search API key for the llm_web source
+    "searxng.password",  # reverse-proxy password guarding a self-hosted SearXNG
     "api.token",  # our own programmatic API token (encrypted at rest so the owner can reveal it)
 }
 

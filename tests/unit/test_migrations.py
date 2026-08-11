@@ -8,7 +8,9 @@ a NULL production accepted was unreachable in a test.
 
 from __future__ import annotations
 
+import json
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -26,6 +28,21 @@ def _alembic(config_dir: Path) -> AlembicConfig:
     cfg.set_main_option("script_location", str(ALEMBIC_DIR))
     cfg.set_main_option("sqlalchemy.url", db_url(config_dir))
     return cfg
+
+
+def _write_setting(config_dir: Path, key: str, value) -> None:
+    """Write a setting exactly as the app does — the `{"v": ...}` envelope `SettingsStore` reads
+    back, and the NOT NULL `updated_at` its ORM default fills in. A bare value here would test a
+    shape the product never writes — the "fake must be no easier than the real server" rule."""
+    con = sqlite3.connect(config_dir / "shortlist.db")
+    try:
+        con.execute(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+            (key, json.dumps({"v": value}), datetime.now(UTC).isoformat(sep=" ")),
+        )
+        con.commit()
+    finally:
+        con.close()
 
 
 def _diffs(config_dir: Path) -> list:
@@ -486,3 +503,171 @@ class TestUpgradingAnOldInstall:
         run_migrations(tmp_path)
 
         assert _diffs(tmp_path) == []
+
+
+class TestRecencyDefaultAppliesToEveryInstall:
+    """`recommendations.recency` defaults to 0.5 for EVERY install, new or existing.
+
+    No migration is involved, and that is the point worth pinning. An earlier pair of migrations
+    pinned 0.0 for servers already in use so an upgrade could not re-rank them; the owner chose the
+    opposite (2026-08-11) — age-blind ranking is the behaviour the setting exists to correct, so
+    every server adopts the corrected default and opts OUT with the slider. With nothing to pin, the
+    `DEFAULTS` entry does the whole job, and a database migrated to head must carry no row for the
+    key at all.
+    """
+
+    def _value(self, config_dir: Path) -> tuple[bool, object]:
+        """(has_row, effective value) — a stored row would mean something is pinning this again."""
+        from shortlist.server.db.session import make_session_factory
+        from shortlist.server.services.secrets import SecretBox
+        from shortlist.server.settings_store import SettingsStore
+
+        sessions = make_session_factory(make_engine(config_dir))
+        with sessions() as session:
+            store = SettingsStore(session, SecretBox(config_dir))
+            return store.has_row("recommendations.recency"), store.get("recommendations.recency")
+
+    def test_a_fresh_install_gets_it(self, tmp_path: Path):
+        run_migrations(tmp_path)
+
+        assert self._value(tmp_path) == (False, 0.5)
+
+    def test_a_server_already_in_use_gets_it_too(self, tmp_path: Path):
+        """Nothing may write a row behind the owner's back: an upgraded server has to reach the same
+        effective value a new one does, or the default silently means two different things."""
+        command.upgrade(_alembic(tmp_path), "0061")
+        _write_setting(tmp_path, "setup.completed", True)
+
+        run_migrations(tmp_path)
+
+        has_row, value = self._value(tmp_path)
+        assert not has_row, "a migration is pinning this again — an upgrade must not stash a value"
+        assert value == 0.5
+
+    def test_an_explicit_choice_is_never_overwritten(self, tmp_path: Path):
+        """Someone who turned it down keeps exactly what they chose, upgrade or not."""
+        command.upgrade(_alembic(tmp_path), "0061")
+        _write_setting(tmp_path, "recommendations.recency", 0.0)
+
+        run_migrations(tmp_path)
+
+        assert self._value(tmp_path) == (True, 0.0)
+
+
+class TestDroppingTheAutoWebSearchBackend:
+    """0063 pins every install to the backend it was actually using.
+
+    `auto` was the stored default, so almost every real database holds it (or no row at all, which
+    reads as the same thing). Getting the mapping wrong doesn't error — it silently moves a server
+    onto a backend it never chose, or leaves a value no validator accepts.
+    """
+
+    @staticmethod
+    def _provider(config_dir: Path):
+        from shortlist.server.db.session import make_session_factory
+        from shortlist.server.services.secrets import SecretBox
+        from shortlist.server.settings_store import SettingsStore
+
+        sessions = make_session_factory(make_engine(config_dir))
+        with sessions() as session:
+            return SettingsStore(session, SecretBox(config_dir)).get("llm_web.search_provider")
+
+    def test_a_fresh_install_defaults_to_the_providers_own_search(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        assert self._provider(tmp_path) == "native"
+
+    def test_a_configured_searxng_wins(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+        _write_setting(tmp_path, "searxng.url", "http://searx.local:8080")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "searxng"
+
+    def test_a_configured_exa_key_wins_when_there_is_no_searxng(self, tmp_path: Path):
+        """The key is written ENCRYPTED, which is the only shape a real database holds — `exa.apikey`
+        is a SECRET_KEY, so production stores a Fernet token, never plaintext. The migration only
+        tests it for non-emptiness, and this is what proves that holds against the real shape rather
+        than a friendlier one (0032 was a no-op on every real database for exactly this reason)."""
+        from shortlist.server.services.secrets import SecretBox
+
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+        _write_setting(tmp_path, "exa.apikey", SecretBox(tmp_path).encrypt("exa-key"))
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "exa"
+
+    def test_searxng_beats_exa_when_both_are_set_up(self, tmp_path: Path):
+        """Auto's own tie-break, kept: the free local one, so an upgrade never starts a bill."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+        _write_setting(tmp_path, "exa.apikey", "exa-key")
+        _write_setting(tmp_path, "searxng.url", "http://searx.local:8080")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "searxng"
+
+    def test_an_install_with_no_external_backend_falls_back_to_native(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "native"
+
+    def test_an_install_that_never_wrote_the_row_is_pinned_too(self, tmp_path: Path):
+        """No row meant "the default", and the default WAS auto — so these installs need pinning as
+        much as the explicit ones, or they silently land on the new default instead."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "exa.apikey", "exa-key")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "exa"
+
+    def test_an_explicit_choice_is_never_rewritten(self, tmp_path: Path):
+        """Someone who already picked a backend by name keeps it, whatever else is configured."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "native")
+        _write_setting(tmp_path, "searxng.url", "http://searx.local:8080")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "native"
+
+    def test_the_downgrade_leaves_a_choice_it_never_made(self, tmp_path: Path):
+        """An explicit `native` was legal on 0062 too, so it belongs to the owner. Deleting it sent
+        the install back to 0062's `auto` default — which, with an Exa key on file, silently resumed
+        Exa searches and billing on the next run."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "native")
+        _write_setting(tmp_path, "exa.apikey", "exa-key")
+        run_migrations(tmp_path)
+
+        command.downgrade(_alembic(tmp_path), "0062")
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            row = con.execute("SELECT value FROM settings WHERE key = 'llm_web.search_provider'").fetchone()
+        finally:
+            con.close()
+        assert row is not None and json.loads(row[0])["v"] == "native"
+
+    def test_the_downgrade_does_clear_what_the_upgrade_pinned(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+        _write_setting(tmp_path, "searxng.url", "http://searx.local:8080")
+        run_migrations(tmp_path)
+
+        command.downgrade(_alembic(tmp_path), "0062")
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            row = con.execute("SELECT value FROM settings WHERE key = 'llm_web.search_provider'").fetchone()
+        finally:
+            con.close()
+        assert row is None  # back to 0062's own default

@@ -210,7 +210,9 @@ class TestSettingsValidation:
 
     def test_web_search_provider_is_validated(self, client: TestClient):
         assert client.put("/api/settings", json={"values": {"llm_web.search_provider": "bogus"}}).status_code == 422
-        for mode in ("auto", "native", "exa"):
+        # "auto" was a real value until 1.3; it must now be refused like any other unknown one.
+        assert client.put("/api/settings", json={"values": {"llm_web.search_provider": "auto"}}).status_code == 422
+        for mode in ("native", "exa", "searxng"):
             assert client.put("/api/settings", json={"values": {"llm_web.search_provider": mode}}).status_code == 200
 
     def test_log_level_is_validated_and_applied(self, client: TestClient):
@@ -368,6 +370,162 @@ class TestSettingsApi:
         assert ok["ok"] is True and "ok" in ok["message"]
         # Both branches build their own dict, so both are checked against the response model.
         assert set(no_key) == {"ok", "message"} and set(ok) == {"ok", "message"}
+
+    def test_searxng_password_is_encrypted_at_rest_and_redacted_in_the_api(self, client: TestClient):
+        """A reverse-proxy password in front of SearXNG is a credential like any other (rule 9). The
+        URL and username are not secrets and stay readable, so the card can show what's configured."""
+        values = {"searxng.url": "http://searx:8080", "searxng.username": "admin", "searxng.password": "hunter2"}
+        client.put("/api/settings", json={"values": values})
+        public = client.get("/api/settings").json()
+        assert public["searxng.password"] == "•••••"
+        assert public["searxng.url"] == "http://searx:8080" and public["searxng.username"] == "admin"
+        client.put("/api/settings", json={"values": {"searxng.password": "•••••"}})  # UI round-trip
+        with client.app.state.sessions() as session:
+            from shortlist.server.settings_store import SettingsStore
+
+            assert SettingsStore(session, client.app.state.secrets).get("searxng.password") == "hunter2"
+
+    def test_a_password_in_the_searxng_url_is_refused_at_the_boundary(self, client: TestClient):
+        """`searxng.url` is deliberately NOT a secret: it is shown in the clear so an owner can spot a
+        typo, it rides into the `settings.change` audit event, and that event is immutable history
+        exported by the support bundle. So a credential must never be allowed INTO it — stripping it
+        later in the client only ever protected the client's own error strings.
+
+        The rejection is the fix, not just a guard: the message sends the owner to the fields that
+        encrypt it.
+        """
+        bad = "http://admin:hunter2@searx.local:8080"
+        response = client.put("/api/settings", json={"values": {"searxng.url": bad}})
+        assert response.status_code == 422
+        assert "username" in response.text.lower()
+
+        # And nothing about it survives anywhere: not the setting, not the audit trail. The `events`
+        # row is checked at the table, because that is the immutable record the support bundle ships.
+        assert "hunter2" not in client.get("/api/settings").text
+        with client.app.state.sessions() as session:
+            import sqlalchemy
+
+            rows = session.execute(sqlalchemy.text("SELECT message FROM events")).all()
+        assert not [r for r in rows if "hunter2" in str(r[0])]
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "http://admin:hunter2@searx.local:8080",
+            # A LEADING SPACE is the dangerous one: `httpx.URL` refuses to parse an authority it
+            # can't see, so username/password both read as empty and the check waves it through —
+            # while every consumer `.strip()`s the value, so the connection works perfectly and the
+            # owner never learns their password was written to the audit trail. Pasting a URL with a
+            # stray space is completely ordinary, and the Connections card does not trim.
+            " http://admin:hunter2@searx.local:8080",
+            "\thttp://admin:hunter2@searx.local:8080",
+            "http://admin:hunter2@searx.local:8080 ",
+        ],
+    )
+    def test_whitespace_cannot_smuggle_a_password_past_the_check(self, client: TestClient, bad: str):
+        assert client.put("/api/settings", json={"values": {"searxng.url": bad}}).status_code == 422
+        assert "hunter2" not in client.get("/api/settings").text
+        with client.app.state.sessions() as session:
+            import sqlalchemy
+
+            rows = session.execute(sqlalchemy.text("SELECT message FROM events")).all()
+        assert not [r for r in rows if "hunter2" in str(r[0])]
+
+    def test_a_plain_searxng_url_is_still_accepted(self, client: TestClient):
+        ok = client.put("/api/settings", json={"values": {"searxng.url": "http://searx.local:8080"}})
+        assert ok.status_code == 200
+
+    def test_a_url_pasted_with_stray_whitespace_is_stored_trimmed(self, client: TestClient):
+        """Store what the consumers actually use. Leaving the space in means the stored value and the
+        parsed value differ, which is exactly the gap the credential check fell through."""
+        assert (
+            client.put("/api/settings", json={"values": {"searxng.url": "  http://searx.local:8080  "}}).status_code
+            == 200
+        )
+        assert client.get("/api/settings").json()["searxng.url"] == "http://searx.local:8080"
+
+    def test_a_url_the_server_will_fetch_is_ssrf_guarded(self, client: TestClient):
+        """`searxng.url` is fetched by the server (the Test button, and every nightly run), so it
+        belongs to the same guard as every other server-fetched URL — not a separate honour system."""
+        blocked = client.put("/api/settings", json={"values": {"searxng.url": "file:///etc/passwd"}})
+        assert blocked.status_code == 422
+
+    def test_native_search_test_actually_runs_a_web_search(self, client: TestClient, monkeypatch):
+        """Being Claude/GPT/Gemini says the provider CAN web-search; it doesn't say this account is
+        allowed to. A plan or model without the tool fails at run time, logs a warning and returns no
+        titles — invisible in the UI. So the probe performs a real search rather than inferring."""
+        client.put("/api/settings", json={"values": {"curator.provider": "anthropic", "curator.api_key": "k"}})
+        called: dict = {}
+
+        def _recommend_web(self, profile, seeds, k):
+            called["k"] = k
+            return [{"title": "Arrival", "year": 2016, "media": "movie"}]
+
+        monkeypatch.setattr("shortlist.engine.curator.anthropic.AnthropicCurator.recommend_web", _recommend_web)
+        body = client.post("/api/settings/test/native_search").json()
+        assert body["ok"] is True and "1" in body["message"]
+        assert called["k"] >= 1  # a real call, not a capability lookup
+
+    def test_native_search_test_fails_loudly_when_the_tool_returns_nothing(self, client: TestClient, monkeypatch):
+        """The silent-failure case this probe exists for: the provider answers, its web-search tool
+        does not, and every night the source quietly contributes nothing."""
+        client.put("/api/settings", json={"values": {"curator.provider": "anthropic", "curator.api_key": "k"}})
+        monkeypatch.setattr(
+            "shortlist.engine.curator.anthropic.AnthropicCurator.recommend_web",
+            lambda self, profile, seeds, k: [],
+        )
+        # The provider itself is healthy — so an empty result really is the web-search tool.
+        monkeypatch.setattr("shortlist.engine.curator.anthropic.AnthropicCurator.ping", lambda self: "pong")
+        body = client.post("/api/settings/test/native_search").json()
+        assert body["ok"] is False
+        assert "Exa" in body["message"] and "SearXNG" in body["message"]  # names the way out
+
+    def test_native_search_test_reports_a_failed_call_as_a_failed_call(self, client: TestClient, monkeypatch):
+        """All three native curators swallow provider errors and return `[]`, so an empty list means
+        EITHER "the search found nothing" OR "the call failed". Reading it as the former told an
+        owner with a revoked key to go and sign up for a paid search vendor — on the one button whose
+        whole purpose is telling them what is actually wrong."""
+        client.put("/api/settings", json={"values": {"curator.provider": "anthropic", "curator.api_key": "k"}})
+        monkeypatch.setattr(
+            "shortlist.engine.curator.anthropic.AnthropicCurator.recommend_web",
+            lambda self, profile, seeds, k: [],
+        )
+
+        def _boom(self):
+            raise RuntimeError("401 invalid x-api-key")
+
+        monkeypatch.setattr("shortlist.engine.curator.anthropic.AnthropicCurator.ping", _boom)
+
+        body = client.post("/api/settings/test/native_search").json()
+        assert body["ok"] is False
+        assert "invalid x-api-key" in body["message"]  # the real cause
+        assert "Exa" not in body["message"]  # NOT "go and buy a search vendor"
+
+    def test_native_search_test_refuses_a_provider_that_cannot_search(self, client: TestClient):
+        client.put("/api/settings", json={"values": {"curator.provider": "ollama"}})
+        body = client.post("/api/settings/test/native_search").json()
+        assert body["ok"] is False and "cannot search the web" in body["message"]
+
+    def test_searxng_test_connection_probes_the_instance(self, client: TestClient, monkeypatch):
+        no_url = client.post("/api/settings/test/searxng").json()
+        assert no_url["ok"] is False and "SearXNG" in no_url["message"]
+        client.put("/api/settings", json={"values": {"searxng.url": "http://searx:8080"}})
+        monkeypatch.setattr("shortlist.engine.clients.search.SearxngClient.ping", lambda self: "ok — 8 results")
+        ok = client.post("/api/settings/test/searxng").json()
+        assert ok["ok"] is True and "ok" in ok["message"]
+        assert set(no_url) == {"ok", "message"} and set(ok) == {"ok", "message"}
+
+    def test_searxng_json_misconfiguration_reaches_the_owner_verbatim(self, client: TestClient, monkeypatch):
+        """The 403-means-enable-JSON message is the whole point of the probe — it must survive the
+        error path intact and not be flattened into a generic "connection failed"."""
+        client.put("/api/settings", json={"values": {"searxng.url": "http://searx:8080"}})
+
+        def _raise(self):
+            raise RuntimeError("SearXNG refused the JSON format (403). Add `json` to `search.formats` in its ...")
+
+        monkeypatch.setattr("shortlist.engine.clients.search.SearxngClient.ping", _raise)
+        body = client.post("/api/settings/test/searxng").json()
+        assert body["ok"] is False and "search.formats" in body["message"]
 
     def test_arr_options_serve_the_dropdowns_the_settings_form_needs(self, client: TestClient, monkeypatch):
         """Quality profiles and root folders, so a non-technical owner picks from a list instead of

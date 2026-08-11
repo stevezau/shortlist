@@ -130,6 +130,8 @@ class CollectionIn(BaseModel):
     # Shows only: exclude every series this person has started, not just the ones they finished.
     unstarted_only: bool = False
     freshness: float | None = Field(default=None, ge=0.0, le=1.0)  # None -> inherit global freshness
+    # How much this row weights a title's release date. None -> inherit recommendations.recency.
+    recency: float | None = Field(default=None, ge=0.0, le=1.0)
     recent_count: int | None = Field(default=None, ge=1, le=25)  # None -> inherit global recent_count
     max_seeds: int | None = Field(default=None, ge=1, le=100)  # None -> inherit the engine default (30)
     # "popular" | "skip" | None -> inherit the global recommendations.cold_start. Enforced in
@@ -198,6 +200,7 @@ class CollectionOut(PassthroughModel):
     rewatch: bool
     unstarted_only: bool
     freshness: float | None
+    recency: float | None
     recent_count: int | None
     max_seeds: int | None
     cold_start: str | None = Field(
@@ -364,6 +367,7 @@ def _serialize(session, collection: Collection) -> dict:
         "rewatch": bool(collection.rewatch),
         "unstarted_only": bool(collection.unstarted_only),
         "freshness": collection.freshness,
+        "recency": collection.recency,
         "recent_count": collection.recent_count,
         "max_seeds": collection.max_seeds,
         "cold_start": collection.cold_start,
@@ -450,6 +454,7 @@ async def create_collection(body: CollectionIn, request: Request) -> dict:
             rewatch=body.rewatch,
             unstarted_only=body.unstarted_only,
             freshness=body.freshness,
+            recency=body.recency,
             recent_count=body.recent_count,
             max_seeds=body.max_seeds,
             cold_start=body.cold_start,
@@ -489,6 +494,7 @@ _PATCHABLE_COLUMNS = (
     "rewatch",
     "unstarted_only",
     "freshness",
+    "recency",
     "recent_count",
     "max_seeds",
     "cold_start",

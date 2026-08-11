@@ -1,4 +1,8 @@
-import { freshnessBadgeLabel, watchedBadgeLabel } from "@/lib/constants";
+import {
+  freshnessBadgeLabel,
+  recencyBadgeLabel,
+  watchedBadgeLabel,
+} from "@/lib/constants";
 import { placementLabel } from "@/lib/placement";
 import { SOURCES, sourceBlockedReason, sourceShortLabel } from "@/lib/sources";
 import type {
@@ -32,6 +36,7 @@ export function blankInput(): CollectionInput {
     rewatch: false,
     unstarted_only: false,
     freshness: null,
+    recency: null,
     recent_count: null,
     max_seeds: null,
     cold_start: null,
@@ -67,6 +72,7 @@ export function toInput(collection: Collection): CollectionInput {
     rewatch: collection.rewatch ?? false,
     unstarted_only: collection.unstarted_only ?? false,
     freshness: collection.freshness ?? null,
+    recency: collection.recency ?? null,
     recent_count: collection.recent_count ?? null,
     max_seeds: collection.max_seeds ?? null,
     cold_start: collection.cold_start ?? null,
@@ -172,6 +178,11 @@ export function rowOverrides(
   // null inherits the global freshness, so only badge a per-row override.
   if (collection.freshness !== null && collection.freshness !== undefined) {
     parts.push(freshnessBadgeLabel(collection.freshness));
+  }
+
+  // null inherits the global release-date weight, so only badge a per-row override.
+  if (collection.recency !== null && collection.recency !== undefined) {
+    parts.push(recencyBadgeLabel(collection.recency));
   }
 
   // null inherits the global recent_count (web-search recency), so only badge a per-row override.

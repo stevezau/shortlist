@@ -165,6 +165,11 @@ class Collection(Base):
     # Per-row day-to-day variability, as a fraction (0.0 stable .. 1.0 fresh). NULL -> inherit the
     # global recommendations.freshness.
     freshness: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    # Per-row weight on a title's RELEASE DATE when ranking it (0.0 ignore age .. 1.0 strongly prefer
+    # new). NULL -> inherit the global recommendations.recency. Nullable rather than defaulting to
+    # 0.0 because "never touched" and "deliberately off" must stay distinguishable: every row that
+    # predates this column reads NULL and follows the global, while a Hidden Gems row can pin 0.0.
+    recency: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     # How many of a person's most recent watches the web-search source searches for this row (one
     # cached search each). NULL -> inherit the global recommendations.recent_count.
     recent_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
@@ -338,6 +343,9 @@ class PickRow(Base):
     # keep their relative order until the row next rebuilds.
     rating: Mapped[float | None] = mapped_column(Float, nullable=True)
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The row_recipe (settings fingerprint) this pick was built under; NULL on picks written
+    # before recipes existed, which reads as "unknown" and does not force a rebuild.
+    recipe: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     # Both indexed: the effectiveness report is windowed, so every aggregate on it filters by one of
     # these two, over the largest table in this schema (retention prunes it, but only by whole runs).
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

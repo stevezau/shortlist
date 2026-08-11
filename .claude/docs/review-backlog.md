@@ -520,3 +520,104 @@ theirs is here".
 The shape worth remembering: **a chooser must not be limited by the page you happen to be looking
 at.** The filter was always able to reach the whole history; the list of things to choose from was
 the part that could not.
+
+## Pipeline order-of-operations audit (2026-08-11) — CLOSED
+
+All seven findings fixed on 2026-08-11 (`f64795c`, `da31cda`, `950ddc6`, `005eb4a`), plus the trace
+work they exposed (`cc302be`, `a1d46ab`). Each fix has a test that was verified to FAIL against the
+reintroduced bug — twice that mattered: the first refresh-collapse test re-implemented the
+composition rule instead of driving the branch and passed against the bug, and the first attempt at
+that fix silently broke the "strongest two-thirds survive" guarantee while fixing the collapse.
+
+The findings are kept below in full: the reproductions are the record of what these code paths do
+wrong when they are got wrong, and two of them (shared-row parity, settings that decide contents)
+are shapes this codebase keeps producing.
+
+### Original findings
+
+Architecture Review of the whole pick pipeline, prompted by the owner asking whether every setting
+acts at the right point. Findings below in the order they should be fixed. Two HIGH, three MED, two
+LOW, plus one gap the audit didn't cover that the owner found immediately after.
+
+### 1. HIGH — a refresh night collapses a row to a single taste, permanently
+
+`_rank_against_pool` (`rows.py:1703`) re-sorts survivors + newcomers by raw pool index, i.e. pure
+score — exactly the ordering `diversify_by_seed` exists to counteract. `[:k]` then evicts every
+weaker-seed pick. Measured on the real function:
+
+    bootstrap night   {Breaking Bad: 7, Fargo: 6, Chernobyl: 2}
+    refresh night     {Breaking Bad: 15}
+    next refresh      {Breaking Bad: 15}
+
+It never recovers — the collapsed row is what carries forward. This is the failure `ranking.py`
+documents as ALREADY FIXED; it returns the moment a row has history, so every per-person row on the
+server is subject to it. Fix: re-diversify after merging. `diversify_by_seed` reads `Candidate`;
+Picks carry `seed_tmdb_id`, so it needs a Pick-aware sibling. Verified remedy restores the bootstrap
+spread and keeps the pool's best pick leading, so `{top_seed}` naming is unaffected.
+
+### 2. HIGH — the shared-row path ignores six settings the editor offers
+
+`_shared_row` (`rows.py:2090`) never calls `_apply_order`, `_is_refresh_night`, `_reusable_prior`,
+`_apply_watched_cap` or `_prefer_watched` — all of those live only in `_build_section_picks`.
+Ignored on shared rows while the editor still renders the control: `pick_order`, `freshness`,
+`watched_pct`, `rewatch`, `unstarted_only`, `cold_start`. Proven: all four pick orders give
+byte-identical output on a shared row. Symptoms: a shared row set to "Shuffled" never shuffles; one
+set to "never change" rebuilds and rewrites to Plex every run.
+
+Same shape as the `recency` bug fixed on 2026-08-11. `request_tag` is the model to copy — the editor
+hides it for shared rows (`row-editor.tsx:1055`). Decide per setting: honour (`pick_order`,
+`freshness`) or hide (`watched_pct`, `rewatch`, `unstarted_only`, `cold_start` have no coherent
+meaning for an aggregate row).
+
+### 3. HIGH — changing a setting does not rebuild the row
+
+Found by the owner, not the audit. `_is_refresh_night` is purely calendar-based, and picks store no
+record of the settings they were built under, so a deliberate configuration change waits behind a
+cadence designed to suppress accidental churn — up to a fortnight. The owner set "Recent releases"
+and 36 of 42 rows redelivered byte-identically, which reads as the feature being broken.
+
+Freshness should suppress churn when NOTHING changed, not when the owner changed the recipe.
+Precedent exists: `_seed_moved` already forces a rebuild when the row's premise changes.
+
+Fix: store a recipe fingerprint alongside the picks and force a rebuild on mismatch. Fingerprint the
+settings that decide CONTENTS — recency, watched_pct, rewatch, unstarted_only, max_seeds,
+seed_window, candidate_sources, media, library_keys, size, cold_start — and NOT the ones that decide
+presentation or cadence (`pick_order`, `freshness`, name template, poster, placement). Needs a
+migration for the new column.
+
+### 4. MED — cold-start rows are half their configured size
+
+`_cold_start_picks` (`rows.py:2346`) splits `k` across `sections_by_type()` regardless of the row's
+media; `_build_section_picks` then takes only that library's share. Probed: asked for 20, each
+library sees 10. On any server with both a movie and a TV library — nearly all — every cold-start
+row is half size. Fix: size the cold pull per target library, or pass the row's media in.
+
+### 5. MED — cold-start ignores `library_keys`
+
+Cold picks come from `plex.top_rated` over the representative library, not the row's pinned ones;
+delivery then drops every pick the target library lacks (`delivery.py:322`). A library-pinned row
+comes back short or empty for a new user, reported as a green run.
+
+### 6. MED — `unstarted_only` isn't re-checked on carry-forward
+
+`_reusable_prior` only filters started shows when `pct <= 0`, but the editor tells the owner the
+toggle "only changes anything if you've allowed already-watched titles above" (`pct > 0`) — where no
+filter is applied. The row keeps showing a series the person has since started, for up to a
+fortnight. Fix: pass `_started_shows` in when `spec.unstarted_only`, independent of `pct`.
+
+### 7. LOW — two documentation items
+
+* `rows.py:409` says a `{top_seed}` title renders from `picks[0].seed_title`; line 423 of the same
+  docstring correctly says `render_row_name` takes the lowest `rank`. Line 409 is pre-fix wording,
+  and it is the sentence someone will trust next time they touch ordering.
+* `context_builder.py:687` — the `or` fallbacks for `min_history` / `recent_count` / `max_seeds` are
+  safe only because the validators exclude the falsy value. Correct by coincidence of the bounds,
+  not by construction: lower a validator floor to 0 and three settings break silently at once.
+
+### Confirmed CORRECT (don't re-audit)
+
+Rank vs display order is cleanly separated everywhere (`render_row_name` uses `min(rank)`,
+`_seed_moved` reads rank-ordered `previous_picks`, delivery writes display order deliberately). The
+watched cap never contradicts ranking and cannot exceed its cap. `_pad_picks` respects ranking.
+Precedence is user -> row -> global throughout, with `is not None` wherever 0/0.0/"" is legitimate.
+No setting is orphaned at the settings->engine seam. Leak-safe ordering intact.

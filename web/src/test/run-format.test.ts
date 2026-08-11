@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   currentPhase,
   errorBucket,
-  exaSummary,
+  webSearchSummary,
   friendlyError,
   rankClass,
   tokenStepBreakdown,
@@ -82,15 +82,21 @@ describe("tokenStepBreakdown", () => {
   });
 });
 
-describe("exaSummary", () => {
+describe("webSearchSummary", () => {
   it("says nothing when zero or undefined", () => {
-    expect(exaSummary(undefined)).toBe("");
-    expect(exaSummary(0)).toBe("");
+    expect(webSearchSummary(undefined)).toBe("");
+    expect(webSearchSummary(0)).toBe("");
   });
 
   it("pluralises correctly", () => {
-    expect(exaSummary(1)).toBe(" · 1 Exa search");
-    expect(exaSummary(2)).toBe(" · 2 Exa searches");
+    expect(webSearchSummary(1)).toBe(" · 1 web search");
+    expect(webSearchSummary(2)).toBe(" · 2 web searches");
+  });
+
+  it("does not name a vendor — the same counter serves Exa and SearXNG", () => {
+    // The stat counts external searches whichever backend ran them; saying "Exa" here would be
+    // simply false on a self-hosted server.
+    expect(webSearchSummary(3)).not.toMatch(/Exa/i);
   });
 });
 

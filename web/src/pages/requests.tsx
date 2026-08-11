@@ -400,8 +400,12 @@ function PendingRow({
           </p>
         ) : null}
         {item.detail ? (
+          // This component only ever renders PENDING rows, so there is no "last attempt" branch to
+          // take. The detail holds either the threshold keeping a title waiting or the failure of a
+          // send that was tried — "last recorded reason" is true of both, and does not assert that a
+          // stale failure is still the current cause.
           <p className="text-xs text-muted-foreground">
-            Last attempt: {item.detail}
+            Last recorded reason: {item.detail}
           </p>
         ) : null}
       </div>

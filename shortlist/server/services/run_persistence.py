@@ -18,6 +18,7 @@ from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.models import SHARED_SLUG_PREFIX
+from shortlist.engine.requests import QUEUE_REASON_PREFIXES
 from shortlist.server.db.models import (
     Delivery,
     Event,
@@ -83,6 +84,18 @@ def _why_json(why) -> list[dict]:
     return [{"user": w.user, "row": w.row, "seed": w.seed, "source": w.source} for w in why]
 
 
+def _is_failure_detail(detail: str | None) -> bool:
+    """Whether a detail describes a send that was ATTEMPTED and failed, rather than a threshold reason
+    for one that was never attempted.
+
+    The queue reasons are settings-derived and finite (`engine/requests.py`); anything else came from
+    an exception while actually talking to Radarr/Sonarr, and is the fact worth keeping.
+    """
+    if not detail:
+        return False
+    return not detail.startswith(QUEUE_REASON_PREFIXES)
+
+
 def _refresh_pending(row: RequestCandidate, m) -> None:
     """Update a still-pending inbox row with what this run now knows about the title."""
     row.title = m.title
@@ -97,7 +110,12 @@ def _refresh_pending(row: RequestCandidate, m) -> None:
     row.tags = sorted(m.tags)
     row.wanters = sorted(m.wanters)
     row.why = _why_json(m.why)
-    row.detail = m.detail or row.detail  # keep the last failure reason if this pass didn't set one
+    # A queued title now always carries a reason ("max_per_run (5) already filled"), so a plain
+    # `m.detail or row.detail` would overwrite yesterday's REAL failure ("Sonarr returned HTTP 503")
+    # with today's threshold note — erasing the only record that Sonarr was broken. A failure detail
+    # is the more important fact, so it survives until a send actually succeeds.
+    if m.detail and (not _is_failure_detail(row.detail) or _is_failure_detail(m.detail)):
+        row.detail = m.detail
     row.excluded = m.excluded  # refresh the exclusion flag each run (a removed exclusion clears it)
 
 
@@ -117,7 +135,7 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         wanters=sorted(m.wanters),
         why=_why_json(m.why),
         status=status,
-        detail=m.detail,  # a failed auto-send carries WHY it didn't land, shown as "Last attempt: …"
+        detail=m.detail,  # why it is not here yet: a threshold, or a real send failure
         excluded=m.excluded,  # on a Sonarr/Radarr exclusion list — flagged in the inbox
         arr_slug=m.arr_slug,  # set for auto-sent titles, so the inbox deep-links to the arr page
         first_seen_run_id=run_id,
@@ -403,6 +421,7 @@ def _persist_user_report(session: Session, run_id: int, user: User, user_report,
                     seed_title=pick.seed_title,
                     rating=pick.rating,
                     year=pick.year,
+                    recipe=pick.recipe,
                 )
             )
     _add_event(

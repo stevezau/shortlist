@@ -41,6 +41,8 @@ class PickOut(PassthroughModel):
     seed_title: str | None  # the watched title that produced it, when the pipeline knows it
     sources: list[str]  # candidate-source ids; [] on picks written before provenance existed
     affinity: float | None  # 0..1, how near the top of the suggesting source's list it sat
+    year: int | None = None  # release year (a show's first-air year); null on a cold-start pick
+    rating: float | None = None  # TMDB vote_average 0..10 as stored at pick time; 0.0 when unrated
 
 
 class RunUserOut(PassthroughModel):

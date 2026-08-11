@@ -22,15 +22,33 @@ from shortlist.engine.privacy import (
 )
 from tests.conftest import make_profile, plextv_user
 
-# Raw filter values: plex.tv never gives us , | = ! inside a value (they're syntax).
+# Raw filter values. `,` `|` `=` `!` really are syntax and never appear inside a value — but `&` is
+# NOT in that list: it is a separator in Plex Web's dialect and an ordinary character in a label
+# ("Kids & Family"), so a filter using both at once is genuinely ambiguous and no parser can resolve
+# it. `&`-in-value is therefore covered by explicit `|`-separated cases below rather than generated
+# here, where hypothesis would happily build the ambiguous combination.
 value = st.text(alphabet=st.sampled_from("abcdefgXYZ0123456789_%."), min_size=1, max_size=12)
 field_name = st.sampled_from(["label", "contentRating", "genre", "year"])
-condition = st.builds(
-    lambda f, op, vals: FilterCondition(f, op, tuple(vals)),
-    field_name,
-    st.sampled_from(["=", "!="]),
-    st.lists(value, min_size=1, max_size=4),
-)
+# Both separators of each kind, because plex.tv stores whatever the last writer used and hands it
+# straight back — live-verified 2026-08-10. Plex Web writes `&` with `%2C`, plexapi writes `|` with
+# `%2C`, Shortlist writes `|` with `,`; a filter can be in any of those shapes when we read it.
+condition_sep = st.sampled_from(["|", "&"])
+value_sep = st.sampled_from([",", "%2C"])
+
+
+@st.composite
+def _condition(draw):
+    values = tuple(draw(st.lists(value, min_size=1, max_size=4)))
+    return FilterCondition(
+        draw(field_name),
+        draw(st.sampled_from(["=", "!="])),
+        values,
+        sep=draw(condition_sep),
+        value_seps=tuple(draw(st.lists(value_sep, min_size=len(values) - 1, max_size=len(values) - 1))),
+    )
+
+
+condition = _condition()
 filter_string = st.lists(condition, min_size=0, max_size=5).map(serialize_filter)
 
 
@@ -43,12 +61,138 @@ class TestParseSerializeRoundTrip:
         assert parse_filter("") == []
 
     def test_parse_preserves_raw_urlencoded_values(self):
-        conds = parse_filter("label!=Some%20Label,other")
-        assert conds == [FilterCondition("label", "!=", ("Some%20Label", "other"))]
+        # Asserted field-by-field, not by dataclass equality: the condition also carries the
+        # separators it was read with, and this test is about the VALUES surviving undecoded.
+        (cond,) = parse_filter("label!=Some%20Label,other")
+        assert (cond.field, cond.op, cond.values) == ("label", "!=", ("Some%20Label", "other"))
 
     def test_parse_rejects_garbage_instead_of_clobbering(self):
         with pytest.raises(FilterParseError):
             parse_filter("label!=ok|garbage-without-operator")
+
+
+class TestTheFormsPlexActuallyWrites:
+    """Issue #77. plex.tv stores a filter byte-for-byte and hands it straight back — verified live on
+    2026-08-10 against a real account: `|`+plain, `|`+`%2C`, `&`+plain and `&`+`%2C` all round-tripped
+    identically, with no server-side normalization.
+
+    So the shape we read is whichever writer last touched that account. Plex Web writes `&` with
+    URL-encoded values, plexapi writes `|` with `%2C` (`myplex.py:_filterDictToStr`), and Shortlist
+    writes plain commas. Splitting only on `|` and `,` mis-parsed Plex Web's form into ONE condition
+    whose field was `'label=Age%200%2CAge%203&label'`, so the existing exclude clause was invisible,
+    the merge appended a second one, and the account's Restrictions tab in Plex Web died with
+    "Something went wrong" until the value was rewritten by hand.
+    """
+
+    # The exact string from the report, captured from Plex Web's own save request.
+    PLEX_WEB = "label=Age%200%2CAge%203&label!=Shortlist_a%2CShortlist_b"
+
+    def test_the_allow_clause_is_not_swallowed_into_the_field_name(self):
+        allow, exclude = parse_filter(self.PLEX_WEB)
+
+        assert (allow.field, allow.op, allow.values) == ("label", "=", ("Age%200", "Age%203"))
+        assert (exclude.field, exclude.op, exclude.values) == ("label", "!=", ("Shortlist_a", "Shortlist_b"))
+
+    def test_a_new_label_joins_the_existing_exclude_clause(self):
+        """The corruption itself: a second `label!=` fragment appended with a THIRD separator.
+        Plex Web cannot read the result, and the user is locked out of their own Restrictions tab."""
+        merged = merge_label_excludes(self.PLEX_WEB, {"shortlist_test"})
+
+        assert merged == "label=Age%200%2CAge%203&label!=Shortlist_a%2CShortlist_b%2Cshortlist_test"
+        assert merged.count("label!=") == 1, "a second exclude clause is what breaks Plex Web"
+
+    def test_an_appended_label_matches_the_encoding_already_in_use(self):
+        """Joining with a plain comma inside a `%2C`-joined clause leaves a value no reader can split."""
+        merged = merge_label_excludes("label!=A%2CB", {"shortlist_x"})
+
+        assert merged == "label!=A%2CB%2Cshortlist_x"
+
+    def test_our_own_excludes_are_visible_when_percent_encoded(self):
+        """`shortlist_labels_in` drives the uninstall and every count of "is this row hidden". Reading
+        an encoded copy of our own label as foreign made Shortlist blind to its own writes."""
+        assert shortlist_labels_in("label!=Shortlist%5Fmike%2CShortlist_dan", "shortlist") == {
+            "Shortlist%5Fmike",
+            "Shortlist_dan",
+        }
+
+    def test_removal_works_on_the_encoded_form_so_uninstall_can_finish(self):
+        assert remove_label_excludes(self.PLEX_WEB, {"Shortlist_a"}) == "label=Age%200%2CAge%203&label!=Shortlist_b"
+
+    def test_an_already_excluded_label_is_not_added_again_in_the_other_encoding(self):
+        assert merge_label_excludes("label!=Age%200", {"Age 0"}) == "label!=Age%200"
+
+    def test_a_new_exclude_clause_uses_the_separator_the_filter_already_uses(self):
+        """An allow-list with no exclude clause yet. Appending with the wrong separator is how the
+        three-fragment value appeared in the first place."""
+        merged = merge_label_excludes("label=Age 0,Age 3&contentRating=PG", {"shortlist_x"})
+
+        assert merged == "label=Age 0,Age 3&contentRating=PG&label!=shortlist_x"
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "label=Age%200%2CAge%203&label!=Shortlist_a%2CShortlist_b",
+            "label=Age 0,Age 3|label!=Shortlist_a,Shortlist_b",
+            "label=Age 0,Age 3&label!=Shortlist_a,Shortlist_b",
+            "label=A%2CB|label!=C%2CD",
+            "label!=A,B|contentRating!=R",
+            "label!=",
+        ],
+    )
+    def test_every_real_world_shape_round_trips_byte_identical(self, raw):
+        assert serialize_filter(parse_filter(raw)) == raw
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "label!=Kids & Family",
+            "label!=Kids & Family,Shortlist_a",
+            "label=Age 0,Age 3|label!=Kids & Family",
+            "contentRating!=R|label!=Rock & Roll",
+        ],
+    )
+    def test_an_ampersand_inside_a_LABEL_is_not_a_separator(self, raw):
+        """`&` is a condition separator in Plex Web's dialect AND an ordinary character in a label —
+        "Kids & Family" is a label a person can create. Splitting on it unconditionally left
+        `' Family'` with no operator, which raised, which blocks promotion for EVERY user on the
+        server until somebody hand-edits that one account (the #14 shape). These parsed fine before
+        `&` was understood at all, and must keep parsing fine."""
+        assert serialize_filter(parse_filter(raw)) == raw
+        merged = merge_label_excludes(raw, {"shortlist_new"})
+        assert merged.startswith(raw), "the existing filter must survive byte-identical"
+        assert "shortlist_new" in merged
+
+    def test_a_bare_ampersand_in_a_value_beside_an_ampersand_separator_is_refused(self):
+        """The one shape the `|`-only fallback cannot rescue, pinned deliberately.
+
+        `_split_conditions` retries on `|` alone when the greedy `[|&]` split leaves a piece with no
+        operator — which saves `label!=Kids & Family`. But when `&` is ALSO the separator, the retry
+        leaves `label=Kids & Family&label!=X`, whose head still carries both, and parsing refuses.
+
+        Refusing is the correct end state, not a gap to paper over: an account whose filter we cannot
+        read has no excludes we can trust, and promoting rows for the server while one account's
+        hiding is unknown is the leak this machinery exists to prevent (rule 1). It costs promotion
+        for everyone that night, which is loud, recoverable, and the safe direction.
+
+        Not believed reachable from real Plex data — Plex Web percent-encodes separators inside
+        values (`Age 0%2CAge 3`), so a literal `&` arrives as `%26` and parses fine, which the row
+        below asserts.
+        """
+        with pytest.raises(FilterParseError):
+            parse_filter("label=Kids & Family&label!=Shortlist_a")
+
+    def test_the_encoded_form_plex_actually_writes_parses_and_merges(self):
+        raw = "label=Kids %26 Family&label!=Shortlist_a"
+        assert serialize_filter(parse_filter(raw)) == raw
+        merged = merge_label_excludes(raw, {"shortlist_new"})
+        assert merged.startswith(raw) and "shortlist_new" in merged
+        assert merged.count("label!=") == 1
+
+    def test_a_field_that_still_holds_a_separator_is_refused_not_rewritten(self):
+        """Belt to the parser's braces. If Plex ever invents a fourth shape, refusing to touch it is
+        the safe failure — rewriting one we only half-understand is how filters get corrupted."""
+        with pytest.raises(FilterParseError):
+            parse_filter("label=A;;label!=B")
 
 
 class TestMergeLabelExcludes:
@@ -240,6 +384,57 @@ class TestSyncUserRestrictions:
         # the wrong exclude sees every row the filter was supposed to hide, with the test still green.
         assert call.args[1]["filterMovies"] == "label!=Shortlist_sarah"
         assert call.args[1]["filterTelevision"] == "label!=Shortlist_sarah"
+
+    def test_a_kids_allow_list_survives_the_whole_write_path(self, mock_plextv, snapshot_store):
+        """Issue #77, end to end — the primitives being right is not enough, because this is the
+        path that actually reaches plex.tv.
+
+        The account is a managed user with an age allow-list, written by Plex Web in its own form
+        (`&` between conditions, `%2C` between values). That is the exact shape 2 of one reporter's
+        16 accounts carried. What used to go out was a THIRD fragment appended with `|`, which Plex
+        Web could not parse: the user was locked out of their own Restrictions tab until somebody
+        rewrote the value by hand, and their allow-list was left inside a bogus field name.
+
+        Asserted on the VALUE plex.tv is handed, not on "a write happened" — the call count was
+        always right here; the string was not.
+        """
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=400)
+        plex_web_form = "label=Age%200%2CAge%203&label!=Shortlist_sarah"
+        mock_plextv.users = [
+            plextv_user(400, "kid", filters={"filterMovies": plex_web_form, "filterTelevision": plex_web_form})
+        ]
+        mock_plextv.update_user_filters.side_effect = lambda _id, fields: mock_plextv.users[0].filters.update(fields)
+
+        sync_user_restrictions(
+            mock_plextv,
+            kid,
+            mock_plextv.get_user(kid.plex_account_id),
+            {"sarah": "Shortlist_sarah", "mike": "Shortlist_mike"},
+            snapshot_store,
+        )
+
+        sent = mock_plextv.update_user_filters.call_args.args[1]["filterMovies"]
+        assert sent == "label=Age%200%2CAge%203&label!=Shortlist_sarah%2CShortlist_mike"
+        assert sent.count("label!=") == 1, "a second exclude clause is what breaks Plex Web"
+        assert sent.startswith("label=Age%200%2CAge%203&"), "the kid's age allow-list must survive untouched"
+
+    def test_a_kids_allow_list_makes_no_write_when_already_correct(self, mock_plextv, snapshot_store):
+        """Steady state on the combined form. Before the fix this account was rewritten EVERY run,
+        because the exclude clause it already had was invisible to the parser."""
+        kid = make_profile("kid", user_type=UserType.MANAGED, account_id=400)
+        settled = "label=Age%200%2CAge%203&label!=Shortlist_sarah"
+        mock_plextv.users = [plextv_user(400, "kid", filters={"filterMovies": settled, "filterTelevision": settled})]
+
+        wrote = sync_user_restrictions(
+            mock_plextv,
+            kid,
+            mock_plextv.get_user(kid.plex_account_id),
+            {"sarah": "Shortlist_sarah"},
+            snapshot_store,
+        )
+
+        assert wrote is None
+        mock_plextv.update_user_filters.assert_not_called()
 
     def test_owner_is_never_restricted(self, mock_plextv, snapshot_store):
         _sarah, _mike, owner = self._users()

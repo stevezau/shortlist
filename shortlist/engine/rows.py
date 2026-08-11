@@ -12,6 +12,7 @@ import time
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
+from datetime import date
 from functools import cached_property
 
 from loguru import logger
@@ -91,6 +92,20 @@ def effective_seed_window(spec: RowSpec) -> int:
     return max(1, spec.seed_window or 1)
 
 
+def _run_year(run_day: int) -> int:
+    """The calendar year this run belongs to — what "how old is this title" is measured against.
+
+    Derived from ``run_day`` rather than read from the clock so ranking stays reproducible and the
+    whole run agrees with itself: a run that starts at 23:59 on 31 December must not age half the
+    roster's candidates against one year and half against the next.
+
+    ``run_day`` is 0 for a direct engine call (the server always sets it). Falling back to today
+    rather than to 0 keeps the setting working for CLI and library callers — `recency_factor` reads
+    a 0 as "no opinion", which would have made this silently do nothing there.
+    """
+    return date.fromordinal(run_day).year if run_day > 0 else date.today().year
+
+
 def seed_cycle_offset(row_slug: str, owner_slug: str, run_day: int) -> int:
     """Which step of the cycle a row is on tonight.
 
@@ -100,6 +115,21 @@ def seed_cycle_offset(row_slug: str, owner_slug: str, run_day: int) -> int:
     re-derive every cycling row on the same night.
     """
     return run_day + zlib.crc32(f"{row_slug}|{owner_slug}".encode())
+
+
+def effective_recency(spec: RowSpec, cfg: EngineConfig) -> float:
+    """How much this row weights a title's release date: its own value, else the run's.
+
+    Module-level for exactly the reason ``effective_max_seeds`` is. The shared-row path resolves its
+    dials independently of the per-person one, and this setting shipped resolved on ONE of them: a
+    shared row read the global and silently ignored its own stored value, in both directions — an
+    override did nothing, and an explicit 0.0 "Hidden Gems" opt-out was overridden back to new — while
+    the editor still offered the control and the row card still badged the override.
+
+    ``is not None``, not truthiness: a stored 0.0 is a choice ("ignore release date on THIS row"),
+    not an absent one, and collapsing the two is what makes a high global silently win.
+    """
+    return spec.recency if spec.recency is not None else cfg.recency
 
 
 def effective_recent_count(spec: RowSpec, cfg: EngineConfig) -> int:
@@ -329,6 +359,7 @@ def _reusable_prior(
     pct: float,
     *,
     keep_watched: bool = False,
+    started: frozenset[tuple[int, MediaType]] = frozenset(),
 ) -> list[Pick]:
     """Last run's picks for this library still valid to redeliver, in their original rank order: right
     media type, still in the library, and — for a 0%-watched row — not since watched.
@@ -342,12 +373,20 @@ def _reusable_prior(
     default `watched_pct` of 0.0, that was the normal case, not an edge one. The row then never took a
     carry-forward branch at all: its `freshness` was inoperative, the anti-immediate-repeat guard never
     ran, and it re-wrote to Plex on nights nothing had changed.
+
+    ``started`` drops shows the person has begun, and is checked at EVERY `pct`, unlike the rule
+    above. An "only series they haven't started" row above 0% took no filter at all here — and above
+    0% is exactly the configuration the row editor recommends for it ("this only changes anything if
+    you've allowed already-watched titles above"). So the row went on showing a series they had since
+    started, for up to a fortnight, in its documented setup.
     """
     out: list[Pick] = []
     for p in prior:
         if p.media_type is not kind or p.tmdb_id not in sec_idx:
             continue
         if pct <= 0 and not keep_watched and (p.tmdb_id, p.media_type) in watched:
+            continue
+        if (p.tmdb_id, p.media_type) in started:
             continue
         out.append(p)
     return out
@@ -376,7 +415,8 @@ def _seed_moved(
 ) -> bool:
     """Whether a row NAMED after its seed is now built from a different one than last run's picks.
 
-    A `{top_seed}` title renders from ``picks[0].seed_title`` (``delivery.render_row_name``), and the
+    A `{top_seed}` title renders from the LOWEST-RANKED pick's ``seed_title`` (``render_row_name``
+    takes ``min(picks, key=rank)``, never ``picks[0]`` — display order is not rank), and the
     refresh branch always carries pick #1 forward — so without this the title stays pinned to the seed
     of the very FIRST build while later refreshes quietly fill the row's tail from newer watches. The
     row then claims "Because you watched X" over contents mostly chosen for something else, which is
@@ -532,6 +572,39 @@ def _shuffle_key(row_slug: str, user_slug: str, run_day: int, tmdb_id: int) -> i
     return int.from_bytes(digest, "big")
 
 
+def row_recipe(policy: RowPolicy, spec: RowSpec) -> str:
+    """A fingerprint of the settings that decide a row's CONTENTS, for change detection.
+
+    Freshness exists to suppress churn when nothing has changed — not to delay a change the owner
+    deliberately made. Without this, editing a setting that decides which titles a row holds waits
+    behind that cadence: on a real server, raising "Recent releases" left 36 of 42 rows redelivering
+    byte-identical picks for up to a fortnight, which is indistinguishable from the feature not
+    working. `_seed_moved` already sets the precedent — the row's premise changed, so rebuild it.
+
+    Contents only. `pick_order` decides presentation and `freshness` is the cadence itself, so
+    neither belongs here: reordering a row must not force a rebuild, and changing the cadence must
+    not trigger the very rebuild the cadence is there to schedule. Row NAME, poster and placement are
+    likewise excluded — they change what a row looks like, never which titles are in it.
+
+    EFFECTIVE values, not stored ones, so raising a global invalidates every row that inherits it.
+    """
+    return "|".join(
+        str(part)
+        for part in (
+            spec.media,
+            ",".join(sorted(str(k) for k in spec.library_keys)),
+            ",".join(policy.effective_sources(spec)),
+            policy.effective_recency(spec),
+            policy.effective_watched_pct(spec),
+            bool(spec.rewatch),
+            bool(spec.unstarted_only),
+            effective_max_seeds(spec, policy.cfg),
+            effective_seed_window(spec),
+            effective_cold_start(spec, policy.cfg),
+        )
+    )
+
+
 def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
     """Re-rank a refresh night's survivors and newcomers together, by the pool's CURRENT order.
 
@@ -546,6 +619,11 @@ def _rank_against_pool(picks: list[Pick], sub: list[Candidate]) -> list[Pick]:
     stable) — it is still a valid delivery, just no longer a ranked candidate tonight. The caller
     then truncates to `k`, so such a pick is the first to lose its slot when the row is over-full,
     which is the right precedence: a ranked candidate outranks one the pool no longer holds.
+
+    ORDERING ONLY. It must not decide MEMBERSHIP: sorting the merged list by pool index and then
+    truncating to `k` evicts exactly the picks `diversify_by_seed` fought for, because pool order is
+    pure score and a heavily-watched title's look-alikes dominate it. The caller therefore chooses
+    its `k` first and hands only those here — see the refresh branch in `_build_section_picks`.
     """
     order = {(c.tmdb_id, c.media_type): i for i, c in enumerate(sub)}
     return sorted(picks, key=lambda p: order.get((p.tmdb_id, p.media_type), len(order)))
@@ -575,6 +653,8 @@ def _stamp_disposition(
     dropped: list[tuple[Candidate, str]],
     in_library: list[Candidate],
     ranked: list[Candidate],
+    recency: float = 0.0,
+    year_now: int = 0,
 ) -> None:
     """Annotate the gather trace with each candidate's FATE, so the operator can follow every title
     from a source's returns to the row (or to the reason it fell out).
@@ -585,15 +665,31 @@ def _stamp_disposition(
 
     * a per-source ``disposition`` tally: ``{kept, already_watched, not_in_your_libraries,
       excluded_genre, lost_ranking_cutoff}`` counts, and
-    * a ``fate``/``fate_reason`` on each already-recorded per-seed return, keyed by tmdb_id.
+    * a ``fate``/``fate_reason`` on each already-recorded per-seed return, keyed by tmdb_id, and
+    * the numbers that DECIDED that fate — the title's year, its rating, and the release-date weight
+      applied to it. Without them the trace could say a title lost the cut but never why, so "it
+      picked a 2003 film over a 2024 one" had no answer on the page built to answer it.
 
     A candidate that survived filtering but lost the ``candidates_pre_rank`` cut is
     ``lost_ranking_cutoff``; one that made the pre-rank is ``kept`` (whether or not it ends in the
     final row — the per-library row build, downstream of here, decides that and is traced separately
     by the delivered-picks stage).
+
+    KNOWN GAP: this is stamped once per POOL, at the server's ``recommendations.recency``. A row that
+    OVERRIDES that weight re-takes its own cut (``RowPolicy.cut_at_recency``) after this has run, so
+    for that row the two disagree — a title it delivers can read ``lost_ranking_cutoff`` here. Every
+    row that inherits the global (the default, and every row on a server that never overrides it) is
+    stamped exactly right. Fixing it properly means stamping per row, which needs ``dropped`` carried
+    past the gather; until then the delivered-picks stage remains the authority on what actually
+    landed in a row.
     """
     ranked_ids = {(c.tmdb_id, c.media_type) for c in ranked}
     in_library_ids = {(c.tmdb_id, c.media_type) for c in in_library}
+    # Every candidate we know anything about, dropped ones included — a title filtered out still has
+    # a year worth showing next to the reason it went.
+    known: dict[tuple[int, MediaType], Candidate] = {
+        (c.tmdb_id, c.media_type): c for c in [*(cand for cand, _ in dropped), *in_library]
+    }
     drop_reason: dict[tuple[int, MediaType], str] = {}
     for cand, reason in dropped:
         drop_reason.setdefault((cand.tmdb_id, cand.media_type), reason)
@@ -613,8 +709,17 @@ def _stamp_disposition(
         for query in source.get("queries", []):
             qmedia = MediaType.SHOW if query.get("media") == "show" else MediaType.MOVIE
             for ret in query.get("returned", []):
-                verdict = fate_of(int(ret.get("tmdb_id") or 0), qmedia)
+                tmdb_id = int(ret.get("tmdb_id") or 0)
+                verdict = fate_of(tmdb_id, qmedia)
                 ret["fate"] = verdict
+                cand = known.get((tmdb_id, qmedia))
+                if cand is not None:
+                    ret["year"] = cand.year
+                    ret["rating"] = round(cand.rating, 1) if cand.rating else None
+                    # The age multiplier this title was actually judged with. 1.0 when the setting is
+                    # off or the title has no known year, which is the honest answer in both cases —
+                    # and the UI omits it rather than printing a meaningless "x1.0".
+                    ret["age_weight"] = round(ranking.recency_factor(cand.year, year_now, recency), 3)
                 tally[verdict] = tally.get(verdict, 0) + 1
         if tally:
             source["disposition"] = tally
@@ -661,6 +766,7 @@ def _candidate_pool(
     media: str = "both",
     watched_exclusions: set[tuple[int, MediaType]] | None = None,
     recent_count: int | None = None,
+    recency: float = 0.0,
 ) -> tuple[tuple[list[Candidate], list[Candidate], list[Candidate]], candidates_mod.GatherStats]:
     """Gather TMDB candidates for ``seeds`` and intersect them with the library.
 
@@ -717,11 +823,22 @@ def _candidate_pool(
     # per-media curate ever sees it, and that library's collection comes up empty.
     kinds = [MediaType.MOVIE, MediaType.SHOW] if media == "both" else [MediaType(media)]
     cap = ctx.config.candidates_pre_rank
-    ranked = [c for kind in kinds for c in ranking.pre_rank([x for x in in_library if x.media_type is kind], cap)]
+    # `recency` is the weight the CALLER resolved, not `ctx.config.recency`. The per-person path
+    # passes the server's value so every row that inherits it shares one cached cut (and re-cuts only
+    # when it overrides); the shared-row path — which has no such cache — passes the row's own
+    # `effective_recency` and gets the right cut first time.
+    ranked = ranking.cut_for_recency(in_library, kinds, cap, recency, _run_year(ctx.run_day))
     # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
     # entirely from the lists selection already produced above — so the trace can follow every title
     # in and out without altering a single delivered pick.
-    _stamp_disposition(gather_stats, dropped=dropped, in_library=in_library, ranked=ranked)
+    _stamp_disposition(
+        gather_stats,
+        dropped=dropped,
+        in_library=in_library,
+        ranked=ranked,
+        recency=recency,
+        year_now=_run_year(ctx.run_day),
+    )
     return (pool, in_library, ranked), gather_stats
 
 
@@ -1138,6 +1255,9 @@ class RowPolicy:
     # sources (the common case — every row inheriting the global set) reuse one pool; a row that
     # picks its own sources gets its own. Keyed by `pool_key`, memoised across the user.
     pool_cache: dict[tuple, Pool] = field(default_factory=dict)
+    # (pool_key, recency) -> that pool re-cut at a row's overridden release-date weight. Empty on a
+    # server where every row inherits the global, which is the default shape.
+    recency_cuts: dict[tuple, list[Candidate]] = field(default_factory=dict)
     pool_failures: dict[tuple, str] = field(default_factory=dict)  # pool key -> why every source for it failed
     seed_cache: dict[tuple, list] = field(default_factory=dict)
 
@@ -1251,6 +1371,33 @@ class RowPolicy:
         if _names_a_seed(spec, self.user, self.cfg) or effective_seed_window(spec) > 1:
             return 1.0
         return spec.freshness if spec.freshness is not None else self.cfg.freshness
+
+    def effective_recency(self, spec: RowSpec) -> float:
+        """How much this row weights a title's release date. Row's own value, else the global.
+
+        Delegates to the module-level helper rather than re-inlining the expression, so the
+        per-person and shared paths cannot resolve it differently — they already did once, and the
+        shared row was the one that lost.
+
+        No forcing clause (unlike ``effective_freshness``): every row is free to hold any value,
+        including an explicit 0.0 on a server whose global is high — that is how one person gets a
+        "New & Notable" row and a "Hidden Gems" row at the same time.
+        """
+        return effective_recency(spec, self.cfg)
+
+    def cut_at_recency(self, spec: RowSpec, in_library: list[Candidate], recency: float) -> list[Candidate]:
+        """This row's own ``candidates_pre_rank`` cut, taken at its overridden release-date weight.
+
+        Memoised per (pool, recency) because rows commonly agree: two "New & Notable" rows sharing a
+        gather and a setting should sort the list once, not once each.
+        """
+        key = (self.pool_key(spec), recency)
+        if key not in self.recency_cuts:
+            kinds = [MediaType.MOVIE, MediaType.SHOW] if spec.media == "both" else [MediaType(spec.media)]
+            self.recency_cuts[key] = ranking.cut_for_recency(
+                in_library, kinds, self.cfg.candidates_pre_rank, recency, _run_year(self.ctx.run_day)
+            )
+        return self.recency_cuts[key]
 
     def effective_recent_count(self, spec: RowSpec) -> int:
         # This person's per-row override wins, then the row's own setting, then the global default —
@@ -1373,6 +1520,10 @@ class RowPolicy:
                     # See `pool_exclusions` for the full rules (0% vs >0, rewatch, unstarted-only) and
                     # for what the None sentinel means here.
                     watched_exclusions=self.pool_exclusions(spec),
+                    # The SERVER's value, deliberately: this pool is shared between rows (`pool_key`
+                    # does not split on recency, so the gather is paid for once), and a row that
+                    # overrides it re-cuts the cached `in_library` in `cut_at_recency`.
+                    recency=self.cfg.recency,
                 )
             except Exception as e:
                 self.pool_failures[key] = f"{type(e).__name__}: {e}"
@@ -1467,7 +1618,12 @@ def _warm_start(
     pools = policy.pool_cache.values()
     report.counts.candidates = len({(c.tmdb_id, c.media_type) for p in pools for c in p[0]})
     report.counts.in_library = len({(c.tmdb_id, c.media_type) for p in pools for c in p[1]})
-    report.counts.pre_ranked = len({(c.tmdb_id, c.media_type) for p in pools for c in p[2]})
+    # Union the per-row re-cuts in too: a row overriding the release-date weight reaches titles the
+    # shared cut dropped, and counting only `pools` under-reports what was actually pre-ranked.
+    report.counts.pre_ranked = len(
+        {(c.tmdb_id, c.media_type) for p in pools for c in p[2]}
+        | {(c.tmdb_id, c.media_type) for cut in policy.recency_cuts.values() for c in cut}
+    )
     if demand is not None:
         _record_demand(policy, demand)
     report.status = "ok"
@@ -1561,9 +1717,31 @@ def _build_section_picks(
         # tmdb_id -> ratingKey for THIS library only; a candidate not in this library isn't a
         # valid pick for it, however well it ranks for the row overall.
         if cold:
-            # Cold picks already come FROM a library (plex.top_rated), so they're in-library by
-            # construction; delivery remaps each to the target library and drops any it lacks.
-            cands = [p for p in base_cold if p.media_type is kind][:k]
+            # Pulled from THIS library, at this row's full size. Two bugs lived in the old version,
+            # both invisible because they only hit users with too little history to notice:
+            #
+            #   * `_cold_start_picks` split `k` across `sections_by_type()` and each section then
+            #     took only its own share, so on any server with both a movie and a TV library —
+            #     nearly all — every cold row came back HALF SIZE.
+            #   * the picks came from the representative library for the media type, not the row's
+            #     own, so a library-pinned row kept only the intersection and could deliver nothing
+            #     at all, reported as a green run.
+            #
+            # `targets` already honours `library_keys`, so taking `k` from `section` fixes both.
+            cands = [
+                Pick(
+                    tmdb_id=tmdb_id,
+                    rating_key=item.ratingKey,
+                    title=item.title,
+                    rank=i + 1,
+                    reason="Popular on this server",
+                    media_type=kind,
+                    sources=["cold_start"],  # no history to work from — say so rather than imply a match
+                )
+                for i, (tmdb_id, item) in enumerate(ctx.plex.top_rated(section, k))
+            ]
+            if not cands:  # a library with nothing rated falls back to the per-user pull
+                cands = [p for p in base_cold if p.media_type is kind][:k]
             ranked_cold = [replace(p, rank=i + 1) for i, p in enumerate(cands)]
             # Ordered like any other row: a cold-start user who set their row to Shuffled expects it
             # to shuffle, and "their history is thin" is no reason to hand back a different feature.
@@ -1571,6 +1749,19 @@ def _build_section_picks(
             # MDBList quota on a placeholder row is not worth it.
             section_picks[section.key] = _apply_order(
                 ranked_cold, spec.pick_order, row_slug=spec.slug, user_slug=user.slug, run_day=ctx.run_day
+            )
+            # Recorded here too: the cold branch returns early, and a row missing from the trace
+            # reads as "not built" rather than "built from the server's top-rated".
+            policy.report.trace.setdefault("selection", []).append(
+                {
+                    "row": spec.slug,
+                    "library": getattr(section, "title", str(section.key)),
+                    "decision": "cold_start",
+                    "size": k,
+                    "delivered": len(ranked_cold),
+                    "candidates": len(cands),
+                    "pick_order": spec.pick_order,
+                }
             )
             continue
         sec_idx = ctx.section_index.get(section.key, {})
@@ -1588,11 +1779,46 @@ def _build_section_picks(
             policy.zero_pct_exclusions(),
             pct,
             keep_watched=spec.rewatch,
+            # Independent of `pct`: see `_reusable_prior`. Movies are exempt because a movie with any
+            # view is already finished, so "started" is not a distinct state there.
+            started=(
+                frozenset(_started_shows(policy.watched_shows))
+                if spec.unstarted_only and spec.media != "movie"
+                else frozenset()
+            ),
         )
+        recipe = row_recipe(policy, spec)
+        was = ctx.previous_recipes.get((user.slug, spec.slug, str(section.key)), "")
+        recipe_changed = bool(was) and was != recipe
         refresh = _is_refresh_night(spec.slug, user.slug, ctx.run_day, fresh)
         # Hoisted out of the refresh branch because the `new_first` order needs it on every path: a
         # pick is "new" if this row was not already carrying it, whichever branch produced it.
         prior_ids = {(p.tmdb_id, p.media_type) for p in prior_valid}
+
+        # Decided here, before the clearing below rewrites `prior_valid` — after it, a settings
+        # change is indistinguishable from a first build.
+        if not prior_valid:
+            decision = "rebuilt"
+        elif recipe_changed:
+            decision = "settings_changed"
+        elif not refresh:
+            decision = "carried_forward"
+        else:
+            decision = "refreshed"
+
+        if prior_valid and recipe_changed:
+            # The owner changed a setting that decides this row's CONTENTS, so rebuild it now
+            # whatever the cadence says. Freshness suppresses churn when nothing changed; a
+            # deliberate edit is not churn, and making it wait up to a fortnight reads as the setting
+            # being broken — on a real server, raising "Recent releases" left 36 of 42 rows
+            # redelivering byte-identical picks. Unknown (a row built before recipes were recorded)
+            # is deliberately NOT a mismatch — see `EngineContext.previous_recipes`.
+            #
+            # Dropping the prior entirely rather than setting `refresh`: the refresh branch keeps
+            # two-thirds of the OLD row, so a row switched to "prefer recent releases" would carry
+            # most of its old titles forward and look like the change half-worked.
+            prior_valid = []
+            prior_ids = set()
 
         if prior_valid and not refresh:
             # Not this row's refresh night: redeliver last run's picks unchanged, so delivery's
@@ -1617,8 +1843,15 @@ def _build_section_picks(
             kept = prior_valid[:keep_n]
             fresh_pool = [c for c in sub if (c.tmdb_id, c.media_type) not in prior_ids]
             new_picks = picker.build_picks(fresh_pool, k)
-            survivors = kept + [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
-            sec_picks = _rank_against_pool(survivors, sub)[:k]
+            newcomers = [p for p in new_picks if (p.tmdb_id, p.media_type) not in prior_ids]
+            # Take only what there is ROOM for, before ordering. Handing the whole merged list to
+            # `_rank_against_pool` and truncating there let pool order — pure score — decide who
+            # stayed, which is the ordering `diversify_by_seed` exists to defeat: `new_picks` comes
+            # back diversified and the truncation threw that away, collapsing the row onto the one
+            # heavily-watched taste whose look-alikes lead the pool. Measured over 10 slots, a
+            # bootstrap spread of 7/6/2 across three seeds returned as 15/0/0 on the first refresh,
+            # and stayed there — the collapsed row is what carries forward to the next one.
+            sec_picks = _rank_against_pool(kept + newcomers[: max(0, k - len(kept))], sub)
             if len(sec_picks) < k:
                 sec_picks = _pad_picks(sec_picks, fresh_pool, k)
             # `_seed_moved` above asked whether the POOL still leads with the seed this row is named
@@ -1667,13 +1900,40 @@ def _build_section_picks(
         # Ordering last WITHOUT this made both of those answer "whichever pick sorted first tonight":
         # a `{top_seed}` row ordered by rating renamed itself after a different seed, and a shuffled
         # one re-derived `_seed_moved` off an arbitrary pick and rebuilt itself every refresh night.
-        ranked = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
+        ranked = [replace(p, rank=i + 1, recipe=recipe) for i, p in enumerate(sec_picks[:k])]
         # Only a row actually sorting on rating pays for the lookups, and only for its own k picks.
         ratings = _rated_by_source(ranked, ctx) if spec.pick_order == "rating" else None
         # Derived from the FINAL list rather than from the refresh branch's `new_picks`, because the
         # watched cap and the rewatch reordering above can both backfill titles from `sub` that the
         # branch never saw — those are new to the row too, and `new_first` has to lead with them.
         new_keys = {(p.tmdb_id, p.media_type) for p in ranked if (p.tmdb_id, p.media_type) not in prior_ids}
+        # What happened to this row tonight, and the settings that decided it. Without this the run
+        # page can say what a row HOLDS but never why it holds it — and the commonest question ("I
+        # changed a setting, why did nothing move?") is answered by a line that was not recorded
+        # anywhere: most nights a row is redelivered untouched and the report looked identical to a
+        # rebuild. Cheap to write (a dict per row per library) and read straight from the values the
+        # branch above already computed, so it cannot drift from what actually happened.
+        policy.report.trace.setdefault("selection", []).append(
+            {
+                "row": spec.slug,
+                "library": getattr(section, "title", str(section.key)),
+                "decision": decision,
+                "size": k,
+                "delivered": len(ranked),
+                "candidates": len(sub),
+                "cut_cap": ctx.config.candidates_pre_rank,
+                "carried": len(prior_valid),
+                "new": len(new_keys),
+                "freshness": fresh,
+                "refresh_night": refresh,
+                "rebuild_every_days": _refresh_period_days(fresh) if fresh > 0 else None,
+                "recency": policy.effective_recency(spec),
+                "watched_pct": pct,
+                "pick_order": spec.pick_order,
+                "rewatch": bool(spec.rewatch),
+                "unstarted_only": bool(spec.unstarted_only),
+            }
+        )
         # "best" is a no-op, which is what keeps the rewatch/watched-cap orderings above intact
         # unless the owner explicitly asked for a different one.
         section_picks[section.key] = _apply_order(
@@ -1886,7 +2146,15 @@ def _run_user(
             pools = policy.pools_for(spec)
             if pools is None:
                 continue  # every source this row uses is down; its siblings still deliver
-            _pool, _in_library, pool_for_row = pools
+            _pool, in_library, pool_for_row = pools
+            # A row that overrides the server's release-date weight needs its OWN truncation, not
+            # just its own ordering: the cut decides which candidates a row may select from at all,
+            # so re-ordering what the global's cut left would cap the setting at whatever survived
+            # it. Re-taken from `in_library` — the cached pre-cut list — so this costs a sort, never
+            # another gather. A row that inherits reuses the pool's cut untouched.
+            recency = policy.effective_recency(spec)
+            if recency != ctx.config.recency:
+                pool_for_row = policy.cut_at_recency(spec, in_library, recency)
             row_label = spec.name_template or spec.slug
             _emit(ctx, user.slug, "curating", {"candidates": len(pool_for_row), "row": row_label})
         section_picks = _build_section_picks(
@@ -2114,6 +2382,7 @@ def _shared_row(
         sources=list(effective_row_sources(spec, cfg.candidate_sources)),
         media=spec.media,
         recent_count=effective_recent_count(spec, cfg),
+        recency=effective_recency(spec, cfg),
     )
     _record_gather(user_report, gather_stats)  # shared-row gather AI cost (llm_web + Exa)
     k = spec.size
@@ -2135,7 +2404,17 @@ def _shared_row(
         if len(sec_picks) < k:
             # Backfill from this library's ranked pool so a thin build never SHRINKS the row.
             sec_picks = _pad_picks(sec_picks, sub, k)
-        section_picks[section.key] = sec_picks
+        # Rank from the SELECTION order, then apply the row's display order — the same two steps, in
+        # the same order, as the per-person path. Shipped missing entirely: every dial that lives in
+        # `_build_section_picks` is invisible to a shared row, so "Shuffled" and "Highest rated" did
+        # nothing at all while the editor went on offering them. `pick_order` is the one that both
+        # applies to an aggregate row and needs no per-user state, so it is honoured here; the rest
+        # (`watched_pct`, `rewatch`, `unstarted_only`, `cold_start`, `freshness`) are hidden in the
+        # editor instead, because they have no coherent meaning for a row nobody owns.
+        sec_picks = [replace(p, rank=i + 1) for i, p in enumerate(sec_picks[:k])]
+        section_picks[section.key] = _apply_order(
+            sec_picks, spec.pick_order, row_slug=spec.slug, user_slug="", run_day=ctx.run_day
+        )
     # Force aggregate framing: a shared row is nobody's "because you watched", and the seed is
     # dropped so a {top_seed} name template can never surface one person's title.
     # Stamp the library too, so a shared row spanning >1 library splits per library in the report.

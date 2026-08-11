@@ -99,16 +99,17 @@ export function RunStatTiles({ run }: { run: RunDetail }) {
       {showExa && (
         <StatTile
           icon={Search}
-          label="Exa searches"
+          label="Web searches"
           value={exa}
-          // A warm cache means most lookups aren't billed — showing only the billed "1" made a
-          // fully-cached run look like the source did nothing. The hint names what the cache served.
+          // A warm cache means most lookups never hit the backend — showing only the "1" that did
+          // made a fully-cached run look like the source did nothing. The hint names what it served.
           hint={
             exaCacheHits > 0
-              ? `billed · ${exaCacheHits.toLocaleString()} from cache`
-              : "web lookups · billed per search"
+              ? `searched · ${exaCacheHits.toLocaleString()} from cache`
+              : "web lookups · one per recent watch"
           }
-          title="Billable Exa web-search requests this run made — a count, not tokens. Exa bills per search; results are cached for two weeks and shared across everyone, so most lookups are served from cache and cost nothing."
+          // Vendor-neutral: the same counter serves Exa and a self-hosted SearXNG.
+          title="External web-search requests this run actually made — a count, not tokens. Exa bills per request and SearXNG rate-limits per request, so it is tracked apart from token spend. Results are cached for two weeks and shared across everyone, so most lookups are served from cache and cost nothing."
         />
       )}
     </div>
