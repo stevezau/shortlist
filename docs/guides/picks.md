@@ -23,10 +23,11 @@ writes each pick's "why" in code. More sources means wider reach. Available toda
   critics' lists.
 
   It works on **every** provider, via the **Search backend** you pick in its card: your provider's
-  own web search (Claude, GPT or Gemini), an **Exa** key (any provider, and the only path for a local
-  Ollama model), or **Auto**, the default, which uses your provider's tool _and_ Exa together when
-  both are set up, since they surface mostly different titles. If a backend needs a key you don't
-  have yet, the card lets you enter it right there.
+  own web search (Claude, GPT or Gemini), an **Exa** key, your own self-hosted **SearXNG** (either
+  one works with any provider, including a local Ollama model), or **Auto**, the default, which uses
+  your provider's tool _and_ one external backend together when both are set up, since they surface
+  mostly different titles. If a backend needs something you haven't set up yet, the card lets you
+  enter it right there.
 
 Each row also chooses **which libraries** it builds in, using the row editor's Libraries picker. A
 Plex collection lives in one library, so a row builds one collection per library you tick. Leave them
@@ -76,7 +77,7 @@ Settings → Finding titles has four more dials, each of which a row can overrid
   filtered out. The default keeps anything finished out of the picks.
 - **Watches the AI web search looks up.** How many of each person's recent titles the AI web-search
   source looks up, one cached search each, taken off the front of the list above. This is the main
-  cost lever on that source. Lower it to spend fewer tokens and Exa searches.
+  cost lever on that source. Lower it to spend fewer tokens and web searches.
 
 ### If a watched title still gets recommended
 

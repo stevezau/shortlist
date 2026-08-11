@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
 import {
   errorBucket,
-  exaSummary,
+  webSearchSummary,
   friendlyError,
   tokenStepBreakdown,
 } from "@/lib/run-format";
@@ -126,7 +126,7 @@ export function RunUsersTab({
                       selected.llm_tokens_by_step,
                     )}`
                   : ""}
-                {exaSummary(selected.exa_searches)}
+                {webSearchSummary(selected.exa_searches)}
               </p>
               {selected.has_trace && userId !== null && (
                 <Button

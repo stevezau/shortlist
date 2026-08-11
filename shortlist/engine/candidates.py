@@ -188,7 +188,7 @@ def _web_via_search(
     """
     cache = cache or NullCache()
     trace_queries: list[dict] = []
-    results: list[SearchResult] = []
+    per_seed: list[list[SearchResult]] = []
     seen_urls: set[str] = set()
     # The provider is part of the key: Exa returns page text and SearXNG returns engine snippets, so
     # serving one from the other's entry would make a backend switch invisible for the whole 14-day
@@ -214,6 +214,7 @@ def _web_via_search(
         trace_queries.append(
             {"seed": seed.title, "query": query, "cached": cached is not None, "returned": [i["title"] for i in items]}
         )
+        kept: list[SearchResult] = []
         for it in items:
             # Dedup by url, but only when there IS one — Exa maps a missing url to "", and deduping
             # on "" would collapse every url-less snippet to a single result, dropping usable context.
@@ -221,7 +222,9 @@ def _web_via_search(
                 continue
             if it["url"]:
                 seen_urls.add(it["url"])
-            results.append(SearchResult(title=it["title"], url=it["url"], text=it["text"]))
+            kept.append(SearchResult(title=it["title"], url=it["url"], text=it["text"]))
+        per_seed.append(kept)
+    results = _interleave(per_seed)
     if web_trace is not None:
         web_trace["searches"] = trace_queries
     if not results:
@@ -234,6 +237,24 @@ def _web_via_search(
         web_trace["rag_user"] = user
         web_trace["proposed"] = [_rec_label(t) for t in titles]
     return titles
+
+
+def _interleave(per_seed: list[list[SearchResult]]) -> list[SearchResult]:
+    """Round-robin the per-seed result lists into one, best-first within each seed.
+
+    The RAG prompt is capped (``_WEB_SEARCH_RAG_CAP``), and the cap used to fall on a list built by
+    appending each seed's results in turn — so the first few seeds consumed the whole budget and the
+    later ones were searched, cached, counted, then silently dropped before the curator saw them.
+    That got worse the MORE results a backend returned: at 10 per search only 4 of 10 recent watches
+    reached the prompt, against 8 at Exa's 5. Taking one result per seed per pass means the cap is
+    shared, so every seed is represented and a wider page adds depth instead of crowding others out.
+    """
+    merged: list[SearchResult] = []
+    for rank in range(max((len(s) for s in per_seed), default=0)):
+        for seed_results in per_seed:
+            if rank < len(seed_results):
+                merged.append(seed_results[rank])
+    return merged
 
 
 def _seed_genre_ids(tmdb: TmdbClient, seed: Seed) -> set[int]:

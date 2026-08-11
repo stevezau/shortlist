@@ -306,9 +306,11 @@ class _NonNativeCurator:
     def __init__(self, reply):
         self._reply = reply
         self.complete_calls = 0
+        self.last_user = ""  # the RAG prompt, so a test can assert what the curator was actually shown
 
     def complete(self, system, user):
         self.complete_calls += 1
+        self.last_user = user
         return self._reply
 
 
@@ -561,6 +563,49 @@ class TestPerTitleWebSearchCache:
             web_search_mode="searxng",
         )
         assert search.counts == [10]
+
+    @pytest.mark.parametrize(("provider", "per_query"), [("exa", 5), ("searxng", 10)])
+    def test_every_searched_seed_reaches_the_curator(self, mock_tmdb, provider: str, per_query: int):
+        """The RAG prompt is capped at 40 results. Appending seed-by-seed and then slicing means the
+        FIRST few seeds eat the whole cap, so the rest are searched, cached, counted — and dropped.
+
+        At Exa's 5 results/search that silently lost 2 of 10 seeds; at SearXNG's 10 it lost 6, so
+        choosing the local backend halved the curator's view of someone's taste while still paying for
+        every search. Results are interleaved across seeds before the cap, so the budget is shared.
+        """
+        self._tmdb(mock_tmdb)
+        seeds = [seed(i, f"Seed{i}") for i in range(1, 11)]
+        search = _FakeSearch([], name=provider, results_per_query=per_query)
+        search._results = None  # per-seed results are generated in the stub below
+
+        def _per_seed(query, *, num_results=8):
+            search.queries.append(query)
+            search.counts.append(num_results)
+            name = query.split("liked ")[1].split(" —")[0]
+            # Distinct URLs per result: the union dedupes by url, so a shared one would collapse
+            # every result to a single entry and the test would measure the dedupe, not the cap.
+            return [
+                SearchResult(title=f"{name} hit {i}", url=f"https://ex.com/{name}/{i}", text="t")
+                for i in range(num_results)
+            ]
+
+        search.search = _per_seed
+        curator = _NonNativeCurator("[]")
+        gather_candidates(
+            mock_tmdb,
+            seeds,
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_cache=_DictCache(),
+            web_search_mode=provider,
+            recent_count=10,
+        )
+        prompt = curator.last_user
+        covered = [s.title for s in seeds if s.title in prompt]
+        assert len(search.queries) == 10, "every recent title is still searched"
+        assert covered == [s.title for s in seeds], f"only {len(covered)}/10 seeds reached the prompt"
 
     def test_a_cached_title_is_not_researched(self, mock_tmdb):
         self._tmdb(mock_tmdb)

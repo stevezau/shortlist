@@ -217,17 +217,37 @@ export function sourceRole(source: string): string {
   }
 }
 
-/** Plain-English description of HOW the AI web search ran, from the mode + whether Exa searches were
- * recorded. The three engine modes (candidates.py): native = the model's own built-in web search;
- * exa = the external Exa search, then the model ranks; auto = both, unioned. */
-export function webMechanism(mode: string, hasSearches: boolean): string {
+/** Display name of an external search backend, for the run trace's plain-English sentences. */
+function backendName(provider: string): string {
+  return provider === "searxng" ? "SearXNG" : "Exa";
+}
+
+/** "an Exa" / "a SearXNG" — the article follows the sound of the name, not its spelling. */
+function backendWithArticle(provider: string): string {
+  const name = backendName(provider);
+  return `${name === "Exa" ? "an" : "a"} ${name}`;
+}
+
+/** Plain-English description of HOW the AI web search ran, from the mode + whether external searches
+ * were recorded. The engine modes (candidates.py): native = the model's own built-in web search;
+ * exa/searxng = that external search, then the model ranks; auto = native + one external, unioned.
+ *
+ * `provider` is what the run RECORDED as the backend that actually ran. It is what distinguishes the
+ * two externals under `auto`, where the mode alone cannot — and it is absent on runs recorded before
+ * the trace carried it, which is why the fallback is Exa (the only backend that existed then). */
+export function webMechanism(
+  mode: string,
+  hasSearches: boolean,
+  provider?: string,
+): string {
   if (mode === "native")
     return "The AI model’s own built-in web search proposed titles directly.";
-  if (mode === "exa" || (hasSearches && mode !== "auto"))
-    return "We searched the web with Exa, then the AI read the results and proposed titles.";
+  const name = backendName(provider ?? mode);
+  if (mode === "exa" || mode === "searxng" || (hasSearches && mode !== "auto"))
+    return `We searched the web with ${name}, then the AI read the results and proposed titles.`;
   if (mode === "auto")
     return hasSearches
-      ? "The AI model’s built-in web search AND an Exa web search, combined — the AI proposed titles from both."
+      ? `The AI model’s built-in web search AND ${backendWithArticle(provider ?? mode)} web search, combined — the AI proposed titles from both.`
       : "The AI model’s own built-in web search proposed titles directly.";
   return "The AI proposed titles to watch next from a web search.";
 }

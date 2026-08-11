@@ -4,6 +4,41 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Web search can now run entirely on your own hardware, via SearXNG.** The AI web-search source
+  previously had two backends: your AI provider's own search (Claude, GPT and Gemini only) or the
+  hosted Exa API. Neither suited a fully self-hosted server — a local Ollama model can't search on
+  its own, so Exa was the only way to use the feature at all, and that meant a third-party account
+  and sending queries off the box. **Settings → Finding titles → AI web search** now offers
+  **SearXNG** as a third backend: point it at your own instance and the whole search stays local.
+  It works with every AI provider, exactly as Exa does. ([#78](https://github.com/stevezau/shortlist/issues/78))
+
+  Set it up in **Connections → Web search** — one card where you pick the backend and enter what it
+  needs, replacing the separate per-vendor cards — or inline on the web-search card itself. One prerequisite,
+  which the card and the **Test** button both state outright: SearXNG's JSON API is **off in a stock
+  install**, so add `json` to `search.formats` in its `settings.yml` and restart. Without it SearXNG
+  answers with a bare `403` that explains nothing — Shortlist translates that into the exact fix.
+  A reverse-proxy login is supported via its own username/password fields, where the password is
+  encrypted at rest. A login embedded in the address (`http://user:pass@host`) is refused outright,
+  with a message pointing at those fields: the address itself is stored in the clear, returned by the
+  API and written verbatim into the immutable `settings.change` audit event that support bundles
+  export, so a password must never be allowed into it. A subpath deployment such as
+  `https://example.com/searxng` is kept intact.
+
+  Choosing a backend by name now means only that backend — an unconfigured Exa or SearXNG no longer
+  falls through to the other one, which would have sent a self-hoster's queries to a paid vendor they
+  never picked. **Auto** combines your provider's own search with ONE external backend, and prefers
+  SearXNG when both are configured, so Auto can never start billing Exa on its own.
+
+### Changed
+
+- **Run stats say "Web searches" rather than "Exa searches".** The same counter now serves both
+  external backends, so naming one vendor was simply wrong on a SearXNG server. A run's "How we
+  picked" trace also records _which_ backend actually ran, which is the only way to tell under Auto.
+
 ## [1.2.1] - 2026-08-07
 
 ### Added

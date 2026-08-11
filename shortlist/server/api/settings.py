@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from pydantic import BaseModel
@@ -131,6 +132,26 @@ def _bounded_float(low: float, high: float):
     return check
 
 
+def _url_without_credentials(value) -> str | None:
+    """Refuse a URL carrying `user:pass@` — the value must stay safe to store and to publish.
+
+    `searxng.url` is deliberately not a SECRET_KEY: it is returned in the clear so the owner can read
+    it back, and it is recorded verbatim in the `settings.change` audit event, which is immutable and
+    is exported by the support bundle. A credential in there is unrecoverable. Stripping it inside
+    `SearxngClient` protects that client's error strings only — far too late for the stored value.
+    """
+    try:
+        parsed = httpx.URL(str(value or ""))
+    except Exception:
+        return "must be a valid URL"
+    if parsed.username or parsed.password:
+        return (
+            "must not contain a username or password — put those in the SearXNG username and "
+            "password fields, where they are encrypted"
+        )
+    return None
+
+
 def _one_of(*allowed: str):
     def check(value: object) -> str | None:
         return None if str(value) in allowed else f"must be one of {', '.join(allowed)}"
@@ -200,7 +221,8 @@ VALIDATORS = {
     "requests.auto_send": _is_bool,
     "candidates.sources": _known_sources,
     "rows.hub_anchor": _hub_anchors,
-    "llm_web.search_provider": _one_of("auto", "native", "exa"),
+    "llm_web.search_provider": _one_of("auto", "native", "exa", "searxng"),
+    "searxng.url": _url_without_credentials,
     "recommendations.watched_pct": _bounded_float(0.0, 1.0),
     "recommendations.freshness": _bounded_float(0.0, 1.0),
     "recommendations.recency": _bounded_float(0.0, 1.0),
@@ -431,7 +453,9 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     return result
 
 
-_TESTABLE_SERVICES = frozenset({"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "llm"})
+_TESTABLE_SERVICES = frozenset(
+    {"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "searxng", "llm"}
+)
 
 
 class ConnectionTestOut(PassthroughModel):
@@ -501,6 +525,15 @@ async def test_connection(service: str, request: Request) -> dict:
                 if not api_key:
                     raise RuntimeError("An Exa API key is required for AI web search")
                 return ExaClient(api_key).ping()
+            if service == "searxng":
+                from shortlist.engine.clients.search import SearxngClient
+
+                url = (get("searxng.url") or "").strip()
+                if not url:
+                    raise RuntimeError("A SearXNG address is required for local AI web search")
+                return SearxngClient(
+                    url, username=get("searxng.username") or "", password=get("searxng.password") or ""
+                ).ping()
             # service == "llm"
             from shortlist.engine.curator import make_curator
             from shortlist.server.services.context_builder import curator_kwargs

@@ -696,7 +696,8 @@ class EngineConfig:
     # preserving legacy behaviour; owners widen recall by enabling more.
     candidate_sources: list[str] = field(default_factory=lambda: ["tmdb_similar"])
     # How the llm_web source searches: 'native' (the provider's own web-search tool), 'exa' (the
-    # external search provider — the only path for Ollama), or 'auto' (native where supported, else Exa).
+    # external search provider, either Exa or SearXNG — the only path for Ollama), or 'auto'
+    # (native where supported, plus whichever external is configured).
     web_search_provider: str = "auto"
     # Per-library placement of Shortlist's rows in Plex's Recommended shelf, keyed by section key
     # (str). Empty -> leave Plex's default order (rows land wherever they're created — last, under a

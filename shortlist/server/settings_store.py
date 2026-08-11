@@ -89,9 +89,18 @@ DEFAULTS: dict[str, Any] = {
     # Which candidate sources feed recommendations (engine/candidates.py). More = wider recall.
     "candidates.sources": ["tmdb_similar", "tmdb_discover"],
     # How the "AI — web search" (llm_web) source searches the web: 'native' (the curator provider's
-    # own web-search tool — Claude/GPT/Gemini), 'exa' (the Exa search API — works for every provider,
-    # the only path for local Ollama), or 'auto' (native where the provider supports it, else Exa).
+    # own web-search tool — Claude/GPT/Gemini), 'exa' (the hosted Exa search API), 'searxng' (the
+    # owner's own SearXNG instance — self-hosted metasearch, so no vendor account, key or per-search
+    # bill; note it still FORWARDS each query to real engines (Google/Brave/DDG), so this is not an
+    # air-gapped path), or 'auto' (native where
+    # the provider supports it, plus whichever external is configured). Either external works for
+    # every provider and is the only kind of backend a local Ollama model can use.
     "llm_web.search_provider": "auto",
+    # Self-hosted SearXNG for the llm_web source. Its JSON API must be enabled — a stock instance
+    # ships `search.formats: [html]` and answers `format=json` with a 403. Username/password are for
+    # a reverse proxy in front of it (SearXNG itself has no auth); the password is a SECRET_KEY.
+    "searxng.url": "",
+    "searxng.username": "",
     # Cap on already-finished titles in a row, as a fraction: 0.0 = all fresh (default), 1.0 = no
     # filtering, in between = at most that share of the row may be things already watched. Per-row.
     "recommendations.watched_pct": 0.0,
@@ -200,6 +209,7 @@ SECRET_KEYS = {
     "requests.mdblist.apikey",  # MDBList key for IMDb/Trakt/RT/Metacritic rating gating
     "trakt.client_id",
     "exa.apikey",  # Exa web-search API key for the llm_web source
+    "searxng.password",  # reverse-proxy password guarding a self-hosted SearXNG
     "api.token",  # our own programmatic API token (encrypted at rest so the owner can reveal it)
 }
 

@@ -9,11 +9,12 @@ from unittest.mock import MagicMock
 import pytest
 
 import shortlist.server.services.context_builder as context_builder_mod
+from shortlist.engine.clients.search import ExaClient, SearxngClient
 from shortlist.engine.history import ShareTokenWatchSource
 from shortlist.engine.models import MediaType
 from shortlist.server.db.models import PickRow, User
 from shortlist.server.db.session import make_engine, make_session_factory, run_migrations
-from shortlist.server.services.context_builder import ContextBuilder
+from shortlist.server.services.context_builder import ContextBuilder, make_search_client
 from shortlist.server.services.run_service import RunService
 from shortlist.server.services.secrets import SecretBox
 from shortlist.server.services.sse import EventBus
@@ -54,6 +55,68 @@ def configured(sessions, tmp_path, monkeypatch):
     monkeypatch.setattr(context_builder_mod, "PlexTvClient", lambda *a, **k: MagicMock())
     monkeypatch.setattr(context_builder_mod, "TmdbClient", lambda *a, **k: MagicMock())
     return box
+
+
+class TestWebSearchBackendChoice:
+    """Which external search client a run gets, across the (mode x what's configured) matrix.
+
+    The rule: naming a backend explicitly means ONLY that backend — never a silent fallback to the
+    other, because a fallback would quietly send a self-hoster's queries to a paid vendor (or the
+    reverse) without them ever choosing it.
+    """
+
+    @staticmethod
+    def _get(mode: str = "auto", *, exa: str = "", url: str = "", user: str = "", password: str = ""):
+        values = {
+            "llm_web.search_provider": mode,
+            "exa.apikey": exa,
+            "searxng.url": url,
+            "searxng.username": user,
+            "searxng.password": password,
+        }
+        return values.get
+
+    def test_exa_mode_builds_exa(self):
+        client = make_search_client(self._get("exa", exa="k"))
+        assert isinstance(client, ExaClient)
+
+    def test_exa_mode_without_a_key_does_not_silently_use_searxng(self):
+        assert make_search_client(self._get("exa", url="http://searx:8080")) is None
+
+    def test_searxng_mode_builds_searxng(self):
+        client = make_search_client(self._get("searxng", url="http://searx:8080"))
+        assert isinstance(client, SearxngClient)
+
+    def test_searxng_mode_without_a_url_does_not_silently_use_exa(self):
+        """The self-hoster's case: they chose local search, so a missing URL means no search at all —
+        it must never fall through to shipping their watch history to a paid API."""
+        assert make_search_client(self._get("searxng", exa="k")) is None
+
+    def test_auto_uses_whichever_single_backend_is_configured(self):
+        assert isinstance(make_search_client(self._get("auto", exa="k")), ExaClient)
+        assert isinstance(make_search_client(self._get("auto", url="http://searx:8080")), SearxngClient)
+
+    def test_auto_prefers_searxng_when_both_are_configured(self):
+        """Both set up and no explicit choice: pick the free local one. `auto` must never be the
+        reason a bill appears, and the owner who wants Exa can just say Exa."""
+        client = make_search_client(self._get("auto", exa="k", url="http://searx:8080"))
+        assert isinstance(client, SearxngClient)
+
+    def test_auto_with_nothing_configured_is_none(self):
+        assert make_search_client(self._get("auto")) is None
+
+    def test_native_mode_builds_no_external_backend(self):
+        """`native` means the provider's own search ONLY — handing the run an external client anyway
+        would leave a path enabled that the owner explicitly turned off."""
+        assert make_search_client(self._get("native", exa="k", url="http://searx:8080")) is None
+
+    def test_searxng_credentials_are_passed_through(self):
+        client = make_search_client(self._get("searxng", url="http://searx:8080", user="admin", password="pw"))
+        assert client._auth == ("admin", "pw")
+
+    def test_searxng_without_credentials_sends_no_auth(self):
+        client = make_search_client(self._get("searxng", url="http://searx:8080"))
+        assert client._auth is None
 
 
 class TestBuildContext:

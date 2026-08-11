@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from shortlist.engine.clients.mdblist import MdbListClient
 from shortlist.engine.clients.plex_pms import PlexClient
 from shortlist.engine.clients.plextv import PlexTvClient
-from shortlist.engine.clients.search import ExaClient
+from shortlist.engine.clients.search import ExaClient, SearxngClient, WebSearchProvider
 from shortlist.engine.clients.tmdb import TmdbClient
 from shortlist.engine.clients.trakt import TraktClient
 from shortlist.engine.context import EngineContext
@@ -81,6 +81,49 @@ def curator_kwargs(get: Callable[[str], object]) -> dict:
     if get("curator.model"):
         kwargs["model"] = get("curator.model")
     return kwargs
+
+
+def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None:
+    """The external web-search backend for the ``llm_web`` source, or None when there isn't one.
+
+    Deciding WHICH provider belongs here rather than in the engine: the engine only knows "an
+    external backend" (``candidates.EXTERNAL_SEARCH_MODES``), so adding a provider never touches it.
+
+    Naming a provider means only that provider — an unconfigured ``exa``/``searxng`` yields None
+    rather than falling through to the other. A fallback would be actively harmful in both
+    directions: it would send a self-hoster's watch history to a paid vendor they didn't pick, or
+    quietly downgrade a paying owner to a box that may be switched off.
+
+    ``auto`` uses whichever single backend is configured, preferring SearXNG when both are — free and
+    local, so choosing "auto" can never be the reason an Exa bill appears. Only ONE external is ever
+    built: two would answer the identical query twice for the same titles.
+
+    Args:
+        get: A settings reader (``store.get``).
+
+    Returns:
+        A configured provider, or None when the mode is ``native`` or nothing is set up.
+    """
+    mode = get("llm_web.search_provider") or "auto"
+    exa_key = get("exa.apikey")
+    searxng_url = (str(get("searxng.url") or "")).strip()
+
+    def _searxng() -> SearxngClient:
+        return SearxngClient(
+            searxng_url,
+            username=str(get("searxng.username") or ""),
+            password=str(get("searxng.password") or ""),
+        )
+
+    if mode == "native":
+        return None
+    if mode == "exa":
+        return ExaClient(exa_key) if exa_key else None
+    if mode == "searxng":
+        return _searxng() if searxng_url else None
+    if searxng_url:
+        return _searxng()
+    return ExaClient(exa_key) if exa_key else None
 
 
 def _dislike_threshold(store: SettingsStore) -> float:
@@ -152,10 +195,9 @@ class ContextBuilder:
                 if store.get("trakt.client_id")
                 else None
             )
-            # External web-search backend for the llm_web source; None when no Exa key is set (the
+            # External web-search backend for the llm_web source; None when none is configured (the
             # native provider tools still work without it — only Ollama depends on it).
-            exa_key = store.get("exa.apikey")
-            search = ExaClient(exa_key) if exa_key else None
+            search = make_search_client(store.get)
             history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get))

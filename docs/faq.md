@@ -76,32 +76,34 @@ well-reviewed titles TMDB simply doesn't return. It's off by default.
 
 See [AI and cost](guides/ai.md) for the full breakdown and cost controls.
 
-## What is Exa, and should I use it?
+## Which web-search backend should I use?
 
-[Exa](https://exa.ai) is a search engine built for AI to read rather than for people to browse.
-Instead of a page of blue links, it returns ranked results with the **relevant text already pulled
-out**, so a model gets straight to the useful part.
+The optional web-search source can search in three ways, and you pick one on its card:
 
-In Shortlist it powers the optional web-search source. You have three choices:
+| Option                              | Works with                         | Trade-off                                                 |
+| ----------------------------------- | ---------------------------------- | --------------------------------------------------------- |
+| Your AI provider's own search       | Claude, GPT, Gemini only           | no extra signup; unavailable on local models              |
+| **[Exa](https://exa.ai) key**       | **every provider, local included** | one extra free-tier signup; billed per search             |
+| **[SearXNG](https://docs.searxng.org)** | **every provider, local included** | free and fully self-hosted; you run and maintain it    |
+| **Auto** (default)                  | your provider's search + one external | widest coverage, and they find noticeably different films |
 
-| Option                        | Works with                         | Trade-off                                                 |
-| ----------------------------- | ---------------------------------- | --------------------------------------------------------- |
-| Your AI provider's own search | Claude, GPT, Gemini only           | no extra signup; unavailable on local models              |
-| **Exa key**                   | **every provider, local included** | one extra free-tier signup                                |
-| **Auto** (default)            | uses both when both are set up     | widest coverage, and they find noticeably different films |
+**Why we suggest adding one of the external backends**, even if your provider can already search:
 
-**Why we suggest adding an Exa key**, even if your provider can already search:
-
-- **It's the only option that works with a local model.** An Ollama or LM Studio server on your own
-  hardware has no way to search the internet. With Exa, _Shortlist_ does the searching and hands the
-  findings over, so a completely offline model can still recommend current titles.
+- **It's the only way a local model can search at all.** (Either backend does this.) An Ollama or LM Studio server on your own
+  hardware has no way to search the internet. With Exa or SearXNG, _Shortlist_ does the searching and
+  hands the findings over, so a completely offline model can still recommend current titles.
 - **Your results stop depending on which AI you picked.** Switch from Claude to a local model to
   save money and the search half stays identical. Only the choosing changes.
 - **The cost is predictable.** Exa bills per search, not per word, and Shortlist reports those
-  searches separately from AI usage. Results are reused for 14 days and shared across everyone on
-  your server, so a popular film is looked up once. Not once per person.
-- **It's built for this job.** Because the results arrive as extracted text, the model spends its
-  effort judging films rather than wading through web pages.
+  searches separately from AI usage. SearXNG costs nothing. Results are reused for 14 days and shared
+  across everyone on your server, so a popular film is looked up once. Not once per person.
+
+**Exa or SearXNG?** Exa returns extracted page text, needs no infrastructure, and its free tier
+covers roughly 1,000 searches a month. SearXNG runs on your own hardware, needs no account, costs
+nothing, and keeps everything but the forwarded queries on your server — but you maintain it, and its
+JSON API must be switched on (`json` added to `search.formats` in its `settings.yml`, or it refuses
+Shortlist with a 403). Configure both and leave the backend on **Auto** and Shortlist uses SearXNG,
+so Auto can never start billing Exa on its own. See [AI and cost](guides/ai.md#exa-or-searxng).
 
 It's genuinely optional. Leave it empty and everything still works. You would just be limited to your
 provider's own search, or to no web search at all.

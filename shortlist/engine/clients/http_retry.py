@@ -44,8 +44,14 @@ _EXTRA_SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"((?:X-Plex-Token|X-Plex-Client-Identifier|X-Api-Key)['\"]?\s*[:=]\s*['\"]?)[^\s,&'\"}\]]+", re.I),
         r"\1REDACTED",
     ),
-    # `Authorization: Bearer abc123` — our own API token, and any other bearer credential.
-    (re.compile(r"((?:Authorization['\"]?\s*[:=]\s*['\"]?)?Bearer\s+)[A-Za-z0-9._\-]{8,}", re.I), r"\1REDACTED"),
+    # `Authorization: Bearer abc123` — our own API token, and any other bearer credential. `Basic`
+    # too: a SearXNG instance behind a reverse proxy authenticates that way, and base64 of
+    # `user:password` is a plaintext credential to anyone who reads the log. The value class carries
+    # `+/=` for base64 as well as the bearer alphabet — over-redaction is the safe direction.
+    (
+        re.compile(r"((?:Authorization['\"]?\s*[:=]\s*['\"]?)?(?:Bearer|Basic)\s+)[A-Za-z0-9._+/\-]{8,}={0,2}", re.I),
+        r"\1REDACTED",
+    ),
     # JSON/dict form: `"token": "abc"`, `'apikey': 'abc'`, `"api_key": "abc"`.
     (re.compile(r"(['\"](?:token|api_?key|authToken|accessToken)['\"]\s*:\s*['\"])[^'\"]+", re.I), r"\1REDACTED"),
     # Provider key shapes, wherever they appear: Anthropic, OpenAI, Google, xAI, Groq.
@@ -58,6 +64,11 @@ _EXTRA_SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bAIza[0-9A-Za-z_\-]{20,}"), "REDACTED"),
     (re.compile(r"\bxai-[A-Za-z0-9_\-]{20,}"), "REDACTED"),
     (re.compile(r"\bgsk_[A-Za-z0-9_\-]{20,}"), "REDACTED"),
+    # Credentials inline in a URL: `http://user:pass@host`. The settings boundary refuses this shape
+    # for `searxng.url`, but a URL reaches logs and `events` rows from plenty of other places, so the
+    # password is stripped here too. Only the secret half goes — the user and host stay readable, so
+    # the line still says which service failed.
+    (re.compile(r"\b(https?://[^/\s:@]+):[^/\s@]+@"), r"\1:REDACTED@"),
     # Plex tokens are 20-char alnum; catch the bare `token=`/`X-Plex-Token` path form too.
     (re.compile(r"(plex\.direct[^\s]*?token[=/])[A-Za-z0-9_\-]+", re.I), r"\1REDACTED"),
 )

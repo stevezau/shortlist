@@ -41,6 +41,53 @@ describe("ConnectionsSection", () => {
     getRuns.mockResolvedValue([]);
   });
 
+  describe("the one Web search card", () => {
+    it("is a single card, not one per backend", () => {
+      // Exa and SearXNG are two ways to do ONE thing, so they are one connection with a choice
+      // inside it — the same shape as the AI provider card, not a card each.
+      renderSection({});
+      expect(screen.getByTestId("connection-exa")).toBeInTheDocument();
+      expect(screen.queryByTestId("connection-searxng")).not.toBeInTheDocument();
+      expect(screen.getByText("Web search")).toBeInTheDocument();
+    });
+
+    it("shows only the chosen backend's fields", async () => {
+      renderSection({ "llm_web.search_provider": "searxng" });
+      const card = screen.getByTestId("connection-searxng");
+      await userEvent.click(within(card).getByRole("button", { name: /edit|set up/i }));
+
+      expect(within(card).getByLabelText(/SearXNG address/i)).toBeInTheDocument();
+      expect(within(card).queryByLabelText(/Exa API key/i)).not.toBeInTheDocument();
+    });
+
+    it("swaps the fields when the backend is switched", async () => {
+      renderSection({ "llm_web.search_provider": "exa" });
+      const card = screen.getByTestId("connection-exa");
+      await userEvent.click(within(card).getByRole("button", { name: /edit|set up/i }));
+      expect(within(card).getByLabelText(/Exa API key/i)).toBeInTheDocument();
+
+      await userEvent.click(within(card).getByRole("button", { name: /SearXNG/i }));
+      expect(within(card).getByLabelText(/SearXNG address/i)).toBeInTheDocument();
+      expect(within(card).queryByLabelText(/Exa API key/i)).not.toBeInTheDocument();
+    });
+
+    it("offers both under Auto, since either one would switch the source on", async () => {
+      renderSection({ "llm_web.search_provider": "auto" });
+      const card = screen.getByTestId("connection-exa");
+      await userEvent.click(within(card).getByRole("button", { name: /edit|set up/i }));
+      expect(within(card).getByLabelText(/Exa API key/i)).toBeInTheDocument();
+      expect(within(card).getByLabelText(/SearXNG address/i)).toBeInTheDocument();
+    });
+
+    it("summarises which backend is in play", () => {
+      renderSection({
+        "llm_web.search_provider": "searxng",
+        "searxng.url": "http://searx.local:8080",
+      });
+      expect(screen.getByText(/SearXNG · http:\/\/searx.local:8080/)).toBeInTheDocument();
+    });
+  });
+
   it("links the AI curator's 'Get a key' to the SELECTED provider's real key page", async () => {
     // Covers the real wiring — the `curator.provider` settings key and findProvider().keyUrl — not
     // just the generic link mechanism. A typo in either would break this.
@@ -64,7 +111,7 @@ describe("ConnectionsSection", () => {
     ).toHaveAttribute("href", "https://www.themoviedb.org/settings/api");
   });
 
-  it("shows the last run's Exa search count on the Exa card once a key is saved", async () => {
+  it("shows the last run's web-search count, without claiming it was billed", async () => {
     // Exa has no live-quota endpoint, so the most recent finished run's search count stands in for
     // "usage" — and it's a count of searches, never tokens.
     getRuns.mockResolvedValue([
@@ -82,7 +129,7 @@ describe("ConnectionsSection", () => {
     renderSection({ "exa.apikey": "•••••" });
     const card = screen.getByTestId("connection-exa");
     expect(
-      await within(card).findByText(/Last run: 46 Exa searches/),
+      await within(card).findByText(/Last run: 46 web searches/),
     ).toBeInTheDocument();
   });
 
@@ -96,7 +143,7 @@ describe("ConnectionsSection", () => {
     ]);
     renderSection({});
     const card = screen.getByTestId("connection-exa");
-    expect(within(card).queryByText(/Exa search/)).not.toBeInTheDocument();
+    expect(within(card).queryByText(/Last run:/)).not.toBeInTheDocument();
   });
 
   it("omits the Exa usage note when a key is saved but no run has finished yet", async () => {
@@ -106,6 +153,6 @@ describe("ConnectionsSection", () => {
     const card = screen.getByTestId("connection-exa");
     // Let the runs query settle so a late-arriving footnote would have rendered.
     await new Promise((r) => setTimeout(r, 0));
-    expect(within(card).queryByText(/Exa search/)).not.toBeInTheDocument();
+    expect(within(card).queryByText(/Last run:/)).not.toBeInTheDocument();
   });
 });

@@ -18,35 +18,74 @@ import { ConnectionCard } from "@/components/connection-card";
 import { settingString } from "@/lib/format";
 import { CURATOR_PROVIDERS, findProvider } from "@/lib/providers";
 import { useRuns } from "@/lib/queries";
-import type { Settings } from "@/lib/types";
+import { hasExa, hasExternalSearch, hasSearxng } from "@/lib/sources";
+import type { Settings, TestableService } from "@/lib/types";
 
 const PROVIDER_OPTIONS = CURATOR_PROVIDERS.map((provider) => ({
   value: provider.id,
   label: provider.label,
 }));
 
-/** "Last run: 46 Exa searches" — a spend proxy for the Exa card (Exa has no live-quota endpoint,
- * so the most recent finished run's search count is the closest thing to "usage today"). */
-function exaUsageNote(lastExa: number | undefined): string | undefined {
-  if (lastExa == null) return undefined;
-  return `Last run: ${lastExa.toLocaleString()} Exa search${lastExa === 1 ? "" : "es"} · billed per search`;
+/** The one "Search with" choice, matching the picker on the AI web search card so the two can never
+ *  disagree — they are the same setting, shown where each is useful. */
+const SEARCH_BACKENDS = [
+  { value: "auto", label: "Auto" },
+  { value: "native", label: "AI provider’s own" },
+  { value: "exa", label: "Exa" },
+  { value: "searxng", label: "SearXNG (self-hosted)" },
+] as const;
+
+/** Whether the card should offer `backend`'s fields for the pending choice. Auto offers both, since
+ *  either would switch the source on and the owner hasn't said which they want. */
+function offers(
+  values: Record<string, string>,
+  backend: "exa" | "searxng",
+): boolean {
+  const chosen = values["llm_web.search_provider"] || "auto";
+  return chosen === backend || chosen === "auto";
+}
+
+/** Which backend the Test button should probe: the named one, or under Auto whichever is set up
+ *  (SearXNG first, mirroring the engine's own preference). */
+function testableSearchService(settings: Settings): TestableService {
+  const chosen = settingString(settings, "llm_web.search_provider") || "auto";
+  if (chosen === "exa" || chosen === "searxng") return chosen;
+  return hasSearxng(settings) ? "searxng" : "exa";
+}
+
+/** The collapsed card's one-line state: which backend is in play and how it's configured. */
+function searchSummary(settings: Settings): string {
+  const chosen = settingString(settings, "llm_web.search_provider") || "auto";
+  if (chosen === "native") return "Your AI provider’s own web search";
+  if (hasSearxng(settings) && chosen !== "exa")
+    return `SearXNG · ${settingString(settings, "searxng.url")}`;
+  if (hasExa(settings) && chosen !== "searxng") return "Exa · API key saved";
+  return "";
+}
+
+/** "Last run: 46 web searches" — a spend proxy, since neither backend exposes a live quota, so the
+ *  most recent finished run's count is the closest thing to "usage today".
+ *
+ *  Deliberately does NOT say "billed": the counter records searches by WHICHEVER backend that run
+ *  used, while the backend shown here is whatever is configured NOW. Someone who has just switched
+ *  SearXNG → Exa would otherwise see a bill claimed for searches that were free. */
+function searchFootnote(lastSearches: number | undefined): string | undefined {
+  if (lastSearches == null) return undefined;
+  return `Last run: ${lastSearches.toLocaleString()} web search${lastSearches === 1 ? "" : "es"}`;
 }
 
 /** Connections: Plex, Tautulli, TMDB, and the AI provider — each editable and testable in place. */
 export function ConnectionsSection({ settings }: { settings: Settings }) {
   const runs = useRuns();
   const lastFinishedRun = runs.data?.find((r) => r.finished_at);
-  const exaConfigured = Boolean(settingString(settings, "exa.apikey"));
-  const exaFootnote = exaConfigured
-    ? exaUsageNote(lastFinishedRun?.stats?.exa_searches)
-    : undefined;
-
-  // Warn when Ollama/compatible is selected but no Exa key is configured — those providers have no
-  // native web search, so llm_web (the proven-valuable feature) won't work without Exa.
+  // Warn when Ollama/compatible is selected but NEITHER external backend is configured — those
+  // providers have no native web search, so llm_web (the proven-valuable feature) can't run without
+  // one. Either backend clears it: a self-hoster satisfying this with SearXNG must not still be
+  // nagged about Exa, which is the whole point of #78.
   const curatorProvider = settingString(settings, "curator.provider");
   const needsExaWarning =
     ["ollama", "openai_compatible"].includes(curatorProvider ?? "") &&
-    !exaConfigured;
+    !hasExternalSearch(settings);
   return (
     <section
       id="connections"
@@ -140,9 +179,10 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
                   aria-hidden="true"
                 />
                 <span>
-                  This provider has no web search of its own, so it can't find
-                  new titles without Exa. Add an Exa key below, or switch to
-                  Anthropic, OpenAI, or Google to search the web directly.
+                  This provider has no web search of its own, so it can&rsquo;t
+                  find new titles on its own. Add an Exa key or a SearXNG
+                  address below, or switch to Anthropic, OpenAI, or Google to
+                  search the web directly.
                 </span>
               </div>
             )
@@ -281,15 +321,48 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
           ]}
         />
         <ConnectionCard
-          service="exa"
-          title="Exa (web search)"
-          purpose="Exa is a web search built for AI to read. Shortlist searches it for each of a person’s recent watches, then hands the results to your AI provider to pick from."
-          next="Works with any provider, and it is the only way a local model like Ollama can search the web at all."
+          service={testableSearchService(settings)}
+          title="Web search"
+          purpose="The optional web-search source looks up what to watch next, then keeps only titles already in your library. Claude, GPT and Gemini can search on their own; any other provider — including a local Ollama — searches through Exa or your own SearXNG."
+          next="You only need ONE of them. Exa is hosted and takes a free-tier key; SearXNG runs on your own hardware and costs nothing."
           settings={settings}
-          summary={settingString(settings, "exa.apikey") ? "API key saved" : ""}
+          summary={searchSummary(settings)}
           glyph={<Globe aria-hidden className="text-primary" />}
-          fields={[{ key: "exa.apikey", label: "API key", kind: "password" }]}
-          footnote={exaFootnote}
+          fields={[
+            {
+              key: "llm_web.search_provider",
+              label: "Search backend",
+              kind: "select",
+              options: [...SEARCH_BACKENDS],
+            },
+            {
+              key: "exa.apikey",
+              label: "Exa API key",
+              kind: "password",
+              helpUrl: "https://dashboard.exa.ai/api-keys",
+              showIf: (v) => offers(v, "exa"),
+            },
+            {
+              key: "searxng.url",
+              label: "SearXNG address",
+              kind: "text",
+              placeholder: "http://your-host:8080",
+              showIf: (v) => offers(v, "searxng"),
+            },
+            {
+              key: "searxng.username",
+              label: "SearXNG username (only if behind a login)",
+              kind: "text",
+              showIf: (v) => offers(v, "searxng"),
+            },
+            {
+              key: "searxng.password",
+              label: "SearXNG password",
+              kind: "password",
+              showIf: (v) => offers(v, "searxng"),
+            },
+          ]}
+          footnote={searchFootnote(lastFinishedRun?.stats?.exa_searches)}
         />
       </div>
       {/* Required by the TMDB API terms of use whenever their data is displayed. */}

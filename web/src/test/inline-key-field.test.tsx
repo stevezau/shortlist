@@ -81,4 +81,51 @@ describe("InlineKeyField", () => {
       screen.queryByRole("link", { name: /get a key/i }),
     ).not.toBeInTheDocument();
   });
+
+  describe("secret={false} — a setting that is an address, not a credential", () => {
+    function renderUrlField(settings: Settings) {
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      render(
+        <QueryClientProvider client={client}>
+          <InlineKeyField
+            settingKey="searxng.url"
+            service="searxng"
+            label="SearXNG address"
+            settings={settings}
+            secret={false}
+          />
+        </QueryClientProvider>,
+      );
+    }
+
+    it("shows a saved address in the clear — dots would hide the thing you need to check", () => {
+      renderUrlField({ "searxng.url": "http://searx.local:8080" });
+      expect(screen.getByLabelText(/SearXNG address/i)).toHaveValue(
+        "http://searx.local:8080",
+      );
+    });
+
+    it("saves an edited address, since there is no sentinel to guard against wiping", () => {
+      renderUrlField({ "searxng.url": "http://old:8080" });
+      fireEvent.change(screen.getByLabelText(/SearXNG address/i), {
+        target: { value: "http://new:8080" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /save/i }));
+      return waitFor(() =>
+        expect(putSettings.mock.calls.at(-1)?.[0]).toEqual({
+          "searxng.url": "http://new:8080",
+        }),
+      );
+    });
+
+    it("can Test an address that is already saved", () => {
+      renderUrlField({ "searxng.url": "http://searx.local:8080" });
+      fireEvent.click(screen.getByRole("button", { name: /test/i }));
+      return waitFor(() =>
+        expect(testConnection).toHaveBeenCalledWith("searxng"),
+      );
+    });
+  });
 });

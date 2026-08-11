@@ -87,15 +87,17 @@ describe("buildLibraries", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "X",
-            reason: "",
-            media_type: "movie",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "X",
+              reason: "",
+              media_type: "movie",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
         {
           row_slug: "picked",
@@ -107,15 +109,17 @@ describe("buildLibraries", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "Y",
-            reason: "",
-            media_type: "movie",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "Y",
+              reason: "",
+              media_type: "movie",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
       ],
     });
@@ -155,15 +159,17 @@ describe("buildLibraries", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "X",
-            reason: "",
-            media_type: "movie",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "X",
+              reason: "",
+              media_type: "movie",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
       ],
     });
@@ -185,15 +191,17 @@ describe("buildLibraries", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "X",
-            reason: "",
-            media_type: "movie",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "X",
+              reason: "",
+              media_type: "movie",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
         {
           row_slug: "picked",
@@ -205,15 +213,17 @@ describe("buildLibraries", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "Y",
-            reason: "",
-            media_type: "movie",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "Y",
+              reason: "",
+              media_type: "movie",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
         {
           row_slug: "picked",
@@ -225,15 +235,17 @@ describe("buildLibraries", () => {
           kept: [],
           deleted: [],
           created: true,
-          picks: [{
-            rank: 1,
-            title: "Z",
-            reason: "",
-            media_type: "show",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+          picks: [
+            {
+              rank: 1,
+              title: "Z",
+              reason: "",
+              media_type: "show",
+              seed_title: null,
+              sources: [],
+              affinity: null,
+            },
+          ],
         },
       ],
     });
@@ -285,6 +297,23 @@ describe("plain-English trace helpers", () => {
     );
   });
 
+  it("webMechanism names SearXNG when that is the backend that ran", () => {
+    expect(webMechanism("searxng", true)).toMatch(
+      /searched the web with SearXNG/,
+    );
+  });
+
+  it("webMechanism trusts the recorded provider over the mode under auto", () => {
+    // `auto` means "native plus whichever external is configured" — the mode alone cannot say which
+    // one ran, so the run records it. Without this the trace would claim Exa on a SearXNG-only server.
+    expect(webMechanism("auto", true, "searxng")).toMatch(/SearXNG/);
+    expect(webMechanism("auto", true, "exa")).toMatch(/Exa/);
+  });
+
+  it("webMechanism falls back to Exa's wording for runs recorded before the provider was traced", () => {
+    expect(webMechanism("auto", true, undefined)).toMatch(/Exa/);
+  });
+
   it("watchedSummary names only the media type(s) a library actually holds", () => {
     const movieOnly = buildLibraries(
       trace({
@@ -307,15 +336,17 @@ describe("plain-English trace helpers", () => {
             kept: [],
             deleted: [],
             created: true,
-            picks: [{
-            rank: 1,
-            title: "X",
-            reason: "",
-            media_type: "movie",
-            seed_title: null,
-            sources: [],
-            affinity: null,
-          }],
+            picks: [
+              {
+                rank: 1,
+                title: "X",
+                reason: "",
+                media_type: "movie",
+                seed_title: null,
+                sources: [],
+                affinity: null,
+              },
+            ],
           },
         ],
       }),

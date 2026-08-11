@@ -4,41 +4,66 @@ import { InlineKeyField } from "@/components/settings/inline-key-field";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { hasCurator, hasExa, hasNativeWebSearch } from "@/lib/sources";
+import {
+  hasCurator,
+  hasExa,
+  hasNativeWebSearch,
+  hasSearxng,
+} from "@/lib/sources";
 import type { Settings } from "@/lib/types";
 
 const BACKENDS = [
   { value: "auto", label: "Auto" },
   { value: "native", label: "AI provider’s own" },
   { value: "exa", label: "Exa" },
+  { value: "searxng", label: "SearXNG" },
 ] as const;
 
-/** Whether the chosen backend needs an Exa key (exa, or auto with no native-capable curator). */
-function needsExa(backend: string, settings: Settings): boolean {
-  const usesExa =
-    backend === "exa" || (backend === "auto" && !hasNativeWebSearch(settings));
-  return usesExa && !hasExa(settings);
+/**
+ * Which external backend this configuration actually searches through, or null for none.
+ *
+ * Mirrors `make_search_client` on the server, including its tie-break: under Auto with both set up,
+ * SearXNG wins because it is free and local — choosing "Auto" must never be the reason a bill
+ * appears. Naming a backend explicitly never falls back to the other one.
+ */
+function resolvedExternal(
+  backend: string,
+  settings: Settings,
+): "exa" | "searxng" | null {
+  if (backend === "native") return null;
+  if (backend === "exa") return hasExa(settings) ? "exa" : null;
+  if (backend === "searxng") return hasSearxng(settings) ? "searxng" : null;
+  if (hasSearxng(settings)) return "searxng";
+  return hasExa(settings) ? "exa" : null;
 }
 
 function backendNote(backend: string, settings: Settings): string {
   if (backend === "native")
-    return "Uses your AI provider’s own web search (Claude, GPT, or Gemini). A local Ollama model can’t — pick Exa for that.";
+    return "Uses your AI provider’s own web search (Claude, GPT, or Gemini). A local Ollama model can’t — pick Exa or SearXNG for that.";
   if (backend === "exa")
-    return "Uses the Exa search API — works for every provider, and the only option for a local Ollama model.";
-  if (hasNativeWebSearch(settings) && hasExa(settings))
+    return "Uses the Exa search API — works for every provider, including a local Ollama model.";
+  if (backend === "searxng")
+    return "Uses your own SearXNG instance — no account, no key, no per-search bill, and it works with any AI provider. SearXNG is a proxy rather than its own index: it forwards each search to real engines (Google, Brave, DuckDuckGo) and merges what they send back.";
+  const native = hasNativeWebSearch(settings);
+  const external = resolvedExternal(backend, settings);
+  if (native && external === "searxng")
+    return "Uses your AI provider’s own search and your SearXNG instance together. They find mostly different titles, so you get the widest pool.";
+  if (native && external === "exa")
     return "Uses your AI provider’s own search and Exa together. They find mostly different titles, so you get the widest pool — at the cost of two searches per run.";
-  if (hasNativeWebSearch(settings))
-    return "Uses your AI provider’s own web search. Add an Exa key below to search with both (they find different titles).";
-  if (hasExa(settings))
+  if (native)
+    return "Uses your AI provider’s own web search. Add Exa or a SearXNG address below to search with both (they find different titles).";
+  if (external === "searxng")
+    return "Uses your SearXNG instance. A Claude, GPT, or Gemini provider would add its own web search alongside it.";
+  if (external === "exa")
     return "Uses your Exa key. A Claude, GPT, or Gemini provider would add its own web search alongside it.";
-  return "Set up a search backend below — an Exa key, or a Claude/GPT/Gemini provider that can search on its own.";
+  return "Set up a search backend below — an Exa key or your own SearXNG — or pick a Claude/GPT/Gemini provider that can search on its own.";
 }
 
 /**
  * "AI — web search for what to watch next" as its own card: enable, choose the search backend, and —
  * the point — enter whatever that backend needs RIGHT HERE. No dead-end "add it in Connections". The
  * toggle reflects intent and is never disabled; if a dependency is missing, the card shows exactly how
- * to satisfy it (an inline Exa key, or an AI-provider prompt), so it can never read "on" while unexplained.
+ * to satisfy it, so it can never read "on" while unexplained.
  */
 export function AiWebSearchCard({
   settings,
@@ -53,18 +78,25 @@ export function AiWebSearchCard({
   backend: string;
   onBackendChange: (v: string) => void;
 }) {
-  // Prompts, prioritised so exactly one shows: no curator at all → set one up (nothing else can help);
-  // else the "native" backend on a curator that can't self-search (Ollama) → tell them to switch; else
-  // an Exa-using backend with no key → enter it inline. This mirrors the engine's own capability gate,
-  // so the card is loud in EVERY state where the source would produce nothing.
+  // Prompts, prioritised so the card is loud in EVERY state where the source would produce nothing:
+  // no curator at all → set one up (nothing else can help); else "native" on a curator that can't
+  // self-search (Ollama) → tell them to switch; else an external backend with nothing configured →
+  // enter it inline. This mirrors the engine's own capability gate.
   const curatorMissing = !hasCurator(settings);
   const nativeUnusable =
     !curatorMissing && backend === "native" && !hasNativeWebSearch(settings);
-  const exaMissing = !curatorMissing && needsExa(backend, settings);
-  // Whether this backend actually hits Exa (so we only surface Exa's usage/limits when relevant):
-  // the "exa" backend always, and "auto" when the curator can't self-search.
-  const usesExa =
-    backend === "exa" || (backend === "auto" && !hasNativeWebSearch(settings));
+  const external = resolvedExternal(backend, settings);
+  // Which inline field(s) to offer. Naming a backend asks for exactly that one; Auto with nothing
+  // configured offers both, because either would switch the source on and neither is the "right"
+  // answer for every owner. Under Auto a native-capable provider needs NOTHING — it already searches
+  // on its own, so asking would be a prompt for a dependency that isn't one.
+  const wantsExternal =
+    !curatorMissing &&
+    backend !== "native" &&
+    !external &&
+    !(backend === "auto" && hasNativeWebSearch(settings));
+  const askExa = wantsExternal && backend !== "searxng";
+  const askSearxng = wantsExternal && backend !== "exa";
 
   return (
     <Card>
@@ -103,6 +135,18 @@ export function AiWebSearchCard({
               <p className="text-xs text-muted-foreground">
                 {backendNote(backend, settings)}
               </p>
+              {/* SearXNG's one prerequisite, stated wherever SearXNG is in play and kept visible
+                  even after the address is saved. A stock instance serves HTML only and refuses us
+                  with a 403, and the source then finds nothing with no other clue as to why. */}
+              {(backend === "searxng" || external === "searxng") && (
+                <p className="text-xs text-muted-foreground">
+                  SearXNG must be serving JSON: add{" "}
+                  <code className="font-mono">json</code> to{" "}
+                  <code className="font-mono">search.formats</code> in its{" "}
+                  <code className="font-mono">settings.yml</code> and restart,
+                  or it will refuse Shortlist with a 403.
+                </p>
+              )}
             </div>
 
             {curatorMissing && (
@@ -118,25 +162,40 @@ export function AiWebSearchCard({
             {nativeUnusable && (
               <p className="text-sm text-warning">
                 Your AI provider can’t search the web on its own. To use this
-                source, either switch the backend to <strong>Auto</strong> or{" "}
-                <strong>Exa</strong>, or pick a Claude, GPT, or Gemini provider.
+                source, either switch the backend to <strong>Auto</strong>,{" "}
+                <strong>Exa</strong> or <strong>SearXNG</strong>, or pick a
+                Claude, GPT, or Gemini provider.
               </p>
             )}
 
-            {exaMissing && (
+            {askExa && (
               <InlineKeyField
                 settingKey="exa.apikey"
                 service="exa"
                 label="Exa API key"
                 placeholder="exa-…"
-                hint="This backend searches via Exa. Paste your key from exa.ai to switch it on — no trip to Connections."
+                hint="Hosted search, no setup beyond the key. Paste it from exa.ai to switch this on."
                 helpUrl="https://dashboard.exa.ai/api-keys"
                 settings={settings}
               />
             )}
 
+            {askSearxng && (
+              <InlineKeyField
+                settingKey="searxng.url"
+                service="searxng"
+                label="SearXNG address"
+                placeholder="http://your-host:8080"
+                hint="Your own SearXNG instance, and it works with any AI provider. SearXNG forwards each search on to real engines (Google, Brave, DuckDuckGo) — what stays yours is that there is no account, key or bill."
+                helpUrl="https://docs.searxng.org/admin/installation-docker.html"
+                helpLabel="Setup guide"
+                secret={false}
+                settings={settings}
+              />
+            )}
+
             {/* Usage & limits, so the cost of turning this on is never a surprise (the MDBList card
-                does the same for its lookups). Only the Exa free-tier line is Exa-specific. */}
+                does the same for its lookups). The last two lines are backend-specific. */}
             <div className="space-y-1.5 rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
               <p className="font-medium text-foreground">
                 How much it searches
@@ -151,11 +210,17 @@ export function AiWebSearchCard({
                 across everyone, so a popular title is searched once for the
                 whole server — not once per person.
               </p>
-              {usesExa && (
+              {external === "exa" && (
                 <p>
                   Exa&rsquo;s free tier covers roughly 1,000 searches a month —
                   plenty for a small server. A large server, or a high recent
                   count, may need a paid Exa plan.
+                </p>
+              )}
+              {external === "searxng" && (
+                <p>
+                  SearXNG searches cost nothing, so the only limit is whatever
+                  your own instance imposes.
                 </p>
               )}
             </div>
