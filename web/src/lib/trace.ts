@@ -6,10 +6,12 @@
  *  library tab is assembled here: its watches/seeds by name, the sources for its media type, and the
  *  delivered picks whose breakdown targets it. */
 import type {
+  Pick,
   RunLibraryBreakdown,
   RunUserTrace,
   RunUserTraceResponse,
   TraceFate,
+  TraceRequestOutcome,
   TraceSeed,
   TraceSource,
   TraceWatch,
@@ -368,4 +370,63 @@ export function shortlistBreakdown(lib: LibraryView): {
       a.fate === "kept" ? -1 : b.fate === "kept" ? 1 : b.titles.length - a.titles.length,
     );
   return { total: seen.size, groups };
+}
+
+/** One delivered pick with the two rotations marked, so the ordering rules are visible rather than
+ *  asserted. */
+export interface OrderingRow {
+  pick: Pick;
+  /** This rank is where a different SOURCE got its turn (the first fairness pass). */
+  newSource: boolean;
+  /** ...and where a different watched title got its turn (the second). */
+  newSeed: boolean;
+}
+
+/** The delivered picks in rank order, each marked with whether it began a new source's or a new
+ *  seed's turn.
+ *
+ * "How we ordered the shortlist" described the algorithm — best score leads, then each source gets a
+ * turn, then each watched title does — without ever showing it happening. The claim an owner most
+ * wants checked ("a single heavily-watched favourite can't swallow the whole row") is exactly the one
+ * prose cannot settle. Every number needed was already on each delivered pick; marking the rotations
+ * turns the rank list into the evidence for the paragraph above it.
+ */
+export function orderingRows(picks: Pick[]): OrderingRow[] {
+  const ordered = [...picks].sort((a, b) => a.rank - b.rank);
+  let lastSource: string | undefined;
+  let lastSeed: string | undefined;
+  return ordered.map((pick) => {
+    const source = (pick.sources ?? [])[0];
+    const seed = pick.seed_title ?? undefined;
+    const row = {
+      pick,
+      newSource: source !== lastSource,
+      newSeed: seed !== lastSeed,
+    };
+    lastSource = source;
+    lastSeed = seed;
+    return row;
+  });
+}
+
+/** What became of a wanted-but-missing title, in one readable clause — or null if the request pass
+ *  never considered it (requests off, or it never reached the demand pool).
+ *
+ *  The "not in your libraries" group IS the request pool, so this is the line that connects the two
+ *  halves of the product: a title Shortlist wanted, could not deliver, and either asked Radarr/Sonarr
+ *  for or deliberately did not. "pending" on its own never answered the only question worth asking —
+ *  why didn't this one go? — which is why the engine now keeps the reason it always computed.
+ */
+export function requestNote(
+  outcome: TraceRequestOutcome | undefined,
+): string | null {
+  if (!outcome) return null;
+  if (outcome.excluded) return "not requested — on an Arr exclusion list";
+  if (outcome.status === "sent")
+    return outcome.detail ? `requested — ${outcome.detail}` : "requested";
+  if (outcome.status === "rejected")
+    return outcome.detail ? `not requested — ${outcome.detail}` : "not requested";
+  return outcome.detail
+    ? `waiting for approval — ${outcome.detail}`
+    : "waiting for approval";
 }

@@ -846,3 +846,64 @@ class TestRequestTitles:
         report = requests_mod.request_titles(RequestConfig(enabled=True, radarr=RADARR), FakeTmdb(), [], dry_run=False)
         assert report.outcomes == []
         assert report.considered == 0
+
+
+class TestWhyATitleWasNotSent:
+    """A queued title records WHY it stayed queued.
+
+    The engine already worked the reason out per title — "demand below auto_min_demand (2)",
+    "max_per_run (3) already filled" — and then dropped it into a Counter for one aggregate log line.
+    So every `sent` row carried a detail and every `pending` row carried none, and the one question
+    an owner actually asks of the requests inbox ("why didn't THIS one go?") had no answer anywhere
+    in the product. The reason is now kept on the title, which is what reaches the DB and the trace.
+    """
+
+    def _demand(self, *titles: MissingTitle) -> requests_mod.DemandMap:
+        return {(t.tmdb_id, t.media_type): t for t in titles}
+
+    def test_a_title_below_the_auto_rating_bar_says_so(self):
+        cfg = _cfg(radarr=RADARR, auto_min_demand=1, auto_min_rating=8.0, min_rating=7.0)
+        report = requests_mod.request_missing(
+            cfg,
+            FakeTmdb(),
+            self._demand(MissingTitle(1, "Nearly", MediaType.MOVIE, 2020, rating=7.5, vote_count=900, demand=5)),
+            dry_run=True,
+        )
+        assert len(report.queued) == 1
+        assert "auto_min_rating" in report.queued[0].detail
+
+    def test_a_title_below_the_auto_demand_bar_says_so(self):
+        cfg = _cfg(radarr=RADARR, auto_min_demand=3, auto_min_rating=0.0, min_rating=7.0)
+        report = requests_mod.request_missing(
+            cfg,
+            FakeTmdb(),
+            self._demand(MissingTitle(1, "Lonely", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=1)),
+            dry_run=True,
+        )
+        assert "auto_min_demand" in report.queued[0].detail
+
+    def test_a_title_that_overflowed_the_per_run_cap_says_so(self, monkeypatch):
+        # The cap only fills if the first send SUCCEEDS, so the Arr client is faked like its siblings.
+        monkeypatch.setattr(requests_mod, "RadarrClient", lambda *a, **k: FakeArr())
+        cfg = _cfg(radarr=RADARR, max_per_run=1, auto_min_demand=1, auto_min_rating=0.0, min_rating=7.0)
+        report = requests_mod.request_missing(
+            cfg,
+            FakeTmdb(),
+            self._demand(
+                MissingTitle(1, "First", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=9),
+                MissingTitle(2, "Overflow", MediaType.MOVIE, 2020, rating=8.9, vote_count=900, demand=8),
+            ),
+            dry_run=False,
+        )
+        assert len(report.queued) == 1
+        assert "max_per_run" in report.queued[0].detail
+
+    def test_auto_send_switched_off_says_so(self):
+        cfg = _cfg(radarr=RADARR, auto_send=False, min_rating=7.0)
+        report = requests_mod.request_missing(
+            cfg,
+            FakeTmdb(),
+            self._demand(MissingTitle(1, "Waiting", MediaType.MOVIE, 2020, rating=9.0, vote_count=900, demand=9)),
+            dry_run=True,
+        )
+        assert "auto-send is off" in report.queued[0].detail

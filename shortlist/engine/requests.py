@@ -210,6 +210,11 @@ def request_missing(
             auto.append(m)
             continue
         blocked[reason] += 1
+        # Keep the reason ON the title, not just in the aggregate log line below. It is what the DB
+        # row and the run trace carry, and it is the only answer to "why didn't THIS one go?" — the
+        # question the requests inbox exists to be asked. Counting it and dropping it left every
+        # queued row with an empty detail while every sent row had one.
+        m.detail = reason
         report.queued.append(m)
 
     if blocked:

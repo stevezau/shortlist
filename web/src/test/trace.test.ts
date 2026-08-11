@@ -7,10 +7,12 @@ import {
   mediaLabel,
   sourceRole,
   watchedSummary,
+  orderingRows,
+  requestNote,
   shortlistBreakdown,
   webMechanism,
 } from "@/lib/trace";
-import type { RunUserTraceResponse } from "@/lib/types";
+import type { Pick, RunUserTraceResponse } from "@/lib/types";
 import type { LibraryView } from "@/lib/trace";
 
 function trace(
@@ -434,5 +436,88 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
     const out = shortlistBreakdown(lib([src("tmdb_similar", [{ tmdb_id: 1, title: "No fate" }])]));
     expect(out.total).toBe(0);
     expect(out.groups).toEqual([]);
+  });
+});
+
+describe("orderingRows — making the fairness passes visible", () => {
+  const pick = (rank: number, source: string, seed: string) =>
+    ({
+      rank,
+      title: `T${rank}`,
+      reason: "",
+      media_type: "movie",
+      seed_title: seed,
+      sources: [source],
+      affinity: 0.5,
+    }) as unknown as Pick;
+
+  it("marks where the source's turn changes, which is the round-robin you can otherwise only take on trust", () => {
+    const rows = orderingRows([
+      pick(1, "tmdb_similar", "A"),
+      pick(2, "trakt", "A"),
+      pick(3, "tmdb_similar", "A"),
+    ]);
+    expect(rows.map((r) => r.newSource)).toEqual([true, true, true]);
+  });
+
+  it("does not mark a repeat of the same source", () => {
+    const rows = orderingRows([
+      pick(1, "tmdb_similar", "A"),
+      pick(2, "tmdb_similar", "A"),
+    ]);
+    expect(rows.map((r) => r.newSource)).toEqual([true, false]);
+  });
+
+  it("marks where the seed's turn changes — the second fairness pass", () => {
+    const rows = orderingRows([
+      pick(1, "tmdb_similar", "Dune"),
+      pick(2, "tmdb_similar", "Dune"),
+      pick(3, "tmdb_similar", "Arrival"),
+    ]);
+    expect(rows.map((r) => r.newSeed)).toEqual([true, false, true]);
+  });
+
+  it("keeps rank order even if the input is not sorted", () => {
+    const rows = orderingRows([pick(3, "a", "X"), pick(1, "b", "Y"), pick(2, "c", "Z")]);
+    expect(rows.map((r) => r.pick.rank)).toEqual([1, 2, 3]);
+  });
+
+  it("is empty when nothing was delivered", () => {
+    expect(orderingRows([])).toEqual([]);
+  });
+});
+
+describe("requestNote — what became of a wanted-but-missing title", () => {
+  it("says it went to the Arr, naming which", () => {
+    expect(requestNote({ status: "sent", detail: "added to Sonarr and searching", excluded: false, arr_slug: null }))
+      .toBe("requested — added to Sonarr and searching");
+  });
+
+  it("gives the REASON a queued title is still waiting", () => {
+    // The whole point: "pending" alone never answered "so why didn't this one go?".
+    expect(
+      requestNote({
+        status: "pending",
+        detail: "rating below auto_min_rating (7.5)",
+        excluded: false,
+        arr_slug: null,
+      }),
+    ).toBe("waiting for approval — rating below auto_min_rating (7.5)");
+  });
+
+  it("falls back gracefully when an older run recorded no reason", () => {
+    expect(requestNote({ status: "pending", detail: "", excluded: false, arr_slug: null })).toBe(
+      "waiting for approval",
+    );
+  });
+
+  it("calls out a title excluded on the Arr side", () => {
+    expect(
+      requestNote({ status: "pending", detail: "", excluded: true, arr_slug: null }),
+    ).toBe("not requested — on an Arr exclusion list");
+  });
+
+  it("is null for a title the request pass never considered", () => {
+    expect(requestNote(undefined)).toBeNull();
   });
 });

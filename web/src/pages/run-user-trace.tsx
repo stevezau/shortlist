@@ -34,6 +34,8 @@ import { useBlockSeed, useRunUserTrace } from "@/lib/queries";
 import {
   buildLibraries,
   fateLabel,
+  orderingRows,
+  requestNote,
   shortlistBreakdown,
   mediaLabel,
   sourceRole,
@@ -214,6 +216,7 @@ function searchesSampled(lib: LibraryView): boolean {
  *  Long groups are collapsed behind a <details> — a filtered-out group can run to hundreds, and the
  *  step above it is the headline, not a list to scroll past. */
 function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
+  const requests = useContext(RequestsContext);
   const { total, groups } = shortlistBreakdown(lib);
   if (total === 0) return null;
   return (
@@ -259,6 +262,19 @@ function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
                       release date &times;{t.age_weight.toFixed(2)}
                     </span>
                   )}
+                  {/* This group IS the Radarr/Sonarr pool, so say what was asked for and what was
+                      not — the two halves of the product were never joined up on screen. */}
+                  {(() => {
+                    // Keyed "<tmdb_id>:<media>"; the breakdown carries no media per title, and a
+                    // tmdb_id belongs to one media type anyway, so either key resolves it.
+                    const note = requestNote(
+                      requests[`${t.tmdb_id}:movie`] ??
+                        requests[`${t.tmdb_id}:show`],
+                    );
+                    return note ? (
+                      <span className="text-primary/80">{note}</span>
+                    ) : null;
+                  })()}
                 </li>
               ))}
             </ul>
@@ -1494,10 +1510,65 @@ function RankingExplainer({ lib }: { lib: LibraryView }) {
           {" — "}spread across your tastes, not stacked on one.
         </p>
       )}
+      <OrderingEvidence picks={picks} />
       <p className="text-xs text-muted-foreground/80">
         No AI decides this order — it&rsquo;s all plain, inspectable code.
       </p>
     </div>
+  );
+}
+
+/** The rank list with both rotations marked — the paragraph above claims each source and each
+ *  watched title gets a turn, and this is where you can watch it happen. Without it the claim an
+ *  owner most wants checked ("one favourite can't swallow the row") had to be taken on trust. */
+function OrderingEvidence({ picks }: { picks: Pick[] }) {
+  const rows = orderingRows(picks);
+  if (rows.length === 0) return null;
+  return (
+    <details className="rounded-md border bg-muted/30 px-3 py-2">
+      <summary className="cursor-pointer text-sm font-medium">
+        The order it produced — {rows.length} picks
+      </summary>
+      <ol className="mt-2 space-y-0.5">
+        {rows.map(({ pick, newSource, newSeed }) => (
+          <li
+            key={pick.rank}
+            className="flex flex-wrap items-baseline gap-x-2 text-xs"
+          >
+            <span className="w-5 shrink-0 text-right tabular-nums text-muted-foreground">
+              {pick.rank}
+            </span>
+            <span>{pick.title}</span>
+            {pick.affinity != null && (
+              <span className="font-mono text-muted-foreground">
+                match {pick.affinity.toFixed(2)}
+              </span>
+            )}
+            {/* The rotations, marked only where they CHANGE — that is the fairness pass itself. */}
+            {(pick.sources ?? [])[0] && (
+              <span
+                className={cn(
+                  newSource ? "text-primary/80" : "text-muted-foreground/60",
+                )}
+              >
+                {newSource ? "→ " : ""}
+                {sourceLabel((pick.sources ?? [])[0] ?? "")}
+              </span>
+            )}
+            {pick.seed_title && (
+              <span
+                className={cn(
+                  newSeed ? "text-primary/80" : "text-muted-foreground/60",
+                )}
+              >
+                {newSeed ? "→ " : ""}
+                {pick.seed_title}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }
 
