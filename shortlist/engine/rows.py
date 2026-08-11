@@ -653,6 +653,8 @@ def _stamp_disposition(
     dropped: list[tuple[Candidate, str]],
     in_library: list[Candidate],
     ranked: list[Candidate],
+    recency: float = 0.0,
+    year_now: int = 0,
 ) -> None:
     """Annotate the gather trace with each candidate's FATE, so the operator can follow every title
     from a source's returns to the row (or to the reason it fell out).
@@ -663,7 +665,10 @@ def _stamp_disposition(
 
     * a per-source ``disposition`` tally: ``{kept, already_watched, not_in_your_libraries,
       excluded_genre, lost_ranking_cutoff}`` counts, and
-    * a ``fate``/``fate_reason`` on each already-recorded per-seed return, keyed by tmdb_id.
+    * a ``fate``/``fate_reason`` on each already-recorded per-seed return, keyed by tmdb_id, and
+    * the numbers that DECIDED that fate — the title's year, its rating, and the release-date weight
+      applied to it. Without them the trace could say a title lost the cut but never why, so "it
+      picked a 2003 film over a 2024 one" had no answer on the page built to answer it.
 
     A candidate that survived filtering but lost the ``candidates_pre_rank`` cut is
     ``lost_ranking_cutoff``; one that made the pre-rank is ``kept`` (whether or not it ends in the
@@ -680,6 +685,11 @@ def _stamp_disposition(
     """
     ranked_ids = {(c.tmdb_id, c.media_type) for c in ranked}
     in_library_ids = {(c.tmdb_id, c.media_type) for c in in_library}
+    # Every candidate we know anything about, dropped ones included — a title filtered out still has
+    # a year worth showing next to the reason it went.
+    known: dict[tuple[int, MediaType], Candidate] = {
+        (c.tmdb_id, c.media_type): c for c in [*(cand for cand, _ in dropped), *in_library]
+    }
     drop_reason: dict[tuple[int, MediaType], str] = {}
     for cand, reason in dropped:
         drop_reason.setdefault((cand.tmdb_id, cand.media_type), reason)
@@ -699,8 +709,17 @@ def _stamp_disposition(
         for query in source.get("queries", []):
             qmedia = MediaType.SHOW if query.get("media") == "show" else MediaType.MOVIE
             for ret in query.get("returned", []):
-                verdict = fate_of(int(ret.get("tmdb_id") or 0), qmedia)
+                tmdb_id = int(ret.get("tmdb_id") or 0)
+                verdict = fate_of(tmdb_id, qmedia)
                 ret["fate"] = verdict
+                cand = known.get((tmdb_id, qmedia))
+                if cand is not None:
+                    ret["year"] = cand.year
+                    ret["rating"] = round(cand.rating, 1) if cand.rating else None
+                    # The age multiplier this title was actually judged with. 1.0 when the setting is
+                    # off or the title has no known year, which is the honest answer in both cases —
+                    # and the UI omits it rather than printing a meaningless "x1.0".
+                    ret["age_weight"] = round(ranking.recency_factor(cand.year, year_now, recency), 3)
                 tally[verdict] = tally.get(verdict, 0) + 1
         if tally:
             source["disposition"] = tally
@@ -812,7 +831,14 @@ def _candidate_pool(
     # Stamp each traced return with its fate (kept as a candidate, or dropped and why), derived
     # entirely from the lists selection already produced above — so the trace can follow every title
     # in and out without altering a single delivered pick.
-    _stamp_disposition(gather_stats, dropped=dropped, in_library=in_library, ranked=ranked)
+    _stamp_disposition(
+        gather_stats,
+        dropped=dropped,
+        in_library=in_library,
+        ranked=ranked,
+        recency=recency,
+        year_now=_run_year(ctx.run_day),
+    )
     return (pool, in_library, ranked), gather_stats
 
 

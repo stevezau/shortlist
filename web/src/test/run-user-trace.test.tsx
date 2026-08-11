@@ -716,3 +716,43 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
     expect(screen.queryByText(/survived filtering/i)).not.toBeInTheDocument();
   });
 });
+
+describe("TraceView — why a title won or lost", () => {
+  const withReturn = (patch: Record<string, unknown>) => {
+    const base = okTrace();
+    const gathers = structuredClone(base.trace.gathers ?? []);
+    const returned = gathers[0]!.sources[0]!.queries![0]!.returned;
+    returned[0] = { ...returned[0]!, ...patch };
+    return okTrace({
+      trace: { ...base.trace, gathers },
+    } as Partial<RunUserTraceResponse>);
+  };
+
+  it("shows a returned title's year, so an era complaint is checkable", () => {
+    render(<TraceView data={withReturn({ year: 1999, rating: 8.6 })} />);
+    expect(screen.getByText("(1999)")).toBeInTheDocument();
+  });
+
+  it("shows the score it was judged on", () => {
+    render(<TraceView data={withReturn({ year: 1999, rating: 8.6 })} />);
+    expect(screen.getByText("8.6")).toBeInTheDocument();
+  });
+
+  it("shows the release-date multiplier that was applied to it", () => {
+    // The number that answers "why did the older one win?" — without it a fate is an outcome with
+    // no reasoning attached.
+    render(<TraceView data={withReturn({ year: 1994, rating: 8.6, age_weight: 0.27 })} />);
+    expect(screen.getByText(/age ×0\.27/)).toBeInTheDocument();
+  });
+
+  it("omits the multiplier when release date was not consulted", () => {
+    // "×1.0" is the absence of information dressed as information.
+    render(<TraceView data={withReturn({ year: 1994, rating: 8.6, age_weight: 1 })} />);
+    expect(screen.queryByText(/age ×/)).not.toBeInTheDocument();
+  });
+
+  it("renders a legacy return that carries none of it", () => {
+    render(<TraceView data={okTrace()} />);
+    expect(screen.queryByText(/age ×/)).not.toBeInTheDocument();
+  });
+});

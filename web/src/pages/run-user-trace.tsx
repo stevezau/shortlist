@@ -1085,7 +1085,30 @@ function ReturnRow({ ret, media }: { ret: TraceReturn; media: string }) {
         )}
       >
         {ret.title}
+        {/* The numbers the verdict was reached on. A fate alone says a title lost; these say why it
+            lost — which is the question "it picked a 2003 film over a 2024 one" is really asking. */}
+        {ret.year != null && (
+          <span className="ml-1 text-muted-foreground tabular-nums">
+            ({ret.year})
+          </span>
+        )}
       </span>
+      {ret.rating != null && ret.rating > 0 && (
+        <span className="shrink-0 tabular-nums text-muted-foreground/80">
+          {ret.rating.toFixed(1)}
+        </span>
+      )}
+      {/* Omitted at 1: "×1.0" is not information, it is the absence of it. */}
+      {ret.age_weight != null && ret.age_weight < 1 && (
+        <span
+          className="shrink-0 tabular-nums text-muted-foreground/80"
+          title={`Release date weighting scaled this title's score to ${Math.round(
+            ret.age_weight * 100,
+          )}% of an equivalent title from this year.`}
+        >
+          age ×{ret.age_weight.toFixed(2)}
+        </span>
+      )}
       {ret.fate !== undefined && !kept && (
         <span className="shrink-0 text-muted-foreground/80">
           {fateLabel(ret.fate)}

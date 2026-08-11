@@ -4762,3 +4762,72 @@ class TestTheTraceExplainsWhatHappenedToTheRow:
         assert entry["size"] == 3
         assert entry["candidates"] >= entry["delivered"] > 0
         assert entry["cut_cap"] == ctx.config.candidates_pre_rank
+
+
+class TestTheTraceShowsWhyATitleWonOrLost:
+    """A fate alone ("lost the ranking cut") does not answer "why this title over that one".
+
+    The numbers that decided it — the release year, the score it was judged on, and the age
+    multiplier the Recent releases setting applied — are what turn the trace from an outcome into an
+    explanation. Recorded next to each returned title, including the ones that were dropped.
+    """
+
+    RUN_DAY = date(2026, 6, 15).toordinal()
+
+    def _ctx(self, ctx: EngineContext, *, recency: float) -> None:
+        movies = MagicMock(type="movie", key="1", title="Movies")
+        ctx.plex.sections.return_value = [movies]
+        ctx.plex.sections_by_type.return_value = {MediaType.MOVIE: movies}
+        ctx.plex.build_library_index.return_value = {900: 999, 10: 2010, 20: 2020}
+        ctx.tmdb.suggestions.return_value = [
+            ({"id": 10, "title": "Old", "genre_ids": [], "vote_average": 8.6, "release_date": "1994-01-01"}, 1.0),
+            ({"id": 20, "title": "New", "genre_ids": [], "vote_average": 7.1, "release_date": "2024-01-01"}, 0.9),
+        ]
+        ctx.history_source.fetch.return_value = [make_watched("Fargo", days_ago=1, rating_key=999)]
+        # The GLOBAL, not a row override: the disposition is stamped once per shared pool, at
+        # `ctx.config.recency`. A row that overrides it re-cuts afterwards, and the trace still shows
+        # the pool's figures — the KNOWN GAP recorded on `_stamp_disposition`.
+        ctx.config = replace(ctx.config, recency=recency)
+        ctx.config.rows = [RowSpec(slug="picked", name_template="", size=2, media="movie")]
+        ctx.config.min_history = 1
+        ctx.run_day = self.RUN_DAY
+
+    def _returns(self, ctx, mock_plextv):
+        mock_plextv.users = [plextv_user(100, "sarah")]
+        report = pipeline_mod.run(ctx, [make_profile("sarah", account_id=100)])
+        out = {}
+        for gather in report.users[0].trace.get("gathers") or []:
+            for source in gather.get("sources") or []:
+                for query in source.get("queries") or []:
+                    for ret in query.get("returned") or []:
+                        out[ret["tmdb_id"]] = ret
+        assert out, "no returned titles recorded — fixture problem, not the feature"
+        return out
+
+    def test_each_returned_title_carries_its_year_and_rating(self, ctx: EngineContext, mock_plextv):
+        self._ctx(ctx, recency=0.0)
+
+        rets = self._returns(ctx, mock_plextv)
+
+        assert rets[10]["year"] == 1994
+        assert rets[20]["year"] == 2024
+        assert rets[10]["rating"] == 8.6
+
+    def test_the_age_multiplier_shows_what_the_setting_did_to_each_title(self, ctx, mock_plextv):
+        """The number that makes "why did the 1994 one win?" answerable: at full strength the older
+        title is scored at a fraction of the newer one."""
+        self._ctx(ctx, recency=1.0)
+
+        rets = self._returns(ctx, mock_plextv)
+
+        assert rets[20]["age_weight"] > rets[10]["age_weight"], rets
+        assert rets[10]["age_weight"] < 0.2, f"a 32-year-old title should be heavily weighted down: {rets[10]}"
+
+    def test_the_multiplier_is_one_when_the_setting_is_off(self, ctx: EngineContext, mock_plextv):
+        """Not absent, and not a made-up number — 1.0 is the truth when age was not consulted."""
+        self._ctx(ctx, recency=0.0)
+
+        rets = self._returns(ctx, mock_plextv)
+
+        assert rets[10]["age_weight"] == 1.0
+        assert rets[20]["age_weight"] == 1.0

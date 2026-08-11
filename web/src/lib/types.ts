@@ -575,6 +575,12 @@ export interface TraceReturn {
   title: string;
   /** Kept/dropped verdict (absent on legacy runs recorded before disposition tracking). */
   fate?: TraceFate;
+  /** The numbers this title was judged on. Absent on runs recorded before they were stamped, and
+   *  `year` is legitimately null for a title TMDB has no date for. */
+  year?: number | null;
+  rating?: number | null;
+  /** The release-date multiplier applied to it: 1 when the setting was off or the year unknown. */
+  age_weight?: number;
 }
 
 /** One seed's query against a source: what it searched for and a sample of what came back. */
