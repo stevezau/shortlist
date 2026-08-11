@@ -552,3 +552,83 @@ class TestRecencyDefaultAppliesToEveryInstall:
         run_migrations(tmp_path)
 
         assert self._value(tmp_path) == (True, 0.0)
+
+
+class TestDroppingTheAutoWebSearchBackend:
+    """0063 pins every install to the backend it was actually using.
+
+    `auto` was the stored default, so almost every real database holds it (or no row at all, which
+    reads as the same thing). Getting the mapping wrong doesn't error — it silently moves a server
+    onto a backend it never chose, or leaves a value no validator accepts.
+    """
+
+    @staticmethod
+    def _provider(config_dir: Path):
+        from shortlist.server.db.session import make_session_factory
+        from shortlist.server.services.secrets import SecretBox
+        from shortlist.server.settings_store import SettingsStore
+
+        sessions = make_session_factory(make_engine(config_dir))
+        with sessions() as session:
+            return SettingsStore(session, SecretBox(config_dir)).get("llm_web.search_provider")
+
+    def test_a_fresh_install_defaults_to_the_providers_own_search(self, tmp_path: Path):
+        run_migrations(tmp_path)
+        assert self._provider(tmp_path) == "native"
+
+    def test_a_configured_searxng_wins(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+        _write_setting(tmp_path, "searxng.url", "http://searx.local:8080")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "searxng"
+
+    def test_a_configured_exa_key_wins_when_there_is_no_searxng(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+        _write_setting(tmp_path, "exa.apikey", "exa-key")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "exa"
+
+    def test_searxng_beats_exa_when_both_are_set_up(self, tmp_path: Path):
+        """Auto's own tie-break, kept: the free local one, so an upgrade never starts a bill."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+        _write_setting(tmp_path, "exa.apikey", "exa-key")
+        _write_setting(tmp_path, "searxng.url", "http://searx.local:8080")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "searxng"
+
+    def test_an_install_with_no_external_backend_falls_back_to_native(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "native"
+
+    def test_an_install_that_never_wrote_the_row_is_pinned_too(self, tmp_path: Path):
+        """No row meant "the default", and the default WAS auto — so these installs need pinning as
+        much as the explicit ones, or they silently land on the new default instead."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "exa.apikey", "exa-key")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "exa"
+
+    def test_an_explicit_choice_is_never_rewritten(self, tmp_path: Path):
+        """Someone who already picked a backend by name keeps it, whatever else is configured."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "native")
+        _write_setting(tmp_path, "searxng.url", "http://searx.local:8080")
+
+        run_migrations(tmp_path)
+
+        assert self._provider(tmp_path) == "native"

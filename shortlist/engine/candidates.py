@@ -89,12 +89,9 @@ def _web_search_capable(curator, search, mode: str) -> bool:
     register as attempted, or the "every source failed" check would misread an incapable setup as a
     failure.
     """
-    native = getattr(curator, "supports_native_web_search", False)
-    if mode == "native":
-        return native
     if mode in EXTERNAL_SEARCH_MODES:
         return search is not None
-    return native or search is not None  # auto: native tool, else external search
+    return getattr(curator, "supports_native_web_search", False)
 
 
 def web_recommendations(
@@ -111,33 +108,24 @@ def web_recommendations(
 ) -> list[dict]:
     """Titles to watch next from a web search, as ``[{title, year, media}]`` for TMDB resolution.
 
-    ``mode`` chooses the search backend:
+    ``mode`` names the ONE backend to search with:
 
-    * ``native`` — the provider's own web-search tool only (Claude/GPT/Gemini).
-    * ``exa`` / ``searxng`` — the external backend only (the only path for a local Ollama model,
-      which has no web search of its own).
-      Identical branches here; the server picked which client to hand us.
-    * ``auto`` (default) — use everything configured, UNIONED: the provider's own tool AND the
-      external backend when both are set up, else whichever one. The two surface largely different
-      titles (measured — barely any overlap), so running both roughly doubles the usable pool.
-      Duplicates cost nothing: ``gather_candidates`` dedupes by ``(tmdb_id, media_type)`` downstream.
-      Note ``auto`` unions native with AT MOST ONE external — two external backends would answer the
-      identical query twice, and one of them bills for it.
+    * ``native`` — the provider's own web-search tool (Claude/GPT/Gemini only).
+    * ``exa`` / ``searxng`` — the external backend the server built for us. Identical branches here;
+      which client it is was decided in ``context_builder.make_search_client``. Either is the only
+      path for a local Ollama model, which has no web search of its own.
+
+    There was a fourth mode, ``auto``, which unioned native with whichever external was configured.
+    It was removed in 1.3 (owner decision): it was the default, so it was what almost everyone ran,
+    and the name told them nothing about the only thing it uniquely did. Migration 0063 pins each
+    install to the backend it was actually using.
 
     ``recent_count`` caps how many recent titles the external path searches (one cached search each).
-    ``stats`` accumulates this source's token spend (and Exa searches) for per-run AI accounting —
+    ``stats`` accumulates this source's token spend (and searches) for per-run AI accounting —
     read ``last_tokens`` right after each LLM call, before the next one overwrites it.
     """
-    native = getattr(curator, "supports_native_web_search", False)
     web_trace: dict = {"mode": mode}
     stats.trace["web"] = web_trace
-    if mode == "native":
-        if not native:
-            return []
-        recs = curator.recommend_web(profile, seeds, k)
-        stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
-        web_trace["proposed"] = [_rec_label(r) for r in recs]
-        return recs
     if mode in EXTERNAL_SEARCH_MODES:
         return (
             _web_via_search(
@@ -146,16 +134,11 @@ def web_recommendations(
             if search is not None
             else []
         )
-    # auto: union of every available backend.
-    recs: list[dict] = []
-    if native:
-        recs += curator.recommend_web(profile, seeds, k)
-        stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
-        web_trace["native_proposed"] = [_rec_label(r) for r in recs]
-    if search is not None:
-        recs += _web_via_search(
-            curator, search, profile, seeds, k, stats, web_trace, cache=cache, recent_count=recent_count
-        )
+    if not getattr(curator, "supports_native_web_search", False):
+        return []
+    recs = curator.recommend_web(profile, seeds, k)
+    stats.add_tokens("llm_web", getattr(curator, "last_tokens", 0))
+    web_trace["proposed"] = [_rec_label(r) for r in recs]
     return recs
 
 
@@ -295,7 +278,7 @@ def gather_candidates(
     profile=None,
     trakt=None,
     search=None,
-    web_search_mode: str = "auto",
+    web_search_mode: str = "native",
     web_search_cache: Cache | None = None,
     recent_count: int = _WEB_SEARCH_MAX_TITLES,
     stats: GatherStats | None = None,

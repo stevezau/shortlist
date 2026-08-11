@@ -66,7 +66,7 @@ class TestWebSearchBackendChoice:
     """
 
     @staticmethod
-    def _get(mode: str = "auto", *, exa: str = "", url: str = "", user: str = "", password: str = ""):
+    def _get(mode: str = "native", *, exa: str = "", url: str = "", user: str = "", password: str = ""):
         values = {
             "llm_web.search_provider": mode,
             "exa.apikey": exa,
@@ -92,18 +92,14 @@ class TestWebSearchBackendChoice:
         it must never fall through to shipping their watch history to a paid API."""
         assert make_search_client(self._get("searxng", exa="k")) is None
 
-    def test_auto_uses_whichever_single_backend_is_configured(self):
-        assert isinstance(make_search_client(self._get("auto", exa="k")), ExaClient)
-        assert isinstance(make_search_client(self._get("auto", url="http://searx:8080")), SearxngClient)
+    def test_an_unset_backend_reads_as_native_and_builds_nothing(self):
+        """A blank value is the fresh-install state, and the default is the provider's own search."""
+        assert make_search_client(self._get("")) is None
 
-    def test_auto_prefers_searxng_when_both_are_configured(self):
-        """Both set up and no explicit choice: pick the free local one. `auto` must never be the
-        reason a bill appears, and the owner who wants Exa can just say Exa."""
-        client = make_search_client(self._get("auto", exa="k", url="http://searx:8080"))
-        assert isinstance(client, SearxngClient)
-
-    def test_auto_with_nothing_configured_is_none(self):
-        assert make_search_client(self._get("auto")) is None
+    def test_the_retired_auto_value_no_longer_builds_a_backend(self):
+        """0063 pins every install off `auto`, but a value that somehow survives must not resolve to
+        a backend nobody chose — it falls through to native, which builds no external client."""
+        assert make_search_client(self._get("auto", exa="k", url="http://searx:8080")) is None
 
     def test_native_mode_builds_no_external_backend(self):
         """`native` means the provider's own search ONLY — handing the run an external client anyway

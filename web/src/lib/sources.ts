@@ -69,9 +69,12 @@ export function hasMdblist(settings: Settings): boolean {
   return Boolean(settingString(settings, "requests.mdblist.apikey"));
 }
 
-/** How the llm_web source searches: 'native' | 'exa' | 'searxng' | 'auto' (owner-chosen). */
+/** Which backend the llm_web source searches with: 'native' | 'exa' | 'searxng' (owner-chosen).
+ *  There was an 'auto' (native unioned with an external); it was removed in 1.3 and migration 0063
+ *  pins every install off it, so a stored 'auto' reads as the default. */
 export function webSearchProvider(settings: Settings): string {
-  return settingString(settings, "llm_web.search_provider") || "auto";
+  const stored = settingString(settings, "llm_web.search_provider");
+  return stored && stored !== "auto" ? stored : "native";
 }
 
 /** Whether the current curator provider can search the web with its OWN tool (Claude/GPT/Gemini). */
@@ -108,10 +111,9 @@ export function hasExternalSearch(settings: Settings): boolean {
 export function hasWebSearch(settings: Settings): boolean {
   if (!hasCurator(settings)) return false;
   const mode = webSearchProvider(settings);
-  if (mode === "native") return hasNativeWebSearch(settings);
   if (mode === "exa") return hasExa(settings);
   if (mode === "searxng") return hasSearxng(settings);
-  return hasNativeWebSearch(settings) || hasExternalSearch(settings); // auto
+  return hasNativeWebSearch(settings); // native
 }
 
 /** The reason a source can't be enabled yet, or null when its dependency is satisfied. */
@@ -131,9 +133,7 @@ export function sourceBlockedReason(
       return "Needs an Exa API key — add it in Connections, or switch the search backend to Auto.";
     if (mode === "searxng")
       return "Needs the address of your SearXNG instance — add it in Connections, or switch the search backend to Auto.";
-    if (mode === "native")
-      return "Needs Claude, GPT, or Gemini — Ollama can't web-search. Change your AI provider, or search through Exa or your own SearXNG instead.";
-    return "Needs Claude, GPT, or Gemini — or a search backend in Connections: an Exa key, or your own SearXNG (both work with Ollama).";
+    return "Needs Claude, GPT, or Gemini — Ollama can't web-search. Change your AI provider in Connections, or switch the search backend there to Exa or your own SearXNG.";
   }
   return null;
 }

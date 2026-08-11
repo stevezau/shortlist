@@ -127,6 +127,9 @@ class TestRedact:
             # `searxng.url`, but redaction is the backstop for every OTHER path a URL can travel —
             # a client's exception text, a logged request line, an `events` row.
             ("hunter2", "ConnectError for http://admin:hunter2@searx.local:8080/search"),
+            # Scheme/host case is whatever the owner typed — every sibling pattern uses re.I, and
+            # this one silently did not, so an uppercased URL walked straight through.
+            ("Hunter2", "HTTPS://Admin:Hunter2@Searx.local/search"),
         ],
     )
     def test_redacts_shapes_that_are_not_query_params(self, secret: str, text: str):

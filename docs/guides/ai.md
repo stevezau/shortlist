@@ -54,7 +54,6 @@ You choose the search backend on the "AI web search" card:
 | Your provider's own web search      | Claude, GPT, Gemini only                   | No extra signup, but unavailable on local models       |
 | [Exa](https://exa.ai) key           | **Every provider, local included**         | One extra free-tier signup; billed per search          |
 | [SearXNG](https://docs.searxng.org) | **Every provider, local included**         | Free and fully self-hosted; you run and maintain it    |
-| **Auto** (default)                  | Your provider's own search + one external  | Widest coverage. They find noticeably different titles |
 
 **Why adding an external backend is worth it**, even when your provider can already search:
 
@@ -70,8 +69,8 @@ Shortlist does the searching and hands the findings to your model, which buys yo
 3. **The cost is predictable.** Exa bills per search rather than per word, and those searches are
    reported separately from AI tokens. SearXNG costs nothing at all. Results are reused for 14 days
    and shared across everyone on the server, so a popular film is looked up once, not once per person.
-4. **Auto gives you both.** Left on the default, Shortlist combines your provider's own search with
-   whichever external backend is configured.
+4. **It is one clear choice.** Shortlist searches with exactly the backend you pick and no other, so
+   a title is never searched — or billed — twice.
 
 ### Exa or SearXNG?
 
@@ -86,8 +85,8 @@ Both work with every provider, and both were measured end-to-end against the sam
   testing it was also *faster*, and its smaller results made the AI call noticeably cheaper.
 
 Pick SearXNG if you already self-host and want no third-party account; pick Exa if you'd rather not
-run another service. If you configure both and leave the backend on **Auto**, Shortlist uses
-SearXNG — the free one — so Auto can never start billing Exa on its own.
+run another service. Only the backend you pick is used, so configuring one never quietly starts
+the other.
 
 **Setting SearXNG up.** Shortlist talks to its JSON API, which is **off in a stock install**. Add
 `json` to `search.formats` in SearXNG's `settings.yml` and restart it:

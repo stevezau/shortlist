@@ -89,41 +89,31 @@ def make_search_client(get: Callable[[str], object]) -> WebSearchProvider | None
     Deciding WHICH provider belongs here rather than in the engine: the engine only knows "an
     external backend" (``candidates.EXTERNAL_SEARCH_MODES``), so adding a provider never touches it.
 
-    Naming a provider means only that provider — an unconfigured ``exa``/``searxng`` yields None
-    rather than falling through to the other. A fallback would be actively harmful in both
-    directions: it would send a self-hoster's watch history to a paid vendor they didn't pick, or
-    quietly downgrade a paying owner to a box that may be switched off.
-
-    ``auto`` uses whichever single backend is configured, preferring SearXNG when both are — free and
-    local, so choosing "auto" can never be the reason an Exa bill appears. Only ONE external is ever
-    built: two would answer the identical query twice for the same titles.
+    The backend is whatever the owner chose, and ONLY that: an unconfigured ``exa``/``searxng``
+    yields None rather than falling through to the other. A fallback would be actively harmful in
+    both directions — it would send a self-hoster's watch history to a paid vendor they didn't pick,
+    or quietly downgrade a paying owner to a box that may be switched off.
 
     Args:
         get: A settings reader (``store.get``).
 
     Returns:
-        A configured provider, or None when the mode is ``native`` or nothing is set up.
+        A configured provider, or None when the backend is ``native`` or its own setup is missing.
     """
-    mode = get("llm_web.search_provider") or "auto"
-    exa_key = get("exa.apikey")
-    searxng_url = (str(get("searxng.url") or "")).strip()
-
-    def _searxng() -> SearxngClient:
+    mode = get("llm_web.search_provider") or "native"
+    if mode == "exa":
+        key = get("exa.apikey")
+        return ExaClient(key) if key else None
+    if mode == "searxng":
+        url = (str(get("searxng.url") or "")).strip()
+        if not url:
+            return None
         return SearxngClient(
-            searxng_url,
+            url,
             username=str(get("searxng.username") or ""),
             password=str(get("searxng.password") or ""),
         )
-
-    if mode == "native":
-        return None
-    if mode == "exa":
-        return ExaClient(exa_key) if exa_key else None
-    if mode == "searxng":
-        return _searxng() if searxng_url else None
-    if searxng_url:
-        return _searxng()
-    return ExaClient(exa_key) if exa_key else None
+    return None  # native: the provider searches for itself, so there is no external client
 
 
 def _dislike_threshold(store: SettingsStore) -> float:
@@ -738,7 +728,7 @@ class ContextBuilder:
             blocked_shared_seeds={
                 tid for tid in (store.get("recommendations.blocked_shared_seeds") or []) if isinstance(tid, int)
             },
-            web_search_provider=store.get("llm_web.search_provider") or "auto",
+            web_search_provider=store.get("llm_web.search_provider") or "native",
             hub_anchors=self._build_hub_anchors(store),
             manage_shelf_order=bool(store.get("rows.manage_shelf_order")),
             # The `or` fallbacks below are safe only because the validators exclude the falsy

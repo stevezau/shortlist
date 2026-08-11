@@ -62,9 +62,14 @@ describe("hasWebSearch across the backend × configuration matrix", () => {
     ).toBe(false);
   });
 
-  it("accepts either external backend under auto", () => {
-    expect(hasWebSearch(settings({ ...OLLAMA, ...SEARX }))).toBe(true);
-    expect(hasWebSearch(settings({ ...OLLAMA, ...EXA }))).toBe(true);
+  it("is satisfied by the chosen backend alone", () => {
+    // `auto` (which accepted either) was removed in 1.3 — a backend is now always named.
+    expect(
+      hasWebSearch(settings({ ...OLLAMA, ...SEARX, "llm_web.search_provider": "searxng" })),
+    ).toBe(true);
+    expect(
+      hasWebSearch(settings({ ...OLLAMA, ...EXA, "llm_web.search_provider": "exa" })),
+    ).toBe(true);
     expect(hasWebSearch(settings(OLLAMA))).toBe(false);
   });
 
@@ -77,7 +82,7 @@ describe("hasWebSearch across the backend × configuration matrix", () => {
     ).toBe(false);
   });
 
-  it("is satisfied by a native-capable provider alone under auto", () => {
+  it("is satisfied by a native-capable provider on the default backend", () => {
     expect(hasWebSearch(settings(CLAUDE))).toBe(true);
   });
 });
@@ -108,7 +113,10 @@ describe("sourceBlockedReason names the fix for the chosen backend", () => {
 
   it("is null once the source can actually run", () => {
     expect(
-      sourceBlockedReason(LLM_WEB, settings({ ...OLLAMA, ...SEARX })),
+      sourceBlockedReason(
+        LLM_WEB,
+        settings({ ...OLLAMA, ...SEARX, "llm_web.search_provider": "searxng" }),
+      ),
     ).toBeNull();
   });
 });

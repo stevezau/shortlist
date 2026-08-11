@@ -741,7 +741,8 @@ export type TestableService =
   | "mdblist"
   | "trakt"
   | "exa"
-  | "searxng";
+  | "searxng"
+  | "native_search";
 
 /** Alias kept short for the components that render one line of this. */
 export type UserRun = UserRunSummary;

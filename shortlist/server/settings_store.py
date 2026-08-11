@@ -88,14 +88,17 @@ DEFAULTS: dict[str, Any] = {
     "notifications.dismissed": [],
     # Which candidate sources feed recommendations (engine/candidates.py). More = wider recall.
     "candidates.sources": ["tmdb_similar", "tmdb_discover"],
-    # How the "AI — web search" (llm_web) source searches the web: 'native' (the curator provider's
-    # own web-search tool — Claude/GPT/Gemini), 'exa' (the hosted Exa search API), 'searxng' (the
-    # owner's own SearXNG instance — self-hosted metasearch, so no vendor account, key or per-search
-    # bill; note it still FORWARDS each query to real engines (Google/Brave/DDG), so this is not an
-    # air-gapped path), or 'auto' (native where
-    # the provider supports it, plus whichever external is configured). Either external works for
-    # every provider and is the only kind of backend a local Ollama model can use.
-    "llm_web.search_provider": "auto",
+    # Which backend the "AI — web search" (llm_web) source searches with. Exactly one, always:
+    #   'native'  — the curator provider's own web-search tool (Claude/GPT/Gemini only)
+    #   'exa'     — the hosted Exa search API
+    #   'searxng' — the owner's own SearXNG instance. Self-hosted metasearch: no vendor account, key
+    #               or per-search bill, though it still FORWARDS each query to real engines
+    #               (Google/Brave/DDG), so it is not an air-gapped path.
+    # Either external works with every provider and is the only kind a local Ollama model can use.
+    # There was a fourth value, 'auto' (native UNIONED with whichever external was configured). It
+    # was the default and it was removed in 1.3 — the name described nothing, and owners could not
+    # tell what it was doing. Migration 0063 pins every existing install to what it was really using.
+    "llm_web.search_provider": "native",
     # Self-hosted SearXNG for the llm_web source. Its JSON API must be enabled — a stock instance
     # ships `search.formats: [html]` and answers `format=json` with a 403. Username/password are for
     # a reverse proxy in front of it (SearXNG itself has no auth); the password is a SECRET_KEY.

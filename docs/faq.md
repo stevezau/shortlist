@@ -82,10 +82,9 @@ The optional web-search source can search in three ways, and you pick one on its
 
 | Option                              | Works with                         | Trade-off                                                 |
 | ----------------------------------- | ---------------------------------- | --------------------------------------------------------- |
-| Your AI provider's own search       | Claude, GPT, Gemini only           | no extra signup; unavailable on local models              |
+| Your AI provider's own search (default) | Claude, GPT, Gemini only       | no extra signup; unavailable on local models              |
 | **[Exa](https://exa.ai) key**       | **every provider, local included** | one extra free-tier signup; billed per search             |
 | **[SearXNG](https://docs.searxng.org)** | **every provider, local included** | free and fully self-hosted; you run and maintain it    |
-| **Auto** (default)                  | your provider's search + one external | widest coverage, and they find noticeably different films |
 
 **Why we suggest adding one of the external backends**, even if your provider can already search:
 
@@ -102,8 +101,8 @@ The optional web-search source can search in three ways, and you pick one on its
 covers roughly 1,000 searches a month. SearXNG runs on your own hardware, needs no account, costs
 nothing, and keeps everything but the forwarded queries on your server — but you maintain it, and its
 JSON API must be switched on (`json` added to `search.formats` in its `settings.yml`, or it refuses
-Shortlist with a 403). Configure both and leave the backend on **Auto** and Shortlist uses SearXNG,
-so Auto can never start billing Exa on its own. See [AI and cost](guides/ai.md#exa-or-searxng).
+Shortlist with a 403). You pick exactly one backend — Shortlist never runs two, so it can never
+search (or bill) twice for the same title. See [AI and cost](guides/ai.md#exa-or-searxng).
 
 It's genuinely optional. Leave it empty and everything still works. You would just be limited to your
 provider's own search, or to no web search at all.

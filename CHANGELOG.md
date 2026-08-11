@@ -28,16 +28,34 @@ All notable changes to this project are documented here. This project follows
   export, so a password must never be allowed into it. A subpath deployment such as
   `https://example.com/searxng` is kept intact.
 
-  Choosing a backend by name now means only that backend — an unconfigured Exa or SearXNG no longer
-  falls through to the other one, which would have sent a self-hoster's queries to a paid vendor they
-  never picked. **Auto** combines your provider's own search with ONE external backend, and prefers
-  SearXNG when both are configured, so Auto can never start billing Exa on its own.
+  Choosing a backend by name means only that backend — an unconfigured Exa or SearXNG never falls
+  through to the other, which would have sent a self-hoster's queries to a paid vendor they never
+  picked.
 
 ### Changed
 
+- **The "Auto" search backend is gone.** It was the default, so it is what nearly everyone ran, and
+  it meant "the provider's own search UNIONED with whichever external is configured" — a real
+  behaviour that its name described not at all. You now pick exactly one backend, and it is the one
+  used. Migration 0063 pins every install to what it was actually using: a configured SearXNG, else
+  a configured Exa key, else the provider's own search. **A server that had both loses the combined
+  search**, which did widen the candidate pool; raise a row's seed count if you want that reach back.
+
+- **Which backend the web search uses now lives in one place.** It was briefly both on the
+  Connections card and on the Finding-titles card — the same control twice, with no way to tell
+  which was authoritative. Connections → Web search owns the backend and its credentials (the AI
+  provider already works that way); Settings → Finding titles owns whether the source runs, and
+  names the backend with a link rather than repeating the form.
+
+- **"Test" on the provider's own web search now really searches.** Being Claude, GPT or Gemini says
+  the provider offers a web-search tool; it does not say your plan or model may use it. When it may
+  not, the call failed at run time, logged a warning and returned no titles — so the source quietly
+  contributed nothing, every night, with nothing in the UI to say so. The Test button now performs
+  one real search and tells you if the tool came back empty.
+
 - **Run stats say "Web searches" rather than "Exa searches".** The same counter now serves both
   external backends, so naming one vendor was simply wrong on a SearXNG server. A run's "How we
-  picked" trace also records _which_ backend actually ran, which is the only way to tell under Auto.
+  picked" trace also records _which_ backend actually ran.
 
 ## [1.2.1] - 2026-08-07
 

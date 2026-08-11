@@ -333,7 +333,7 @@ class _NativeCurator:
 
 
 class TestLlmWebBackends:
-    """The auto|native|exa backend matrix for the llm_web source (public-app: works on every provider)."""
+    """The native|exa|searxng backend matrix for the llm_web source (works on every provider)."""
 
     def _tmdb(self, mock_tmdb, resolved):
         mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
@@ -348,14 +348,22 @@ class TestLlmWebBackends:
         curator = _NonNativeCurator('[{"title": "Exa Pick", "year": 2021, "media": "movie"}]')
 
         pool = gather_candidates(
-            mock_tmdb, [seed(1, "Arrival")], sources=["llm_web"], curator=curator, profile=web_profile(), search=search
+            mock_tmdb,
+            [seed(1, "Arrival")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_mode="exa",
         )
         assert {c.tmdb_id for c in pool} == {55}
         assert curator.complete_calls == 1 and len(search.queries) == 1  # searched, then the model picked
         assert "Arrival" in search.queries[0]  # the query is built from what they watched, not a constant
 
-    def test_auto_unions_native_and_exa_when_both_are_available(self, mock_tmdb):
-        # Both configured → auto runs BOTH and unions them (they surface different titles).
+    def test_exactly_one_backend_runs_even_when_both_are_available(self, mock_tmdb):
+        """The `auto` mode used to union the provider's own search with an external one. It was
+        removed in 1.3, so a native-capable curator WITH an external client configured must now run
+        the named backend and nothing else — no second search, no second bill."""
         self._tmdb(
             mock_tmdb,
             {
@@ -367,18 +375,30 @@ class TestLlmWebBackends:
         curator = _NativeCurator()
 
         pool = gather_candidates(
-            mock_tmdb, [seed(1)], sources=["llm_web"], curator=curator, profile=web_profile(), search=search
+            mock_tmdb,
+            [seed(1)],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_mode="native",
         )
-        assert {c.tmdb_id for c in pool} == {77, 88}  # native + exa, unioned
-        assert curator.recommend_calls == 1 and curator.complete_calls == 1
-        assert len(search.queries) == 1
+        assert {c.tmdb_id for c in pool} == {77}  # the native tool only
+        assert curator.recommend_calls == 1 and curator.complete_calls == 0
+        assert search.queries == []  # the external client is present but deliberately unused
 
-    def test_auto_uses_only_the_native_tool_when_no_search_is_configured(self, mock_tmdb):
+    def test_the_native_tool_runs_when_no_search_is_configured(self, mock_tmdb):
         self._tmdb(mock_tmdb, {"Native Pick": {"id": 77, "title": "Native Pick", "genre_ids": [], "vote_average": 8.0}})
         curator = _NativeCurator()
 
         pool = gather_candidates(
-            mock_tmdb, [seed(1)], sources=["llm_web"], curator=curator, profile=web_profile(), search=None
+            mock_tmdb,
+            [seed(1)],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=None,
+            web_search_mode="native",
         )
         assert {c.tmdb_id for c in pool} == {77}
         assert curator.recommend_calls == 1 and curator.complete_calls == 0
@@ -517,6 +537,7 @@ class TestPerTitleWebSearchCache:
             curator=curator,
             profile=web_profile(),
             search=search,
+            web_search_mode="exa",
             web_search_cache=cache,
         )
         assert len(search.queries) == 2  # one search per title, not one blended query
@@ -620,6 +641,7 @@ class TestPerTitleWebSearchCache:
             curator=_NonNativeCurator("[]"),
             profile=web_profile(),
             search=search,
+            web_search_mode="exa",
             web_search_cache=cache,
             stats=stats,
         )
@@ -639,6 +661,7 @@ class TestPerTitleWebSearchCache:
             curator=_NonNativeCurator("[]"),
             profile=web_profile(),
             search=search,
+            web_search_mode="exa",
             web_search_cache=_DictCache(),
             recent_count=2,
         )
@@ -814,6 +837,7 @@ class TestGatherStats:
             curator=_C(),
             profile=web_profile(),
             search=search,
+            web_search_mode="exa",
             stats=stats,
         )
         assert stats.tokens_by_source == {"llm_web": 99}

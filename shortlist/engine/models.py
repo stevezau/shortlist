@@ -695,10 +695,10 @@ class EngineConfig:
     # Which candidate sources to pool (see engine/candidates.py). Empty/default = TMDB similar only,
     # preserving legacy behaviour; owners widen recall by enabling more.
     candidate_sources: list[str] = field(default_factory=lambda: ["tmdb_similar"])
-    # How the llm_web source searches: 'native' (the provider's own web-search tool), 'exa' (the
-    # external search provider, either Exa or SearXNG — the only path for Ollama), or 'auto'
-    # (native where supported, plus whichever external is configured).
-    web_search_provider: str = "auto"
+    # Which backend the llm_web source searches with — exactly one: 'native' (the provider's own
+    # web-search tool, Claude/GPT/Gemini only), 'exa', or 'searxng'. Either external is the only path
+    # for a local Ollama model. ('auto', which unioned native with an external, was removed in 1.3.)
+    web_search_provider: str = "native"
     # Per-library placement of Shortlist's rows in Plex's Recommended shelf, keyed by section key
     # (str). Empty -> leave Plex's default order (rows land wherever they're created — last, under a
     # co-managing tool's collections). Applied at end of run, read-only against the anchor.

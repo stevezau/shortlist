@@ -39,43 +39,6 @@ describe("RecommendationsSection", () => {
     expect(screen.getByLabelText(/Trakt API key/i)).toBeInTheDocument();
   });
 
-  it("AI web search: enabling it reveals the backend picker", () => {
-    renderSection({
-      "curator.provider": "anthropic",
-      "candidates.sources": ["llm_web"],
-    });
-    expect(screen.getByRole("button", { name: /^Exa$/i })).toBeInTheDocument();
-  });
-
-  it("AI web search: choosing Exa with no key prompts for the Exa key INLINE (no dead-end)", () => {
-    renderSection({
-      "curator.provider": "anthropic",
-      "candidates.sources": ["llm_web"],
-      "llm_web.search_provider": "exa",
-    });
-    // The fix is right here — not a "go to Connections" message.
-    expect(screen.getByLabelText(/Exa API key/i)).toBeInTheDocument();
-  });
-
-  it("AI web search: no inline Exa key needed on a native-capable curator using Auto", () => {
-    renderSection({
-      "curator.provider": "anthropic",
-      "candidates.sources": ["llm_web"],
-      "llm_web.search_provider": "auto",
-    });
-    expect(screen.queryByLabelText(/Exa API key/i)).toBeNull();
-  });
-
-  it("AI web search: Exa key present → no inline prompt even in Exa mode", () => {
-    renderSection({
-      "curator.provider": "ollama",
-      "exa.apikey": "•••••",
-      "candidates.sources": ["llm_web"],
-      "llm_web.search_provider": "exa",
-    });
-    expect(screen.queryByLabelText(/Exa API key/i)).toBeNull();
-  });
-
   it("AI web search: with no curator, prompts to set one up (every backend needs a model)", () => {
     renderSection({
       "curator.provider": "none",
@@ -109,16 +72,33 @@ describe("RecommendationsSection", () => {
     expect(sources).toContain("trakt"); // kept as intent, NOT stripped for the missing key
   });
 
-  it("saves the backend choice to llm_web.search_provider", async () => {
+  it("AI web search: names the backend and sends you to Connections to change it", () => {
+    // The picker and the credential fields moved to the Connections card, so this section must not
+    // render a second copy of either — but it still has to say what the source will use.
+    renderSection({
+      "curator.provider": "ollama",
+      "candidates.sources": ["llm_web"],
+      "llm_web.search_provider": "searxng",
+      "searxng.url": "http://searx.local:8080",
+    });
+    expect(screen.getByText(/your SearXNG instance/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Exa$/i })).toBeNull();
+    expect(screen.queryByLabelText(/Exa API key/i)).toBeNull();
+  });
+
+  it("AI web search: never writes llm_web.search_provider — Connections owns it", async () => {
+    // This section PUTs its whole object on any change. While it still held a copy of the backend,
+    // saving anything here would overwrite a choice just made in Connections with stale state.
     renderSection({
       "curator.provider": "anthropic",
       "candidates.sources": ["llm_web"],
+      "llm_web.search_provider": "searxng",
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Exa$/i }));
+    fireEvent.click(screen.getByLabelText(/TMDB — discover by taste/i));
     await waitFor(() => expect(putSettings).toHaveBeenCalled());
-    expect(
-      putSettings.mock.calls.at(-1)?.[0]?.["llm_web.search_provider"],
-    ).toBe("exa");
+    expect(putSettings.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      "llm_web.search_provider",
+    );
   });
 
   it("persists the owner's intent — enabling a source saves it in candidates.sources", async () => {

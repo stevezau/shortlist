@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -132,7 +133,7 @@ def _bounded_float(low: float, high: float):
     return check
 
 
-def _url_without_credentials(value) -> str | None:
+def _url_without_credentials(value: object) -> str | None:
     """Refuse a URL carrying `user:pass@` — the value must stay safe to store and to publish.
 
     `searxng.url` is deliberately not a SECRET_KEY: it is returned in the clear so the owner can read
@@ -140,8 +141,12 @@ def _url_without_credentials(value) -> str | None:
     is exported by the support bundle. A credential in there is unrecoverable. Stripping it inside
     `SearxngClient` protects that client's error strings only — far too late for the stored value.
     """
+    # Parse the value the CONSUMERS use, which is the trimmed one (`test_connection` and
+    # `make_search_client` both strip). Parsing the raw string instead let a single leading space
+    # smuggle a password straight through: `httpx.URL(" http://u:p@h")` sees no authority at all and
+    # reports empty credentials, so the check passed and the connection still worked perfectly.
     try:
-        parsed = httpx.URL(str(value or ""))
+        parsed = httpx.URL(str(value or "").strip())
     except Exception:
         return "must be a valid URL"
     if parsed.username or parsed.password:
@@ -221,7 +226,7 @@ VALIDATORS = {
     "requests.auto_send": _is_bool,
     "candidates.sources": _known_sources,
     "rows.hub_anchor": _hub_anchors,
-    "llm_web.search_provider": _one_of("auto", "native", "exa", "searxng"),
+    "llm_web.search_provider": _one_of("native", "exa", "searxng"),
     "searxng.url": _url_without_credentials,
     "recommendations.watched_pct": _bounded_float(0.0, 1.0),
     "recommendations.freshness": _bounded_float(0.0, 1.0),
@@ -278,6 +283,7 @@ _FETCHED_URL_KEYS = (
     "requests.sonarr.url",
     "curator.ollama_url",
     "curator.openai_base_url",
+    "searxng.url",  # fetched by the Test button and by the llm_web source on every run
     # NB: `curator_models` fetches an ollama_url WITHOUT saving it, so it checks the URL itself.
     # Anything else that fetches a caller-supplied URL without going through `PUT /settings` must
     # do the same — this tuple is not the only door.
@@ -398,6 +404,10 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
                 # default expression would pin a copy of it rather than inherit it.
                 store.unset(key)
                 continue
+            if key in _FETCHED_URL_KEYS and isinstance(value, str):
+                # Store what the consumers actually fetch. A stored value that differs from the
+                # parsed one is the seam a credential smuggled itself through once already.
+                value = value.strip()
             store.set(key, value)
         if changed:
             add_audit(session, "settings.change", "info", changed=changed)
@@ -453,8 +463,13 @@ async def put_settings(update: SettingsUpdate, request: Request) -> dict:
     return result
 
 
+# A throwaway profile for the `native_search` probe: `build_web_prompt` reads only `.history` (via
+# `taste_summary`), and an empty one asks for "well-reviewed titles to watch right now" — enough to
+# prove the provider's web-search tool actually runs, without needing a real user.
+_PROBE_PROFILE = SimpleNamespace(history=[])
+
 _TESTABLE_SERVICES = frozenset(
-    {"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "searxng", "llm"}
+    {"plex", "tautulli", "tmdb", "radarr", "sonarr", "mdblist", "trakt", "exa", "searxng", "native_search", "llm"}
 )
 
 
@@ -525,6 +540,29 @@ async def test_connection(service: str, request: Request) -> dict:
                 if not api_key:
                     raise RuntimeError("An Exa API key is required for AI web search")
                 return ExaClient(api_key).ping()
+            if service == "native_search":
+                # A REAL web search, not a capability lookup. `supports_native_web_search` says the
+                # provider offers the tool; it cannot say this account's plan or model may use it.
+                # When it may not, the call fails at run time, logs a warning and returns no titles —
+                # so the source silently contributes nothing every night and nothing in the UI says
+                # so. One small live call at setup is what turns that into an answer.
+                from shortlist.engine.curator import make_curator
+                from shortlist.server.services.context_builder import curator_kwargs
+
+                curator = make_curator(get("curator.provider"), **curator_kwargs(get))
+                if not getattr(curator, "supports_native_web_search", False):
+                    raise RuntimeError(
+                        "This AI provider cannot search the web on its own — only Claude, GPT and "
+                        "Gemini can. Choose Exa or SearXNG as the search backend, or change provider."
+                    )
+                found = curator.recommend_web(_PROBE_PROFILE, [], 3)
+                if not found:
+                    raise RuntimeError(
+                        "The provider answered, but its web search returned no titles. That usually "
+                        "means the account's plan or model can't use the web-search tool. Choose Exa "
+                        "or SearXNG as the search backend instead, or switch to a model that can."
+                    )
+                return f"ok — the provider's own web search returned {len(found)} titles"
             if service == "searxng":
                 from shortlist.engine.clients.search import SearxngClient
 

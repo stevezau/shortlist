@@ -61,6 +61,8 @@ export type ConnectionField =
  */
 export function ConnectionCard({
   service,
+  testId,
+  autoTest = true,
   title,
   need = "optional",
   requires,
@@ -73,6 +75,14 @@ export function ConnectionCard({
   footnote,
 }: {
   service: TestableService;
+  /** False for a service whose probe is too expensive to run unasked. The dot then stays amber
+   *  (configured, untested) until Test is pressed. The provider's own web search is the case: its
+   *  probe performs a REAL search, so auto-running it would bill a page load. */
+  autoTest?: boolean;
+  /** Stable identity for the card. Defaults to the service, which is right for every card whose
+   *  service is fixed; the Web search card's service follows the chosen backend, so it passes its
+   *  own — it is one card either way, and tests should not have to know which backend is selected. */
+  testId?: string;
   title: string;
   /** Whether Shortlist works without this. Shown as a badge, so it is answerable at a glance
       instead of being the first clause of a paragraph on every card. */
@@ -138,14 +148,19 @@ export function ConnectionCard({
 
   // Auto-test a configured connection once when the page opens, so the dot shows real green/red
   // without the owner clicking Test on every card. Only configured services probe (nothing to test
-  // otherwise); the ref fires it a single time per mount (or the first time setup completes).
-  const autoTested = useRef(false);
+  // otherwise); it fires a single time per mount (or the first time setup completes).
+  //
+  // Tracks WHICH service it tested, not merely that it did. The Web search card's `service` follows
+  // the chosen backend, and a save fires the probe before the settings query has re-rendered the
+  // card — so a one-shot boolean left the result of testing the PREVIOUS backend on screen, showing
+  // a green "Connection OK" for an instance that was never contacted.
+  const autoTested = useRef<string | null>(null);
   useEffect(() => {
-    if (configured && !autoTested.current && !editing) {
-      autoTested.current = true;
+    if (autoTest && configured && autoTested.current !== service && !editing) {
+      autoTested.current = service;
       test.mutate();
     }
-  }, [configured, editing, test]);
+  }, [autoTest, configured, editing, service, test]);
 
   // Status dot on the logo tile: green = last test passed, red = failed, amber = configured but
   // untested, grey = nothing set. A quick scan across the cards shows what's wired up. The dot is
@@ -194,7 +209,13 @@ export function ConnectionCard({
         // opened, so the dot kept showing the old key's green while the new one went untried. That
         // is the case that matters most — someone re-entering a key precisely because the old one
         // stopped working (a lapsed Trakt VIP, a rotated token) got no signal that it still doesn't.
-        test.mutate();
+        //
+        // Clearing the marker rather than probing HERE, because a save can change which service this
+        // card even talks to (the Web search card's backend). Calling `test.mutate()` inline would
+        // use the `service` from this render — the one being replaced — and leave its verdict on
+        // screen for a backend that was never contacted. The effect re-runs once the settings query
+        // has refreshed and probes whatever is actually configured now.
+        autoTested.current = null;
       },
     });
   };
@@ -213,7 +234,7 @@ export function ConnectionCard({
   };
 
   return (
-    <Card data-testid={`connection-${service}`}>
+    <Card data-testid={testId ?? `connection-${service}`}>
       <CardHeader className="pb-3">
         {/* Wraps, and the name side may shrink: the glyph, the service name and the Set up/Test
             buttons together held the card open to 326px on a 320px screen. */}

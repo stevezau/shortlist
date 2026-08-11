@@ -29,38 +29,38 @@ const PROVIDER_OPTIONS = CURATOR_PROVIDERS.map((provider) => ({
 /** The one "Search with" choice, matching the picker on the AI web search card so the two can never
  *  disagree — they are the same setting, shown where each is useful. */
 const SEARCH_BACKENDS = [
-  { value: "auto", label: "Auto" },
   { value: "native", label: "AI provider’s own" },
   { value: "exa", label: "Exa" },
   { value: "searxng", label: "SearXNG (self-hosted)" },
 ] as const;
 
-/** Whether the card should offer `backend`'s fields for the pending choice. Auto offers both, since
- *  either would switch the source on and the owner hasn't said which they want. */
+/** Whether the card should show `backend`'s fields for the pending choice. Exactly one backend runs,
+ *  so exactly one backend's fields are ever asked for. */
 function offers(
   values: Record<string, string>,
   backend: "exa" | "searxng",
 ): boolean {
-  const chosen = values["llm_web.search_provider"] || "auto";
-  return chosen === backend || chosen === "auto";
+  return (values["llm_web.search_provider"] || "native") === backend;
 }
 
-/** Which backend the Test button should probe: the named one, or under Auto whichever is set up
- *  (SearXNG first, mirroring the engine's own preference). */
+/** Which backend the Test button probes — the one the owner chose. `native` has no external service
+ *  of its own, so it probes the AI provider's web-search tool instead (see the `native_search` case
+ *  in the settings API): inferring "Claude can search" from the provider name is not the same as
+ *  that account actually being allowed to. */
 function testableSearchService(settings: Settings): TestableService {
-  const chosen = settingString(settings, "llm_web.search_provider") || "auto";
-  if (chosen === "exa" || chosen === "searxng") return chosen;
-  return hasSearxng(settings) ? "searxng" : "exa";
+  const chosen = settingString(settings, "llm_web.search_provider") || "native";
+  return chosen === "exa" || chosen === "searxng" ? chosen : "native_search";
 }
 
 /** The collapsed card's one-line state: which backend is in play and how it's configured. */
 function searchSummary(settings: Settings): string {
-  const chosen = settingString(settings, "llm_web.search_provider") || "auto";
-  if (chosen === "native") return "Your AI provider’s own web search";
-  if (hasSearxng(settings) && chosen !== "exa")
-    return `SearXNG · ${settingString(settings, "searxng.url")}`;
-  if (hasExa(settings) && chosen !== "searxng") return "Exa · API key saved";
-  return "";
+  const chosen = settingString(settings, "llm_web.search_provider") || "native";
+  if (chosen === "searxng")
+    return hasSearxng(settings)
+      ? `SearXNG · ${settingString(settings, "searxng.url")}`
+      : "";
+  if (chosen === "exa") return hasExa(settings) ? "Exa · API key saved" : "";
+  return "Your AI provider’s own web search";
 }
 
 /** "Last run: 46 web searches" — a spend proxy, since neither backend exposes a live quota, so the
@@ -69,8 +69,15 @@ function searchSummary(settings: Settings): string {
  *  Deliberately does NOT say "billed": the counter records searches by WHICHEVER backend that run
  *  used, while the backend shown here is whatever is configured NOW. Someone who has just switched
  *  SearXNG → Exa would otherwise see a bill claimed for searches that were free. */
-function searchFootnote(lastSearches: number | undefined): string | undefined {
-  if (lastSearches == null) return undefined;
+function searchFootnote(
+  settings: Settings,
+  lastSearches: number | undefined,
+): string | undefined {
+  // Only where an external backend is actually set up. `run_persistence` always writes
+  // `exa_searches`, so without this a native-only (Claude) server reads "Last run: 0 web searches"
+  // while its provider searched all night, and a server that removed its backend keeps showing the
+  // count from before.
+  if (lastSearches == null || !hasExternalSearch(settings)) return undefined;
   return `Last run: ${lastSearches.toLocaleString()} web search${lastSearches === 1 ? "" : "es"}`;
 }
 
@@ -322,6 +329,9 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
         />
         <ConnectionCard
           service={testableSearchService(settings)}
+          testId="connection-websearch"
+          // The native probe runs a real web search, so it is never fired unasked.
+          autoTest={testableSearchService(settings) !== "native_search"}
           title="Web search"
           purpose="The optional web-search source looks up what to watch next, then keeps only titles already in your library. Claude, GPT and Gemini can search on their own; any other provider — including a local Ollama — searches through Exa or your own SearXNG."
           next="You only need ONE of them. Exa is hosted and takes a free-tier key; SearXNG runs on your own hardware and costs nothing."
@@ -362,7 +372,7 @@ export function ConnectionsSection({ settings }: { settings: Settings }) {
               showIf: (v) => offers(v, "searxng"),
             },
           ]}
-          footnote={searchFootnote(lastFinishedRun?.stats?.exa_searches)}
+          footnote={searchFootnote(settings, lastFinishedRun?.stats?.exa_searches)}
         />
       </div>
       {/* Required by the TMDB API terms of use whenever their data is displayed. */}

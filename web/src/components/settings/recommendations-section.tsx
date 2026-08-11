@@ -32,10 +32,11 @@ import {
   RECENCY_DEFAULT,
   WATCHED_PCT_DEFAULT,
 } from "@/lib/constants";
-import { hasTrakt, SOURCES, webSearchProvider } from "@/lib/sources";
+import { hasTrakt, SOURCES } from "@/lib/sources";
 import type { Settings } from "@/lib/types";
 
-// Every source except AI web search — that one gets its own card (backend choice + inline key).
+// Every source except AI web search — that one gets its own card (its toggle plus what it costs;
+// the backend it searches with lives on the Connections card).
 const SIMPLE_SOURCES = SOURCES.filter((s) => s.id !== "llm_web");
 
 function readSources(settings: Settings): string[] {
@@ -102,9 +103,6 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
     const value = Number(settings["recommendations.max_seeds"]);
     return Number.isFinite(value) ? Math.min(100, Math.max(5, value)) : 30;
   });
-  const [searchBackend, setSearchBackend] = useState<string>(() =>
-    webSearchProvider(settings),
-  );
   const [minHistory, setMinHistory] = useState<number>(() => {
     const value = Number(settings["recommendations.min_history"]);
     return Number.isFinite(value) ? Math.min(100, Math.max(1, value)) : 10;
@@ -135,7 +133,6 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       recency,
       recentCount,
       maxSeeds,
-      searchBackend,
       ratingSource,
       minHistory,
       coldStart,
@@ -154,7 +151,6 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
       "recommendations.recent_count": recentCount,
       "recommendations.max_seeds": maxSeeds,
       "recommendations.rating_source": ratingSource,
-      "llm_web.search_provider": searchBackend,
     }),
   );
 
@@ -248,8 +244,6 @@ export function RecommendationsSection({ settings }: { settings: Settings }) {
           settings={settings}
           enabled={enabled.includes("llm_web")}
           onToggle={() => toggle("llm_web")}
-          backend={searchBackend}
-          onBackendChange={setSearchBackend}
         />
       </div>
 

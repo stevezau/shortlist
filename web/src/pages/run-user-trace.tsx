@@ -1181,7 +1181,7 @@ function WebSourceCard({
   const kept =
     [...fateByTitle.values()].filter((f) => f === "kept").length ||
     (source?.disposition?.kept ?? 0);
-  const mech = webMechanism(web?.mode ?? "", searches.length > 0);
+  const mech = webMechanism(web?.mode ?? "", searches.length > 0, web?.provider);
   // Exa bills per search, so a title many users watched is searched once and reused from a shared
   // cache for the rest. Surface how many actually hit Exa vs came back cached — it's the difference
   // between a costly run and a cheap one.

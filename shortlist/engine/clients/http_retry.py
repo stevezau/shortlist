@@ -68,7 +68,7 @@ _EXTRA_SECRETS: tuple[tuple[re.Pattern[str], str], ...] = (
     # for `searxng.url`, but a URL reaches logs and `events` rows from plenty of other places, so the
     # password is stripped here too. Only the secret half goes — the user and host stay readable, so
     # the line still says which service failed.
-    (re.compile(r"\b(https?://[^/\s:@]+):[^/\s@]+@"), r"\1:REDACTED@"),
+    (re.compile(r"\b(https?://[^/\s:@]+):[^/\s@]+@", re.I), r"\1:REDACTED@"),
     # Plex tokens are 20-char alnum; catch the bare `token=`/`X-Plex-Token` path form too.
     (re.compile(r"(plex\.direct[^\s]*?token[=/])[A-Za-z0-9_\-]+", re.I), r"\1REDACTED"),
 )
