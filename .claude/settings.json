@@ -23,5 +23,8 @@
       "Read(./config/**)",
       "Read(CLAUDE.local.md)"
     ]
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true
   }
 }
