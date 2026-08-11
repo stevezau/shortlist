@@ -47,7 +47,8 @@ works with **any** provider, including a local Ollama, llama.cpp or LM Studio se
 access of its own. A local model that could never search the web still gets to recommend from current
 web results.
 
-You choose the search backend on the "AI web search" card:
+You choose the search backend in **Settings → Connections → Web search**, which is also where
+that backend's credentials live:
 
 | Backend                             | Works with                                 | Trade-off                                              |
 | ----------------------------------- | ------------------------------------------ | ------------------------------------------------------ |

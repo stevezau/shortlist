@@ -130,9 +130,9 @@ export function sourceBlockedReason(
       return "Needs an AI provider to choose titles from the results — set one up in Connections first.";
     const mode = webSearchProvider(settings);
     if (mode === "exa")
-      return "Needs an Exa API key — add it in Connections, or switch the search backend to Auto.";
+      return "Needs an Exa API key — add it in Connections, or switch the search backend there to SearXNG or your AI provider's own.";
     if (mode === "searxng")
-      return "Needs the address of your SearXNG instance — add it in Connections, or switch the search backend to Auto.";
+      return "Needs the address of your SearXNG instance — add it in Connections, or switch the search backend there to Exa or your AI provider's own.";
     return "Needs Claude, GPT, or Gemini — Ollama can't web-search. Change your AI provider in Connections, or switch the search backend there to Exa or your own SearXNG.";
   }
   return null;

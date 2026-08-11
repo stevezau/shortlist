@@ -348,13 +348,12 @@ Candidate sources are set globally (`candidates.sources`) and can be overridden 
 (`collections.candidate_sources`, `[]` = inherit the global set; valid values: `tmdb_similar`,
 `tmdb_discover`, `trakt`, `llm_web`). `llm_web` proposes titles to watch next from a
 live web search, each resolved via TMDB search then library-verified. It works on **every** AI
-provider via `llm_web.search_provider`: `native` uses the provider's own web-search tool (Claude,
-GPT, or Gemini), `exa` uses the hosted Exa API (`exa.apikey`), `searxng` uses your own SearXNG
-instance (`searxng.url`) and keeps the whole search on your hardware, and `auto` (the default) UNIONS
-the provider's own tool with ONE external backend when both are set up (they surface mostly different
-titles, so the pool is widest), else whichever one is available. Either external backend is a path
-for a local model, which cannot search on its own. `auto` never unions two external backends — they
-would answer the identical query twice — and prefers SearXNG when both are configured. When a
+provider via `llm_web.search_provider`, which names exactly ONE backend: `native` (the default) uses
+the provider's own web-search tool (Claude, GPT, or Gemini), `exa` uses the hosted Exa API
+(`exa.apikey`), and `searxng` uses your own SearXNG instance (`searxng.url`). Either external backend
+is a path for a local model, which cannot search on its own. Only the named backend runs, so a title
+is never searched — or billed — twice. A fourth value, `auto` (native unioned with an external), was
+removed in 1.3; migration 0063 pins every install to the backend it was actually using. When a
 source's dependency is missing, the Settings UI keeps the toggle usable but shows an inline fix
 (enter the key right there, or set up an AI provider). It never reads as on while silently doing nothing.
 

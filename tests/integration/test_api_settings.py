@@ -474,9 +474,32 @@ class TestSettingsApi:
             "shortlist.engine.curator.anthropic.AnthropicCurator.recommend_web",
             lambda self, profile, seeds, k: [],
         )
+        # The provider itself is healthy — so an empty result really is the web-search tool.
+        monkeypatch.setattr("shortlist.engine.curator.anthropic.AnthropicCurator.ping", lambda self: "pong")
         body = client.post("/api/settings/test/native_search").json()
         assert body["ok"] is False
         assert "Exa" in body["message"] and "SearXNG" in body["message"]  # names the way out
+
+    def test_native_search_test_reports_a_failed_call_as_a_failed_call(self, client: TestClient, monkeypatch):
+        """All three native curators swallow provider errors and return `[]`, so an empty list means
+        EITHER "the search found nothing" OR "the call failed". Reading it as the former told an
+        owner with a revoked key to go and sign up for a paid search vendor — on the one button whose
+        whole purpose is telling them what is actually wrong."""
+        client.put("/api/settings", json={"values": {"curator.provider": "anthropic", "curator.api_key": "k"}})
+        monkeypatch.setattr(
+            "shortlist.engine.curator.anthropic.AnthropicCurator.recommend_web",
+            lambda self, profile, seeds, k: [],
+        )
+
+        def _boom(self):
+            raise RuntimeError("401 invalid x-api-key")
+
+        monkeypatch.setattr("shortlist.engine.curator.anthropic.AnthropicCurator.ping", _boom)
+
+        body = client.post("/api/settings/test/native_search").json()
+        assert body["ok"] is False
+        assert "invalid x-api-key" in body["message"]  # the real cause
+        assert "Exa" not in body["message"]  # NOT "go and buy a search vendor"
 
     def test_native_search_test_refuses_a_provider_that_cannot_search(self, client: TestClient):
         client.put("/api/settings", json={"values": {"curator.provider": "ollama"}})

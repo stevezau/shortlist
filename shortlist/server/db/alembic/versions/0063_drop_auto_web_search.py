@@ -86,7 +86,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Auto is gone from the application, so restoring the literal value would leave a setting no
-    # validator accepts. Removing the row lets `DEFAULTS` supply whatever the running version's
-    # default is, which is the only value guaranteed to be legal on the version downgraded to.
-    op.get_bind().execute(sa.text("DELETE FROM settings WHERE key = :k"), {"k": _KEY})
+    """Undo only what `upgrade` could have WRITTEN, never a choice it left alone.
+
+    Removing the row unconditionally destroyed values this migration never touched: an install that
+    had explicitly chosen `native` while holding an Exa key came back with no row, fell to 0062's
+    `auto` default, and silently resumed Exa searches (and billing) on its next run.
+
+    So only the two values upgrade can write are cleared, which returns those installs to 0062's
+    `auto`. `native` is deliberately NOT cleared — it was a legal value on 0062 too, so an explicit
+    one there is the owner's, not ours.
+    """
+    op.get_bind().execute(
+        sa.text("DELETE FROM settings WHERE key = :k AND value IN (:exa, :searxng)"),
+        {"k": _KEY, "exa": json.dumps({"v": "exa"}), "searxng": json.dumps({"v": "searxng"})},
+    )

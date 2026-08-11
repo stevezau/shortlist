@@ -117,16 +117,24 @@ export function AiWebSearchCard({
               <p className="font-medium text-foreground">
                 How much it searches
               </p>
-              <p>
-                On a row&rsquo;s refresh night it runs one search per recent
-                watch, as many as{" "}
-                <a href="#recent-count" className="font-medium underline">
-                  {RECENT_COUNT_LABEL}
-                </a>{" "}
-                allows (default 10). Results are cached for two weeks and shared
-                across everyone, so a popular title is searched once for the
-                whole server — not once per person.
-              </p>
+              {backend === "native" ? (
+                <p>
+                  Your AI provider searches as part of one call per person, so
+                  there is no separate search to count, cap or cache — the cost
+                  shows up as AI tokens rather than as searches.
+                </p>
+              ) : (
+                <p>
+                  On a row&rsquo;s refresh night it runs one search per recent
+                  watch, as many as{" "}
+                  <a href="#recent-count" className="font-medium underline">
+                    {RECENT_COUNT_LABEL}
+                  </a>{" "}
+                  allows (default 10). Results are cached for two weeks and
+                  shared across everyone, so a popular title is searched once for
+                  the whole server — not once per person.
+                </p>
+              )}
               {backend === "exa" && (
                 <p>
                   Exa&rsquo;s free tier covers roughly 1,000 searches a month —

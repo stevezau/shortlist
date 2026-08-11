@@ -557,6 +557,13 @@ async def test_connection(service: str, request: Request) -> dict:
                     )
                 found = curator.recommend_web(_PROBE_PROFILE, [], 3)
                 if not found:
+                    # Every native curator catches provider errors and returns `[]`, so an empty list
+                    # means EITHER "found nothing" OR "the call failed" — indistinguishable here. A
+                    # plain completion tells them apart: if it raises, the fault is the provider (a
+                    # revoked key, a bad model, no outbound route) and THAT is what to report.
+                    # Blaming the web-search tool would send someone with an expired key off to sign
+                    # up for a paid search vendor, on the one button meant to diagnose them.
+                    curator.ping()
                     raise RuntimeError(
                         "The provider answered, but its web search returned no titles. That usually "
                         "means the account's plan or model can't use the web-search tool. Choose Exa "

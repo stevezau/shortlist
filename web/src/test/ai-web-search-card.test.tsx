@@ -93,6 +93,19 @@ describe("AiWebSearchCard", () => {
     expect(screen.getByText(/cost nothing/i)).toBeInTheDocument();
   });
 
+  it("does not describe per-watch searching on the provider's own backend", () => {
+    // That paragraph (one search per recent watch, capped, cached 14 days, shared server-wide) is
+    // only true of the external path. `native` is the DEFAULT now, so it is what most owners read.
+    renderCard({ ...CLAUDE, "llm_web.search_provider": "native" });
+    expect(screen.queryByText(/one search per recent/)).not.toBeInTheDocument();
+    expect(screen.getByText(/no separate search to count/)).toBeInTheDocument();
+  });
+
+  it("does describe it on an external backend, where it is true", () => {
+    renderCard({ ...OLLAMA, ...SEARX, "llm_web.search_provider": "searxng" });
+    expect(screen.getByText(/one search per recent/)).toBeInTheDocument();
+  });
+
   it("shows none of the detail while the source is switched off", () => {
     renderCard(
       { ...OLLAMA, ...SEARX, "llm_web.search_provider": "searxng" },

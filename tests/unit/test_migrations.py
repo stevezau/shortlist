@@ -586,9 +586,15 @@ class TestDroppingTheAutoWebSearchBackend:
         assert self._provider(tmp_path) == "searxng"
 
     def test_a_configured_exa_key_wins_when_there_is_no_searxng(self, tmp_path: Path):
+        """The key is written ENCRYPTED, which is the only shape a real database holds — `exa.apikey`
+        is a SECRET_KEY, so production stores a Fernet token, never plaintext. The migration only
+        tests it for non-emptiness, and this is what proves that holds against the real shape rather
+        than a friendlier one (0032 was a no-op on every real database for exactly this reason)."""
+        from shortlist.server.services.secrets import SecretBox
+
         command.upgrade(_alembic(tmp_path), "0062")
         _write_setting(tmp_path, "llm_web.search_provider", "auto")
-        _write_setting(tmp_path, "exa.apikey", "exa-key")
+        _write_setting(tmp_path, "exa.apikey", SecretBox(tmp_path).encrypt("exa-key"))
 
         run_migrations(tmp_path)
 
@@ -632,3 +638,36 @@ class TestDroppingTheAutoWebSearchBackend:
         run_migrations(tmp_path)
 
         assert self._provider(tmp_path) == "native"
+
+    def test_the_downgrade_leaves_a_choice_it_never_made(self, tmp_path: Path):
+        """An explicit `native` was legal on 0062 too, so it belongs to the owner. Deleting it sent
+        the install back to 0062's `auto` default — which, with an Exa key on file, silently resumed
+        Exa searches and billing on the next run."""
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "native")
+        _write_setting(tmp_path, "exa.apikey", "exa-key")
+        run_migrations(tmp_path)
+
+        command.downgrade(_alembic(tmp_path), "0062")
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            row = con.execute("SELECT value FROM settings WHERE key = 'llm_web.search_provider'").fetchone()
+        finally:
+            con.close()
+        assert row is not None and json.loads(row[0])["v"] == "native"
+
+    def test_the_downgrade_does_clear_what_the_upgrade_pinned(self, tmp_path: Path):
+        command.upgrade(_alembic(tmp_path), "0062")
+        _write_setting(tmp_path, "llm_web.search_provider", "auto")
+        _write_setting(tmp_path, "searxng.url", "http://searx.local:8080")
+        run_migrations(tmp_path)
+
+        command.downgrade(_alembic(tmp_path), "0062")
+
+        con = sqlite3.connect(tmp_path / "shortlist.db")
+        try:
+            row = con.execute("SELECT value FROM settings WHERE key = 'llm_web.search_provider'").fetchone()
+        finally:
+            con.close()
+        assert row is None  # back to 0062's own default
