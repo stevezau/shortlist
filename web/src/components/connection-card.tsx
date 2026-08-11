@@ -1,8 +1,9 @@
 import { useMutation } from "@tanstack/react-query";
-import { ExternalLink, PlugZap, Trash2 } from "lucide-react";
+import { ExternalLink, PlugZap, Trash2, TriangleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 import { Segmented } from "@/components/segmented";
+import { Badge } from "@/components/ui/badge";
 import { TestResult } from "@/components/test-result";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,8 +61,13 @@ export type ConnectionField =
  */
 export function ConnectionCard({
   service,
+  testId,
+  autoTest = true,
   title,
+  need = "optional",
+  requires,
   purpose,
+  next,
   glyph,
   settings,
   fields,
@@ -69,9 +75,27 @@ export function ConnectionCard({
   footnote,
 }: {
   service: TestableService;
+  /** False for a service whose probe is too expensive to run unasked. The dot then stays amber
+   *  (configured, untested) until Test is pressed. The provider's own web search is the case: its
+   *  probe performs a REAL search, so auto-running it would bill a page load. */
+  autoTest?: boolean;
+  /** Stable identity for the card. Defaults to the service, which is right for every card whose
+   *  service is fixed; the Web search card's service follows the chosen backend, so it passes its
+   *  own — it is one card either way, and tests should not have to know which backend is selected. */
+  testId?: string;
   title: string;
-  /** Plain-English, non-technical explanation of what this connection is for. */
+  /** Whether Shortlist works without this. Shown as a badge, so it is answerable at a glance
+      instead of being the first clause of a paragraph on every card. */
+  need?: "required" | "optional";
+  /** A cost or precondition worth seeing BEFORE going to get a key — "Needs paid Trakt VIP". Given
+      its own warning-toned line, because buried mid-sentence is exactly how someone ends up hunting
+      for a key they cannot create (issue #73). */
+  requires?: string;
+  /** What the service is and what Shortlist does with it. One or two sentences. */
   purpose: string;
+  /** What to do once it is connected, or when it matters — kept out of `purpose` so the card reads
+      as "what is this" then "what do I do", rather than one undifferentiated block. */
+  next?: string;
   /** The service's brand mark, shown in the logo tile. */
   glyph: ReactNode;
   settings: Settings;
@@ -124,14 +148,19 @@ export function ConnectionCard({
 
   // Auto-test a configured connection once when the page opens, so the dot shows real green/red
   // without the owner clicking Test on every card. Only configured services probe (nothing to test
-  // otherwise); the ref fires it a single time per mount (or the first time setup completes).
-  const autoTested = useRef(false);
+  // otherwise); it fires a single time per mount (or the first time setup completes).
+  //
+  // Tracks WHICH service it tested, not merely that it did. The Web search card's `service` follows
+  // the chosen backend, and a save fires the probe before the settings query has re-rendered the
+  // card — so a one-shot boolean left the result of testing the PREVIOUS backend on screen, showing
+  // a green "Connection OK" for an instance that was never contacted.
+  const autoTested = useRef<string | null>(null);
   useEffect(() => {
-    if (configured && !autoTested.current && !editing) {
-      autoTested.current = true;
+    if (autoTest && configured && autoTested.current !== service && !editing) {
+      autoTested.current = service;
       test.mutate();
     }
-  }, [configured, editing, test]);
+  }, [autoTest, configured, editing, service, test]);
 
   // Status dot on the logo tile: green = last test passed, red = failed, amber = configured but
   // untested, grey = nothing set. A quick scan across the cards shows what's wired up. The dot is
@@ -172,7 +201,23 @@ export function ConnectionCard({
       }
       payload[field.key] = value;
     }
-    save.mutate(payload, { onSuccess: () => setEditing(false) });
+    save.mutate(payload, {
+      onSuccess: () => {
+        setEditing(false);
+        // Test what was just saved. The auto-test above fires once per mount, so it covers a
+        // FIRST-time setup but not a REPLACED key: the card was already configured when the page
+        // opened, so the dot kept showing the old key's green while the new one went untried. That
+        // is the case that matters most — someone re-entering a key precisely because the old one
+        // stopped working (a lapsed Trakt VIP, a rotated token) got no signal that it still doesn't.
+        //
+        // Clearing the marker rather than probing HERE, because a save can change which service this
+        // card even talks to (the Web search card's backend). Calling `test.mutate()` inline would
+        // use the `service` from this render — the one being replaced — and leave its verdict on
+        // screen for a backend that was never contacted. The effect re-runs once the settings query
+        // has refreshed and probes whatever is actually configured now.
+        autoTested.current = null;
+      },
+    });
   };
 
   const clear = () => {
@@ -189,7 +234,7 @@ export function ConnectionCard({
   };
 
   return (
-    <Card data-testid={`connection-${service}`}>
+    <Card data-testid={testId ?? `connection-${service}`}>
       <CardHeader className="pb-3">
         {/* Wraps, and the name side may shrink: the glyph, the service name and the Set up/Test
             buttons together held the card open to 326px on a 320px screen. */}
@@ -269,7 +314,24 @@ export function ConnectionCard({
               </div>
             ))}
         </CardTitle>
-        <CardDescription>{purpose}</CardDescription>
+        {/* Four separate things, four separate lines: is it needed, what does it cost, what is it,
+            what do I do next. As one paragraph they all read at the same weight, and the one that
+            stops you (a paid subscription) was the easiest to skim past. */}
+        <CardDescription className="space-y-2">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <Badge variant={need === "required" ? "default" : "secondary"}>
+              {need === "required" ? "Required" : "Optional"}
+            </Badge>
+            {requires && (
+              <Badge variant="warning">
+                <TriangleAlert aria-hidden className="h-3 w-3" />
+                {requires}
+              </Badge>
+            )}
+          </span>
+          <span className="block">{purpose}</span>
+          {next && <span className="block">{next}</span>}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {editing ? (

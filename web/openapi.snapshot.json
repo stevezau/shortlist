@@ -595,6 +595,19 @@
           "poster": {
             "$ref": "#/components/schemas/PosterIn"
           },
+          "recency": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recency"
+          },
           "recent_count": {
             "anyOf": [
               {
@@ -841,6 +854,17 @@
           "poster": {
             "$ref": "#/components/schemas/PosterOut"
           },
+          "recency": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recency"
+          },
           "recent_count": {
             "anyOf": [
               {
@@ -917,6 +941,7 @@
           "rewatch",
           "unstarted_only",
           "freshness",
+          "recency",
           "recent_count",
           "max_seeds",
           "cold_start",
@@ -2261,6 +2286,17 @@
             "title": "Rank",
             "type": "integer"
           },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -2286,6 +2322,17 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
           }
         },
         "required": [
@@ -4999,6 +5046,17 @@
             "title": "Rank",
             "type": "integer"
           },
+          "rating": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rating"
+          },
           "reason": {
             "title": "Reason",
             "type": "string"
@@ -5028,6 +5086,17 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
           }
         },
         "required": [
@@ -5040,7 +5109,9 @@
           "section_key",
           "seed_title",
           "sources",
-          "affinity"
+          "affinity",
+          "year",
+          "rating"
         ],
         "title": "UserPickOut",
         "type": "object"
@@ -5750,7 +5821,7 @@
   },
   "info": {
     "title": "Shortlist",
-    "version": "1.2.1"
+    "version": "1.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -7176,7 +7247,7 @@
     },
     "/api/runs/{run_id}/cancel": {
       "post": {
-        "description": "Ask the in-flight run to stop. Cooperative \u2014 it finishes the person it's on, then stops, and\nstill merges the privacy filters + promotes everyone delivered so far. 409 if it isn't running.",
+        "description": "Ask the in-flight run to stop. Cooperative \u2014 it finishes the person it's on, then stops, and\nstill merges the privacy filters + promotes everyone delivered so far.\n\nIdempotent: asking twice succeeds, because a run that is already stopping is the state the caller\nwanted. Only a run this process isn't executing at all gets the 409 \u2014 which is what that message\nhas always claimed and, until the second press stopped being an error, frequently was not.",
         "operationId": "cancel_run_api_runs__run_id__cancel_post",
         "parameters": [
           {
@@ -8507,6 +8578,30 @@
           }
         },
         "summary": "Suggestions",
+        "tags": [
+          "support"
+        ]
+      }
+    },
+    "/api/support/surfaces": {
+      "get": {
+        "description": "Where every Shortlist row is ACTUALLY showing on the server, versus where it should be.\n\nThe gap this closes: rows are hidden from other people by share filters, but the server OWNER has\nno share filter (plex-safety rule 5), so the only thing keeping somebody else's row off the\nowner's Home screen is the row's own ``promotedToOwnHome`` flag. Nothing reported those flags, so\n\"the admin can see another user's row\" was uninvestigable (issue #75).\n\nTwo things are checked, and they are different in kind:\n\n* An INVARIANT \u2014 a per-person row that is not the owner's must never claim the owner's Home.\n  No configuration makes that correct, so a violation is always a bug.\n* A CONSEQUENCE \u2014 the Recommended shelf is one flag per collection, and the owner has no filter,\n  so a row set to show on friends' library shelves also appears on the OWNER's. That is a Plex\n  limitation (see `RowSpec.show_friends_library`), so it is reported as an explanation, not a\n  fault: the fix is a settings change, not a code change.",
+        "operationId": "surfaces_api_support_surfaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Surfaces Api Support Surfaces Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Surfaces",
         "tags": [
           "support"
         ]

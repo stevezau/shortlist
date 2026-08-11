@@ -642,14 +642,33 @@ function ReportBody({
 
         <Section
           title="Picks that get watched"
-          hint={`Of the picks delivered, the share watched within ${landing.matured_days} days.`}
+          hint={`Are the recommendations any good? This is the share of delivered picks someone actually watched, within ${landing.matured_days} days of the pick landing.`}
         >
           {landing.rate === null ? (
+            // Say what it is waiting FOR and when it arrives — not the rule and a cutoff date the
+            // reader has to invert. "Needs picks delivered before <date>" reads as though it wants
+            // OLD picks; what it actually needs is for the picks it has to get older.
             <p className="text-sm text-muted-foreground">
-              Not enough time has passed. A pick only counts as watched within{" "}
-              {landing.matured_days} days of delivery, so this needs picks
-              delivered at least {landing.matured_days} days ago — try a longer
-              window.
+              Not enough time yet. Every pick gets {landing.matured_days} days to
+              be watched before it counts, so a fair score needs picks that have
+              had their full {landing.matured_days} days.{" "}
+              {report.first_pick ? (
+                <>
+                  Your first picks landed{" "}
+                  {formatDate(report.first_pick as string, { dateOnly: true })}, so
+                  this starts showing a score around{" "}
+                  {formatDate(
+                    new Date(
+                      new Date(report.first_pick as string).getTime() +
+                        landing.matured_days * 86400000,
+                    ).toISOString(),
+                    { dateOnly: true },
+                  )}
+                  .
+                </>
+              ) : (
+                <>It appears once your earliest picks reach that age.</>
+              )}
             </p>
           ) : (
             <div className="space-y-1.5">

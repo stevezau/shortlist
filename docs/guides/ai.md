@@ -47,29 +47,72 @@ works with **any** provider, including a local Ollama, llama.cpp or LM Studio se
 access of its own. A local model that could never search the web still gets to recommend from current
 web results.
 
-You choose the search backend on the "AI web search" card:
+You choose the search backend in **Settings → Connections → Web search**, which is also where
+that backend's credentials live:
 
-| Backend                        | Works with                          | Trade-off                                              |
-| ------------------------------ | ----------------------------------- | ------------------------------------------------------ |
-| Your provider's own web search | Claude, GPT, Gemini only            | No extra signup, but unavailable on local models       |
-| [Exa](https://exa.ai) key      | **Every provider, local included**  | One extra free-tier signup                             |
-| **Auto** (default)             | Both, combined when both are set up | Widest coverage. They find noticeably different titles |
+| Backend                             | Works with                                 | Trade-off                                              |
+| ----------------------------------- | ------------------------------------------ | ------------------------------------------------------ |
+| Your provider's own web search      | Claude, GPT, Gemini only                   | No extra signup, but unavailable on local models       |
+| [Exa](https://exa.ai) key           | **Every provider, local included**         | One extra free-tier signup; billed per search          |
+| [SearXNG](https://docs.searxng.org) | **Every provider, local included**         | Free and fully self-hosted; you run and maintain it    |
 
-**Why an Exa key is worth adding**, even when your provider can already search:
+**Why adding an external backend is worth it**, even when your provider can already search:
 
-[Exa](https://exa.ai) is a search engine built for AI to read rather than for people to browse. It
-returns ranked results with the relevant text already pulled out, so the model spends its effort
-judging films instead of wading through web pages. In practice that buys you four things:
+Exa is a search engine built for AI to read rather than for people to browse, and SearXNG is a
+metasearch engine you host yourself that forwards queries to ordinary search engines. Either way
+Shortlist does the searching and hands the findings to your model, which buys you four things:
 
-1. **It's the only option that works with a local model.** An Ollama or LM Studio server on your own
-   hardware has no way to reach the internet. With Exa, Shortlist does the searching and hands over
-   the findings, so a fully offline model still recommends current titles.
+1. **It's the only kind of backend that works with a local model.** An Ollama or LM Studio server on your own
+   hardware has no way to reach the internet. With Exa or SearXNG, Shortlist does the searching and
+   hands over the findings, so a fully offline model still recommends current titles.
 2. **Your results stop depending on which AI you picked.** Switch from Claude to a cheap local model
    and the search half stays identical. Only the choosing changes.
 3. **The cost is predictable.** Exa bills per search rather than per word, and those searches are
-   reported separately from AI tokens. Results are reused for 14 days and shared across everyone on
-   the server, so a popular film is looked up once, not once per person.
-4. **Auto gives you both.** Left on the default with both configured, Shortlist combines the two.
+   reported separately from AI tokens. SearXNG costs nothing at all. Results are reused for 14 days
+   and shared across everyone on the server, so a popular film is looked up once, not once per person.
+4. **It is one clear choice.** Shortlist searches with exactly the backend you pick and no other, so
+   a title is never searched — or billed — twice.
+
+### Exa or SearXNG?
+
+Both work with every provider, and both were measured end-to-end against the same watch history.
+
+- **Exa** returns extracted page text — roughly 800 characters per result — so the model reads more
+  about each title. It needs no infrastructure, and the free tier covers about 1,000 searches a
+  month. It bills per search beyond that.
+- **SearXNG** returns the underlying search engines' snippets, a couple of hundred characters each,
+  so Shortlist pulls twice as many results per search to compensate. Nothing leaves your server
+  except the queries SearXNG itself forwards, there is no account or key, and it costs nothing. In
+  testing it was also *faster*, and its smaller results made the AI call noticeably cheaper.
+
+Pick SearXNG if you already self-host and want no third-party account; pick Exa if you'd rather not
+run another service. Only the backend you pick is used, so configuring one never quietly starts
+the other.
+
+**Setting SearXNG up.** Shortlist talks to its JSON API, which is **off in a stock install**. Add
+`json` to `search.formats` in SearXNG's `settings.yml` and restart it:
+
+```yaml
+search:
+  formats:
+    - html
+    - json
+```
+
+Without that, SearXNG answers Shortlist with a `403` and the source finds nothing. Shortlist's
+**Test** button says exactly this if it happens. If your instance also has its bot `limiter` on,
+allow Shortlist's address through, or it may be rate-limited.
+
+**What SearXNG actually does.** It has no index of its own — it is a metasearch proxy. Each query is
+forwarded to real search engines, and their results are merged, deduplicated and re-ranked. So your
+queries do leave your network; what you avoid is a third-party account, an API key tying searches to
+your identity, and a per-search bill.
+
+That also means its reliability is only as good as those upstream engines' tolerance for a
+self-hosted instance. On a test instance, one search returned 20 results from Google while Brave was
+rate-limiting and DuckDuckGo and Startpage both served CAPTCHAs — normal, and fine as long as at
+least one engine answers. If none do, **Test** reports which engines failed rather than a blank
+"no results", so you can enable different ones in SearXNG's own settings.
    They reliably surface different films, so coverage is wider than either alone.
 
 It is entirely optional. Leave it empty and everything still works. You are just limited to your
@@ -101,11 +144,11 @@ cheapest-to-priciest levers:
    is plenty. You don't need a flagship model to read a few search results.
 4. **Run less often.** Nightly is the default. A longer schedule means fewer runs and fewer searches.
 5. **Use a local model.** An Ollama or LM Studio server on your own hardware costs nothing per run.
-   This needs an Exa key, since a local model can't search the web itself. See
+   This needs Exa or SearXNG, since a local model can't search the web itself. See
    [the backend table above](#the-source-that-uses-ai).
 
 **Seeing where the tokens go.** Every run records its AI cost, so there is no guessing. Open a run
 (Runs → click a run) and you'll see the **total AI tokens** for that run, then a per-person breakdown
-by what the AI did, plus any **Exa searches**. Those are counted separately, since Exa bills per
-search rather than per token. The runs list shows each run's token total at a glance. Use it to spot
+by what the AI did, plus any **web searches**. Those are counted separately, since a search is
+billed (or rate-limited) per request rather than per token. The runs list shows each run's token total at a glance. Use it to spot
 which people cost the most, then tune with the levers above.

@@ -2232,3 +2232,132 @@ class TestTrustIsJudgedPerPersonNotPerRow:
                 assert watch["title"] not in seeds, f"trace calls {watch['title']} blocked, but it seeded"
             elif watch["title"] in ("Show 01",):
                 assert watch["title"] in seeds, "trace stayed silent about a title the run kept — consistent"
+
+
+class TestLabelReadsAgainstTheRealServerShape:
+    """The label read is the whole of Shortlist's identity model, and until now nothing exercised the
+    path production actually takes.
+
+    A real PMS returns NO `<Label>` children in the collections listing (recorded in
+    `tests/fixtures/pms_collections_listing.json`); they arrive only because plexapi silently re-reads
+    each collection behind `collection.labels`. The fake used to serve them inline, so every test
+    proved label identity against a server shape Plex does not produce. These drive the real
+    implementations through the corrected fake — no mocking of our own helpers.
+    """
+
+    def test_the_listing_really_does_not_carry_labels(self, fakes):
+        """The premise. If this ever fails, the fake has drifted back to being easier than Plex."""
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        section = plex.sections()[0]
+        state.collections[9101] = FakeCollection(
+            rating_key=9101, title="✨ Movies Picked for You", section_id=section.key, labels=["Shortlist_mike"]
+        )
+        import xml.etree.ElementTree as ET
+
+        import httpx
+
+        raw = httpx.get(
+            f"{pms_url}/library/sections/{section.key}/all",
+            params={"type": "18"},
+            headers={"X-Plex-Token": state.owner_token},
+            timeout=10,
+        ).text
+        listed = [d for d in ET.fromstring(raw) if d.get("ratingKey") == "9101"]
+        assert listed, "the collection must be in the listing"
+        assert listed[0].findall("Label") == [], "a real PMS serves no labels here"
+
+    def test_owned_collections_still_finds_the_label(self, fakes):
+        """...and it works anyway, because plexapi re-reads. This is the production path."""
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        state.collections[9102] = FakeCollection(
+            rating_key=9102, title="✨ Movies Picked for You", section_id=state.section_id, labels=["Shortlist_mike"]
+        )
+
+        assert "mike" in plex.owned_collections("shortlist")
+
+    def test_confirm_unlabelled_says_no_for_a_labelled_collection(self, fakes):
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        state.collections[9103] = FakeCollection(
+            rating_key=9103, title="✨ Movies Picked for You", section_id=state.section_id, labels=["Shortlist_mike"]
+        )
+        collection = plex._section_collections(plex.sections()[0])[-1]
+
+        assert plex.confirm_unlabelled(collection, "shortlist") is False
+
+    def test_confirm_unlabelled_says_yes_for_a_genuinely_unlabelled_one(self, fakes):
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        state.collections[9104] = FakeCollection(
+            rating_key=9104, title="✨ Movies Picked for You", section_id=state.section_id, labels=[]
+        )
+        collection = plex._section_collections(plex.sections()[0])[-1]
+
+        assert plex.confirm_unlabelled(collection, "shortlist") is True
+
+    def test_confirm_unlabelled_refuses_when_the_server_cannot_be_read(self, fakes):
+        """ "I could not ask" must never authorise a delete."""
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        state.collections[9105] = FakeCollection(
+            rating_key=9105, title="✨ Movies Picked for You", section_id=state.section_id, labels=["Shortlist_mike"]
+        )
+        collection = plex._section_collections(plex.sections()[0])[-1]
+        del state.collections[9105]  # the re-read now 404s
+
+        assert plex.confirm_unlabelled(collection, "shortlist") is False
+
+    def test_owned_row_surfaces_reports_label_marker_and_flags(self, fakes):
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        state.collections[9106] = FakeCollection(
+            rating_key=9106,
+            title="✨ Movies Picked for You" + row_marker(202),
+            section_id=state.section_id,
+            labels=["Shortlist_mike"],
+            promoted_recommended=True,
+            promoted_shared_home=True,
+        )
+
+        row = next(r for r in plex.owned_row_surfaces("shortlist") if r["rating_key"] == 9106)
+
+        assert row["label"] == "Shortlist_mike"
+        assert row["marked"] is True
+        assert (row["recommended"], row["own_home"], row["shared_home"]) == (True, False, True)
+
+    def test_owned_row_surfaces_finds_a_marked_row_that_lost_its_label(self, fakes):
+        """The state issue #76 looked like: ours by title, invisible to every `label!=` filter."""
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        state.collections[9107] = FakeCollection(
+            rating_key=9107, title="✨ Movies Picked for You" + row_marker(203), section_id=state.section_id, labels=[]
+        )
+
+        row = next(r for r in plex.owned_row_surfaces("shortlist") if r["rating_key"] == 9107)
+
+        assert (row["label"], row["marked"]) == ("", True)
+
+    def test_owned_row_surfaces_skips_a_foreign_collection(self, fakes):
+        """Kometa coexistence (rule 4): neither our label nor our marker means it is not ours."""
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        state.collections[9108] = FakeCollection(
+            rating_key=9108, title="Kometa: Best of the 90s", section_id=state.section_id, labels=["Overlay"]
+        )
+
+        assert not [r for r in plex.owned_row_surfaces("shortlist") if r["rating_key"] == 9108]
+
+    def test_flags_false_skips_the_surface_read_entirely(self, fakes):
+        """The cheap mode drift uses — one round-trip per collection is worth paying to answer
+        "where is this row showing", and not worth paying to count rows."""
+        state, pms_url, _tmdb = fakes
+        plex = PlexClient(pms_url, state.owner_token)
+        state.collections[9109] = FakeCollection(
+            rating_key=9109, title="✨ Movies Picked for You", section_id=state.section_id, labels=["Shortlist_mike"]
+        )
+
+        row = next(r for r in plex.owned_row_surfaces("shortlist", flags=False) if r["rating_key"] == 9109)
+
+        assert "recommended" not in row and row["label"] == "Shortlist_mike"

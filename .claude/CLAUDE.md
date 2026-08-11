@@ -103,6 +103,19 @@ Long sessions are the single biggest cost: every turn re-sends the whole convers
   test. Never use `git checkout <file>` to undo it: that wipes uncommitted work (done twice). Copy to
   a backup first, or re-apply by hand.
 
+## Text the owner is going to paste somewhere
+
+Issue replies, release notes, PR bodies, forum posts — anything written to be copied out of the
+terminal:
+
+- **Never use a markdown blockquote (`>`).** The terminal renders it as a leading vertical bar on
+  every line, and that bar comes along with the selection — so the paste has to be cleaned up by
+  hand, line by line. Put copy-out text in a fenced code block instead, which selects cleanly and
+  keeps the markdown intact for GitHub.
+- Same reason to avoid tables and hard-wrapped prose in that text: reflow it once and it's ruined.
+- Say what the person on the other end has to DO, in its own short paragraph. A diagnosis they
+  can't act on is a status update, not a reply.
+
 ## Code style
 
 - `ruff format` / `ruff check` (config in pyproject.toml), 120-char lines, 4-space indent

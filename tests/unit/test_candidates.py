@@ -279,16 +279,22 @@ class TestGatherCandidates:
 
 
 class _FakeSearch:
-    """A stub external search backend (Exa) that returns canned results and records queries."""
+    """A stub external search backend that returns canned results and records queries.
 
-    name = "exa"
+    Carries `name`/`results_per_query` because the real providers do (the fake must be no easier than
+    the real thing) — the engine reads both to namespace the cache and size each search.
+    """
 
-    def __init__(self, results):
+    def __init__(self, results, name: str = "exa", results_per_query: int = 5):
         self._results = results
+        self.name = name
+        self.results_per_query = results_per_query
         self.queries: list[str] = []
+        self.counts: list[int] = []
 
     def search(self, query, *, num_results=8):
         self.queries.append(query)
+        self.counts.append(num_results)
         return self._results
 
 
@@ -300,9 +306,11 @@ class _NonNativeCurator:
     def __init__(self, reply):
         self._reply = reply
         self.complete_calls = 0
+        self.last_user = ""  # the RAG prompt, so a test can assert what the curator was actually shown
 
     def complete(self, system, user):
         self.complete_calls += 1
+        self.last_user = user
         return self._reply
 
 
@@ -325,7 +333,7 @@ class _NativeCurator:
 
 
 class TestLlmWebBackends:
-    """The auto|native|exa backend matrix for the llm_web source (public-app: works on every provider)."""
+    """The native|exa|searxng backend matrix for the llm_web source (works on every provider)."""
 
     def _tmdb(self, mock_tmdb, resolved):
         mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked([])
@@ -340,14 +348,22 @@ class TestLlmWebBackends:
         curator = _NonNativeCurator('[{"title": "Exa Pick", "year": 2021, "media": "movie"}]')
 
         pool = gather_candidates(
-            mock_tmdb, [seed(1, "Arrival")], sources=["llm_web"], curator=curator, profile=web_profile(), search=search
+            mock_tmdb,
+            [seed(1, "Arrival")],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_mode="exa",
         )
         assert {c.tmdb_id for c in pool} == {55}
         assert curator.complete_calls == 1 and len(search.queries) == 1  # searched, then the model picked
         assert "Arrival" in search.queries[0]  # the query is built from what they watched, not a constant
 
-    def test_auto_unions_native_and_exa_when_both_are_available(self, mock_tmdb):
-        # Both configured → auto runs BOTH and unions them (they surface different titles).
+    def test_exactly_one_backend_runs_even_when_both_are_available(self, mock_tmdb):
+        """The `auto` mode used to union the provider's own search with an external one. It was
+        removed in 1.3, so a native-capable curator WITH an external client configured must now run
+        the named backend and nothing else — no second search, no second bill."""
         self._tmdb(
             mock_tmdb,
             {
@@ -359,25 +375,40 @@ class TestLlmWebBackends:
         curator = _NativeCurator()
 
         pool = gather_candidates(
-            mock_tmdb, [seed(1)], sources=["llm_web"], curator=curator, profile=web_profile(), search=search
+            mock_tmdb,
+            [seed(1)],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_mode="native",
         )
-        assert {c.tmdb_id for c in pool} == {77, 88}  # native + exa, unioned
-        assert curator.recommend_calls == 1 and curator.complete_calls == 1
-        assert len(search.queries) == 1
+        assert {c.tmdb_id for c in pool} == {77}  # the native tool only
+        assert curator.recommend_calls == 1 and curator.complete_calls == 0
+        assert search.queries == []  # the external client is present but deliberately unused
 
-    def test_auto_uses_only_the_native_tool_when_no_search_is_configured(self, mock_tmdb):
+    def test_the_native_tool_runs_when_no_search_is_configured(self, mock_tmdb):
         self._tmdb(mock_tmdb, {"Native Pick": {"id": 77, "title": "Native Pick", "genre_ids": [], "vote_average": 8.0}})
         curator = _NativeCurator()
 
         pool = gather_candidates(
-            mock_tmdb, [seed(1)], sources=["llm_web"], curator=curator, profile=web_profile(), search=None
+            mock_tmdb,
+            [seed(1)],
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=None,
+            web_search_mode="native",
         )
         assert {c.tmdb_id for c in pool} == {77}
         assert curator.recommend_calls == 1 and curator.complete_calls == 0
 
-    def test_exa_mode_forces_external_search_even_for_a_native_provider(self, mock_tmdb):
+    @pytest.mark.parametrize("mode", ["exa", "searxng"])
+    def test_naming_an_external_backend_forces_it_even_for_a_native_provider(self, mock_tmdb, mode: str):
+        """Both external providers are the same branch to the engine: picking either one by name means
+        "search externally", overriding a curator that could have searched natively."""
         self._tmdb(mock_tmdb, {"Exa Pick": {"id": 88, "title": "Exa Pick", "genre_ids": [], "vote_average": 7.0}})
-        search = _FakeSearch([make_result("2021", "Exa Pick")])
+        search = _FakeSearch([make_result("2021", "Exa Pick")], name=mode)
         curator = _NativeCurator()
 
         pool = gather_candidates(
@@ -387,10 +418,10 @@ class TestLlmWebBackends:
             curator=curator,
             profile=web_profile(),
             search=search,
-            web_search_mode="exa",
+            web_search_mode=mode,
         )
         assert {c.tmdb_id for c in pool} == {88}
-        assert curator.recommend_calls == 0 and curator.complete_calls == 1  # forced onto the Exa path
+        assert curator.recommend_calls == 0 and curator.complete_calls == 1  # forced onto the external path
 
     def test_native_mode_without_a_native_provider_is_a_noop_not_a_failure(self, mock_tmdb):
         """web_search_mode=native + Ollama: the source can't run, so it's skipped — the OTHER source
@@ -430,13 +461,15 @@ class TestLlmWebBackends:
         assert {c.tmdb_id for c in pool} == {2}
         assert curator.complete_calls == 0
 
-    def test_exa_mode_without_a_search_key_is_a_noop_not_a_failure(self, mock_tmdb):
-        """web_search_mode=exa but no Exa client configured: llm_web can't run, so it's skipped and
-        never registers as attempted — tmdb_similar still carries the pool, no phantom failure."""
+    @pytest.mark.parametrize("mode", ["exa", "searxng"])
+    def test_an_external_mode_without_its_backend_is_a_noop_not_a_failure(self, mock_tmdb, mode: str):
+        """web_search_mode names an external backend that isn't configured: llm_web can't run, so it's
+        skipped and never registers as attempted — tmdb_similar still carries the pool, no phantom
+        failure. Same for an Exa key that was never entered and a SearXNG URL that was never set."""
         mock_tmdb.suggestions.side_effect = lambda tid, mt: _ranked(
             [{"id": 3, "title": "S", "genre_ids": [], "vote_average": 7.0}]
         )
-        curator = _NativeCurator()  # native-capable, but exa mode forces the (absent) Exa backend
+        curator = _NativeCurator()  # native-capable, but an external mode forces the (absent) backend
         pool = gather_candidates(
             mock_tmdb,
             [seed(1)],
@@ -444,7 +477,7 @@ class TestLlmWebBackends:
             curator=curator,
             profile=web_profile(),
             search=None,
-            web_search_mode="exa",
+            web_search_mode=mode,
         )
         assert {c.tmdb_id for c in pool} == {3}
         assert curator.recommend_calls == 0 and curator.complete_calls == 0
@@ -504,17 +537,102 @@ class TestPerTitleWebSearchCache:
             curator=curator,
             profile=web_profile(),
             search=search,
+            web_search_mode="exa",
             web_search_cache=cache,
         )
         assert len(search.queries) == 2  # one search per title, not one blended query
         assert any("Dune" in q for q in search.queries) and any("Arrival" in q for q in search.queries)
-        assert set(cache.store) == {"exasearch:movie:1", "exasearch:movie:2"}  # cached by (media, tmdb_id)
+        # Cached by (provider, media, tmdb_id) — see test_switching_backends_does_not_reuse... below.
+        assert set(cache.store) == {"websearch:exa:movie:1", "websearch:exa:movie:2"}
+
+    def test_switching_backends_does_not_reuse_the_other_backends_cached_results(self, mock_tmdb):
+        """The cache key must carry the PROVIDER, or a switch is invisible for the 14-day TTL.
+
+        Exa returns page text and SearXNG returns engine snippets; serving one from the other's cache
+        would silently keep the old backend's results after the owner changed the setting.
+        """
+        self._tmdb(mock_tmdb)
+        exa_cached = _DictCache()
+        exa_cached.set("websearch:exa:movie:1", "[]", 1)  # Dune already searched via Exa this window
+        searxng = _FakeSearch([make_result("Result", "text")], name="searxng")
+        gather_candidates(
+            mock_tmdb,
+            [seed(1, "Dune")],
+            sources=["llm_web"],
+            curator=_NonNativeCurator("[]"),
+            profile=web_profile(),
+            search=searxng,
+            web_search_cache=exa_cached,
+            web_search_mode="searxng",
+        )
+        assert searxng.queries, "SearXNG must run its own search, not inherit Exa's cached page"
+        assert "websearch:searxng:movie:1" in exa_cached.store
+
+    def test_each_backend_is_asked_for_its_own_result_depth(self, mock_tmdb):
+        """SearXNG is free and returns thin snippets, so it pulls a wider page than Exa — the engine
+        must ask each provider for ITS number rather than one shared constant."""
+        self._tmdb(mock_tmdb)
+        search = _FakeSearch([make_result("Result", "text")], name="searxng", results_per_query=10)
+        gather_candidates(
+            mock_tmdb,
+            [seed(1, "Dune")],
+            sources=["llm_web"],
+            curator=_NonNativeCurator("[]"),
+            profile=web_profile(),
+            search=search,
+            web_search_cache=_DictCache(),
+            web_search_mode="searxng",
+        )
+        assert search.counts == [10]
+
+    @pytest.mark.parametrize(("provider", "per_query"), [("exa", 5), ("searxng", 10)])
+    def test_every_searched_seed_reaches_the_curator(self, mock_tmdb, provider: str, per_query: int):
+        """The RAG prompt is capped at 40 results. Appending seed-by-seed and then slicing means the
+        FIRST few seeds eat the whole cap, so the rest are searched, cached, counted — and dropped.
+
+        At Exa's 5 results/search that silently lost 2 of 10 seeds; at SearXNG's 10 it lost 6, so
+        choosing the local backend halved the curator's view of someone's taste while still paying for
+        every search. Results are interleaved across seeds before the cap, so the budget is shared.
+        """
+        self._tmdb(mock_tmdb)
+        seeds = [seed(i, f"Seed{i}") for i in range(1, 11)]
+        search = _FakeSearch([], name=provider, results_per_query=per_query)
+        search._results = None  # per-seed results are generated in the stub below
+
+        def _per_seed(query, *, num_results=8):
+            search.queries.append(query)
+            search.counts.append(num_results)
+            name = query.split("liked ")[1].split(" —")[0]
+            # Distinct URLs per result: the union dedupes by url, so a shared one would collapse
+            # every result to a single entry and the test would measure the dedupe, not the cap.
+            return [
+                SearchResult(title=f"{name} hit {i}", url=f"https://ex.com/{name}/{i}", text="t")
+                for i in range(num_results)
+            ]
+
+        search.search = _per_seed
+        curator = _NonNativeCurator("[]")
+        gather_candidates(
+            mock_tmdb,
+            seeds,
+            sources=["llm_web"],
+            curator=curator,
+            profile=web_profile(),
+            search=search,
+            web_search_cache=_DictCache(),
+            web_search_mode=provider,
+            recent_count=10,
+        )
+        prompt = curator.last_user
+        covered = [s.title for s in seeds if s.title in prompt]
+        assert len(search.queries) == 10, "every recent title is still searched"
+        assert covered == [s.title for s in seeds], f"only {len(covered)}/10 seeds reached the prompt"
 
     def test_a_cached_title_is_not_researched(self, mock_tmdb):
         self._tmdb(mock_tmdb)
         search = _FakeSearch([make_result("Result", "text")])
         cache = _DictCache()
-        cache.set("exasearch:movie:1", "[]", 1)  # Dune already searched by a prior user this window
+        cache.set("websearch:exa:movie:1", "[]", 1)  # Dune already searched by a prior user this window
         stats = GatherStats()
         gather_candidates(
             mock_tmdb,
@@ -523,6 +641,7 @@ class TestPerTitleWebSearchCache:
             curator=_NonNativeCurator("[]"),
             profile=web_profile(),
             search=search,
+            web_search_mode="exa",
             web_search_cache=cache,
             stats=stats,
         )
@@ -542,6 +661,7 @@ class TestPerTitleWebSearchCache:
             curator=_NonNativeCurator("[]"),
             profile=web_profile(),
             search=search,
+            web_search_mode="exa",
             web_search_cache=_DictCache(),
             recent_count=2,
         )
@@ -717,6 +837,7 @@ class TestGatherStats:
             curator=_C(),
             profile=web_profile(),
             search=search,
+            web_search_mode="exa",
             stats=stats,
         )
         assert stats.tokens_by_source == {"llm_web": 99}
@@ -929,3 +1050,29 @@ class TestAffinityAcrossSources:
         pool = gather_candidates(mock_tmdb, [seed(1), seed(2)], sources=["tmdb_similar"])
 
         assert next(c for c in pool if c.tmdb_id == self.TAIL_ID).affinity == pytest.approx(0.9)
+
+
+class TestTheTraceReportsRealSearchCounts:
+    """`queries` in the trace is a capped display sample (`_TRACE_SEEDS_SAMPLE`). The UI was counting
+    it and presenting that as the number of searches, so a run that queried 30 seeds could report
+    "searched 12" — the trace misstating the engine, which is the one thing it must never do."""
+
+    def test_the_count_survives_the_sample_cap(self, mock_tmdb):
+        from shortlist.engine.candidates import _TRACE_SEEDS_SAMPLE, GatherStats, gather_candidates
+        from shortlist.engine.models import MediaType, Seed
+
+        seeds = [
+            Seed(tmdb_id=i, title=f"Seed {i}", media_type=MediaType.MOVIE, weight=1.0)
+            for i in range(_TRACE_SEEDS_SAMPLE + 8)
+        ]
+        mock_tmdb.suggestions.return_value = [({"id": 900, "title": "Out", "genre_ids": [], "vote_average": 7.0}, 1.0)]
+        mock_tmdb.genre_names.return_value = {}
+        stats = GatherStats()
+
+        gather_candidates(mock_tmdb, seeds, sources=["tmdb_similar"], stats=stats)
+
+        entry = next(s for s in stats.trace["sources"] if s["source"] == "tmdb_similar")
+        assert len(entry["queries"]) == _TRACE_SEEDS_SAMPLE, "the sample cap should still apply"
+        assert entry["searched"]["movie"] == len(seeds), (
+            f"the trace under-reported searches: said {entry['searched']} for {len(seeds)} seeds"
+        )

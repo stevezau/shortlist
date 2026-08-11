@@ -318,9 +318,27 @@ class RunService:
         the privacy merge + promote still run for everyone delivered — the server stays consistent.
         """
         event = self._cancels.get(run_id)
-        if event is None or event.is_set():
+        if event is None:
             return False
+        if event.is_set():
+            return True  # already stopping — pressing again is a no-op, and a no-op is not an error
         event.set()
+        # Recorded on the RUN, not just in memory and an SSE event, so any client can see it. The
+        # button used to read "Stopping..." off local mutation state alone: a page refresh forgot,
+        # offered a live-looking Cancel, and every press after that 409'd with "this run isn't
+        # currently running" — the opposite of the truth, on a run that was very much running.
+        # Best-effort: the Event above IS the cancellation, and it has already taken effect. This row
+        # is a convenience so a reloaded page knows. SQLite is single-writer and the run's own thread
+        # is writing users and log lines, so a busy timeout here must not surface as a failed cancel —
+        # which would be this endpoint lying about what it did, the very thing it was fixed to stop.
+        try:
+            with self._sessions() as session:
+                run = session.get(Run, run_id)
+                if run is not None:
+                    run.stats = {**(run.stats or {}), "cancel_requested": True}
+                    session.commit()
+        except Exception as e:
+            logger.warning("run {}: cancel accepted but not recorded ({})", run_id, type(e).__name__)
         self._bus.publish("run.progress", {"run_id": run_id, "status": "cancelling"})
         logger.info("run {} cancel requested", run_id)
         return True

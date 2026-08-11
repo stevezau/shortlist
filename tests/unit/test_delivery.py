@@ -683,6 +683,7 @@ class TestSweepBrokenRows:
         orphan = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
         plex = self._plex(movies, shows, orphan)
         plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = True  # the server agrees it has no label
 
         deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
 
@@ -697,11 +698,118 @@ class TestSweepBrokenRows:
         orphan = self._collection(shows, title="✨ TV Shows Picked for You" + row_marker(202))
         plex = self._plex(movies, shows, orphan)
         plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = True  # the server agrees it has no label
 
         deleted = sweep_broken_rows(plex, engine_config)
 
         assert deleted == {"orphan:202": [orphan.title]}
         plex.delete_owned_collection.assert_called_once()
+
+    def test_an_orphan_is_confirmed_against_the_server_before_it_is_deleted(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        """The collection LIST does not carry labels on a real PMS — verified on 1.43.3.10861: 103
+        collections, zero `<Label>` children. `collection.labels` is populated only because plexapi
+        silently re-reads each collection behind the attribute, so "no label" here can equally mean
+        "the label did not come back". Deleting on that reading is unrecoverable, so it is checked."""
+        orphan = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, orphan)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = True
+
+        sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
+
+        plex.confirm_unlabelled.assert_called_once_with(orphan, "shortlist")
+
+    def test_a_label_read_that_comes_back_empty_does_not_wipe_the_server(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        """The catastrophic case, and the reason the guard exists.
+
+        Every Shortlist row carries the invisible marker, and `delete_owned_collection` accepts that
+        marker ALONE as proof of ownership. So one empty label read turns every row on the server
+        into an unlabelled orphan and this loop deletes all of them — while the run reports success,
+        because nothing raised. The server saying "no, these are labelled" has to stop it dead.
+        """
+        rows = [
+            self._collection(movies, title=f"✨ Movies Picked for You{row_marker(account)}")
+            for account in (201, 202, 203)
+        ]
+        plex = self._plex(movies, shows, *rows)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = False  # the re-read finds labels after all
+
+        deleted = sweep_broken_rows(plex, engine_config)
+
+        assert deleted == {}
+        plex.delete_owned_collection.assert_not_called()
+
+    def test_no_labels_at_all_on_a_server_full_of_our_rows_is_a_read_failure(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        """The SYSTEMIC case the per-collection re-read cannot catch: if the PMS answers both reads
+        the same way — mid library-index rebuild, or a version that stops serving `<Label>` — then
+        confirming each row individually just agrees with itself, and the sweep deletes everything.
+
+        So the aggregate is the second guard, the same reasoning the privacy sync already applies:
+        an EMPTY enumeration is not evidence of absence. Rows of ours exist and NOT ONE reads as
+        labelled — that is a failed read, not a server full of orphans.
+        """
+        rows = [
+            self._collection(movies, title=f"✨ Movies Picked for You{row_marker(account)}")
+            for account in (201, 202, 203)
+        ]
+        plex = self._plex(movies, shows, *rows)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = True  # even a second read agrees — it is systemic
+
+        deleted = sweep_broken_rows(plex, engine_config)
+
+        assert deleted == {}
+        plex.delete_owned_collection.assert_not_called()
+        plex.confirm_unlabelled.assert_not_called(), "the aggregate check must short-circuit first"
+
+    def test_one_orphan_beside_healthy_labelled_rows_is_still_deleted(self, engine_config: EngineConfig, movies, shows):
+        """The guard must not become a blanket refusal. Labels ARE readable here — other rows came
+        back labelled — so the single unlabelled one is a genuine orphan and still gets removed."""
+        # Sarah's row, and no marker is passed for her — so the shared-tag rule leaves it alone and
+        # the only thing under test is whether the aggregate guard lets the real orphan through.
+        healthy = self._collection(movies, "Shortlist_sarah")
+        orphan = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, healthy, orphan)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = True
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
+
+        assert deleted == {"mike": [orphan.title]}
+        plex.delete_owned_collection.assert_called_once_with(orphan, "shortlist")
+
+    def test_a_lone_orphan_on_an_otherwise_empty_server_is_still_deleted(
+        self, engine_config: EngineConfig, movies, shows
+    ):
+        """A fresh install whose first run died between creating a collection and labelling it: no
+        labelled rows exist to prove the read works, but ONE orphan is not a mass-deletion signature,
+        and leaving it would leave a row nothing can hide."""
+        orphan = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, orphan)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = True
+
+        deleted = sweep_broken_rows(plex, engine_config, markers={"mike": row_marker(202)})
+
+        assert deleted == {"mike": [orphan.title]}
+
+    def test_a_failed_re_read_is_treated_as_do_not_delete(self, engine_config: EngineConfig, movies, shows):
+        """`confirm_unlabelled` returns False when it cannot read at all. "I don't know" must never
+        authorise a delete — the same fail-closed direction the privacy sync takes."""
+        orphan = self._collection(movies, title="✨ Movies Picked for You" + row_marker(202))
+        plex = self._plex(movies, shows, orphan)
+        plex.matches_section.return_value = True
+        plex.confirm_unlabelled.return_value = False
+
+        assert sweep_broken_rows(plex, engine_config) == {}
+        plex.delete_owned_collection.assert_not_called()
 
     def test_leaves_an_unlabelled_collection_without_our_marker_alone(self, engine_config: EngineConfig, movies, shows):
         # No label AND no marker → genuinely foreign (Kometa etc.). Never touched (rule 4).

@@ -7,7 +7,7 @@ from dataclasses import replace
 
 from loguru import logger
 
-from shortlist.engine.clients.plex_pms import PlexClient
+from shortlist.engine.clients.plex_pms import PlexClient, log_title
 from shortlist.engine.clients.poster import PosterArtist
 from shortlist.engine.models import (
     LABEL_PREFIX,
@@ -389,6 +389,11 @@ def deliver_rows(
                             # one screen built to answer it.
                             "sources": list(p.sources),
                             "affinity": p.affinity,
+                            # Release year and TMDB score, for the same reason as provenance above:
+                            # the run page renders this blob, and "is this an old title, and is it
+                            # any good?" is the first thing asked of a row that looks wrong.
+                            "year": p.year,
+                            "rating": p.rating,
                         }
                         for p in this_section
                     ],
@@ -1018,50 +1023,82 @@ def sweep_broken_rows(
     markers = markers or {}
     slug_by_marker = {marker: slug for slug, marker in markers.items()}  # attribute an unlabelled orphan
     deleted = {} if deleted is None else deleted
+    # Whether ANY of our labels came back at all this pass. The per-collection re-read below defeats a
+    # transient miss, but not a SYSTEMIC one: a PMS mid library-index rebuild, or a version that stops
+    # serving labels, answers both reads the same way, and then every marked row looks like an orphan
+    # and this loop deletes the lot. So the aggregate is the second guard, exactly as the privacy sync
+    # already reasons ("an EMPTY enumeration is not evidence of absence"): if the server has rows of
+    # ours and NONE of them read as labelled, that is a read failure, not a server full of orphans.
+    walked: list[tuple] = []
+    labelled_seen = 0
     for section in plex.sections():
         for collection in section.collections():
             label = next((t.tag for t in collection.labels if t.tag.lower().startswith(prefix)), None)
-            if label is None:
-                # No shortlist label. If the title still carries our invisible marker, it's an ORPHAN —
-                # a per-user row whose label write never landed (an interrupted run). With no label, NO
-                # `label!=` share filter can hide it, so EVERY user sees it: the exact leak that stranded
-                # unlabelled "Picked for You" rows on SFLIX. The marker proves it's ours, so delete it;
-                # the next successful run rebuilds the owner's row, labelled. A collection with no marker
-                # is genuinely foreign (Kometa and friends) — leave it alone (rule 4).
-                if not has_marker(collection.title):
-                    continue
-                orphan_slug = slug_by_marker.get(collection.title[-64:]) or f"orphan:{marker_account(collection.title)}"
+            labelled_seen += label is not None
+            walked.append((section, collection, label))
+    orphan_candidates = sum(1 for _s, c, label in walked if label is None and has_marker(c.title))
+    trust_labels = labelled_seen > 0 or orphan_candidates <= 1
+    if not trust_labels:
+        logger.error(
+            "the PMS returned NO labels for any of {} collection(s) that are ours by title — treating "
+            "that as a failed read, NOT as {} orphans. Nothing will be deleted this pass.",
+            orphan_candidates,
+            orphan_candidates,
+        )
+
+    for section, collection, label in walked:
+        if label is None:
+            # No shortlist label. If the title still carries our invisible marker, it's an ORPHAN —
+            # a per-user row whose label write never landed (an interrupted run). With no label, NO
+            # `label!=` share filter can hide it, so EVERY user sees it: the exact leak that stranded
+            # unlabelled "Picked for You" rows on SFLIX. The marker proves it's ours, so delete it;
+            # the next successful run rebuilds the owner's row, labelled. A collection with no marker
+            # is genuinely foreign (Kometa and friends) — leave it alone (rule 4).
+            if not has_marker(collection.title) or not trust_labels:
+                continue
+            # Ask the server again before destroying anything. A real PMS returns no labels in
+            # the section listing, so the `collection.labels` above is only populated by a
+            # silent plexapi re-read — and a read that SUCCEEDS carrying no <Label> is
+            # indistinguishable from a genuinely unlabelled row. `confirm_unlabelled` is an
+            # explicit second read whose failure means "leave it".
+            if not plex.confirm_unlabelled(collection, LABEL_PREFIX):
                 logger.warning(
-                    "{}{}: removing an UNLABELLED orphan row in '{}' — no label, so no share filter can "
-                    "hide it (visible to everyone)",
-                    "[dry-run] " if dry_run else "",
-                    orphan_slug,
-                    section.title,
+                    "{}: looked unlabelled in the collection list but the server says it is labelled — NOT deleting it",
+                    log_title(collection.title),
                 )
-                title = collection.title
-                if not dry_run:
-                    plex.delete_owned_collection(collection, LABEL_PREFIX)
-                deleted.setdefault(orphan_slug, []).append(title)
                 continue
-            slug = label[len(prefix) :].lower()
-            marker = markers.get(slug)
-            unhidable = not plex.matches_section(collection, section)
-            shares_tag = marker is not None and not collection.title.endswith(marker)
-            if not unhidable and not shares_tag:
-                continue
-            reason = (
-                "it is the wrong type for that library, so no share filter can hide it and every user can see it"
-                if unhidable
-                else "it shares a collection tag with other users' rows, so it holds their picks too"
-            )
+            orphan_slug = slug_by_marker.get(collection.title[-64:]) or f"orphan:{marker_account(collection.title)}"
             logger.warning(
-                "{}{}: removing their row in '{}' — {}", "[dry-run] " if dry_run else "", slug, section.title, reason
+                "{}{}: removing an UNLABELLED orphan row in '{}' — no label, so no share filter can "
+                "hide it (visible to everyone)",
+                "[dry-run] " if dry_run else "",
+                orphan_slug,
+                section.title,
             )
-            # Delete THEN record, so the audit says what actually happened: recording first would
-            # report a deletion that a failing PMS call never made. (Read the title first — after
-            # the delete the object no longer refers to anything on the server.)
             title = collection.title
             if not dry_run:
                 plex.delete_owned_collection(collection, LABEL_PREFIX)
-            deleted.setdefault(slug, []).append(title)
+            deleted.setdefault(orphan_slug, []).append(title)
+            continue
+        slug = label[len(prefix) :].lower()
+        marker = markers.get(slug)
+        unhidable = not plex.matches_section(collection, section)
+        shares_tag = marker is not None and not collection.title.endswith(marker)
+        if not unhidable and not shares_tag:
+            continue
+        reason = (
+            "it is the wrong type for that library, so no share filter can hide it and every user can see it"
+            if unhidable
+            else "it shares a collection tag with other users' rows, so it holds their picks too"
+        )
+        logger.warning(
+            "{}{}: removing their row in '{}' — {}", "[dry-run] " if dry_run else "", slug, section.title, reason
+        )
+        # Delete THEN record, so the audit says what actually happened: recording first would
+        # report a deletion that a failing PMS call never made. (Read the title first — after
+        # the delete the object no longer refers to anything on the server.)
+        title = collection.title
+        if not dry_run:
+            plex.delete_owned_collection(collection, LABEL_PREFIX)
+        deleted.setdefault(slug, []).append(title)
     return deleted

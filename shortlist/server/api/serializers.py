@@ -37,6 +37,8 @@ class UserPickOut(PassthroughModel):
     seed_title: str | None
     sources: list[str]
     affinity: float
+    year: int | None
+    rating: float | None
 
 
 class UserOut(PassthroughModel):
@@ -92,6 +94,11 @@ def pick_dict(pick: PickRow) -> dict:
         # written before 0035, which the UI renders as "not recorded" rather than "a perfect match".
         "sources": [s for s in (pick.sources or "").split(",") if s],
         "affinity": pick.affinity,
+        # Release year and the TMDB score recorded at pick time. Both are null on rows written
+        # before they were stored, and `year` is legitimately null on a cold-start pick, which comes
+        # from the library's top-rated list rather than from a TMDB candidate.
+        "year": pick.year,
+        "rating": pick.rating,
     }
 
 

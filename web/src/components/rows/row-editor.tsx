@@ -19,6 +19,7 @@ import {
 import { TemplateVarsHint } from "@/components/rows/template-vars-hint";
 import { Segmented } from "@/components/segmented";
 import { FreshnessSlider } from "@/components/settings/freshness-slider";
+import { RecencySlider } from "@/components/settings/recency-slider";
 import { WatchedSlider } from "@/components/settings/watched-slider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,6 +53,8 @@ import {
   freshnessGlobal,
   freshnessGlobalValue,
   freshnessSeed,
+  recencyGlobal,
+  recencySeed,
   maxSeedsGlobal,
   recentCountGlobal,
   recentCountSeed,
@@ -377,6 +380,10 @@ export function RowEditor({
     if (mine) return "You only";
     return "Hidden from every shelf";
   })();
+  // A shared row is built once for the whole server from aggregate history, so the per-person dials
+  // have no meaning on it — and `_shared_row` ignores them regardless. Hidden rather than shown and
+  // ignored, following `request_tag`, which has always been hidden here for the same reason.
+  const isSharedRow = input.build === "shared";
   const requestSummary = input.request_tag
     ? `Tagged “${input.request_tag}”`
     : "No tag";
@@ -616,6 +623,11 @@ export function RowEditor({
               onChange={(candidate_sources) => set({ candidate_sources })}
             />
 
+            {/* Hidden for a shared row, like the request tag below. `_shared_row` never calls
+                `_apply_watched_cap` or `_prefer_watched` — and more to the point, "how much of this
+                row may be things they have already seen" has no answer for a row nobody owns. A
+                control the engine ignores is worse than no control: it promises a behaviour. */}
+            {!isSharedRow && (
             <InheritableField
               label="Already-watched titles"
               labelFor="row-watched-pct"
@@ -709,10 +721,12 @@ export function RowEditor({
               />
             </InheritableField>
 
-            {/* Nothing at all for a row that follows a watch. The cadence is fixed for those rows, so
-                a heading and a paragraph explaining a control that isn't there is just something else
-                to read past — the section summary already says "refreshes nightly". */}
-            {!followsAWatch && (
+            )}
+
+            {/* Nothing at all for a row that follows a watch, nor for a shared one: the cadence is
+                fixed for the first, and `_shared_row` rebuilds every run regardless for the second.
+                A heading explaining a control that isn't there is just something else to read past. */}
+            {!followsAWatch && !isSharedRow && (
               <InheritableField
                 label="How often it changes"
                 labelFor="row-freshness"
@@ -731,6 +745,27 @@ export function RowEditor({
                 />
               </InheritableField>
             )}
+
+            {/* Shown for EVERY row, including one that follows a watch — unlike freshness above,
+                whose cadence those rows have forced. Which titles win is still a free choice there:
+                "Because you watched X" can lean modern or not, independently of rebuilding nightly. */}
+            <InheritableField
+              label="Recent releases"
+              labelFor="row-recency"
+              description="How much a title’s release date counts when ranking it for this row — turn it up for a “new and notable” shelf, or all the way down for one that digs up older films. Old titles are never excluded; they just have to be a better match. Leave it on the global default to use the figure from Settings → Finding titles."
+              ariaLabel="Use the global recent-releases default"
+              inheriting={input.recency === null}
+              globalValue={recencyGlobal(settings.data)}
+              onToggle={(on) =>
+                set({ recency: on ? null : recencySeed(settings.data) })
+              }
+            >
+              <RecencySlider
+                id="row-recency"
+                value={Math.round((input.recency ?? 0) * 100)}
+                onChange={(pct) => set({ recency: pct / 100 })}
+              />
+            </InheritableField>
 
             {usesWebSearch && (
               <InheritableField
@@ -817,6 +852,7 @@ export function RowEditor({
               />
             </InheritableField>
 
+            {!isSharedRow && (
             <InheritableField
               label="When someone hasn’t watched enough"
               labelFor="row-cold-start"
@@ -868,6 +904,7 @@ export function RowEditor({
                 {COLD_START_HINTS[asColdStart(input.cold_start)]}
               </p>
             </InheritableField>
+            )}
 
             {/* Only for a row that builds from one or two watches. Above that it is blending a whole
                 history and "which watch does it follow" has no answer, so asking would be noise. */}

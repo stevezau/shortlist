@@ -120,6 +120,11 @@ class EngineContext:
     # users watched is searched ONCE server-wide (Exa bills per search). NullCache disables it — safe,
     # since a miss just re-searches.
     web_search_cache: Cache = field(default_factory=NullCache)
+    # (user_slug, row_slug, section_key) -> the `row_recipe` the stored picks were built under.
+    # Absent for a row never built, and for picks written before recipes were recorded — both read
+    # as "unknown", which deliberately does NOT force a rebuild: a one-off rebuild of every row on
+    # every server at upgrade is exactly the churn freshness exists to prevent.
+    previous_recipes: dict[tuple[str, str, str], str] = field(default_factory=dict)
     # Day number of this run (date.toordinal()), the phase for freshness rotation so a row shifts
     # day to day but is reproducible within a day. Set at the start of run(); 0 disables rotation.
     run_day: int = 0

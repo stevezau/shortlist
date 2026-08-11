@@ -39,43 +39,6 @@ describe("RecommendationsSection", () => {
     expect(screen.getByLabelText(/Trakt API key/i)).toBeInTheDocument();
   });
 
-  it("AI web search: enabling it reveals the backend picker", () => {
-    renderSection({
-      "curator.provider": "anthropic",
-      "candidates.sources": ["llm_web"],
-    });
-    expect(screen.getByRole("button", { name: /^Exa$/i })).toBeInTheDocument();
-  });
-
-  it("AI web search: choosing Exa with no key prompts for the Exa key INLINE (no dead-end)", () => {
-    renderSection({
-      "curator.provider": "anthropic",
-      "candidates.sources": ["llm_web"],
-      "llm_web.search_provider": "exa",
-    });
-    // The fix is right here — not a "go to Connections" message.
-    expect(screen.getByLabelText(/Exa API key/i)).toBeInTheDocument();
-  });
-
-  it("AI web search: no inline Exa key needed on a native-capable curator using Auto", () => {
-    renderSection({
-      "curator.provider": "anthropic",
-      "candidates.sources": ["llm_web"],
-      "llm_web.search_provider": "auto",
-    });
-    expect(screen.queryByLabelText(/Exa API key/i)).toBeNull();
-  });
-
-  it("AI web search: Exa key present → no inline prompt even in Exa mode", () => {
-    renderSection({
-      "curator.provider": "ollama",
-      "exa.apikey": "•••••",
-      "candidates.sources": ["llm_web"],
-      "llm_web.search_provider": "exa",
-    });
-    expect(screen.queryByLabelText(/Exa API key/i)).toBeNull();
-  });
-
   it("AI web search: with no curator, prompts to set one up (every backend needs a model)", () => {
     renderSection({
       "curator.provider": "none",
@@ -109,16 +72,33 @@ describe("RecommendationsSection", () => {
     expect(sources).toContain("trakt"); // kept as intent, NOT stripped for the missing key
   });
 
-  it("saves the backend choice to llm_web.search_provider", async () => {
+  it("AI web search: names the backend and sends you to Connections to change it", () => {
+    // The picker and the credential fields moved to the Connections card, so this section must not
+    // render a second copy of either — but it still has to say what the source will use.
+    renderSection({
+      "curator.provider": "ollama",
+      "candidates.sources": ["llm_web"],
+      "llm_web.search_provider": "searxng",
+      "searxng.url": "http://searx.local:8080",
+    });
+    expect(screen.getByText(/your SearXNG instance/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Exa$/i })).toBeNull();
+    expect(screen.queryByLabelText(/Exa API key/i)).toBeNull();
+  });
+
+  it("AI web search: never writes llm_web.search_provider — Connections owns it", async () => {
+    // This section PUTs its whole object on any change. While it still held a copy of the backend,
+    // saving anything here would overwrite a choice just made in Connections with stale state.
     renderSection({
       "curator.provider": "anthropic",
       "candidates.sources": ["llm_web"],
+      "llm_web.search_provider": "searxng",
     });
-    fireEvent.click(screen.getByRole("button", { name: /^Exa$/i }));
+    fireEvent.click(screen.getByLabelText(/TMDB — discover by taste/i));
     await waitFor(() => expect(putSettings).toHaveBeenCalled());
-    expect(
-      putSettings.mock.calls.at(-1)?.[0]?.["llm_web.search_provider"],
-    ).toBe("exa");
+    expect(putSettings.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      "llm_web.search_provider",
+    );
   });
 
   it("persists the owner's intent — enabling a source saves it in candidates.sources", async () => {
@@ -140,6 +120,46 @@ describe("RecommendationsSection", () => {
     const body = putSettings.mock.calls.at(-1)?.[0];
     expect(body?.["recommendations.watched_pct"]).toBe(0.55);
     expect(body).toHaveProperty("candidates.sources");
+  });
+
+  it("auto-saves the recent-releases weight as a 0..1 fraction", async () => {
+    renderSection({ "recommendations.recency": 0.5 });
+    const slider = screen.getByRole("slider", { name: /release date counts/i });
+    expect(slider).toHaveValue("50");
+    fireEvent.change(slider, { target: { value: "75" } });
+    await waitFor(() => expect(putSettings).toHaveBeenCalled());
+    expect(putSettings.mock.calls.at(-1)?.[0]?.["recommendations.recency"]).toBe(
+      0.75,
+    );
+  });
+
+  it("shows a server that chose to turn it off as off, not as the shipped default", () => {
+    // The control must render the STORED value, never the default — otherwise the UI advertises
+    // ranking the engine is not doing for anyone who deliberately turned it back down.
+    renderSection({ "recommendations.recency": 0 });
+    expect(
+      screen.getByRole("slider", { name: /release date counts/i }),
+    ).toHaveValue("0");
+  });
+
+  it("shows a fresh install at the shipped default", () => {
+    // No stored row: every server, new or upgraded, follows DEFAULTS (0.5).
+    renderSection({});
+    expect(
+      screen.getByRole("slider", { name: /release date counts/i }),
+    ).toHaveValue("50");
+  });
+
+  it("keeps recent releases and freshness as two separate controls", () => {
+    // They are near-synonyms in English and completely different settings here. If one ever
+    // replaces the other in this card, the owner silently loses a control.
+    renderSection({});
+    expect(
+      screen.getByRole("slider", { name: /release date counts/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("slider", { name: /how often the row refreshes/i }),
+    ).toBeInTheDocument();
   });
 
   it("saves the cold-start choice, and says what it will actually do", async () => {

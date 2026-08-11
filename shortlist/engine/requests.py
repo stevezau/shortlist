@@ -97,6 +97,20 @@ def accumulate(
                     existing.why.append(reason)
 
 
+# The leading words of every reason a QUALIFYING title can be held back from auto-send. Exported
+# because `run_persistence._is_failure_detail` classifies a stored `detail` by them: anything not
+# starting with one of these came from an exception while actually talking to Radarr/Sonarr, and a
+# real failure must outlive a mere threshold note. Reword a reason below and this moves with it —
+# restating the strings in the classifier is what would let them drift apart silently.
+QUEUE_REASON_PREFIXES = (
+    "auto-send is off",
+    "on an Arr exclusion list",
+    "demand below",
+    "rating below",
+    "max_per_run",
+)
+
+
 def _within_year_window(year: int | None, min_year: int, max_year: int) -> bool:
     """Whether a candidate's release year falls inside the requested window.
 
@@ -210,6 +224,11 @@ def request_missing(
             auto.append(m)
             continue
         blocked[reason] += 1
+        # Keep the reason ON the title, not just in the aggregate log line below. It is what the DB
+        # row and the run trace carry, and it is the only answer to "why didn't THIS one go?" — the
+        # question the requests inbox exists to be asked. Counting it and dropping it left every
+        # queued row with an empty detail while every sent row had one.
+        m.detail = reason
         report.queued.append(m)
 
     if blocked:

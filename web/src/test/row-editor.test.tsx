@@ -54,6 +54,7 @@ function row(patch: Partial<Collection> = {}): Collection {
     rewatch: false,
     unstarted_only: false,
     freshness: null,
+    recency: null,
     recent_count: null,
     max_seeds: null,
     cold_start: null,
@@ -1328,5 +1329,106 @@ describe("RowEditor — only series they haven't started", () => {
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
     const call = updateCollection.mock.calls.at(0);
     expect((call?.[1] as Collection).unstarted_only).toBe(true);
+  });
+});
+
+describe("RowEditor — recent releases", () => {
+  beforeEach(() => {
+    updateCollection.mockClear();
+    settingsData.current = {};
+  });
+
+  it("shows the slider only when the row overrides the global default", () => {
+    renderEditor(row({ recency: 0.8 }));
+    expect(
+      screen.getByRole("slider", { name: /release date counts/i }),
+    ).toHaveValue("80");
+    expect(
+      screen.getByRole("switch", { name: /global recent-releases default/i }),
+    ).not.toBeChecked();
+  });
+
+  it("hides the slider while the row is inheriting", () => {
+    renderEditor(row({ recency: null }));
+    expect(
+      screen.queryByRole("slider", { name: /release date counts/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", { name: /global recent-releases default/i }),
+    ).toBeChecked();
+  });
+
+  it("stops inheriting at the global's own value, not at zero", async () => {
+    // Same trap freshness hit: dropping to 0 on un-inherit silently changes what the row does, so
+    // the switch reads as broken. Here it would ALSO be indistinguishable from a deliberate
+    // "any era" row, which is a real setting someone might have chosen.
+    settingsData.current = { "recommendations.recency": 0.6 };
+    renderEditor(row({ recency: null }));
+
+    await userEvent.click(
+      screen.getByRole("switch", { name: /global recent-releases default/i }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+
+    await waitFor(() => expect(updateCollection).toHaveBeenCalled());
+    expect(
+      (updateCollection.mock.calls.at(0)?.[1] as Collection).recency,
+    ).toBe(0.6);
+  });
+
+  it("offers the control on a row that follows a watch, where freshness is withheld", async () => {
+    // A `{top_seed}` row is forced to a nightly cadence, so the editor hides its freshness slider.
+    // Which titles win is still a free choice there, so this control must NOT be hidden with it.
+    renderEditor(
+      row({ name_template: "Because you watched {top_seed}", recency: 0.5 }),
+    );
+
+    expect(
+      screen.queryByRole("switch", { name: /global freshness default/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("slider", { name: /release date counts/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("RowEditor — a shared row hides the dials that do not apply to it", () => {
+  beforeEach(() => {
+    settingsData.current = {};
+  });
+
+  const perPersonOnly = [
+    /global already-watched default/i,
+    /global freshness default/i,
+    /watch it again/i,
+    /not started/i,
+    /global setting for people without enough watch history/i,
+  ];
+
+  it("offers them on a per-person row", () => {
+    // The control: without it, the shared-row assertions below could pass on a broken editor.
+    renderEditor(row({ build: "per_person" }));
+    for (const name of perPersonOnly) {
+      expect(screen.getByRole("switch", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("hides them on a shared row, rather than promising what the engine ignores", () => {
+    // `_shared_row` never calls `_apply_watched_cap`, `_prefer_watched` or `_is_refresh_night`, and
+    // cold-start is meaningless for a row built from aggregate history. Showing a control the
+    // engine drops is worse than showing none — it states a behaviour.
+    renderEditor(row({ build: "shared", min_watchers: 2 }));
+    for (const name of perPersonOnly) {
+      expect(screen.queryByRole("switch", { name })).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps the controls a shared row DOES honour", () => {
+    // Sources, libraries, seed budget, release-date weight and display order all work on the
+    // shared path — hiding those would remove real function.
+    renderEditor(row({ build: "shared", min_watchers: 2 }));
+    expect(
+      screen.getByRole("switch", { name: /global recent-releases default/i }),
+    ).toBeInTheDocument();
   });
 });

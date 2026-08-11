@@ -401,12 +401,17 @@ def _movie_xml(parent: Element, state: FakePlexState, movie: FakeMovie, *, watch
     return element
 
 
-def _collection_xml(parent: Element, state: FakePlexState, collection: FakeCollection) -> Element:
+def _collection_xml(
+    parent: Element, state: FakePlexState, collection: FakeCollection, *, labels: bool = True
+) -> Element:
     directory = _el(
         parent,
         "Directory",
         ratingKey=collection.rating_key,
-        key=f"/library/metadata/{collection.rating_key}/children",
+        # `/library/collections/<rk>/children`, exactly as PMS 1.43.3 returns it — recorded from a
+        # real server 2026-08-10. plexapi strips the `/children` to build `key`, and every reload of
+        # this object then goes to `/library/collections/<rk>`, which is why that route must exist.
+        key=f"/library/collections/{collection.rating_key}/children",
         type="collection",
         subtype=collection.subtype,
         title=collection.title,
@@ -415,8 +420,13 @@ def _collection_xml(parent: Element, state: FakePlexState, collection: FakeColle
         collectionSort=collection.sort,
         librarySectionID=collection.section_id,
     )
-    for i, tag in enumerate(collection.labels, start=1):
-        _el(directory, "Label", id=i, tag=tag)
+    # A real PMS returns NO <Label> children in the section LISTING — verified against 1.43.3.10861:
+    # 103 collections, zero with labels. They appear only on the per-collection detail read. Serving
+    # them inline made every test prove label identity against a shape Plex does not produce, and hid
+    # the fact that the whole feature depends on plexapi silently re-reading each collection.
+    if labels:
+        for i, tag in enumerate(collection.labels, start=1):
+            _el(directory, "Label", id=i, tag=tag)
     # plexapi's editAdvanced (modeUpdate/sortUpdate) reads these to validate enum values.
     preferences = SubElement(directory, "Preferences")
     for setting_id, default, value, enums in (
@@ -532,7 +542,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             owned = [c for c in state.collections.values() if c.section_id == section_id]
             root = _container(size=len(owned), totalSize=len(owned), librarySectionID=section_id)
             for collection in owned:
-                _collection_xml(root, state, collection)
+                _collection_xml(root, state, collection, labels=False)
             return _xml(root)
         # The share-token watched read (ShareTokenWatchSource): `unwatched=0` filters to what the
         # REQUESTING account has watched, served AS them with their own per-user viewCount/leaf counts.
@@ -603,6 +613,21 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         _collection_xml(root, state, collection)
         return _xml(root)
 
+    @app.get("/library/collections/{rating_key}")
+    def collection_detail(rating_key: int) -> Response:
+        """The per-collection read plexapi falls back to whenever it wants a field the section
+        listing does not carry — labels being the one Shortlist's whole identity model rests on.
+
+        Real PMS 1.43.3 serves labels ONLY here, never in the listing, so this route is the only
+        reason `collection.labels` is ever non-empty in production. Without it the tests exercised
+        an easier server than the real one.
+        """
+        collection = _collection(rating_key)
+        root = _container(size=1, librarySectionID=collection.section_id)
+        _collection_xml(root, state, collection, labels=True)
+        return _xml(root)
+
+    @app.get("/library/collections/{rating_key}/children")
     @app.get("/library/metadata/{rating_key}/children")
     def collection_children(rating_key: int) -> Response:
         collection = _collection(rating_key)
@@ -613,6 +638,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
                 _movie_xml(root, state, item)
         return _xml(root)
 
+    @app.put("/library/collections/{rating_key}/items")
     @app.put("/library/metadata/{rating_key}/items")
     def collection_add_items(rating_key: int, request: Request) -> Response:
         collection = _collection(rating_key)
@@ -622,12 +648,14 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
                 collection.item_keys.append(key)
         return Response(status_code=200)
 
+    @app.delete("/library/collections/{rating_key}/items/{item_key}")
     @app.delete("/library/metadata/{rating_key}/items/{item_key}")
     def collection_remove_item(rating_key: int, item_key: int) -> Response:
         collection = _collection(rating_key)
         collection.item_keys = [k for k in collection.item_keys if k != item_key]
         return Response(status_code=200)
 
+    @app.put("/library/collections/{rating_key}/items/{item_key}/move")
     @app.put("/library/metadata/{rating_key}/items/{item_key}/move")
     def collection_move_item(rating_key: int, item_key: int, request: Request) -> Response:
         collection = _collection(rating_key)
@@ -637,6 +665,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
         collection.item_keys.insert(position, item_key)
         return Response(status_code=200)
 
+    @app.put("/library/collections/{rating_key}/prefs")
     @app.put("/library/metadata/{rating_key}/prefs")
     def collection_prefs(rating_key: int, request: Request) -> Response:
         collection = _collection(rating_key)
@@ -646,6 +675,7 @@ def make_fake_plex(state: FakePlexState) -> FastAPI:
             collection.sort = int(request.query_params["collectionSort"])
         return Response(status_code=200)
 
+    @app.delete("/library/collections/{rating_key}")
     @app.delete("/library/metadata/{rating_key}")
     def delete_collection(rating_key: int) -> Response:
         collection = _collection(rating_key)

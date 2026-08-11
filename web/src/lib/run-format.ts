@@ -64,10 +64,12 @@ export function tokenStepBreakdown(byStep?: Record<string, number>): string {
     .join(" · ");
 }
 
-/** " · N Exa search(es)" when any ran, else "". Exa bills per search, so it's shown apart from tokens. */
-export function exaSummary(count?: number): string {
+/** " · N web search(es)" when any ran, else "". Shown apart from tokens because an external search is
+ * billed (or rate-limited) per REQUEST, not per token. Deliberately names no vendor: the same counter
+ * serves Exa and a self-hosted SearXNG. */
+export function webSearchSummary(count?: number): string {
   if (!count) return "";
-  return ` · ${count} Exa search${count === 1 ? "" : "es"}`;
+  return ` · ${count} web search${count === 1 ? "" : "es"}`;
 }
 
 /** The stage the run is in RIGHT NOW, phrased for the header.

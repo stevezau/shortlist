@@ -4,6 +4,144 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-08-11
+
+### Added
+
+- **Rows can prefer recent releases.** Ranking had no age term at all — a title's score was seed
+  frequency x rating x seed weight x affinity — so a well-rated, highly-similar 1996 film beat a 2024
+  one every time and rows filled with catalog titles. **Settings → Finding titles → Recent releases**
+  is a weight, never a filter: an older title still reaches a row, it just has to be a better match.
+  It applies to the pool CUT as well as the order, so a newer title below the line can still get in.
+  **This applies to every install, existing servers included** — the default is 0.5 ("leans towards
+  recent releases"), and no migration pins the old age-blind behaviour. Nothing is rewritten at
+  upgrade: each row adopts it on its next refresh night, so rows shift towards newer titles over the
+  following days rather than all at once. Set **Recent releases** to 0 to rank as before, globally or
+  per row.
+
+- **Changing a setting rebuilds the row instead of waiting out freshness.** Freshness is a cadence
+  for suppressing churn when nothing has changed — but nothing recorded WHICH settings a row's picks
+  were chosen under, so it also delayed changes made on purpose. On a real server, raising "Recent
+  releases" left 36 of 42 rows redelivering byte-identical picks for up to a fortnight, which from
+  the outside is indistinguishable from the setting not working. Each row now stores a fingerprint of
+  the settings that decide its CONTENTS and rebuilds on a mismatch, whatever the cadence says.
+
+- **`/api/support/surfaces`** — a read-only diagnostic that reports which Plex surfaces each row is
+  actually on, included in the support bundle.
+
+- **A run says what year each pick is and how well rated it was.** "Why is this row full of old
+  films?" was unanswerable on the one page built to answer it.
+
+
+- **Web search can now run entirely on your own hardware, via SearXNG.** The AI web-search source
+  previously had two backends: your AI provider's own search (Claude, GPT and Gemini only) or the
+  hosted Exa API. Neither suited a fully self-hosted server — a local Ollama model can't search on
+  its own, so Exa was the only way to use the feature at all, and that meant a third-party account
+  and sending queries off the box. **Settings → Finding titles → AI web search** now offers
+  **SearXNG** as a third backend: point it at your own instance and the whole search stays local.
+  It works with every AI provider, exactly as Exa does. ([#78](https://github.com/stevezau/shortlist/issues/78))
+
+  Set it up in **Connections → Web search** — one card where you pick the backend and enter what it
+  needs, replacing the separate per-vendor cards — or inline on the web-search card itself. One prerequisite,
+  which the card and the **Test** button both state outright: SearXNG's JSON API is **off in a stock
+  install**, so add `json` to `search.formats` in its `settings.yml` and restart. Without it SearXNG
+  answers with a bare `403` that explains nothing — Shortlist translates that into the exact fix.
+  A reverse-proxy login is supported via its own username/password fields, where the password is
+  encrypted at rest. A login embedded in the address (`http://user:pass@host`) is refused outright,
+  with a message pointing at those fields: the address itself is stored in the clear, returned by the
+  API and written verbatim into the immutable `settings.change` audit event that support bundles
+  export, so a password must never be allowed into it. A subpath deployment such as
+  `https://example.com/searxng` is kept intact.
+
+  Choosing a backend by name means only that backend — an unconfigured Exa or SearXNG never falls
+  through to the other, which would have sent a self-hoster's queries to a paid vendor they never
+  picked.
+
+### Changed
+
+- **The "Auto" search backend is gone.** It was the default, so it is what nearly everyone ran, and
+  it meant "the provider's own search UNIONED with whichever external is configured" — a real
+  behaviour that its name described not at all. You now pick exactly one backend, and it is the one
+  used. Migration 0063 pins every install to what it was actually using: a configured SearXNG, else
+  a configured Exa key, else the provider's own search. **A server that had both loses the combined
+  search**, which did widen the candidate pool; raise a row's seed count if you want that reach back.
+
+- **Which backend the web search uses now lives in one place.** It was briefly both on the
+  Connections card and on the Finding-titles card — the same control twice, with no way to tell
+  which was authoritative. Connections → Web search owns the backend and its credentials (the AI
+  provider already works that way); Settings → Finding titles owns whether the source runs, and
+  names the backend with a link rather than repeating the form.
+
+- **"Test" on the provider's own web search now really searches.** Being Claude, GPT or Gemini says
+  the provider offers a web-search tool; it does not say your plan or model may use it. When it may
+  not, the call failed at run time, logged a warning and returned no titles — so the source quietly
+  contributed nothing, every night, with nothing in the UI to say so. The Test button now performs
+  one real search and tells you if the tool came back empty.
+
+- **The run trace names every candidate and what became of it.** "What survived, and what release
+  date did to it" reported counts — "40 candidates survived filtering" — which is a summary, not a
+  trace: it could not answer "so why isn't X in my row". Every candidate is now listed under what
+  happened to it (made the shortlist / not in your libraries / lost the cut / already watched), each
+  with the rating and the release-date multiplier actually applied to it. The per-title verdicts were
+  already being recorded; they were simply never shown.
+
+- **The "not in your libraries" group says what Radarr/Sonarr did with it.** That group IS the
+  request pool, and nothing on the page said so. Each title now reads "requested — added to Sonarr
+  and searching" or the reason it is still waiting. Which exposed the gap behind it: the engine
+  worked out per-title why a title stayed queued and then discarded it into an aggregate log line, so
+  every pending row had an empty reason and the inbox's one question had no answer anywhere.
+
+- **"How we ordered the shortlist" shows the ordering instead of describing it.** The claim an owner
+  most wants checked — that one heavily-watched favourite cannot swallow the row — was the one prose
+  could not settle. The rank list now marks where each source's and each watched title's turn begins.
+
+- **Run stats say "Web searches" rather than "Exa searches".** The same counter now serves both
+  external backends, so naming one vendor was simply wrong on a SearXNG server. A run's "How we
+  picked" trace also records _which_ backend actually ran.
+
+### Fixed
+
+- **A share filter written by Plex Web is merged, not corrupted.** `parse_filter` split conditions on
+  `|` and values on `,` only, but Plex Web writes a combined allow+exclude filter as
+  `label=Age%200%2CAge%203&label!=X`. That parsed into one condition whose field swallowed the allow
+  clause, so the existing exclude was invisible, the merge appended a second one, and the filter grew
+  corrupt. This is the privacy machinery, so it is the most important fix in this release.
+
+  **It stops the corruption; it does not undo it.** An account whose filter already carries two
+  `label!=` clauses keeps both — future runs merge into the first and leave the second alone, and Plex
+  Web is unhappy with the pair. If you hit this before upgrading, open **Plex → Settings → Users →
+  that account → Restrictions** and delete the duplicate exclude line; Shortlist rebuilds what it
+  needs on the next run. Healing them automatically means rewriting a filter we only partly wrote,
+  which is how they got corrupted in the first place, so it is deliberately left as a manual step.
+
+- **The broken-row sweep asks twice before deleting.** It is the only destructive Plex path, and an
+  empty label read is indistinguishable from a genuinely unlabelled collection — so a collection is
+  now re-read to confirm before removal, and a sweep where NOT ONE of our rows reads as labelled is
+  treated as a failed read rather than a server full of orphans.
+
+- **A refresh night no longer collapses a row onto one taste.** The refresh branch merged survivors
+  with newcomers and then truncated by pool order, re-applying the very ordering `diversify_by_seed`
+  had just defeated — so a heavily-watched title's look-alikes took the row back over.
+
+- **Shared rows honour their display order** and stop offering dials they ignore: a shared row set to
+  "Shuffled" or "Highest rated" was delivering ranking order, because the shared path never called
+  the code those settings live in.
+
+- **Cold-start rows are full size and from the right library**, and "unstarted only" is rechecked —
+  three findings from the pipeline audit, all in paths whose victims are least likely to report them.
+
+- **An exclusion written URL-encoded is no longer reported as missing.** The sharing report compared
+  filter values raw while the privacy code compares them decoded, so an encoded copy of a label read
+  as absent — and the one question that report exists to answer named a leak that wasn't there.
+
+- **Cancel stops lying about what it did.** It worked on the first press and then answered "this run
+  isn't currently running" to every press after, about a run that was. Asking a stopping run to stop
+  is now a no-op rather than an error, and the accepted cancel is recorded on the run so a reloaded
+  page still shows "Stopping…" instead of a live-looking button that can only fail.
+
+- **A connection card says what it needs before what it is** — the part that actually blocks you was
+  the easiest to skim past.
+
 ## [1.2.1] - 2026-08-07
 
 ### Added

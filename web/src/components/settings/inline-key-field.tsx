@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 
 import { TestResult } from "@/components/test-result";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   isSecretUnchanged,
@@ -29,6 +30,8 @@ export function InlineKeyField({
   placeholder,
   hint,
   helpUrl,
+  helpLabel = "Get a key",
+  secret = true,
 }: {
   settingKey: string;
   label: string;
@@ -39,19 +42,30 @@ export function InlineKeyField({
   hint?: string;
   /** Optional "Get a key ↗" link to the provider's key page. */
   helpUrl?: string;
+  /** Wording for that link. Override where there is no key to get — a self-hosted backend's link
+   *  points at install docs, and calling that "Get a key" invents a step that doesn't exist. */
+  helpLabel?: string;
+  /**
+   * False for a setting that is an ADDRESS rather than a credential (a SearXNG URL). Redacting one
+   * would hide the very value the owner needs to read back to spot a typo, and the sentinel logic
+   * that protects a key from being wiped has nothing to protect here.
+   */
+  secret?: boolean;
 }) {
   const save = useSaveSettings();
   const test = useMutation({ mutationFn: () => api.testConnection(service) });
-  const saved = settingString(settings, settingKey) !== "";
-  const [value, setValue] = useState(saved ? REDACTED : "");
+  const stored = settingString(settings, settingKey);
+  const saved = stored !== "";
+  const [value, setValue] = useState(secret ? (saved ? REDACTED : "") : stored);
   const id = useId();
 
-  const untouched = isSecretUnchanged(value);
+  const untouched = secret ? isSecretUnchanged(value) : value.trim() === stored;
   const commit = () => {
     if (untouched) return; // nothing typed / still the placeholder → no change, never wipe the key
+    const next = secret ? value : value.trim();
     save.mutate(
-      { [settingKey]: value },
-      { onSuccess: () => setValue(REDACTED) },
+      { [settingKey]: next },
+      { onSuccess: () => secret && setValue(REDACTED) },
     );
   };
 
@@ -66,21 +80,31 @@ export function InlineKeyField({
             rel="noreferrer"
             className="inline-flex items-center gap-0.5 text-xs font-medium text-primary underline-offset-2 hover:underline"
           >
-            Get a key
+            {helpLabel}
             <ExternalLink className="h-3 w-3" aria-hidden="true" />
           </a>
         )}
       </div>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        <SecretInput
-          id={id}
-          placeholder={placeholder}
-          className="max-w-xs"
-          value={value}
-          saved={saved}
-          onChange={setValue}
-        />
+        {secret ? (
+          <SecretInput
+            id={id}
+            placeholder={placeholder}
+            className="max-w-xs"
+            value={value}
+            saved={saved}
+            onChange={setValue}
+          />
+        ) : (
+          <Input
+            id={id}
+            placeholder={placeholder}
+            className="max-w-xs"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
+        )}
         <Button
           size="sm"
           onClick={commit}

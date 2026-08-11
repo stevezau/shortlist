@@ -15,16 +15,17 @@ writes each pick's "why" in code. More sources means wider reach. Available toda
 - **TMDB, discover by taste.** Widens into popular, well-rated titles in the genres each person leans
   toward, derived from their watch history.
 - **Trakt, related titles.** Needs a Trakt API key, added in Connections. Uses Trakt's recommendation
-  graph, which often surfaces "what to watch next" picks that TMDB's similar list misses.
+  graph, which often surfaces "what to watch next" picks that TMDB's similar list misses. Trakt now
+  requires a paid **VIP** subscription to create an API key, so this source is only available if you
+  have one. Everything else here works without it.
 - **AI web search for what to watch next.** Searches the live web for current, well-reviewed titles,
   then resolves each against your library. This reaches beyond TMDB and Trakt to fresh releases and
   critics' lists.
 
-  It works on **every** provider, via the **Search backend** you pick in its card: your provider's
-  own web search (Claude, GPT or Gemini), an **Exa** key (any provider, and the only path for a local
-  Ollama model), or **Auto**, the default, which uses your provider's tool _and_ Exa together when
-  both are set up, since they surface mostly different titles. If a backend needs a key you don't
-  have yet, the card lets you enter it right there.
+  It works on **every** provider. Choose its **Search backend** in Settings → Connections → Web
+  search: your provider's own web search (Claude, GPT or Gemini), an **Exa** key, or your own
+  self-hosted **SearXNG** — either external works with any provider, including a local Ollama model.
+  Exactly one backend is used, and its credentials live on that same card.
 
 Each row also chooses **which libraries** it builds in, using the row editor's Libraries picker. A
 Plex collection lives in one library, so a row builds one collection per library you tick. Leave them
@@ -34,7 +35,7 @@ the libraries you pick.
 
 ### Freshness, already-watched, and cost
 
-Settings → Finding titles has three more dials, each of which a row can override:
+Settings → Finding titles has four more dials, each of which a row can override:
 
 - **How often it changes**, called **Freshness** in Settings where the global lives. This sets how
   often a row's picks change, and it is a pace rather than a nightly shuffle. `1.0` refreshes every
@@ -46,11 +47,35 @@ Settings → Finding titles has three more dials, each of which a row can overri
   `0.5`, about weekly. If you trigger two runs the same day, a row that isn't due won't change. That
   is expected.
 
+- **Recent releases.** How much a title's **release date** counts when Shortlist ranks it. At
+  `0.0` release date is ignored entirely: a well-rated 1996 film and a well-rated 2024 one are
+  judged the same, which is why rows can fill up with older titles. Turn it up and newer titles rank
+  higher.
+
+  The default is `0.5` — "leans towards recent releases". Age-blind is not the neutral setting it
+  looks like: a library holds decades of catalog against a trickle of new releases, so a ranker with
+  no opinion about age just inherits that skew.
+
+  **This applies to existing servers too.** Upgrading to the release that introduced it shifts each
+  row towards newer titles on its next refresh night — staggered by each row's freshness rather than
+  all at once. Nothing about who can see what changes. If you preferred the old behaviour, set the
+  slider to `0` and ranking ignores release date exactly as it used to.
+
+  It is a preference, not a filter. Nothing is excluded for being old — an older title simply has
+  to be a better match to win a slot, so a classic three of someone's watches point at still beats a
+  forgettable new release. At `1.0`, roughly every 8 years of age halves a title's ranking weight;
+  at `0.5` it takes about 16 years. The slider shows a live strip of what each era is worth so you
+  can see the trade before you save it.
+
+  This is **not** Freshness. Freshness is how often a row re-picks; this is which titles win when it
+  does. A row can rebuild every night and still be full of 1990s films — that pairing is exactly
+  what this dial is for.
+
 - **Already-watched titles.** How much of a partly-watched title still counts as watched and gets
   filtered out. The default keeps anything finished out of the picks.
 - **Watches the AI web search looks up.** How many of each person's recent titles the AI web-search
   source looks up, one cached search each, taken off the front of the list above. This is the main
-  cost lever on that source. Lower it to spend fewer tokens and Exa searches.
+  cost lever on that source. Lower it to spend fewer tokens and web searches.
 
 ### If a watched title still gets recommended
 
@@ -80,12 +105,15 @@ Settings → Finding titles sets what a row uses **unless the row says otherwise
 | **Recommendation sources**                           | Switch to "Choose for this row" and tick its own sources                                  |
 | **Libraries**                                        | Which Plex libraries it builds in, which also sets what it recommends                     |
 | **How often it changes**, **Already-watched titles** | How often it refreshes, and how much already-watched it allows                            |
+| **Recent releases**                                  | How much release date counts for this row — a “new and notable” shelf, or one that digs up older films |
 | **Row size**, **Audience**                           | How many titles, and who gets it                                                          |
 | **Watches the AI web search looks up**               | How many recent watches AI web search looks up for this row (shown only on rows using it) |
 | **Request tag**                                      | The Radarr or Sonarr tag on titles requested for this row's audience                      |
 
 So a "What to watch next" row can be Trakt-only, a "Hidden gems" row can use AI web search alone
-pointed at just your 4K library, and your default "Picked for You" can stay on the global settings.
+pointed at just your 4K library with **Recent releases** turned all the way down, a "New & notable"
+row can turn the same dial all the way up, and your default "Picked for You" can stay on the global
+settings.
 All on the same server, all at once. The Rows list shows each row's overrides on its card, so you can
 see at a glance which rows differ.
 

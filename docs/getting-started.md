@@ -25,9 +25,10 @@ heading: Getting started
 - **An AI provider** — Claude, GPT or Gemini, or a local server you run yourself (Ollama,
   llama.cpp, LM Studio, vLLM, LocalAI). This unlocks one extra source: a live web search for what
   to watch next.
-- **An [Exa](https://exa.ai) key** — makes that web search work with _any_ AI provider, including
-  local ones that have no internet access. See
-  [What is Exa, and should I use it?](faq.md#what-is-exa-and-should-i-use-it).
+- **An [Exa](https://exa.ai) key _or_ your own [SearXNG](https://docs.searxng.org)** — either makes
+  that web search work with _any_ AI provider, including local ones that have no internet access.
+  Exa needs a free-tier signup; SearXNG is free and runs on your own hardware. See
+  [Which web-search backend should I use?](faq.md#which-web-search-backend-should-i-use).
 
 ## Install (Docker)
 

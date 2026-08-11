@@ -45,7 +45,7 @@ RUN_USER_KEYS = {
     "breakdown",
     "has_trace",
 }
-PICK_KEYS = {"rank", "title", "reason", "seed_title", "sources", "affinity"}
+PICK_KEYS = {"rank", "title", "reason", "seed_title", "sources", "affinity", "year", "rating"}
 TRACE_KEYS = {"username", "display_name", "status", "error", "reason", "trace", "breakdown", "requests"}
 TRACE_REQUEST_KEYS = {"status", "detail", "arr_slug", "excluded"}
 RUN_LOG_KEYS = {"seq", "ts", "run_id", "user", "stage", "counts", "reason"}

@@ -45,8 +45,25 @@ class TraktClient:
             r = http_retry.get(f"{TRAKT_API}{path}", headers=self._headers(), timeout=self._timeout)
         except httpx.HTTPError as e:
             raise TraktError(f"Trakt unreachable ({type(e).__name__})") from e
+        if r.status_code == 426:
+            # Trakt's own "you are not a VIP" signal — its docs define 426 as exactly that
+            # (docs.trakt.tv/docs/vip-methods). This is the ONLY authoritative VIP answer available
+            # to us: the endpoint that reports VIP status (`/users/settings`) needs an OAuth user
+            # token, and Shortlist is deliberately client-id-only, so it cannot be asked.
+            raise TraktError(
+                "Trakt says this needs a paid VIP subscription (HTTP 426). Renew Trakt VIP, or "
+                "switch the Trakt source off under Finding titles — nothing else in Shortlist "
+                "depends on it."
+            )
         if r.status_code in (401, 403):
-            raise TraktError("Trakt rejected the API key")
+            # Trakt made API keys VIP-only, and a lapsed subscription takes an existing key with it —
+            # so this is now a likelier cause than a typo (issue #73). "Trakt rejected the API key"
+            # alone sent someone checking a key that was fine.
+            raise TraktError(
+                "Trakt rejected the API key. Creating a Trakt API key now needs a paid VIP "
+                "subscription, so check yours is still active — or switch the Trakt source off, "
+                "which costs you nothing else."
+            )
         if r.status_code != 200:
             raise TraktError(f"Trakt GET {path} returned HTTP {r.status_code}")
         return r.json()

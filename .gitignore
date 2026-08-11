@@ -40,3 +40,8 @@ web/.vite/
 # hypothesis's own example database (test_privacy.py's @given properties) — not fixtures, and one
 # `git add -A` away from being committed if left untracked-but-unignored
 .hypothesis/
+
+# npm's lockfile. This project is pnpm (`packageManager` in web/package.json, and CI installs with
+# `pnpm --frozen-lockfile` against pnpm-lock.yaml). A stray `npm install` writes one of these, and a
+# second competing lockfile drifts from the real one and misleads anyone who reads it.
+package-lock.json

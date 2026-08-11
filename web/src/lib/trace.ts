@@ -6,10 +6,12 @@
  *  library tab is assembled here: its watches/seeds by name, the sources for its media type, and the
  *  delivered picks whose breakdown targets it. */
 import type {
+  Pick,
   RunLibraryBreakdown,
   RunUserTrace,
   RunUserTraceResponse,
   TraceFate,
+  TraceRequestOutcome,
   TraceSeed,
   TraceSource,
   TraceWatch,
@@ -217,17 +219,37 @@ export function sourceRole(source: string): string {
   }
 }
 
-/** Plain-English description of HOW the AI web search ran, from the mode + whether Exa searches were
- * recorded. The three engine modes (candidates.py): native = the model's own built-in web search;
- * exa = the external Exa search, then the model ranks; auto = both, unioned. */
-export function webMechanism(mode: string, hasSearches: boolean): string {
+/** Display name of an external search backend, for the run trace's plain-English sentences. */
+function backendName(provider: string): string {
+  return provider === "searxng" ? "SearXNG" : "Exa";
+}
+
+/** "an Exa" / "a SearXNG" — the article follows the sound of the name, not its spelling. */
+function backendWithArticle(provider: string): string {
+  const name = backendName(provider);
+  return `${name === "Exa" ? "an" : "a"} ${name}`;
+}
+
+/** Plain-English description of HOW the AI web search ran, from the mode + whether external searches
+ * were recorded. The engine modes (candidates.py): native = the model's own built-in web search;
+ * exa/searxng = that external search, then the model ranks; auto = native + one external, unioned.
+ *
+ * `provider` is what the run RECORDED as the backend that actually ran. It is what distinguishes the
+ * two externals under `auto`, where the mode alone cannot — and it is absent on runs recorded before
+ * the trace carried it, which is why the fallback is Exa (the only backend that existed then). */
+export function webMechanism(
+  mode: string,
+  hasSearches: boolean,
+  provider?: string,
+): string {
   if (mode === "native")
     return "The AI model’s own built-in web search proposed titles directly.";
-  if (mode === "exa" || (hasSearches && mode !== "auto"))
-    return "We searched the web with Exa, then the AI read the results and proposed titles.";
+  const name = backendName(provider ?? mode);
+  if (mode === "exa" || mode === "searxng" || (hasSearches && mode !== "auto"))
+    return `We searched the web with ${name}, then the AI read the results and proposed titles.`;
   if (mode === "auto")
     return hasSearches
-      ? "The AI model’s built-in web search AND an Exa web search, combined — the AI proposed titles from both."
+      ? `The AI model’s built-in web search AND ${backendWithArticle(provider ?? mode)} web search, combined — the AI proposed titles from both.`
       : "The AI model’s own built-in web search proposed titles directly.";
   return "The AI proposed titles to watch next from a web search.";
 }
@@ -278,4 +300,157 @@ export function fateLabel(fate: TraceFate): string {
     default:
       return "";
   }
+}
+
+/** One title as the shortlist step shows it: what it is, and the numbers its verdict rested on. */
+export interface ShortlistTitle {
+  tmdb_id: number;
+  /** The media type this candidate was judged as. Required for the request lookup, which is keyed
+   *  `"<tmdb_id>:<media>"` — a tmdb_id is NOT unique on its own (the DB constraint is the pair). */
+  media: string;
+  title: string;
+  year?: number | null;
+  rating?: number | null;
+  /** The release-date multiplier applied to it. 1 when the setting was off or the year is unknown. */
+  age_weight?: number;
+}
+
+/** Titles sharing one fate, biggest group first (after `kept`). */
+export interface ShortlistGroup {
+  fate: TraceFate;
+  titles: ShortlistTitle[];
+}
+
+/** Every candidate this library saw, grouped by what became of it.
+ *
+ * The step this feeds used to state only counts — "40 candidates survived filtering" — which is a
+ * summary, not a trace: it cannot answer "why isn't X in my row", the question the page exists for.
+ * The per-title verdicts were already recorded (`fate`, plus the `year`/`rating`/`age_weight` it was
+ * judged on); they were just buried per-seed inside each source and never gathered into one view.
+ *
+ * Deduped by tmdb_id, because the pool dedupes by (tmdb_id, media): a title two sources both
+ * returned is ONE candidate, and counting it twice would make the totals disagree with the row.
+ *
+ * Within a group, ordered by the release-date weight applied — highest first — so "what release date
+ * did to it" has a visible answer: a 1990 title at x0.10 beside a 2022 one at x0.90 explains an
+ * order that otherwise looks arbitrary.
+ */
+export function shortlistBreakdown(lib: LibraryView): {
+  total: number;
+  /** True when the trace holds less than the sources returned, so this list cannot claim to be
+   *  every candidate.
+   *
+   *  Deliberately a FLAG, not a total. The obvious "N of M" is not available: `query.total` is one
+   *  seed's return count, so summing it counts a title once per seed AND per source that returned
+   *  it, while the candidate count dedupes — the two are not comparable, and the sum is inflated
+   *  every time two seeds agree. The honest thing the data supports is "some returns were not
+   *  recorded", which is exactly what the cap tells us. */
+  sampled: boolean;
+  groups: ShortlistGroup[];
+} {
+  const seen = new Map<string, { fate: TraceFate; title: ShortlistTitle }>();
+  let sampled = false;
+  const sources = [...lib.sources, ...(lib.webSource ? [lib.webSource] : [])];
+  for (const source of sources) {
+    for (const query of source.queries ?? []) {
+      // A capped return list is the one signal that says this view is partial.
+      if ((query.total ?? 0) > (query.returned ?? []).length) sampled = true;
+      for (const ret of query.returned ?? []) {
+        const key = `${ret.tmdb_id}:${query.media}`;
+        if (ret.fate === undefined || seen.has(key)) continue;
+        seen.set(key, {
+          fate: ret.fate,
+          title: {
+            tmdb_id: ret.tmdb_id,
+            media: query.media,
+            title: ret.title,
+            year: ret.year,
+            rating: ret.rating,
+            age_weight: ret.age_weight,
+          },
+        });
+      }
+    }
+  }
+
+  const byFate = new Map<TraceFate, ShortlistTitle[]>();
+  for (const { fate, title } of seen.values()) {
+    byFate.set(fate, [...(byFate.get(fate) ?? []), title]);
+  }
+  const groups = [...byFate.entries()]
+    .map(([fate, titles]) => ({
+      fate,
+      titles: titles.sort((a, b) => (b.age_weight ?? 1) - (a.age_weight ?? 1)),
+    }))
+    // What survived leads; the rest by how much they cost you, which is what an owner scans for.
+    .sort((a, b) =>
+      a.fate === "kept" ? -1 : b.fate === "kept" ? 1 : b.titles.length - a.titles.length,
+    );
+  return { total: seen.size, sampled, groups };
+}
+
+/** One delivered pick with the two rotations marked, so the ordering rules are visible rather than
+ *  asserted. */
+export interface OrderingRow {
+  pick: Pick;
+  /** This rank is where a different SOURCE got its turn (the first fairness pass). */
+  newSource: boolean;
+  /** ...and where a different watched title got its turn (the second). */
+  newSeed: boolean;
+}
+
+/** The delivered picks in rank order, each marked with whether it began a new source's or a new
+ *  seed's turn.
+ *
+ * "How we ordered the shortlist" described the algorithm — best score leads, then each source gets a
+ * turn, then each watched title does — without ever showing it happening. The claim an owner most
+ * wants checked ("a single heavily-watched favourite can't swallow the whole row") is exactly the one
+ * prose cannot settle. Every number needed was already on each delivered pick; marking the rotations
+ * turns the rank list into the evidence for the paragraph above it.
+ */
+export function orderingRows(picks: Pick[]): OrderingRow[] {
+  const ordered = [...picks].sort((a, b) => a.rank - b.rank);
+  let lastSource: string | undefined;
+  let lastSeed: string | undefined;
+  return ordered.map((pick) => {
+    const source = (pick.sources ?? [])[0];
+    const seed = pick.seed_title ?? undefined;
+    const row = {
+      pick,
+      newSource: source !== lastSource,
+      newSeed: seed !== lastSeed,
+    };
+    lastSource = source;
+    lastSeed = seed;
+    return row;
+  });
+}
+
+/** What became of a wanted-but-missing title, in one readable clause — or null if the request pass
+ *  never considered it (requests off, or it never reached the demand pool).
+ *
+ *  The "not in your libraries" group IS the request pool, so this is the line that connects the two
+ *  halves of the product: a title Shortlist wanted, could not deliver, and either asked Radarr/Sonarr
+ *  for or deliberately did not. "pending" on its own never answered the only question worth asking —
+ *  why didn't this one go? — which is why the engine now keeps the reason it always computed.
+ */
+export function requestNote(
+  outcome: TraceRequestOutcome | undefined,
+): string | null {
+  if (!outcome) return null;
+  // Status first, exclusion only as a qualifier on a title still waiting — matching
+  // `RequestOutcomeTag` on the same page. `excluded` is never cleared when a title is later sent or
+  // rejected by hand, so testing it first made one title read "requested" in one place and "not
+  // requested — on an Arr exclusion list" a few lines away.
+  if (outcome.status === "sent")
+    return outcome.detail ? `requested — ${outcome.detail}` : "requested";
+  if (outcome.status === "rejected")
+    return outcome.detail ? `not requested — ${outcome.detail}` : "not requested";
+  if (outcome.excluded)
+    return outcome.detail && outcome.detail !== "on an Arr exclusion list"
+      ? `waiting — on an Arr exclusion list (${outcome.detail})`
+      : "waiting — on an Arr exclusion list";
+  return outcome.detail
+    ? `waiting for approval — ${outcome.detail}`
+    : "waiting for approval";
 }

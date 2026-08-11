@@ -1577,6 +1577,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/support/surfaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Surfaces
+         * @description Where every Shortlist row is ACTUALLY showing on the server, versus where it should be.
+         *
+         *     The gap this closes: rows are hidden from other people by share filters, but the server OWNER has
+         *     no share filter (plex-safety rule 5), so the only thing keeping somebody else's row off the
+         *     owner's Home screen is the row's own ``promotedToOwnHome`` flag. Nothing reported those flags, so
+         *     "the admin can see another user's row" was uninvestigable (issue #75).
+         *
+         *     Two things are checked, and they are different in kind:
+         *
+         *     * An INVARIANT — a per-person row that is not the owner's must never claim the owner's Home.
+         *       No configuration makes that correct, so a violation is always a bug.
+         *     * A CONSEQUENCE — the Recommended shelf is one flag per collection, and the owner has no filter,
+         *       so a row set to show on friends' library shelves also appears on the OWNER's. That is a Plex
+         *       limitation (see `RowSpec.show_friends_library`), so it is reported as an explanation, not a
+         *       fault: the fix is a settings change, not a code change.
+         */
+        get: operations["surfaces_api_support_surfaces_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/support/timeline": {
         parameters: {
             query?: never;
@@ -2637,6 +2671,8 @@ export interface components {
              */
             placement_friends: "both" | "home" | "library" | "off";
             poster?: components["schemas"]["PosterIn"];
+            /** Recency */
+            recency?: number | null;
             /** Recent Count */
             recent_count?: number | null;
             /**
@@ -2753,6 +2789,8 @@ export interface components {
              */
             placement_friends: "both" | "home" | "library" | "off";
             poster: components["schemas"]["PosterOut"];
+            /** Recency */
+            recency: number | null;
             /** Recent Count */
             recent_count: number | null;
             /** Request Tag */
@@ -3361,6 +3399,8 @@ export interface components {
             affinity: number | null;
             /** Rank */
             rank: number;
+            /** Rating */
+            rating?: number | null;
             /** Reason */
             reason: string;
             /** Seed Title */
@@ -3369,6 +3409,8 @@ export interface components {
             sources: string[];
             /** Title */
             title: string;
+            /** Year */
+            year?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -4561,6 +4603,8 @@ export interface components {
             media_type: string;
             /** Rank */
             rank: number;
+            /** Rating */
+            rating: number | null;
             /** Reason */
             reason: string;
             /** Section Key */
@@ -4571,6 +4615,8 @@ export interface components {
             sources: string[];
             /** Title */
             title: string;
+            /** Year */
+            year: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -6869,6 +6915,28 @@ export interface operations {
         };
     };
     suggestions_api_support_suggestions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    surfaces_api_support_surfaces_get: {
         parameters: {
             query?: never;
             header?: never;

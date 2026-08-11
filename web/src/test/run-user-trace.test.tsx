@@ -640,3 +640,143 @@ describe("TraceView · what Plex ratings did", () => {
     ).toBeTruthy();
   });
 });
+
+describe("TraceView — the flow explains freshness, the cut and release date", () => {
+  /** The trace's `selection` entry for the Movies library, which okTrace()'s tabs land on. */
+  const entry = (patch: Record<string, unknown> = {}) => ({
+    row: "picked",
+    library: "Movies",
+    decision: "rebuilt" as const,
+    size: 15,
+    delivered: 15,
+    candidates: 62,
+    cut_cap: 40,
+    carried: 0,
+    new: 15,
+    freshness: 0.5,
+    refresh_night: true,
+    rebuild_every_days: 8,
+    recency: 0.5,
+    watched_pct: 0,
+    pick_order: "best",
+    rewatch: false,
+    unstarted_only: false,
+    ...patch,
+  });
+
+  const withSelection = (patch: Record<string, unknown> = {}) =>
+    okTrace({
+      trace: { ...okTrace().trace, selection: [entry(patch)] },
+    } as Partial<RunUserTraceResponse>);
+
+  it("tells the owner a row was NOT re-picked, in the delivered step", () => {
+    // The question the whole section exists for: "I changed a setting and nothing moved." It belongs
+    // beside what was delivered, because that is the thing the owner is looking at and doubting.
+    render(
+      <TraceView
+        data={withSelection({ decision: "carried_forward", refresh_night: false })}
+      />,
+    );
+    expect(screen.getByText(/not re-picked tonight/i)).toBeInTheDocument();
+    expect(screen.getByText(/rebuilds about every 8 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/Raise Freshness/i)).toBeInTheDocument();
+  });
+
+  it("names a settings change as the reason a row rebuilt early", () => {
+    render(<TraceView data={withSelection({ decision: "settings_changed" })} />);
+    expect(
+      screen.getByText(/a setting that decides its titles changed/i),
+    ).toBeInTheDocument();
+  });
+
+  it("has a shortlisted step showing the cut", () => {
+    // Between search and order, because that is where it happens: the cut decides what can be
+    // ordered at all, so explaining ordering without it describes half the mechanism.
+    render(<TraceView data={withSelection()} />);
+    expect(screen.getByText(/62 candidates survived filtering/i)).toBeInTheDocument();
+    expect(screen.getByText(/strongest 40 per media type/i)).toBeInTheDocument();
+  });
+
+  it("says release date applied to the CUT, not merely to the order", () => {
+    render(<TraceView data={withSelection()} />);
+    expect(screen.getByText(/Release date counted for 50%/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/applied to the cut itself, not just the order/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says release date was ignored rather than showing 0%", () => {
+    render(<TraceView data={withSelection({ recency: 0 })} />);
+    expect(screen.getByText(/Release date was ignored/i)).toBeInTheDocument();
+  });
+
+  it("adds no shortlisted step for a run recorded before this existed", () => {
+    // Absent must read as "not recorded", never as a stage with empty numbers.
+    render(<TraceView data={okTrace()} />);
+    expect(screen.queryByText(/survived filtering/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("TraceView — why a title won or lost", () => {
+  /** One movie gather with a single returned title, built explicitly so the test states the shape
+   *  it depends on instead of reaching into okTrace()'s nesting to patch it. */
+  const withReturn = (patch: Record<string, unknown>) => {
+    const base = okTrace();
+    return okTrace({
+      trace: {
+        ...base.trace,
+        gathers: [
+          {
+            pool: "movie · tmdb_similar",
+            sources: [
+              {
+                source: "tmdb_similar",
+                status: "ok" as const,
+                contributed: 1,
+                detail: "",
+                queries: [
+                  {
+                    seed: "Toy Story",
+                    media: "movie",
+                    total: 1,
+                    returned: [
+                      { tmdb_id: 863, title: "Toy Story 2", fate: "kept" as const, ...patch },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    } as Partial<RunUserTraceResponse>);
+  };
+
+  it("shows a returned title's year, so an era complaint is checkable", () => {
+    render(<TraceView data={withReturn({ year: 1999, rating: 8.6 })} />);
+    expect(screen.getByText("(1999)")).toBeInTheDocument();
+  });
+
+  it("shows the score it was judged on", () => {
+    render(<TraceView data={withReturn({ year: 1999, rating: 8.6 })} />);
+    expect(screen.getByText("8.6")).toBeInTheDocument();
+  });
+
+  it("shows the release-date multiplier that was applied to it", () => {
+    // The number that answers "why did the older one win?" — without it a fate is an outcome with
+    // no reasoning attached.
+    render(<TraceView data={withReturn({ year: 1994, rating: 8.6, age_weight: 0.27 })} />);
+    expect(screen.getByText(/age ×0\.27/)).toBeInTheDocument();
+  });
+
+  it("omits the multiplier when release date was not consulted", () => {
+    // "×1.0" is the absence of information dressed as information.
+    render(<TraceView data={withReturn({ year: 1994, rating: 8.6, age_weight: 1 })} />);
+    expect(screen.queryByText(/age ×/)).not.toBeInTheDocument();
+  });
+
+  it("renders a legacy return that carries none of it", () => {
+    render(<TraceView data={okTrace()} />);
+    expect(screen.queryByText(/age ×/)).not.toBeInTheDocument();
+  });
+});
