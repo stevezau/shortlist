@@ -718,13 +718,37 @@ describe("TraceView — the flow explains freshness, the cut and release date", 
 });
 
 describe("TraceView — why a title won or lost", () => {
+  /** One movie gather with a single returned title, built explicitly so the test states the shape
+   *  it depends on instead of reaching into okTrace()'s nesting to patch it. */
   const withReturn = (patch: Record<string, unknown>) => {
     const base = okTrace();
-    const gathers = structuredClone(base.trace.gathers ?? []);
-    const returned = gathers[0]!.sources[0]!.queries![0]!.returned;
-    returned[0] = { ...returned[0]!, ...patch };
     return okTrace({
-      trace: { ...base.trace, gathers },
+      trace: {
+        ...base.trace,
+        gathers: [
+          {
+            pool: "movie · tmdb_similar",
+            sources: [
+              {
+                source: "tmdb_similar",
+                status: "ok" as const,
+                contributed: 1,
+                detail: "",
+                queries: [
+                  {
+                    seed: "Toy Story",
+                    media: "movie",
+                    total: 1,
+                    returned: [
+                      { tmdb_id: 863, title: "Toy Story 2", fate: "kept" as const, ...patch },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
     } as Partial<RunUserTraceResponse>);
   };
 
