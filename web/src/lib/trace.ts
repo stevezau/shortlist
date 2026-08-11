@@ -299,3 +299,73 @@ export function fateLabel(fate: TraceFate): string {
       return "";
   }
 }
+
+/** One title as the shortlist step shows it: what it is, and the numbers its verdict rested on. */
+export interface ShortlistTitle {
+  tmdb_id: number;
+  title: string;
+  year?: number | null;
+  rating?: number | null;
+  /** The release-date multiplier applied to it. 1 when the setting was off or the year is unknown. */
+  age_weight?: number;
+}
+
+/** Titles sharing one fate, biggest group first (after `kept`). */
+export interface ShortlistGroup {
+  fate: TraceFate;
+  titles: ShortlistTitle[];
+}
+
+/** Every candidate this library saw, grouped by what became of it.
+ *
+ * The step this feeds used to state only counts — "40 candidates survived filtering" — which is a
+ * summary, not a trace: it cannot answer "why isn't X in my row", the question the page exists for.
+ * The per-title verdicts were already recorded (`fate`, plus the `year`/`rating`/`age_weight` it was
+ * judged on); they were just buried per-seed inside each source and never gathered into one view.
+ *
+ * Deduped by tmdb_id, because the pool dedupes by (tmdb_id, media): a title two sources both
+ * returned is ONE candidate, and counting it twice would make the totals disagree with the row.
+ *
+ * Within a group, ordered by the release-date weight applied — highest first — so "what release date
+ * did to it" has a visible answer: a 1990 title at x0.10 beside a 2022 one at x0.90 explains an
+ * order that otherwise looks arbitrary.
+ */
+export function shortlistBreakdown(lib: LibraryView): {
+  total: number;
+  groups: ShortlistGroup[];
+} {
+  const seen = new Map<number, { fate: TraceFate; title: ShortlistTitle }>();
+  const sources = [...lib.sources, ...(lib.webSource ? [lib.webSource] : [])];
+  for (const source of sources) {
+    for (const query of source.queries ?? []) {
+      for (const ret of query.returned ?? []) {
+        if (ret.fate === undefined || seen.has(ret.tmdb_id)) continue;
+        seen.set(ret.tmdb_id, {
+          fate: ret.fate,
+          title: {
+            tmdb_id: ret.tmdb_id,
+            title: ret.title,
+            year: ret.year,
+            rating: ret.rating,
+            age_weight: ret.age_weight,
+          },
+        });
+      }
+    }
+  }
+
+  const byFate = new Map<TraceFate, ShortlistTitle[]>();
+  for (const { fate, title } of seen.values()) {
+    byFate.set(fate, [...(byFate.get(fate) ?? []), title]);
+  }
+  const groups = [...byFate.entries()]
+    .map(([fate, titles]) => ({
+      fate,
+      titles: titles.sort((a, b) => (b.age_weight ?? 1) - (a.age_weight ?? 1)),
+    }))
+    // What survived leads; the rest by how much they cost you, which is what an owner scans for.
+    .sort((a, b) =>
+      a.fate === "kept" ? -1 : b.fate === "kept" ? 1 : b.titles.length - a.titles.length,
+    );
+  return { total: seen.size, groups };
+}

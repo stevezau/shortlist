@@ -7,9 +7,11 @@ import {
   mediaLabel,
   sourceRole,
   watchedSummary,
+  shortlistBreakdown,
   webMechanism,
 } from "@/lib/trace";
 import type { RunUserTraceResponse } from "@/lib/types";
+import type { LibraryView } from "@/lib/trace";
 
 function trace(
   patch: Partial<RunUserTraceResponse> = {},
@@ -354,5 +356,83 @@ describe("plain-English trace helpers", () => {
     expect(movieOnly && watchedSummary(movieOnly)).toBe(
       "Watched 5 movies here",
     );
+  });
+});
+
+describe("shortlistBreakdown — the per-title answer to 'what survived and why'", () => {
+  const lib = (sources: unknown[]) =>
+    ({ sources, webSource: null }) as unknown as LibraryView;
+
+  const src = (name: string, returned: unknown[]) => ({
+    source: name,
+    status: "ok",
+    contributed: 0,
+    detail: "",
+    queries: [{ seed: "S", media: "movie", returned }],
+  });
+
+  it("groups every title by what happened to it", () => {
+    const out = shortlistBreakdown(
+      lib([
+        src("tmdb_similar", [
+          { tmdb_id: 1, title: "Kept One", fate: "kept", year: 2024, rating: 8, age_weight: 1 },
+          { tmdb_id: 2, title: "Cut One", fate: "lost_ranking_cutoff", year: 1999, rating: 9, age_weight: 0.3 },
+          { tmdb_id: 3, title: "Seen It", fate: "already_watched", year: 2020, rating: 7 },
+        ]),
+      ]),
+    );
+    expect(out.total).toBe(3);
+    expect(out.groups.find((g) => g.fate === "kept")?.titles.map((t) => t.title)).toEqual(["Kept One"]);
+    expect(out.groups.find((g) => g.fate === "lost_ranking_cutoff")?.titles[0]?.age_weight).toBe(0.3);
+  });
+
+  it("counts a title found by two sources once", () => {
+    // The pool dedupes by (tmdb_id, media); counting per source would inflate every number on
+    // screen and make the funnel not add up.
+    const out = shortlistBreakdown(
+      lib([
+        src("tmdb_similar", [{ tmdb_id: 1, title: "Both", fate: "kept", year: 2024, rating: 8 }]),
+        src("trakt", [{ tmdb_id: 1, title: "Both", fate: "kept", year: 2024, rating: 8 }]),
+      ]),
+    );
+    expect(out.total).toBe(1);
+  });
+
+  it("orders the cut list by the release-date weight that decided it", () => {
+    // The point of the list: "why did a 2003 title beat a 2024 one" is answered by this number.
+    const out = shortlistBreakdown(
+      lib([
+        src("tmdb_similar", [
+          { tmdb_id: 1, title: "Old", fate: "lost_ranking_cutoff", year: 1990, rating: 9, age_weight: 0.1 },
+          { tmdb_id: 2, title: "Newer", fate: "lost_ranking_cutoff", year: 2022, rating: 7, age_weight: 0.9 },
+        ]),
+      ]),
+    );
+    const cut = out.groups.find((g) => g.fate === "lost_ranking_cutoff");
+    expect(cut!.titles.map((t) => t.title)).toEqual(["Newer", "Old"]);
+  });
+
+  it("puts what survived first, then the biggest removal reason", () => {
+    const out = shortlistBreakdown(
+      lib([
+        src("tmdb_similar", [
+          { tmdb_id: 1, title: "A", fate: "already_watched" },
+          { tmdb_id: 2, title: "B", fate: "lost_ranking_cutoff" },
+          { tmdb_id: 3, title: "C", fate: "lost_ranking_cutoff" },
+          { tmdb_id: 4, title: "D", fate: "kept" },
+        ]),
+      ]),
+    );
+    expect(out.groups.map((g) => g.fate)).toEqual([
+      "kept",
+      "lost_ranking_cutoff",
+      "already_watched",
+    ]);
+  });
+
+  it("is empty for a legacy run that recorded no fates", () => {
+    const out = shortlistBreakdown(lib([src("tmdb_similar", [{ tmdb_id: 1, title: "No fate" }])]));
+    expect(out.total).toBe(0);
+    expect(out.groups).toEqual([]);
   });
 });

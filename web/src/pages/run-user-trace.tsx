@@ -34,6 +34,7 @@ import { useBlockSeed, useRunUserTrace } from "@/lib/queries";
 import {
   buildLibraries,
   fateLabel,
+  shortlistBreakdown,
   mediaLabel,
   sourceRole,
   watchedSummary,
@@ -204,6 +205,68 @@ function searchesSampled(lib: LibraryView): boolean {
     const shown = (src.queries ?? []).length;
     return shown > 0 && mediaSearches(src, lib.media) > shown;
   });
+}
+
+/** Every candidate this library saw, grouped by what became of it, with the numbers each verdict
+ *  rested on. This is the part that makes the step a trace rather than a summary: the counts alone
+ *  never answered "so why isn't X in my row", which is the only question worth opening this page for.
+ *
+ *  Long groups are collapsed behind a <details> — a filtered-out group can run to hundreds, and the
+ *  step above it is the headline, not a list to scroll past. */
+function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
+  const { total, groups } = shortlistBreakdown(lib);
+  if (total === 0) return null;
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-sm font-medium">
+        What happened to all {total} candidates
+      </p>
+      {groups.map((group) => {
+        const kept = group.fate === "kept";
+        return (
+          <details
+            key={group.fate}
+            open={kept}
+            className="rounded-md border bg-muted/30 px-3 py-2"
+          >
+            <summary className="cursor-pointer text-sm">
+              <span className={cn("font-medium", kept && "text-success")}>
+                {kept ? "Made the shortlist" : fateLabel(group.fate)}
+              </span>{" "}
+              <span className="text-muted-foreground">
+                — {group.titles.length}
+              </span>
+            </summary>
+            <ul className="mt-2 space-y-0.5">
+              {group.titles.map((t) => (
+                <li
+                  key={t.tmdb_id}
+                  className="flex flex-wrap items-baseline gap-x-2 text-xs"
+                >
+                  <span className={cn(!kept && "text-muted-foreground")}>
+                    {t.title}
+                    {t.year ? ` (${t.year})` : ""}
+                  </span>
+                  {t.rating != null && (
+                    <span className="text-muted-foreground">
+                      rated {t.rating.toFixed(1)}
+                    </span>
+                  )}
+                  {/* The release-date multiplier actually applied — the answer to "why did a 2003
+                      title beat a 2024 one". Hidden at 1, where the setting changed nothing. */}
+                  {t.age_weight != null && t.age_weight !== 1 && (
+                    <span className="font-mono text-muted-foreground">
+                      release date &times;{t.age_weight.toFixed(2)}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        );
+      })}
+    </div>
+  );
 }
 
 /** What the release-date weight and the pool cap did to this library's shortlist. */
@@ -474,7 +537,12 @@ function LibraryFlow({
             title: "What survived, and what release date did to it",
             subtitle:
               "Everything found above is filtered (already watched, wrong library, excluded genres) and then cut to the strongest few per media type. Release date is part of that cut, not applied after it.",
-            body: shortlistBody(selection),
+            body: (
+              <>
+                {shortlistBody(selection)}
+                <ShortlistTitles lib={lib} />
+              </>
+            ),
           },
         ]),
     // How the shortlist was ORDERED — the step that used to be missing entirely. Not shown for cold
