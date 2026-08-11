@@ -626,4 +626,7 @@ def _finalize_run(
         # Every account whose share filter Plex refused this run. These are the reason nothing
         # was promoted, so the UI can say so instead of leaving "Failed" unexplained (issue #1).
         "promotion_blockers": list(report.promotion_blockers),
+        # Accounts Plex refuses a hide-list for that can nonetheless SEE other people's rows. Not a
+        # blocker — nothing we do hides them — so the run succeeds and this is how the owner finds out.
+        "unhideable_rows": {name: list(keys) for name, keys in report.unhideable_rows.items()},
     }

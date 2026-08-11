@@ -222,6 +222,17 @@ export const api = {
       body: JSON.stringify(patch),
     }),
 
+  /** File away someone Plex no longer lists: drops their picks and run history and hides them from
+   *  the list. Not a delete — the users row anchors the pre-Shortlist filter snapshot uninstall
+   *  restores from. Refused (409) for anyone still on the share. */
+  removeUser: (
+    id: number,
+  ): Promise<{
+    user_id: number;
+    picks_deleted: number;
+    runs_deleted: number;
+  }> => request(`/api/users/${id}`, { method: "DELETE" }),
+
   /** Enable or disable every user at once. Disabling also removes their rows from Plex. */
   setAllUsersEnabled: (
     enabled: boolean,

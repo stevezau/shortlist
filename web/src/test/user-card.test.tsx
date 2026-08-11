@@ -25,6 +25,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     avatar_url: "",
     plex_account_id: 0,
     restriction_profile: "",
+    unhidden_rows: 0,
+    departed: false,
     preview_titles: [],
     prefs: {},
     ...overrides,

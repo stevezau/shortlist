@@ -189,6 +189,22 @@ class ContextBuilder:
             # native provider tools still work without it — only Ollama depends on it).
             search = make_search_client(store.get)
             history = ShareTokenWatchSource(plex, plextv, owner_token=plex_token)
+
+            def _pms_for_user(profile, _history=history, _url=plex_url):
+                """The server as ONE user sees it, for the privacy check on accounts Plex refuses a
+                hide-list for.
+
+                Reuses `ShareTokenWatchSource._token_for` rather than reading the shared-server list
+                directly, for two reasons. It has the CANARY fallback: a managed Home profile that was
+                never separately shared is absent from `shared_server_tokens()` — and that is exactly
+                the archetype this check exists for, so a bare lookup returned None and the account was
+                recorded as seeing nothing, which is the false all-clear the whole feature was written
+                to stop. It also memoises the roster behind a lock, so this does not re-fetch plex.tv
+                once per profiled account per run (rule 6).
+                """
+                token = _history._token_for(profile)
+                return PlexClient(_url, token, timeout=int(store.get("plex.timeout_s") or 45)) if token else None
+
             provider = store.get("curator.provider")
             curator = make_curator(provider, **curator_kwargs(store.get))
             # Build the poster studio only if a row actually renders a poster from text (built-in or
@@ -208,6 +224,14 @@ class ContextBuilder:
             # Every user Shortlist knows, enabled or not: the engine answers "whose row is this?"
             # by account id, because a name can change and two names can slugify alike.
             known_slugs = {u.plex_account_id: u.slug for u in session.query(User).all()}
+            # People our records say are GONE — plex.tv stopped listing them (`departed_at`, set and
+            # cleared by the roster sweep) or the owner filed them away (`removed_at`). This is the
+            # ONLY thing that lets a private-row exclude be pruned, so it has to be an assertion we
+            # made, not an inference from who happens to be in tonight's run.
+            departed_slugs = {
+                u.slug
+                for u in session.query(User).filter((User.departed_at.isnot(None)) | (User.removed_at.isnot(None)))
+            }
             # Whose rows are allowed on the owner's Home. Read from the DB rather than this run's
             # profiles, because the owner may be paused, disabled, or simply not in a scoped run —
             # and converge still has to know which single label is legitimately there.
@@ -258,8 +282,10 @@ class ContextBuilder:
                 previous_picks=previous,
                 previous_recipes=previous_recipes,
                 delivered_keys=delivered_keys,
+                pms_for_user=_pms_for_user,
                 disabled_account_ids=disabled_account_ids,
                 known_slugs=known_slugs,
+                departed_slugs=departed_slugs,
                 owner_slug=owner_slug,
                 paused_slugs=paused_slugs,
                 # The DB read above succeeded, so `known_slugs` lists every user Shortlist has — the
@@ -622,10 +648,10 @@ class ContextBuilder:
             # A parental PROFILE, not the `restricted` flag: plex.tv sets that for every Plex Home
             # account. Keying on it dropped ordinary managed users from every run — while the Users
             # page now lets you enable them and the docs promise they get a row. An account with a
-            # profile still gets none: Plex hides every collection from it, so a row is invisible.
+            # profile still gets none: Plex usually hides collections from it, so a row is invisible.
             #
             # `restriction_profile` is "" until the next user sync backfills it, so immediately after
-            # an upgrade a profiled account is briefly eligible. Harmless — it sees no collections
+            # an upgrade a profiled account is briefly eligible. Harmless — Plex refuses its filter
             # either way, and the next sync settles it.
             #
             # BOTH flags, matching `privacy.py`'s skip exactly. They come from different endpoints

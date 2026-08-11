@@ -106,7 +106,7 @@ POST /api/setup/probe · POST /api/setup/link · GET/PUT /api/setup/state
 ### Users
 
 ```
-GET  /api/users · PATCH /api/users/{id} {enabled?, request_tag?, prefs?} · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
+GET  /api/users · PATCH /api/users/{id} {enabled?, request_tag?, prefs?} · DELETE /api/users/{id} (only for someone plex.tv no longer lists: drops their picks and run history and hides them from the list; keeps the users row and their pre-Shortlist share-filter snapshot, which uninstall restores from — 409 for anyone still on the share) · POST /api/users/sync (shared + Home users from plex.tv, plus the server owner, whom that list never returns)
 POST /api/users/set-enabled {enabled} (bulk enable/disable every user at once)
 GET  /api/users/{id}/rows · PUT /api/users/{id}/rows/{collection_id} {muted?, row_size?, recent_count?} (per-person, per-row: `recent_count` (1–25) overrides how many recent watches the `llm_web` source searches for this person on this row; null on any field clears it back to the row's own setting)
 GET  /api/users/{id}/runs (this person's outcome per run — `status`, `reason` for a non-failing skip, `duration_ms`, their diff and picks) · GET /api/users/{id}/runs/summary -> {included, total} (a run is server-wide, so "6 runs" on a person's page only reads honestly next to "of 148")

@@ -216,6 +216,68 @@ def _failed_jobs(session: Session) -> dict | None:
     }
 
 
+def _rows_we_cannot_hide(session: Session) -> dict | None:
+    """An account exists that Plex refuses a hide-list for, and it can see other people's rows.
+
+    Plex declines label restrictions on a managed account while a parental Restriction Profile is set.
+    Shortlist skipped those accounts on the assumption that they see no collections anyway — true of
+    `little_kid`, false of `older_kid` (measured on a real server, 2026-08-11). So for those accounts
+    nothing hid other people's rows and nothing said so.
+
+    Nothing in Shortlist can fix it: changing someone's parental profile is not ours to do, and there
+    is no other way to hide one collection from one account. The owner has exactly ONE remedy —
+    clearing the Restriction Profile — and this says so. Disabling the account is deliberately NOT
+    offered: it removes that person's own row, while the exposure is their view of everyone else's,
+    which needs the very filter Plex is refusing. NOT dismissable while it is true — it is a live
+    privacy exposure, not a preference.
+    """
+    from shortlist.server.db.models import Run
+
+    # The latest run that actually RECORDED a measurement — not merely the latest that finished. A run
+    # that failed early, was aborted, or never reached the privacy phase carries no `unhideable_rows`
+    # key at all; treating that as "{}" would let one bad run clear a real finding from the alert while
+    # the exposure is untouched. That silence is the thing this whole check exists to end.
+    run = next(
+        (
+            r
+            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
+            if "unhideable_rows" in (r.stats or {})
+        ),
+        None,
+    )
+    exposed = ((run.stats or {}).get("unhideable_rows") or {}) if run else {}
+    if not exposed:
+        return None
+
+    # One paragraph, no markup: the bell renders `body` as a single unformatted <p>. So the order has
+    # to carry the meaning — who, how much, why nobody here can fix it, what the owner does instead.
+    names = sorted(exposed)
+    if len(names) == 1:
+        who = names[0]
+        count = len(exposed[who])
+        title = f"{who} can see other people's rows"
+        lead = f"{who} can see {count} {'row that belongs' if count == 1 else 'rows that belong'} to other people."
+        fix = who
+    else:
+        who = f"{', '.join(names[:-1])} and {names[-1]}"
+        title = f"{len(names)} accounts can see other people's rows"
+        lead = f"{who} can see rows that belong to other people."
+        fix = "those accounts"
+    return {
+        "id": f"unhideable-rows-{run.id}",
+        "severity": "error",
+        "title": title,
+        "body": (
+            f"{lead} Plex won't let Shortlist hide anything from an account with a parental profile "
+            f"set, so this can't be fixed from here. Clear the Restriction Profile for {fix} in Plex "
+            "(Settings → Users & Sharing) and the normal privacy filter starts applying again."
+        ),
+        "action_url": "/users",
+        "action_label": "Open Users",
+        "dismissable": False,
+    }
+
+
 def build_notifications(session: Session, store: SettingsStore, current_version: str) -> list[dict]:
     """Every currently-firing notification the owner hasn't dismissed, most severe first. Dismissal is
     by id, and each dismissable id encodes its state (the run id, the version), so a NEW failure or a
@@ -227,6 +289,7 @@ def build_notifications(session: Session, store: SettingsStore, current_version:
         _failed_jobs(session),
         _mdblist_quota(session),
         _recent_service_errors(session),
+        _rows_we_cannot_hide(session),
         _owner_sees_all_rows(session),
     ]
     dismissed = set(store.get(DISMISSED_KEY) or [])

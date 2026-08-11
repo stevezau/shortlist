@@ -72,6 +72,8 @@ function person(username: string, displayName: string): User {
     user_type: "shared",
     restricted: false,
     restriction_profile: "",
+    unhidden_rows: 0,
+    departed: false,
     enabled: true,
     cold_start: false,
     request_tag: "",

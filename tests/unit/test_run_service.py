@@ -231,6 +231,7 @@ class TestRunExecution:
             "exa_cache_hits": 0,
             "error": None,
             "promotion_blockers": [],
+            "unhideable_rows": {},
         }
         with sessions() as session:
             run_users = session.query(RunUser).filter_by(run_id=run.id).all()

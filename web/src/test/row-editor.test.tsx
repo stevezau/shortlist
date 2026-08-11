@@ -88,6 +88,8 @@ function user(patch: Partial<User> = {}): User {
     avatar_url: "",
     plex_account_id: 0,
     restriction_profile: "",
+    unhidden_rows: 0,
+    departed: false,
     preview_titles: [],
     prefs: {},
     ...patch,
@@ -1296,7 +1298,9 @@ describe("RowEditor — only series they haven't started", () => {
     renderEditor(row({ media: "both" }));
 
     expect(
-      screen.getByRole("switch", { name: /only series they have not started/i }),
+      screen.getByRole("switch", {
+        name: /only series they have not started/i,
+      }),
     ).toBeInTheDocument();
   });
 
@@ -1304,7 +1308,9 @@ describe("RowEditor — only series they haven't started", () => {
     renderEditor(row({ media: "movie" }));
 
     expect(
-      screen.queryByRole("switch", { name: /only series they have not started/i }),
+      screen.queryByRole("switch", {
+        name: /only series they have not started/i,
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -1314,7 +1320,9 @@ describe("RowEditor — only series they haven't started", () => {
     renderEditor(row({ media: "show" }));
 
     expect(
-      screen.getByText(/only changes anything if you.*allowed already-watched titles/i),
+      screen.getByText(
+        /only changes anything if you.*allowed already-watched titles/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -1322,9 +1330,13 @@ describe("RowEditor — only series they haven't started", () => {
     renderEditor(row({ media: "both", unstarted_only: false }));
 
     await userEvent.click(
-      screen.getByRole("switch", { name: /only series they have not started/i }),
+      screen.getByRole("switch", {
+        name: /only series they have not started/i,
+      }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
     const call = updateCollection.mock.calls.at(0);
@@ -1368,12 +1380,14 @@ describe("RowEditor — recent releases", () => {
     await userEvent.click(
       screen.getByRole("switch", { name: /global recent-releases default/i }),
     );
-    await userEvent.click(screen.getByRole("button", { name: /Save changes/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /Save changes/i }),
+    );
 
     await waitFor(() => expect(updateCollection).toHaveBeenCalled());
-    expect(
-      (updateCollection.mock.calls.at(0)?.[1] as Collection).recency,
-    ).toBe(0.6);
+    expect((updateCollection.mock.calls.at(0)?.[1] as Collection).recency).toBe(
+      0.6,
+    );
   });
 
   it("offers the control on a row that follows a watch, where freshness is withheld", async () => {

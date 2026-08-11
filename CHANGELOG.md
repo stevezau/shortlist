@@ -4,6 +4,45 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Shortlist now tells you when it cannot make a row private.** Plex refuses a label share-filter
+  for a managed account with a parental **Restriction Profile** set, so those accounts were skipped —
+  on the stated grounds that such an account "sees zero collections anyway". That is true of *Younger
+  Kid* and false of *Older Kid*, which on a real server listed three collections. So for those
+  accounts nothing hid other people's rows and nothing said so. Every run now checks each profiled
+  account **with that account's own token** and reports what it can actually see: a dashboard alert
+  that cannot be dismissed while it is true, a **"Sees N rows of others'"** badge in the Users list,
+  and an explanation on the person's page. Shortlist still cannot fix it — hiding a row *is* the
+  filter Plex is refusing — so the one remedy that works (clear the Restriction Profile) is named,
+  and disabling the account is explicitly called out as *not* a fix, since that removes their own row
+  rather than their view of everyone else's. (#76)
+
+- **People who leave your Plex server are handled properly.** Losing access already switched someone
+  off and removed their rows, but the Users list then showed them exactly like an account you had
+  turned off yourself, and the share-filter exclude for their deleted row stayed in every other
+  account's filter permanently (one real server had reached 990-character filter strings). Departed
+  accounts are now badged **Left the server** and offer **Remove**, which drops their pick and run
+  history and clears them out of the list. Remove deliberately keeps their original Plex share
+  settings, so uninstalling Shortlist can still restore that account exactly as it was found — that
+  record is the only copy. A departure is re-checked every sync, so re-inviting somebody brings them
+  straight back.
+
+### Fixed
+
+- **Dead privacy excludes are cleaned up.** A `label!=shortlist_<person>` exclude for a row that no
+  longer exists is now removed from everyone's share filter — but only once **two independent checks**
+  agree the row is gone: a complete collections read in which nothing carries that label, *and*
+  Shortlist's own record that the person departed. Either alone can be wrong in the direction that
+  un-hides a live row, so neither is trusted by itself.
+
+- **The nightly departure sweep is now tested.** It disables people and deletes collections
+  unattended, and had no test coverage at all — including the two limits that stop it acting on a
+  truncated read from plex.tv (an empty roster is ignored; more than half the server appearing to
+  leave at once is refused and recorded).
+
 ## [1.3.0] - 2026-08-11
 
 ### Added

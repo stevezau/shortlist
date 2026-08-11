@@ -901,6 +901,11 @@ class RunReport:
     # only "promotion skipped — a privacy sync failed", which names neither the account nor the
     # reason and sends them to the container logs (issue #1, mrjohnpoz).
     promotion_blockers: list[str] = field(default_factory=list)
+    # {username: [ratingKey, ...]} — rows this account can SEE that are not its own, on an account
+    # Plex will not accept a hide-list for. Not a blocker: nothing we do can hide these, so stopping
+    # the run would punish everyone for one account. It is reported instead, because an exposure the
+    # owner is not told about is the actual failure (see privacy.unhidden_rows_visible_to).
+    unhideable_rows: dict[str, list[int]] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:

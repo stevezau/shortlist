@@ -86,7 +86,14 @@ class User(Base):
 
     So a `DELETE FROM users` fails loudly today, and that is the designed outcome: nothing in the
     codebase deletes a user (they are disabled instead), and the first code that wants to must state,
-    per table, what happens to the three records that cannot be rebuilt. The app's engine sets
+    per table, what happens to the three records that cannot be rebuilt.
+
+    **The one sanctioned exception**, stating it as that rule requires: `DELETE /api/users/{id}`
+    ("Remove", for someone plex.tv no longer lists) deletes `picks` and `run_users` and KEEPS
+    `restriction_snapshots`. It does not delete the users row at all — it sets `removed_at` — precisely
+    so the snapshot keeps its anchor, since uninstall skips any snapshot whose user has gone. The cost
+    of the two it does drop is real and deliberate: lifetime dashboard figures change retroactively for
+    the whole server, and past run pages lose a user that `runs.stats` still counts. The app's engine sets
     `PRAGMA foreign_keys=ON` (`db/session.py`), so both halves of this policy are actually enforced.
 
     RESTRICT is spelled out rather than left to SQLite's default NO ACTION, which behaves the same
@@ -114,6 +121,14 @@ class User(Base):
     # for both), and the difference decides whether Plex will accept a label restriction at all.
     restriction_profile: Mapped[str] = mapped_column(String(32), default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # plex.tv stopped listing this account — set by the roster sweep, CLEARED the moment it lists them
+    # again, so a re-invite heals on the next sync. Distinct from `enabled=0`, which the owner also
+    # sets by hand: without it the Users list cannot say why somebody is switched off.
+    departed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # The owner filed them away: picks and run history dropped, row hidden from the Users list. Never
+    # a DELETE — `restriction_snapshots` is RESTRICT-keyed here and holds the only copy of their
+    # pre-Shortlist filters, which uninstall restores from (plex-safety rule 2).
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     cold_start: Mapped[bool] = mapped_column(Boolean, default=False)
     label: Mapped[str] = mapped_column(String(255), default="")  # as stored by Plex (title-cased)
     request_tag: Mapped[str] = mapped_column(String(64), default="")  # tag added to titles requested for them

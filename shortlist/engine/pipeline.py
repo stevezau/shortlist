@@ -33,6 +33,7 @@ from shortlist.engine.models import (
     CollectionDiff,
     HubAnchor,
     MediaType,
+    OwnedRow,
     RequestOutcome,
     RequestReport,
     RowSpec,
@@ -45,6 +46,7 @@ from shortlist.engine.privacy import (
     shared_label_audiences,
     shortlist_labels_in,
     sync_user_restrictions,
+    unhidden_rows_visible_to,
 )
 
 
@@ -329,7 +331,7 @@ def _deliver_phase(
 
     def process(user: UserProfile) -> tuple[UserProfile, UserRunReport, bool]:
         user_report = UserRunReport(username=user.username, slug=user.slug)
-        # Cancelled: skip this user's gather/curate/delivery entirely. Checked here (not mid-user) so
+        # Cancelled: skip this user's gather/rank/delivery entirely. Checked here (not mid-user) so
         # a user already in flight finishes cleanly — per-user transactionality means a cancel never
         # leaves a half-applied user. Queued users fall straight through as "skipped".
         if ctx.cancelled():
@@ -344,7 +346,7 @@ def _deliver_phase(
         delivered = False
         try:
             # PMS timeouts are retried at the DELIVERY write (idempotent) inside _run_user, so a Plex
-            # hiccup no longer re-runs the whole user's gather + LLM curate (which is what made a slow
+            # hiccup no longer re-runs the whole user's gather + ranking (which is what made a slow
             # night catastrophic — SFLIX run 3, 2026-07-19). A timeout that exhausts the delivery
             # retries, or one from a non-delivery PMS read, falls through here and fails just this user.
             delivered = rows._run_user(
@@ -418,6 +420,60 @@ def _deliver_phase(
     return to_promote, shared_to_promote
 
 
+def _record_unhideable(ctx, user, remote, owned, collections_known, report) -> None:
+    """Check what an account we could not write a hide-list for can actually SEE, and record it.
+
+    Only for accounts Plex genuinely refuses (a managed account with a parental profile) — every other
+    empty write is either a no-op or already handled as a blocker upstream.
+
+    Deliberately NOT a promotion blocker. Nothing we can do would hide these rows, so stopping the run
+    would punish every other user on the server for one account's Plex settings, permanently. The
+    honest response is to tell the owner, who can set that account's Restriction Profile to None (the
+    path Plex's own documentation gives) or disable it in Shortlist.
+
+    Never raises: this is a diagnostic on top of a sync that already succeeded, and a failed read here
+    must not fail the run. A read that fails is simply not reported as clean.
+
+    `owned` is this phase's own FRESH PMS enumeration, not `ctx.delivered_keys`. The ledger is loaded
+    when the context is built, so on a first run it holds nothing and every account would measure as
+    clean — silence indistinguishable from the bug.
+    """
+    if ctx.pms_for_user is None or remote is None or not getattr(remote, "restriction_profile", ""):
+        return
+    if not collections_known or not owned:
+        # We could not establish which rows exist, so "sees none of ours" would be an artefact of the
+        # failed read, not a finding — and it would be PERSISTED, clearing last night's real one from
+        # the badge and the alert. The docstring of `unhidden_rows_visible_to` refuses exactly this
+        # (plex-safety rule 4); honouring it means not calling it at all here.
+        logger.warning(
+            "{}: could not check what this '{}' account can see — the collections read did not "
+            "produce a usable picture, so this run reports nothing rather than a false all-clear",
+            user.username,
+            remote.restriction_profile,
+        )
+        return
+    try:
+        as_them = ctx.pms_for_user(user)
+        if as_them is None:
+            return
+        exposed = unhidden_rows_visible_to(as_them, owned, user.slug)
+    except Exception as e:
+        logger.warning("{}: could not check what this account can see ({})", user.username, type(e).__name__)
+        return
+    if not exposed:
+        logger.debug("{}: '{}' account, and it sees none of our rows", user.username, remote.restriction_profile)
+        return
+    report.unhideable_rows[user.username] = exposed
+    logger.warning(
+        "{}: Plex refuses a hide-list for this '{}' account AND it can see {} row(s) that are not "
+        "its own — set its Restriction Profile to None (disabling the account in Shortlist does NOT "
+        "help: that removes THEIR row, not their view of everyone else's)",
+        user.username,
+        remote.restriction_profile,
+        len(exposed),
+    )
+
+
 def _privacy_sync_phase(
     ctx: EngineContext, users: list[UserProfile], stored_labels: dict[str, str], report: RunReport
 ) -> bool | None:
@@ -437,6 +493,10 @@ def _privacy_sync_phase(
     # the collections" and "that collection is gone" are indistinguishable, and one of those readings
     # un-hides a live row.
     collections_known = False
+    # Bound BEFORE the try: the enumeration below can raise, and `owned` is read again further down by
+    # the unhideable-rows check. Left unbound, that failure path raises NameError inside the privacy
+    # phase — turning a handled "could not read the collections" into an unhandled crash.
+    owned: dict[str, OwnedRow] = {}
     # Read in a DRY RUN too. The enumeration is read-only, and skipping it made `--dry-run` report the
     # merges while silently omitting the exclude REMOVALS a live run would make — a preview that is
     # missing the only destructive half is worse than no preview (rule 8).
@@ -518,6 +578,7 @@ def _privacy_sync_phase(
                 label_prefix=LABEL_PREFIX,
                 shared_labels=shared_labels,
                 collections_known=collections_known,
+                departed_slugs=ctx.departed_slugs,
                 # A disabled (opted-out) Shortlist account gets even public shared rows hidden, so
                 # disabling someone removes them from Shortlist entirely. Non-Shortlist accounts that
                 # merely share the server aren't in disabled_account_ids, so they still see public rows.
@@ -535,6 +596,12 @@ def _privacy_sync_phase(
                     to_verify[user.plex_account_id] = {field: after for field, (_before, after) in written.items()}
             if user_report is not None:
                 user_report.privacy_synced = bool(written)
+            if not written:
+                # Nothing was written for this account. For a profiled managed account that is
+                # expected (Plex refuses label filters) — but "expected" was doing too much work: the
+                # code assumed such an account sees nothing, so there was nothing to hide. Measured on
+                # a real server, an `older_kid` account saw three collections. So find out.
+                _record_unhideable(ctx, user, roster.get(user.plex_account_id), owned, collections_known, report)
         except FilterWriteRefused as e:
             # plex.tv permanently refused the write (422). Safe to skip ONLY for an account with a
             # parental PROFILE: Plex declines label restrictions while one is set, and such an account

@@ -53,16 +53,49 @@ depth just for them. Opening a person shows their recent watch history (distinct
 and episode numbers for TV), their picks grouped by row (long lists collapse behind a "show more"),
 and a **Run now** button to rebuild just that person.
 
+### When someone leaves your server
+
+Removing a person from your Plex share (or deleting a Plex Home user) is picked up by the daily user
+sync. Shortlist switches them off, deletes their rows from the server, and badges them **Left the
+server** in the Users list — distinct from an account *you* switched off, which is the same
+`disabled` state but means something completely different.
+
+Two safety limits keep that sweep from acting on a bad read of plex.tv, because it deletes
+collections and runs unattended: an **empty** roster is ignored entirely, and if **more than half**
+your enabled accounts appear to vanish at once, nothing happens and an error is recorded instead.
+Both cases are far more likely to be a truncated response than a real mass departure.
+
+A departed row stays in the list so you can see what happened. **Remove** clears it out: their pick
+history and run history are deleted and the row disappears. What it deliberately keeps is that
+account's *original Plex share settings*, recorded before Shortlist ever touched them — so
+uninstalling Shortlist can still put the account back exactly as it found it. That record is the only
+copy, which is why Remove archives rather than deletes.
+
+You do not have to clean up their share filters. Once their row is gone from the server, the next
+privacy pass drops the leftover `label!=` entry from everyone else's filters on its own — but only
+once two independent checks agree the row is really gone, never on the strength of one read.
+
 ### Accounts Plex restricts
 
 Accounts with a Plex **restriction profile** (Younger Kid / Older Kid / Teen) are badged with that
-profile's name. Plex hides every collection from them, so no row is built. Plex also refuses
+profile's name. Plex usually hides collections from them, so no row is built. Plex also refuses
 the privacy filters Shortlist writes, so those accounts are left out of them.
 
 Both go away by setting **Restriction Profile → None** in Plex → Settings → Users & Sharing. You can
 still limit them by rating or label there, which Plex only permits once the profile is None. A Plex
 Home account with **no** profile is an ordinary user: it gets a row and privacy filters like anybody
 else.
+
+**"Sees N rows of others'".** "Usually" is doing real work in that first paragraph: a Younger Kid
+account sees no collections at all, but an Older Kid account can see them. Since Plex refuses a
+privacy filter for any profiled account, such an account can end up seeing rows built for other
+people — and nothing Shortlist writes can hide them, because hiding a row _is_ the filter Plex is
+refusing. Every run now checks each profiled account with that account's own token and badges it
+here, on the person's page, and as a dashboard alert if it finds any.
+
+Two fixes, both yours to make. Set that account's **Restriction Profile → None**, which lets the
+normal filter apply and hides everyone else's rows from them; or turn the person **off** in
+Shortlist, which leaves them out of rows entirely so there is nothing of anyone else's to find.
 
 ## Runs
 

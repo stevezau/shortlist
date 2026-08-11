@@ -73,9 +73,17 @@ class TestTheOwnerIsAUserToo:
         expect(page.get_by_role("heading", name=state.owner_username)).to_be_visible(timeout=LOAD)
         expect(page.get_by_text("New viewer")).to_have_count(0)
 
-    def test_the_owners_row_is_excluded_on_every_other_share(self, app: ShortlistApp, reset_fake_plex):
+    def test_the_owners_row_is_excluded_on_every_share_plex_will_accept_one_for(
+        self, app: ShortlistApp, reset_fake_plex
+    ):
         """The owner's own filter is never written (Plex cannot restrict them) — that must not be
-        mistaken for 'this row needs no hiding'. Everyone else still has to exclude it."""
+        mistaken for 'this row needs no hiding'. Everyone else still has to exclude it.
+
+        Everyone Plex ALLOWS, that is. A managed account with a parental profile is the one exception:
+        plex.tv answers 422 to any label restriction while the profile is set, so no exclude can exist
+        on that share no matter what Shortlist does. Asserting it anyway would be asserting a write
+        that cannot succeed. What must hold instead is that the account is REPORTED rather than
+        silently passed over — which is the rest of this test (#76)."""
         state = reset_fake_plex
         app.api("POST", "/api/users/sync")
         owner = _users_by_name(app)[state.owner_username]
@@ -83,11 +91,25 @@ class TestTheOwnerIsAUserToo:
 
         build_real_rows(app)
 
+        unfilterable = {u.id for u in state.users.values() if u.restriction_profile}
+        assert unfilterable, "the roster must carry a profiled account, or this proves only the easy half"
         for account_id, user in state.users.items():
+            if account_id in unfilterable:
+                continue
             for field_name in ("filterMovies", "filterTelevision"):
                 assert "Shortlist_steve" in user.filters[field_name], (
                     f"account {account_id} can see the owner's row in {field_name}"
                 )
+
+        # The exception is not a blind spot: the run looked through that account's own eyes and said
+        # what it found. A skip that reported nothing is the bug this whole check exists for.
+        listed = _users_by_name(app)
+        for account_id in unfilterable:
+            username = state.users[account_id].username
+            assert listed[username]["unhidden_rows"] > 0, (
+                f"{username} was skipped by the filter write AND reported as seeing nothing — "
+                "the exact silence that hid this for a year"
+            )
 
 
 class TestUsers:

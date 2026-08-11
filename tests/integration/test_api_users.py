@@ -45,6 +45,8 @@ USER_KEYS = {
     "last_run_at",
     "hit_rate",
     "preview_titles",
+    "unhidden_rows",
+    "departed",
 }
 
 #: Every key `serializers.pick_dict` renders — shared by `/users/{id}/runs` and `/users/{id}/rows`.
@@ -78,6 +80,39 @@ class TestUsersApi:
         assert set(r.json()) == USER_KEYS, "the PATCH renders the same person as the list"
         assert r.json()["enabled"] is True
         assert r.json()["prefs"]["excluded_genres"] == ["Horror"]
+
+    def test_the_list_reports_rows_this_account_can_see_that_are_not_its_own(self, client: TestClient):
+        """Plex refuses a hide-list for a managed account with a parental profile, so for those accounts
+        nothing hides other people's rows. The last run MEASURED how many each such account can see; the
+        Users screen is where the owner would look, so the count has to reach it.
+
+        Keyed by username, because that is the only identifier the engine has when it writes the run —
+        the slug is Shortlist's, and a nickname can change between the run and this request."""
+        from datetime import UTC, datetime
+
+        from shortlist.server.db.models import Run
+
+        with client.app.state.sessions() as session:
+            session.add(
+                Run(
+                    status="ok",
+                    trigger="manual",
+                    started_at=datetime.now(UTC),
+                    finished_at=datetime.now(UTC),
+                    stats={"unhideable_rows": {"mike": [21, 22, 23]}},
+                )
+            )
+            session.commit()
+
+        users = {u["username"]: u for u in client.get("/api/users").json()}
+
+        assert users["mike"]["unhidden_rows"] == 3
+        assert users["sarah"]["unhidden_rows"] == 0, "an account Plex does filter is not implicated"
+
+    def test_no_run_yet_is_reported_as_nothing_seen_not_as_a_missing_field(self, client: TestClient):
+        """Absent evidence renders as zero, never as null: the SPA branches on the number, and a null
+        would make an unmeasured account look the same as an exposed one."""
+        assert all(u["unhidden_rows"] == 0 for u in client.get("/api/users").json())
 
     def test_prefs_pass_through_whatever_an_install_has_accrued(self, client: TestClient):
         """`prefs` is free-form JSON: which keys exist varies by DATA, not by branch (`history_depth`
@@ -568,6 +603,267 @@ class TestUserSync:
             job = session.query(Job).filter(Job.kind == "sync.users").one()
         assert job.status == "queued", "the job must still be waiting, not have run against a live run"
         assert job.started_at is None
+
+    @staticmethod
+    def _roster_without(*usernames: str) -> str:
+        """The recorded roster with some accounts removed — the shape of an unfriend or a truncated read.
+
+        Parsed and re-serialised rather than string-spliced, so the test cannot pass by accidentally
+        producing XML that means something other than intended.
+        """
+        import xml.etree.ElementTree as ET
+
+        tree = ET.fromstring((Path(__file__).parent.parent / "fixtures" / "plextv_users.xml.txt").read_text())
+        for user in list(tree):
+            if user.get("title") in usernames or user.get("username") in usernames:
+                tree.remove(user)
+        return ET.tostring(tree, encoding="unicode")
+
+    def _enable_everyone(self, client: TestClient) -> list[str]:
+        """Turn on every non-owner account and return their usernames. The fixture roster leaves the
+        managed accounts off, and a departure sweep only ever considers ENABLED users — so without
+        this the guards below have a population of one and cannot be exercised at all."""
+        for user in client.get("/api/users").json():
+            if user["user_type"] != "owner":
+                client.patch(f"/api/users/{user['id']}", json={"enabled": True})
+        return [u["username"] for u in client.get("/api/users").json() if u["user_type"] != "owner"]
+
+    def test_someone_who_left_the_share_is_turned_off_and_their_rows_removed(
+        self, client: TestClient, plextv, monkeypatch
+    ):
+        """Losing access to the server must take the row with it. Left enabled, their collection stays
+        on the PMS carrying their label, every other account keeps excluding a row for a person who is
+        gone, and the next run keeps rebuilding it."""
+        from shortlist.server.services import user_sync
+
+        removed: list[list[str]] = []
+
+        async def spy(state, slugs):
+            removed.append(list(slugs))
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        self._enable_everyone(client)
+        removed.clear()
+
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("sarah")))
+        client.post("/api/users/sync")
+
+        after = self._users(client)
+        assert after["sarah"]["enabled"] is False, "a departed user must not keep getting rows"
+        assert any("sarah" in batch for batch in removed), "their collection must come off the server too"
+        assert after["teen"]["enabled"] is True, "nobody else is touched"
+
+    def test_a_departure_is_recorded_as_such_not_just_as_switched_off(self, client: TestClient, plextv, monkeypatch):
+        """`enabled=0` means two unrelated things — the owner turned them off, or Plex no longer has
+        them. Rendered identically, a departed account is an unexplained row nobody can act on, and
+        the excludes for their deleted collection sit in every other filter with nothing to prompt a
+        clean-up. `departed_at` is the difference."""
+        from shortlist.server.db.models import User
+        from shortlist.server.services import user_sync
+
+        async def spy(state, slugs):
+            return None
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        self._enable_everyone(client)
+
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("sarah")))
+        client.post("/api/users/sync")
+
+        with client.app.state.sessions() as session:
+            gone = session.query(User).filter_by(slug="sarah").one()
+            stayed = session.query(User).filter_by(slug="teen").one()
+            assert gone.departed_at is not None, "a departure must be distinguishable from a manual toggle"
+            assert stayed.departed_at is None, "nobody still on the roster is marked as gone"
+
+    def test_someone_who_comes_back_stops_being_marked_as_gone(self, client: TestClient, plextv, monkeypatch):
+        """A re-invite — or a roster blip that slipped past both guards — must heal on the next sync
+        rather than needing a hand. The flag is a FACT about the roster, so it is re-derived, never
+        latched."""
+        from shortlist.server.db.models import User
+        from shortlist.server.services import user_sync
+
+        async def spy(state, slugs):
+            return None
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        self._enable_everyone(client)
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("sarah")))
+        client.post("/api/users/sync")
+
+        plextv.roster.mock(
+            return_value=httpx.Response(
+                200, text=(Path(__file__).parent.parent / "fixtures" / "plextv_users.xml.txt").read_text()
+            )
+        )
+        client.post("/api/users/sync")
+
+        with client.app.state.sessions() as session:
+            back = session.query(User).filter_by(slug="sarah").one()
+            assert back.departed_at is None, "they are on the roster again — the mark must clear itself"
+
+    def test_an_empty_roster_never_disables_the_whole_server(self, client: TestClient, plextv, monkeypatch):
+        """This sweep runs UNATTENDED daily and deletes collections. "plex.tv returned nothing" and
+        "nobody shares this server any more" are the same bytes, and only one of them means act —
+        so an empty read must do nothing rather than switch off every account on the server."""
+        from shortlist.server.services import user_sync
+
+        removed: list[list[str]] = []
+
+        async def spy(state, slugs):
+            removed.append(list(slugs))
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        enabled = self._enable_everyone(client)
+        removed.clear()
+
+        plextv.roster.mock(return_value=httpx.Response(200, text="<MediaContainer/>"))
+        client.post("/api/users/sync")
+
+        after = self._users(client)
+        assert all(after[name]["enabled"] for name in enabled), "an empty read must not switch anyone off"
+        assert not any(removed), "an empty roster must delete nothing"
+
+    def test_most_of_the_server_leaving_at_once_is_refused_and_recorded(self, client: TestClient, plextv, monkeypatch):
+        """One person leaving is routine. Most of them leaving in one poll is a truncated read, and
+        acting on it costs every one of them a manual re-enable and a full LLM rebuild. Refused —
+        but recorded as an event, so a genuine mass removal is still visible to the owner."""
+        from shortlist.server.db.models import Event
+        from shortlist.server.services import user_sync
+
+        removed: list[list[str]] = []
+
+        async def spy(state, slugs):
+            removed.append(list(slugs))
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        enabled = self._enable_everyone(client)
+        removed.clear()
+
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("sarah", "kid")))
+        client.post("/api/users/sync")
+
+        after = self._users(client)
+        assert all(after[name]["enabled"] for name in enabled), "a suspected partial read must switch nobody off"
+        assert not any(removed), "a suspected partial read must delete no collections"
+        with client.app.state.sessions() as session:
+            refusals = session.query(Event).filter_by(scope="user.departed.refused").all()
+            assert len(refusals) == 1, "silently doing nothing would hide a real mass removal"
+            assert refusals[0].level == "error"
+
+    def test_removing_a_departed_person_clears_their_history_but_keeps_the_snapshot(
+        self, client: TestClient, plextv, monkeypatch
+    ):
+        """Remove frees the list and the filters; it does NOT delete the users row.
+
+        `restriction_snapshots` is RESTRICT-keyed to `users.id` (migration 0055) and holds the only
+        copy of that account's share filters as they were BEFORE Shortlist — what uninstall restores
+        from (plex-safety rule 2). Uninstall skips any snapshot whose user row has gone, so deleting
+        the row would silently cost that person their restore. Archive, don't delete."""
+        from shortlist.server.db.models import PickRow, RestrictionSnapshotRow, User
+        from shortlist.server.services import user_sync
+
+        async def spy(state, slugs):
+            return None
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        self._enable_everyone(client)
+        with client.app.state.sessions() as session:
+            user = session.query(User).filter_by(slug="sarah").one()
+            uid = user.id
+            session.add(
+                PickRow(
+                    user_id=uid, run_id=None, rank=1, title="Old Pick", tmdb_id=1, media_type="movie", rating_key=9001
+                )
+            )
+            session.add(RestrictionSnapshotRow(user_id=uid, reason="initial", filters_before={"filterMovies": "x"}))
+            session.commit()
+
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("sarah")))
+        client.post("/api/users/sync")
+
+        r = client.delete(f"/api/users/{uid}")
+
+        assert r.status_code == 200
+        with client.app.state.sessions() as session:
+            user = session.get(User, uid)
+            assert user is not None, "the row must survive — the snapshot is keyed to it"
+            assert user.removed_at is not None
+            assert session.query(PickRow).filter_by(user_id=uid).count() == 0, "history is dropped"
+            assert session.query(RestrictionSnapshotRow).filter_by(user_id=uid).count() == 1, (
+                "the pre-Shortlist filters are the one record with no second copy — uninstall needs them"
+            )
+        assert "sarah" not in self._users(client), "a removed person leaves the Users list"
+
+    def test_a_removed_person_who_is_re_invited_comes_back(self, client: TestClient, plextv, monkeypatch):
+        """The lifecycle row that is easy to miss: departed -> removed -> re-invited. The list filters
+        on `removed_at`, no PATCH field can clear it, and DELETE now 409s because they are no longer
+        departed — so left latched, a returning person is invisible for ever and only a hand-edit of
+        the database brings them back."""
+        from shortlist.server.services import user_sync
+
+        async def spy(state, slugs):
+            return None
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        self._enable_everyone(client)
+        uid = self._users(client)["sarah"]["id"]
+
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("sarah")))
+        client.post("/api/users/sync")
+        assert client.delete(f"/api/users/{uid}").status_code == 200
+        assert "sarah" not in self._users(client)
+
+        plextv.roster.mock(
+            return_value=httpx.Response(
+                200, text=(Path(__file__).parent.parent / "fixtures" / "plextv_users.xml.txt").read_text()
+            )
+        )
+        client.post("/api/users/sync")
+
+        back = self._users(client)
+        assert "sarah" in back, "they are on the share again — the archive no longer applies"
+        assert back["sarah"]["departed"] is False
+
+    def test_removing_somebody_who_is_still_on_the_share_is_refused(self, client: TestClient, plextv, monkeypatch):
+        """Remove is for people Plex no longer has. Offered on an active account it would read as
+        'delete this user', silently dropping their whole pick history while their row keeps being
+        rebuilt every night."""
+        client.post("/api/users/sync")
+        self._enable_everyone(client)
+        uid = self._users(client)["sarah"]["id"]
+
+        r = client.delete(f"/api/users/{uid}")
+
+        assert r.status_code == 409
+        assert "sarah" in self._users(client)
+
+    def test_a_departed_person_is_flagged_in_the_list_until_removed(self, client: TestClient, plextv, monkeypatch):
+        """The Users list has to say WHY somebody is switched off, or a departed account is an
+        unexplained row with no action attached to it."""
+        from shortlist.server.services import user_sync
+
+        async def spy(state, slugs):
+            return None
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")
+        self._enable_everyone(client)
+        assert self._users(client)["sarah"]["departed"] is False
+
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("sarah")))
+        client.post("/api/users/sync")
+
+        listed = self._users(client)
+        assert listed["sarah"]["departed"] is True
+        assert listed["teen"]["departed"] is False
 
     def test_sync_adds_the_owner_disabled_and_badged(self, client: TestClient, plextv):
         r = client.post("/api/users/sync")

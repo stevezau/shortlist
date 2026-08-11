@@ -7,6 +7,7 @@ nightly job is its other caller, so it is not this layer's to own.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
@@ -19,6 +20,7 @@ from shortlist.server.api.schemas import PassthroughModel
 from shortlist.server.api.serializers import UserOut, UserPickOut, pick_dict, user_dict
 from shortlist.server.auth import require_owner
 from shortlist.server.db.models import (
+    Event,
     PickRow,
     Run,
     RunUser,
@@ -208,6 +210,32 @@ def _watch_depths(session) -> dict[int, int]:
     return depths
 
 
+def _unhidden_row_counts(session) -> dict[str, int]:
+    """username -> how many of OTHER people's rows the last run found this account able to see.
+
+    Plex refuses a label hide-list for a managed account with a parental Restriction Profile, so those
+    accounts are left out of the privacy filters entirely. Shortlist used to assume that was harmless
+    because such an account sees no collections at all — true of `little_kid`, false of `older_kid`.
+    The run now measures it instead of assuming, and this is how the measurement reaches the UI.
+
+    Keyed by username because that is the identifier the engine has at run time: the slug is ours, and
+    a nickname can change between the run and this request.
+    """
+    # The latest run that MEASURED, not merely the latest that finished — see `_rows_we_cannot_hide`
+    # in notifications.py. An errored or aborted run carries no measurement, and reading it as "nobody
+    # is exposed" would wipe the badge off the Users list while the exposure is still there.
+    run = next(
+        (
+            r
+            for r in session.query(Run).filter(Run.finished_at.isnot(None)).order_by(Run.finished_at.desc()).limit(50)
+            if "unhideable_rows" in (r.stats or {})
+        ),
+        None,
+    )
+    exposed = ((run.stats or {}).get("unhideable_rows") or {}) if run else {}
+    return {name: len(keys) for name, keys in exposed.items()}
+
+
 @router.get("", response_model=list[UserOut])
 def list_users(request: Request) -> list[dict]:
     """Every user with their badges, watch depth, lifetime hit rate and a pick preview.
@@ -219,8 +247,9 @@ def list_users(request: Request) -> list[dict]:
     """
     with request.app.state.sessions() as session:
         depths = _watch_depths(session)
+        exposed = _unhidden_row_counts(session)
         out = []
-        for user in session.query(User).order_by(User.username).all():
+        for user in session.query(User).filter(User.removed_at.is_(None)).order_by(User.username).all():
             # DISTINCT title, not pick row: a title recommended over several runs is one title, and a
             # title watched after lingering a few runs is one hit — counting rows would skew both.
             # `||` via .concat(), NOT func.concat: the latter compiles to SQLite's concat() scalar,
@@ -254,7 +283,14 @@ def list_users(request: Request) -> list[dict]:
                     .all()
                 ]
             out.append(
-                user_dict(user, depths.get(user.id, 0), last.run.finished_at if last else None, hit_rate, preview)
+                user_dict(
+                    user,
+                    depths.get(user.id, 0),
+                    last.run.finished_at if last else None,
+                    hit_rate,
+                    preview,
+                    exposed.get(user.username, 0),
+                )
             )
         return out
 
@@ -332,7 +368,13 @@ async def patch_user(user_id: int, patch: UserPatch, request: Request) -> dict:
             elif was_paused and not now_paused:
                 unpaused_slug = user.slug
         session.commit()
-        result = user_dict(user, _watch_depths(session).get(user.id, 0), None, None)
+        result = user_dict(
+            user,
+            _watch_depths(session).get(user.id, 0),
+            None,
+            None,
+            unhidden_rows=_unhidden_row_counts(session).get(user.username, 0),
+        )
     if disabled_slug is not None:
         await remove_users_rows(state, [disabled_slug])
     if enabled_slug is not None:
@@ -617,3 +659,60 @@ async def _restore_paused_users_rows(state, user_slug: str) -> None:
 
     enqueue(state.sessions, "user.restore", {"slug": user_slug})
     await drain_now(state, f"'{user_slug}' was un-paused")
+
+
+class RemovedOut(PassthroughModel):
+    """What `DELETE /users/{id}` dropped. `user_id` is still valid — the row is archived, not deleted."""
+
+    user_id: int
+    picks_deleted: int
+    runs_deleted: int
+
+
+@router.delete("/{user_id}", response_model=RemovedOut)
+async def remove_departed_user(user_id: int, request: Request) -> dict:
+    """File away someone Plex no longer has: drop their picks and run history, hide them from the list.
+
+    NOT a delete, and the difference is load-bearing. `restriction_snapshots` is keyed to `users.id`
+    with `ON DELETE RESTRICT` (migration 0055) and holds the only copy of this account's share filters
+    as they were BEFORE Shortlist touched them — what uninstall restores from (plex-safety rule 2).
+    Uninstall skips any snapshot whose user row has gone, so deleting the row would quietly cost that
+    person their restore. The row stays as the snapshot's anchor and leaves the UI instead.
+
+    Refused for anyone still on the share (409): on an active account this would read as "delete this
+    user", dropping their history while the nightly run keeps rebuilding their row.
+
+    Their share-filter excludes are not touched here. Once their collection is gone, the next privacy
+    pass prunes the dead label on its own — under both guards in `sync_user_restrictions`, which is a
+    safer place for that decision than a button.
+    """
+    state = request.app.state
+    with state.sessions() as session:
+        user = session.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        if user.departed_at is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{user.display_name} still shares this server — turn them off instead of removing them",
+            )
+        picks = session.query(PickRow).filter_by(user_id=user_id).delete(synchronize_session=False)
+        runs = session.query(RunUser).filter_by(user_id=user_id).delete(synchronize_session=False)
+        user.removed_at = datetime.now(UTC)
+        user.enabled = False
+        session.add(
+            Event(
+                scope="user.removed",
+                level="warning",
+                message={
+                    "user": user.username,
+                    "slug": user.slug,
+                    "picks_deleted": picks,
+                    "runs_deleted": runs,
+                    "at": datetime.now(UTC).isoformat(),
+                },
+            )
+        )
+        session.commit()
+        logger.warning("{} removed by the owner — {} picks and {} run rows dropped", user.username, picks, runs)
+        return {"user_id": user_id, "picks_deleted": picks, "runs_deleted": runs}

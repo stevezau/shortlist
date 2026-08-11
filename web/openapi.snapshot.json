@@ -2778,6 +2778,31 @@
         "title": "RejectedOut",
         "type": "object"
       },
+      "RemovedOut": {
+        "additionalProperties": true,
+        "description": "What `DELETE /users/{id}` dropped. `user_id` is still valid \u2014 the row is archived, not deleted.",
+        "properties": {
+          "picks_deleted": {
+            "title": "Picks Deleted",
+            "type": "integer"
+          },
+          "runs_deleted": {
+            "title": "Runs Deleted",
+            "type": "integer"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "user_id",
+          "picks_deleted",
+          "runs_deleted"
+        ],
+        "title": "RemovedOut",
+        "type": "object"
+      },
       "RenameRequest": {
         "properties": {
           "dry_run": {
@@ -4861,6 +4886,10 @@
             "title": "Cold Start",
             "type": "boolean"
           },
+          "departed": {
+            "title": "Departed",
+            "type": "boolean"
+          },
           "display_name": {
             "title": "Display Name",
             "type": "string"
@@ -4939,6 +4968,10 @@
             "title": "Slug",
             "type": "string"
           },
+          "unhidden_rows": {
+            "title": "Unhidden Rows",
+            "type": "integer"
+          },
           "user_type": {
             "$ref": "#/components/schemas/UserType"
           },
@@ -4966,7 +4999,9 @@
           "history_depth",
           "last_run_at",
           "hit_rate",
-          "preview_titles"
+          "preview_titles",
+          "unhidden_rows",
+          "departed"
         ],
         "title": "UserOut",
         "type": "object"
@@ -9477,6 +9512,47 @@
       }
     },
     "/api/users/{user_id}": {
+      "delete": {
+        "description": "File away someone Plex no longer has: drop their picks and run history, hide them from the list.\n\nNOT a delete, and the difference is load-bearing. `restriction_snapshots` is keyed to `users.id`\nwith `ON DELETE RESTRICT` (migration 0055) and holds the only copy of this account's share filters\nas they were BEFORE Shortlist touched them \u2014 what uninstall restores from (plex-safety rule 2).\nUninstall skips any snapshot whose user row has gone, so deleting the row would quietly cost that\nperson their restore. The row stays as the snapshot's anchor and leaves the UI instead.\n\nRefused for anyone still on the share (409): on an active account this would read as \"delete this\nuser\", dropping their history while the nightly run keeps rebuilding their row.\n\nTheir share-filter excludes are not touched here. Once their collection is gone, the next privacy\npass prunes the dead label on its own \u2014 under both guards in `sync_user_restrictions`, which is a\nsafer place for that decision than a button.",
+        "operationId": "remove_departed_user_api_users__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovedOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Departed User",
+        "tags": [
+          "users"
+        ]
+      },
       "patch": {
         "operationId": "patch_user_api_users__user_id__patch",
         "parameters": [

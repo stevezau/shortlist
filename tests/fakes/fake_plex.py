@@ -99,13 +99,22 @@ class FakeUser:
     id: int
     username: str
     home: bool = False
-    restricted: bool = False
+    restricted: bool | None = None
     # The Plex parental preset ("little_kid"|"older_kid"|"teen", "" for none). Only /api/home/users
     # reports it, and it is what decides whether Plex accepts a label restriction at all (#20).
     restriction_profile: str = ""
     protected: bool = False
     uuid: str = ""
     filters: dict[str, str] = field(default_factory=lambda: dict.fromkeys(FILTER_FIELDS, ""))
+
+    def __post_init__(self) -> None:
+        # DERIVED, not a free field: plex.tv reports `restricted="1"` for EVERY Plex Home account,
+        # preset or not (that is the whole reason #20 needed `restrictionProfile` to tell them apart).
+        # Left independent, this fake could serve a home account as `restricted="0"` — a shape plex.tv
+        # cannot produce, and one that silently disarms the skip in `privacy.py`, which is gated on
+        # BOTH flags. A test built that way writes filters for an account Plex would 422.
+        if self.restricted is None:
+            self.restricted = self.home
 
 
 @dataclass
@@ -324,6 +333,12 @@ def seed_state() -> FakePlexState:
     state.users[201] = FakeUser(id=201, username="sarah")
     state.users[202] = FakeUser(id=202, username="mike")
     state.users[203] = FakeUser(id=203, username="canary", home=True, uuid="uuid-203")
+    # A managed account with a parental preset. Plex refuses a label filter for one, so Shortlist
+    # writes it no excludes — and this account can still SEE collections, which is the whole point:
+    # `little_kid` sees none, `older_kid` sees them (measured on a real server, 2026-08-11, #76).
+    # The listing above serves every collection to every token, which for an account carrying no
+    # excludes is exactly what a real PMS does, so this models the case faithfully.
+    state.users[204] = FakeUser(id=204, username="kid", home=True, uuid="uuid-204", restriction_profile="older_kid")
     base_viewed = 1_752_000_000
     # One run then covers the whole delivery matrix: sarah watches both types (two rows), mike
     # watches only TV (one row, in the TV library), the canary has no history (cold start).

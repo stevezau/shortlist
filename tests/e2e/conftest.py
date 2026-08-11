@@ -309,6 +309,13 @@ def app(fake_plex, fake_tmdb, reset_fake_plex, tmp_path: Path, monkeypatch) -> I
                     username=user.username,
                     slug=user.username.lower(),
                     user_type="managed" if user.home else "shared",
+                    # BOTH flags, because the product's skip needs both (`privacy.py`, and
+                    # `context_builder.enabled_profiles`) — plex.tv sets `restricted=1` for every Plex
+                    # Home account, preset or not, and only the preset says which. A fixture that
+                    # dropped either one built the profiled account a row like anyone else, so every
+                    # e2e ran against a roster the product cannot actually produce.
+                    restricted=user.home,
+                    restriction_profile=user.restriction_profile,
                     enabled=True,
                 )
             )

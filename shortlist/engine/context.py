@@ -60,6 +60,16 @@ class EngineContext:
     # Empty for direct engine runs and for rows delivered before the ledger existed — the count-based
     # fallback still covers those.
     delivered_keys: dict[tuple[str, str, str], int] = field(default_factory=dict)
+    # Build a PMS client that sees the server AS one user, or None when no token can be had. Used to
+    # CHECK what an account Plex refuses a hide-list for can actually see, rather than assume. None on
+    # direct engine runs, where the check is simply skipped.
+    pms_for_user: Callable[[UserProfile], object] | None = None
+    #: Slugs of people our own database says are GONE from Plex — plex.tv stopped listing them, or the
+    #: owner removed them. The second of the two guards that let a private-row exclude be pruned (see
+    #: `privacy.sync_user_restrictions`). Positive evidence on purpose: it must be something a partial
+    #: PMS read cannot manufacture, which "absent from tonight's user list" is not — a `privacy.sync`
+    #: runs with NO users at all. None means the adapter could not say, and nothing is pruned.
+    departed_slugs: set[str] | None = None
     # plex_account_ids of DISABLED (opted-out) Shortlist users. With config.hide_shared_from_disabled,
     # the privacy sync hides even public shared rows from these accounts, so disabling a user removes
     # them from Shortlist entirely. A non-Shortlist account that merely shares the server is NOT here,

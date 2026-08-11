@@ -725,7 +725,11 @@ export interface paths {
         /**
          * Cancel Run
          * @description Ask the in-flight run to stop. Cooperative — it finishes the person it's on, then stops, and
-         *     still merges the privacy filters + promotes everyone delivered so far. 409 if it isn't running.
+         *     still merges the privacy filters + promotes everyone delivered so far.
+         *
+         *     Idempotent: asking twice succeeds, because a run that is already stopping is the state the caller
+         *     wanted. Only a run this process isn't executing at all gets the 409 — which is what that message
+         *     has always claimed and, until the second press stopped being an error, frequently was not.
          */
         post: operations["cancel_run_api_runs__run_id__cancel_post"];
         delete?: never;
@@ -2157,7 +2161,24 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Remove Departed User
+         * @description File away someone Plex no longer has: drop their picks and run history, hide them from the list.
+         *
+         *     NOT a delete, and the difference is load-bearing. `restriction_snapshots` is keyed to `users.id`
+         *     with `ON DELETE RESTRICT` (migration 0055) and holds the only copy of this account's share filters
+         *     as they were BEFORE Shortlist touched them — what uninstall restores from (plex-safety rule 2).
+         *     Uninstall skips any snapshot whose user row has gone, so deleting the row would quietly cost that
+         *     person their restore. The row stays as the snapshot's anchor and leaves the UI instead.
+         *
+         *     Refused for anyone still on the share (409): on an active account this would read as "delete this
+         *     user", dropping their history while the nightly run keeps rebuilding their row.
+         *
+         *     Their share-filter excludes are not touched here. Once their collection is gone, the next privacy
+         *     pass prunes the dead label on its own — under both guards in `sync_user_restrictions`, which is a
+         *     safer place for that decision than a button.
+         */
+        delete: operations["remove_departed_user_api_users__user_id__delete"];
         options?: never;
         head?: never;
         /** Patch User */
@@ -3637,6 +3658,20 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * RemovedOut
+         * @description What `DELETE /users/{id}` dropped. `user_id` is still valid — the row is archived, not deleted.
+         */
+        RemovedOut: {
+            /** Picks Deleted */
+            picks_deleted: number;
+            /** Runs Deleted */
+            runs_deleted: number;
+            /** User Id */
+            user_id: number;
+        } & {
+            [key: string]: unknown;
+        };
         /** RenameRequest */
         RenameRequest: {
             /**
@@ -4535,6 +4570,8 @@ export interface components {
             avatar_url: string;
             /** Cold Start */
             cold_start: boolean;
+            /** Departed */
+            departed: boolean;
             /** Display Name */
             display_name: string;
             /** Enabled */
@@ -4567,6 +4604,8 @@ export interface components {
             restriction_profile: string;
             /** Slug */
             slug: string;
+            /** Unhidden Rows */
+            unhidden_rows: number;
             user_type: components["schemas"]["UserType"];
             /** Username */
             username: string;
@@ -7601,6 +7640,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserSyncOut"];
+                };
+            };
+        };
+    };
+    remove_departed_user_api_users__user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovedOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

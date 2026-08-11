@@ -14,7 +14,9 @@ import { QueryBoundary, EmptyState } from "@/components/query-boundary";
 import { UserAvatar } from "@/components/user-avatar";
 import {
   ColdStartBadge,
+  DepartedBadge,
   RestrictedBadge,
+  UnhiddenRowsBadge,
   UserTypeBadge,
 } from "@/components/user-badges";
 import { Button } from "@/components/ui/button";
@@ -42,6 +44,7 @@ import type { User } from "@/lib/types";
 import { formatHitRate, timeAgo } from "@/lib/format";
 import {
   queryKeys,
+  useRemoveUser,
   useSetAllUsersEnabled,
   usePatchUser,
   useUsers,
@@ -106,6 +109,10 @@ export function UsersPage() {
   const queryClient = useQueryClient();
   const [confirmDisableOpen, setConfirmDisableOpen] = useState(false);
   const [confirmEnableOpen, setConfirmEnableOpen] = useState(false);
+  // Who the owner is about to file away. Confirmed rather than one-click: it drops their pick history
+  // and run history, and that is not something to undo by clicking again.
+  const [removing, setRemoving] = useState<User | null>(null);
+  const removeUser = useRemoveUser();
   const userCount = usersQuery.data?.length ?? 0;
 
   // The wizard syncs on its way past, but an install that finished setup had NO way to pull the
@@ -196,13 +203,58 @@ export function UsersPage() {
         />
       )}
 
+      <Dialog
+        open={removing !== null}
+        onOpenChange={(open) => !open && setRemoving(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Remove {removing?.display_name || removing?.username}?
+            </DialogTitle>
+            <DialogDescription>
+              Plex no longer has this account, so their rows are already gone
+              from the server. Removing them here deletes their pick and run
+              history and takes them out of this list &mdash; which also changes
+              your dashboard totals, since those count every pick ever
+              delivered. Their original Plex share settings are kept, so
+              uninstalling Shortlist can still put this account back the way it
+              found it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRemoving(null)}>
+              Keep them
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={removeUser.isPending}
+              onClick={() => {
+                const target = removing;
+                if (!target) return;
+                removeUser.mutate(target.id, {
+                  onSuccess: (result) => {
+                    toast.success(
+                      `${target.display_name || target.username} removed — ${result.picks_deleted} picks and ${result.runs_deleted} runs dropped`,
+                    );
+                    setRemoving(null);
+                  },
+                  onError: (e) => toast.error((e as Error).message),
+                });
+              }}
+            >
+              Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={confirmEnableOpen} onOpenChange={setConfirmEnableOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Turn on all {userCount} users?</DialogTitle>
             {/* "each user gets a row" was an over-claim: an account with a Plex restriction
-                profile is skipped (Plex hides every collection from it), and a person still needs
-                to be in some row's audience. */}
+                profile is skipped (Plex refuses the privacy filter for it), and a person still
+                needs to be in some row's audience. */}
             <DialogDescription>
               Everyone here is switched on, so each of them gets their own
               private row the next time the rows they&rsquo;re in are built.
@@ -315,6 +367,8 @@ export function UsersPage() {
                         <span className="flex flex-wrap items-center gap-1.5">
                           <UserTypeBadge user={user} />
                           <RestrictedBadge user={user} />
+                          <UnhiddenRowsBadge user={user} />
+                          <DepartedBadge user={user} />
                         </span>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
@@ -342,7 +396,7 @@ export function UsersPage() {
                           disabled={Boolean(user.restriction_profile)}
                           title={
                             user.restriction_profile
-                              ? `Plex's ${profileName(user)} restriction profile hides every collection from this account — set the profile to None in Plex to enable`
+                              ? `Plex's ${profileName(user)} restriction profile is set on this account — Plex refuses the privacy filters Shortlist writes for it, so set the profile to None in Plex to enable`
                               : undefined
                           }
                           onCheckedChange={(enabled) =>
@@ -350,6 +404,19 @@ export function UsersPage() {
                           }
                           aria-label={`Shortlist row for ${user.username}`}
                         />
+                        {/* Only for someone Plex no longer lists. On an active account this would
+                            read as "delete this user" — dropping their history while the nightly
+                            run carries on rebuilding their row. */}
+                        {user.departed && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="ml-2 text-destructive-text"
+                            onClick={() => setRemoving(user)}
+                          >
+                            Remove
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
