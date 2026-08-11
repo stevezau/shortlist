@@ -31,16 +31,20 @@ export function timeUntil(iso: string | null): string {
   return `in ${days}d`;
 }
 
-export function formatDate(iso: string | null): string {
+export function formatDate(
+  iso: string | null,
+  opts: { dateOnly?: boolean } = {},
+): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
+  // `dateOnly` for a date that answers "roughly when", where a time of day is noise pretending to be
+  // precision — "around 23 Aug 2026" reads as an estimate; "23 Aug 2026, 16:30" reads as a deadline.
   return date.toLocaleString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+    ...(opts.dateOnly ? {} : { hour: "2-digit", minute: "2-digit" }),
   });
 }
 

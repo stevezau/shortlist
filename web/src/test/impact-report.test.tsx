@@ -217,10 +217,14 @@ describe("ImpactReport", () => {
     });
     renderReport();
 
-    expect(await screen.findByText(/Nothing to measure yet/i)).toBeTruthy();
-    // The old copy said "try a longer window" — advice that cannot work, because no window reaches
-    // picks that do not exist yet. It must name the date it is waiting for instead.
+    expect(await screen.findByText(/Not enough time yet/i)).toBeTruthy();
+    // Two rewrites' worth of lessons, both pinned. "try a longer window" was advice that cannot
+    // work — no window reaches picks that do not exist. And stating the CUTOFF ("needs picks
+    // delivered before 12 Jul") read as though it wanted old picks, when what it needs is for the
+    // picks it has to get older. It must say when a score arrives instead.
     expect(screen.queryByText(/longer window/i)).toBeNull();
+    expect(screen.queryByText(/needs picks delivered before/i)).toBeNull();
+    expect(screen.getByText(/starts showing a score around/i)).toBeTruthy();
   });
 
   it("hides deleted rows behind a disclosure, and keeps their numbers", async () => {
