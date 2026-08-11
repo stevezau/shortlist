@@ -217,24 +217,25 @@ function searchesSampled(lib: LibraryView): boolean {
  *  step above it is the headline, not a list to scroll past. */
 function ShortlistTitles({ lib }: { lib: LibraryView }): ReactNode {
   const requests = useContext(RequestsContext);
-  const { total, recorded, groups } = shortlistBreakdown(lib);
+  const { total, sampled, groups } = shortlistBreakdown(lib);
   if (total === 0) return null;
-  // The per-seed returns are a display SAMPLE (12 seeds x 25 returns each), so "all N candidates"
-  // would be false on any user with more. A title missing from every group below would then read as
-  // never having been a candidate, which is the opposite of what this step is for.
-  const sampled = recorded > total;
+  // The trace records a SAMPLE of each source's returns (12 seeds x 25 returns each), so "all N
+  // candidates" would be false on any user with more — a title missing from every group below would
+  // read as one that was never a candidate. `searchesSampled` catches the other half: seeds beyond
+  // the twelfth contribute no returns at all.
+  const partial = sampled || searchesSampled(lib);
   return (
     <div className="mt-3 space-y-2">
       <p className="text-sm font-medium">
-        {sampled
-          ? `What happened to ${total} of the ${recorded} candidates`
+        {partial
+          ? `What happened to the ${total} candidates the run recorded`
           : `What happened to all ${total} candidates`}
       </p>
-      {sampled && (
+      {partial && (
         <p className="text-xs text-muted-foreground">
-          The run records a sample of each source&rsquo;s returns, so this lists{" "}
-          {total} of {recorded}. A title missing here was not necessarily
-          rejected — it may simply not have been sampled.
+          A run records only a sample of what each source returned, so a title
+          missing here was not necessarily rejected — it may simply not have
+          been recorded.
         </p>
       )}
       {groups.map((group) => {
@@ -1444,12 +1445,6 @@ function WebSourceCard({
  *  this says exactly that and grounds it in THIS library's picks: how many sources and how many
  *  different watched titles fed the row, which is what the fair-share passes actually produce. */
 function RankingExplainer({ lib }: { lib: LibraryView }) {
-  const picks = lib.delivered.flatMap((b) => b.picks);
-  const sources = new Set<string>();
-  for (const p of picks) for (const s of p.sources ?? []) sources.add(s);
-  const seedTitles = new Set(
-    picks.map((p) => p.seed_title).filter((s): s is string => Boolean(s)),
-  );
   return (
     <div className="space-y-4 text-sm">
       <div className="space-y-2">
@@ -1501,26 +1496,6 @@ function RankingExplainer({ lib }: { lib: LibraryView }) {
           reach it.
         </p>
       </div>
-      {picks.length > 0 && (sources.size > 0 || seedTitles.size > 0) && (
-        <p className="rounded-md border bg-muted/40 p-3 text-xs text-muted-foreground">
-          In this row, {picks.length} pick{picks.length === 1 ? "" : "s"} came
-          from{" "}
-          <span className="font-medium text-foreground">
-            {sources.size} source{sources.size === 1 ? "" : "s"}
-          </span>
-          {seedTitles.size > 0 && (
-            <>
-              {" "}
-              and{" "}
-              <span className="font-medium text-foreground">
-                {seedTitles.size} different title
-                {seedTitles.size === 1 ? "" : "s"} you watched
-              </span>
-            </>
-          )}
-          {" — "}spread across your tastes, not stacked on one.
-        </p>
-      )}
       {lib.delivered.map((b) => (
         <OrderingEvidence key={`${b.row_slug}:${b.library_key}`} entry={b} />
       ))}
@@ -1540,11 +1515,30 @@ function OrderingEvidence({ entry }: { entry: RunLibraryBreakdown }) {
   // presented as the evidence for the fairness paragraph above it.
   const rows = orderingRows(entry.picks);
   if (rows.length === 0) return null;
+  // Counted from THIS row. The fair-share passes run per row, so a library fed by two rows of 10
+  // was claiming "In this row, 20 picks" — a number no row produced — over two correct lists of 10.
+  const sources = new Set<string>();
+  for (const p of entry.picks) for (const src of p.sources ?? []) sources.add(src);
+  const seedTitles = new Set(
+    entry.picks.map((p) => p.seed_title).filter((t): t is string => Boolean(t)),
+  );
   return (
     <details className="rounded-md border bg-muted/30 px-3 py-2">
       <summary className="cursor-pointer text-sm font-medium">
         The order it produced for {entry.row_title} — {rows.length} picks
       </summary>
+      <p className="mt-2 text-xs text-muted-foreground">
+        These {rows.length} picks came from{" "}
+        <span className="font-medium text-foreground">
+          {sources.size} source{sources.size === 1 ? "" : "s"}
+        </span>{" "}
+        and{" "}
+        <span className="font-medium text-foreground">
+          {seedTitles.size} different title{seedTitles.size === 1 ? "" : "s"} you
+          watched
+        </span>{" "}
+        — spread across your tastes, not stacked on one.
+      </p>
       <ol className="mt-2 space-y-0.5">
         {rows.map(({ pick, newSource, newSeed }) => (
           <li

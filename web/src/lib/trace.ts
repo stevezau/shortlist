@@ -337,18 +337,24 @@ export interface ShortlistGroup {
  */
 export function shortlistBreakdown(lib: LibraryView): {
   total: number;
-  /** What the sources actually returned, which is MORE than the trace recorded — the per-seed
-   *  returns are a display sample (12 seeds x 25 returns). Presenting the sample as the whole is
-   *  precisely how a title that IS a candidate reads as never having been one. */
-  recorded: number;
+  /** True when the trace holds less than the sources returned, so this list cannot claim to be
+   *  every candidate.
+   *
+   *  Deliberately a FLAG, not a total. The obvious "N of M" is not available: `query.total` is one
+   *  seed's return count, so summing it counts a title once per seed AND per source that returned
+   *  it, while the candidate count dedupes — the two are not comparable, and the sum is inflated
+   *  every time two seeds agree. The honest thing the data supports is "some returns were not
+   *  recorded", which is exactly what the cap tells us. */
+  sampled: boolean;
   groups: ShortlistGroup[];
 } {
   const seen = new Map<string, { fate: TraceFate; title: ShortlistTitle }>();
-  let recorded = 0;
+  let sampled = false;
   const sources = [...lib.sources, ...(lib.webSource ? [lib.webSource] : [])];
   for (const source of sources) {
     for (const query of source.queries ?? []) {
-      recorded += query.total ?? (query.returned ?? []).length;
+      // A capped return list is the one signal that says this view is partial.
+      if ((query.total ?? 0) > (query.returned ?? []).length) sampled = true;
       for (const ret of query.returned ?? []) {
         const key = `${ret.tmdb_id}:${query.media}`;
         if (ret.fate === undefined || seen.has(key)) continue;
@@ -380,7 +386,7 @@ export function shortlistBreakdown(lib: LibraryView): {
     .sort((a, b) =>
       a.fate === "kept" ? -1 : b.fate === "kept" ? 1 : b.titles.length - a.titles.length,
     );
-  return { total: seen.size, recorded, groups };
+  return { total: seen.size, sampled, groups };
 }
 
 /** One delivered pick with the two rotations marked, so the ordering rules are visible rather than
@@ -440,7 +446,10 @@ export function requestNote(
     return outcome.detail ? `requested — ${outcome.detail}` : "requested";
   if (outcome.status === "rejected")
     return outcome.detail ? `not requested — ${outcome.detail}` : "not requested";
-  if (outcome.excluded) return "waiting — on an Arr exclusion list";
+  if (outcome.excluded)
+    return outcome.detail && outcome.detail !== "on an Arr exclusion list"
+      ? `waiting — on an Arr exclusion list (${outcome.detail})`
+      : "waiting — on an Arr exclusion list";
   return outcome.detail
     ? `waiting for approval — ${outcome.detail}`
     : "waiting for approval";

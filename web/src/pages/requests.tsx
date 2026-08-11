@@ -400,12 +400,12 @@ function PendingRow({
           </p>
         ) : null}
         {item.detail ? (
-          // Not "Last attempt": most pending rows were never attempted. The detail now holds either
-          // the threshold that kept a title waiting or a real send failure, and both answer the same
-          // question — why isn't this one on my server yet.
+          // This component only ever renders PENDING rows, so there is no "last attempt" branch to
+          // take. The detail holds either the threshold keeping a title waiting or the failure of a
+          // send that was tried — "last recorded reason" is true of both, and does not assert that a
+          // stale failure is still the current cause.
           <p className="text-xs text-muted-foreground">
-            {item.status === "pending" ? "Why it's waiting" : "Last attempt"}:{" "}
-            {item.detail}
+            Last recorded reason: {item.detail}
           </p>
         ) : null}
       </div>

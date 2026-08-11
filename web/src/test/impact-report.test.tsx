@@ -217,7 +217,10 @@ describe("ImpactReport", () => {
     });
     renderReport();
 
-    expect(await screen.findByText(/Not enough time has passed/i)).toBeTruthy();
+    expect(await screen.findByText(/Nothing to measure yet/i)).toBeTruthy();
+    // The old copy said "try a longer window" — advice that cannot work, because no window reaches
+    // picks that do not exist yet. It must name the date it is waiting for instead.
+    expect(screen.queryByText(/longer window/i)).toBeNull();
   });
 
   it("hides deleted rows behind a disclosure, and keeps their numbers", async () => {

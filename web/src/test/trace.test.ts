@@ -444,14 +444,27 @@ describe("shortlistBreakdown — the per-title answer to 'what survived and why'
     expect(out.total).toBe(2);
   });
 
-  it("reports what the sources really returned, not just what was sampled", () => {
-    // `returned` is a capped display sample (12 seeds x 25 returns). Calling it "all N candidates"
-    // makes an unsampled title read as one that was never a candidate.
+  it("flags that the view is partial when a source's returns were capped", () => {
+    // `returned` is a capped display sample. Without the flag, "all N candidates" makes an
+    // unrecorded title read as one that was never a candidate.
     const out = shortlistBreakdown(
       lib([src("tmdb_similar", [{ tmdb_id: 1, title: "Sampled", fate: "kept" }], "movie", 40)]),
     );
     expect(out.total).toBe(1);
-    expect(out.recorded).toBe(40);
+    expect(out.sampled).toBe(true);
+  });
+
+  it("does NOT claim sampling when everything returned was recorded", () => {
+    // The number this replaced ("N of M") summed per-seed totals, so two seeds agreeing inflated M
+    // and the disclaimer fired on runs where nothing had been withheld at all.
+    const out = shortlistBreakdown(
+      lib([
+        src("tmdb_similar", [{ tmdb_id: 1, title: "A", fate: "kept" }], "movie", 1),
+        src("trakt", [{ tmdb_id: 1, title: "A", fate: "kept" }], "movie", 1),
+      ]),
+    );
+    expect(out.total).toBe(1);
+    expect(out.sampled).toBe(false);
   });
 
   it("is empty for a legacy run that recorded no fates", () => {

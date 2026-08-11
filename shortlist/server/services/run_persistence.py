@@ -18,6 +18,7 @@ from loguru import logger
 from sqlalchemy.orm import Session, sessionmaker
 
 from shortlist.engine.models import SHARED_SLUG_PREFIX
+from shortlist.engine.requests import QUEUE_REASON_PREFIXES
 from shortlist.server.db.models import (
     Delivery,
     Event,
@@ -92,8 +93,7 @@ def _is_failure_detail(detail: str | None) -> bool:
     """
     if not detail:
         return False
-    queued = ("auto-send is off", "on an Arr exclusion list", "demand below", "rating below", "max_per_run")
-    return not detail.startswith(queued)
+    return not detail.startswith(QUEUE_REASON_PREFIXES)
 
 
 def _refresh_pending(row: RequestCandidate, m) -> None:
@@ -135,7 +135,7 @@ def _candidate_row(m, run_id: int, *, status: str) -> RequestCandidate:
         wanters=sorted(m.wanters),
         why=_why_json(m.why),
         status=status,
-        detail=m.detail,  # a failed auto-send carries WHY it didn't land, shown as "Last attempt: …"
+        detail=m.detail,  # why it is not here yet: a threshold, or a real send failure
         excluded=m.excluded,  # on a Sonarr/Radarr exclusion list — flagged in the inbox
         arr_slug=m.arr_slug,  # set for auto-sent titles, so the inbox deep-links to the arr page
         first_seen_run_id=run_id,
