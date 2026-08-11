@@ -364,7 +364,11 @@ async def trigger_run(body: RunRequest, request: Request) -> dict:
 @router.post("/{run_id}/cancel", response_model=RunCancelledOut)
 async def cancel_run(run_id: int, request: Request) -> dict:
     """Ask the in-flight run to stop. Cooperative — it finishes the person it's on, then stops, and
-    still merges the privacy filters + promotes everyone delivered so far. 409 if it isn't running."""
+    still merges the privacy filters + promotes everyone delivered so far.
+
+    Idempotent: asking twice succeeds, because a run that is already stopping is the state the caller
+    wanted. Only a run this process isn't executing at all gets the 409 — which is what that message
+    has always claimed and, until the second press stopped being an error, frequently was not."""
     if not request.app.state.run_service.cancel_run(run_id):
         raise HTTPException(status_code=409, detail="This run isn't currently running.")
     return {"cancelling": True}

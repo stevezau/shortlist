@@ -7247,7 +7247,7 @@
     },
     "/api/runs/{run_id}/cancel": {
       "post": {
-        "description": "Ask the in-flight run to stop. Cooperative \u2014 it finishes the person it's on, then stops, and\nstill merges the privacy filters + promotes everyone delivered so far. 409 if it isn't running.",
+        "description": "Ask the in-flight run to stop. Cooperative \u2014 it finishes the person it's on, then stops, and\nstill merges the privacy filters + promotes everyone delivered so far.\n\nIdempotent: asking twice succeeds, because a run that is already stopping is the state the caller\nwanted. Only a run this process isn't executing at all gets the 409 \u2014 which is what that message\nhas always claimed and, until the second press stopped being an error, frequently was not.",
         "operationId": "cancel_run_api_runs__run_id__cancel_post",
         "parameters": [
           {

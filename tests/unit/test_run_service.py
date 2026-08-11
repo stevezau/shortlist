@@ -141,7 +141,35 @@ class TestRunExecution:
         service._cancels[7] = threading.Event()  # simulate a run currently executing
         assert service.cancel_run(7) is True
         assert service._cancels[7].is_set()  # the engine's cooperative cancel flag is now set
-        assert service.cancel_run(7) is False  # already cancelling — not signalled again
+
+    def test_cancelling_twice_is_not_an_error(self, sessions, tmp_path):
+        """A second press must not read as "this run isn't running" — it IS, it is stopping. The two
+        cases were one `False`, so the UI showed a 409 saying the opposite of the truth. Pressing
+        again is a no-op, and a no-op is a success."""
+        import threading
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        service._cancels[7] = threading.Event()
+        assert service.cancel_run(7) is True
+        assert service.cancel_run(7) is True  # idempotent, not a lie
+
+    def test_a_cancel_is_recorded_on_the_run_so_a_reloaded_page_still_knows(self, sessions, tmp_path):
+        """The button read "Stopping..." off local mutation state alone, so a refresh forgot and
+        offered a live-looking Cancel that could only 409. Any client must be able to see it."""
+        import threading
+
+        from shortlist.server.db.models import Run
+
+        service = RunService(sessions, EventBus(), tmp_path, SecretBox(tmp_path))
+        with sessions() as session:
+            session.add(Run(id=7, status="running", trigger="manual", stats={}))
+            session.commit()
+        service._cancels[7] = threading.Event()
+
+        service.cancel_run(7)
+
+        with sessions() as session:
+            assert session.get(Run, 7).stats.get("cancel_requested") is True
 
     def test_a_skipped_user_is_counted_as_skipped_not_as_a_success(self, sessions, tmp_path, monkeypatch):
         """A skipped person built nothing. Folding them into `users_ok` is what made a run where

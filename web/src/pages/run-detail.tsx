@@ -76,6 +76,11 @@ export function RunDetailPage() {
   const usersQuery = useUsers();
   const queryClient = useQueryClient();
   const cancel = useCancelRun();
+  // From the RUN, not just this component's mutation state: a refresh threw that away, so the
+  // button came back looking live on a run that was already stopping — and every press after that
+  // returned "this run isn't currently running" about a run that was.
+  const stopping =
+    cancel.isSuccess || runQuery.data?.stats?.cancel_requested === true;
   // Tab and the deep-linked person both live in the URL, so a refresh, a bookmark, and the link
   // from a person's Runs tab all land exactly where they said they would.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -204,11 +209,11 @@ export function RunDetailPage() {
                       size="sm"
                       className="ml-auto"
                       loading={cancel.isPending}
-                      disabled={cancel.isPending || cancel.isSuccess}
+                      disabled={cancel.isPending || stopping}
                       onClick={() => cancel.mutate(run.id)}
                       title="Stop this run. It finishes the person it's on, then stops — everyone already done stays."
                     >
-                      {cancel.isSuccess ? "Stopping…" : "Cancel run"}
+                      {stopping ? "Stopping…" : "Cancel run"}
                     </Button>
                   )}
                 </div>

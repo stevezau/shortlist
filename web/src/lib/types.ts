@@ -490,6 +490,9 @@ export interface RunStats {
   exa_searches?: number;
   /** Searches served from the shared 14-day cache instead of billed — "1 searched · N from cache". */
   exa_cache_hits?: number;
+  /** Set the moment a cancel is accepted, so ANY client — including a freshly loaded page, which has
+   *  no mutation state — can show "Stopping…" instead of a live-looking Cancel that can only fail. */
+  cancel_requested?: boolean;
 }
 
 /**
