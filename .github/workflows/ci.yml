@@ -313,6 +313,13 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The same facts the OCI labels carry, but as env vars the app can actually read at
+          # runtime — nothing inside a container can inspect its own labels. `ref_name` is the
+          # branch on a dev push and the tag (`v1.4.1`) on a release, which is exactly what
+          # `_install_type` splits `dev_docker` from `docker` on.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
           # Its own scope — see docker-smoke's note. This one holds both platforms.
           cache-from: type=gha,scope=publish
           cache-to: type=gha,mode=max,scope=publish

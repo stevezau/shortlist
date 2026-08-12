@@ -65,6 +65,11 @@ class VersionOut(PassthroughModel):
     latest_version: str | None
     update_available: bool
     install_type: str
+    #: Commit and ref this build came from — empty on a source checkout. A `:dev` image reports the
+    #: same version number for every push between two releases, so these are the only fields that
+    #: identify WHICH build is running.
+    git_sha: str
+    git_branch: str
 
 
 @_authed.get("/version", response_model=VersionOut)
@@ -293,8 +298,13 @@ async def debug_bundle(request: Request) -> str:
 
     from shortlist.server.db.models import PickRow, RequestCandidate, Run
     from shortlist.server.settings_store import SettingsStore
+    from shortlist.server.version_check import build_provenance
 
     lines: list[str] = ["=== Shortlist debug bundle ===", f"version: {shortlist.__version__}"]
+    # The FIRST question on any `:dev` bug report — the version number is identical for every push
+    # between two releases, so without the commit there is no way to know which code is running.
+    git_sha, git_branch = build_provenance()
+    lines.append(f"build: {git_branch or '(source checkout)'} {git_sha or ''}".rstrip())
     lines.append(f"python: {platform.python_version()} on {platform.system()} {platform.machine()}")
     lines.append(f"time: {datetime.now(UTC).isoformat()}  TZ={os.environ.get('TZ', '(unset)')}")
 

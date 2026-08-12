@@ -5483,6 +5483,14 @@
             "title": "Current Version",
             "type": "string"
           },
+          "git_branch": {
+            "title": "Git Branch",
+            "type": "string"
+          },
+          "git_sha": {
+            "title": "Git Sha",
+            "type": "string"
+          },
           "install_type": {
             "title": "Install Type",
             "type": "string"
@@ -5507,7 +5515,9 @@
           "current_version",
           "latest_version",
           "update_available",
-          "install_type"
+          "install_type",
+          "git_sha",
+          "git_branch"
         ],
         "title": "VersionOut",
         "type": "object"

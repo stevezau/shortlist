@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildLabel,
   cronFromTime,
   formatDuration,
   formatHitRate,
@@ -178,5 +179,28 @@ describe("small formatters", () => {
     expect(
       renderRowName("✨ {library_name} Picked for You", "Fargo", "Sarah", ""),
     ).toBe("✨ Picked for You");
+  });
+});
+
+describe("buildLabel", () => {
+  it("names the exact build when the image carries one", () => {
+    // The point of the field: on `:dev` the version is identical for every push between releases,
+    // so version alone cannot tell two builds apart.
+    expect(
+      buildLabel({
+        current_version: "1.4.0",
+        git_branch: "dev",
+        git_sha: "ba891f571edd4f1c4a17b02a40369e3af92ceb53",
+      }),
+    ).toBe("Shortlist · 1.4.0 · dev · ba891f5");
+  });
+
+  it("falls back cleanly on a source checkout", () => {
+    // A checkout has no build args. Empty strings must drop out entirely rather than render as
+    // trailing separators against nothing.
+    expect(buildLabel({ current_version: "1.4.0", git_branch: "", git_sha: "" })).toBe(
+      "Shortlist · 1.4.0",
+    );
+    expect(buildLabel(undefined)).toBe("Shortlist");
   });
 });

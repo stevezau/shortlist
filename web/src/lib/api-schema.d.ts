@@ -4784,6 +4784,10 @@ export interface components {
         VersionOut: {
             /** Current Version */
             current_version: string;
+            /** Git Branch */
+            git_branch: string;
+            /** Git Sha */
+            git_sha: string;
             /** Install Type */
             install_type: string;
             /** Latest Version */

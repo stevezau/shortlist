@@ -6,7 +6,20 @@ All notable changes to this project are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+
+- **The sidebar now names the exact build you're running** — version, branch, and commit
+  (`Shortlist · 1.4.0 · dev · ba891f5`), with the full commit on hover and in the debug bundle. On
+  `:dev` the version number is identical for every push between two releases, so it could never tell
+  two builds apart; "is my container actually on the fix?" had no answer short of shelling in. A
+  source checkout shows the version alone, as before.
+
 ### Fixed
+
+- **Docker installs no longer report themselves as source checkouts.** The app read `GIT_SHA` and
+  `GIT_BRANCH` to tell a container from a development checkout, but nothing ever set them — the image
+  carried those facts only as OCI labels, which nothing running inside the container can read. The
+  build now bakes them in, so the install type is right and the commit is visible.
 
 - **Accounts that were switched off when they left your server now show as gone.** The daily roster
   sweep only compared **enabled** accounts against Plex, so anyone already turned off when they were
