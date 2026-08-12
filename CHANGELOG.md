@@ -107,7 +107,9 @@ All notable changes to this project are documented here. This project follows
 - **A downloading request updates itself.** The Sonarr/Radarr status on the Requests page was
   fetched once when the page opened and never again, so a title that finished downloading while you
   were looking at it went on saying "Searching" until you reloaded, and a title you had just sent
-  showed nothing at all. It now checks while you watch and says **Checking…** while it does.
+  showed nothing at all. It now checks while you watch and says **Checking…** while it does — and
+  only while something is actually moving, so an inbox where everything has downloaded stops asking
+  rather than re-reading your whole Radarr library every half minute for as long as the tab is open.
 
 - **A Sonarr or Radarr that can't be reached says so.** A failed lookup is deliberately ignored so
   that one app being down doesn't blank the other's titles — but that left an unreachable app
