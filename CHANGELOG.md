@@ -10,14 +10,14 @@ All notable changes to this project are documented here. This project follows
 
 - **Shortlist now tells you when it cannot make a row private.** Plex refuses a label share-filter
   for a managed account with a parental **Restriction Profile** set, so those accounts were skipped —
-  on the stated grounds that such an account "sees zero collections anyway". That is true of *Younger
-  Kid* and false of *Older Kid*, which on a real server listed three collections. So for those
+  on the stated grounds that such an account "sees zero collections anyway". That is true of _Younger
+  Kid_ and false of _Older Kid_, which on a real server listed three collections. So for those
   accounts nothing hid other people's rows and nothing said so. Every run now checks each profiled
   account **with that account's own token** and reports what it can actually see: a dashboard alert
   that cannot be dismissed while it is true, a **"Sees N rows of others'"** badge in the Users list,
-  and an explanation on the person's page. Shortlist still cannot fix it — hiding a row *is* the
+  and an explanation on the person's page. Shortlist still cannot fix it — hiding a row _is_ the
   filter Plex is refusing — so the one remedy that works (clear the Restriction Profile) is named,
-  and disabling the account is explicitly called out as *not* a fix, since that removes their own row
+  and disabling the account is explicitly called out as _not_ a fix, since that removes their own row
   rather than their view of everyone else's. (#76)
 
 - **People who leave your Plex server are handled properly.** Losing access already switched someone
@@ -30,11 +30,31 @@ All notable changes to this project are documented here. This project follows
   record is the only copy. A departure is re-checked every sync, so re-inviting somebody brings them
   straight back.
 
+- **Shortlist tells you when another tool is fighting it over the Recommended shelf.** That shelf is
+  one server-wide list, so anything else that manages Plex recommendations (Kometa, agregarr,
+  Plex-Meta-Manager) reorders your rows along with everything else. It is invisible from any single
+  pass — Shortlist moves its rows, re-reads the shelf, confirms the new order, and is right; the other
+  tool moves them back minutes later. When the same row has had to be put back three or more times in
+  a day, an alert now says so, names the likely tools, and gives the two ways out: exclude
+  `shortlist_*` collections in that tool, or turn off **Let Shortlist order the Recommended shelf** and
+  hand the order over. Your rows are still built, delivered and kept private either way.
+
 ### Fixed
+
+- **Rows no longer get stranded at the bottom of the Recommended shelf.** Three separate faults, each
+  enough on its own to make it unfixable. A run with no users — which is what every privacy sync is —
+  came out with no libraries to order, so the whole pass silently did nothing. A per-library shelf
+  anchor made the pass take its rows from the run in progress, so a run with no users had nothing to
+  move and said nothing about it; it also dropped the row of anyone paused, errored or skipped. And
+  the reorder itself re-issued a move for _every_ row whenever any one was misplaced (47 writes where
+  19 were needed) and then reported success without ever re-reading the shelf. Ordering now happens on
+  every privacy sync and on **Check and fix rows on Plex** rather than only overnight, moves only what
+  is out of place, and re-reads to confirm — recording the result as unverified rather than claiming a
+  shelf it did not get.
 
 - **Dead privacy excludes are cleaned up.** A `label!=shortlist_<person>` exclude for a row that no
   longer exists is now removed from everyone's share filter — but only once **two independent checks**
-  agree the row is gone: a complete collections read in which nothing carries that label, *and*
+  agree the row is gone: a complete collections read in which nothing carries that label, _and_
   Shortlist's own record that the person departed. Either alone can be wrong in the direction that
   un-hides a live row, so neither is trusted by itself.
 
@@ -70,7 +90,6 @@ All notable changes to this project are documented here. This project follows
 
 - **A run says what year each pick is and how well rated it was.** "Why is this row full of old
   films?" was unanswerable on the one page built to answer it.
-
 
 - **Web search can now run entirely on your own hardware, via SearXNG.** The AI web-search source
   previously had two backends: your AI provider's own search (Claude, GPT and Gemini only) or the
