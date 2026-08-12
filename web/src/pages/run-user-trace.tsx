@@ -32,9 +32,11 @@ import { provenanceLabel, sourceLabel } from "@/lib/pick-provenance";
 import { Button } from "@/components/ui/button";
 import {
   useBlockSeed,
+  useCollections,
   useRunSharedRowTrace,
   useRunUserTrace,
 } from "@/lib/queries";
+import { rowDisplayName } from "@/lib/run-rows";
 import {
   buildLibraries,
   fateLabel,
@@ -90,6 +92,14 @@ export function RunUserTracePage() {
   const userQuery = useRunUserTrace(runId, uid, valid && !isRow);
   const rowQuery = useRunSharedRowTrace(runId, rowSlug ?? "", valid && isRow);
   const query = isRow ? rowQuery : userQuery;
+  // The row's configured name, stripped of its `{placeholder}` — exactly what the run page shows —
+  // so the trace and the row card never disagree about what the row is called.
+  const collections = useCollections();
+  const rowName = isRow
+    ? rowDisplayName(
+        collections.data?.find((row) => row.slug === rowSlug)?.name ?? "",
+      ) || undefined
+    : undefined;
 
   return (
     <div className="space-y-6">
@@ -111,7 +121,14 @@ export function RunUserTracePage() {
             />
           }
         >
-          {(data) => <TraceView data={data} userId={uid} />}
+          {(data) => (
+            <TraceView
+              data={data}
+              userId={uid}
+              rowName={rowName}
+              sharedRow={isRow}
+            />
+          )}
         </QueryBoundary>
       )}
     </div>
@@ -141,11 +158,19 @@ function TraceSkeleton() {
 export function TraceView({
   data,
   userId,
+  rowName,
+  sharedRow = false,
 }: {
   data: RunUserTraceResponse;
   userId?: number;
+  /** For a SHARED row: its name as the run page shows it, so the two never disagree about what the
+   *  row is called. `display_name` carries a per-LIBRARY rendered title ("Popular Movies on SFLIX"),
+   *  which would name the whole row after one of its libraries. */
+  rowName?: string;
+  /** A shared row belongs to nobody, so the person-framed copy in this view is wrong for it. */
+  sharedRow?: boolean;
 }) {
-  const name = data.display_name || data.username;
+  const name = rowName || data.display_name || data.username;
   const libraries = useMemo(() => buildLibraries(data), [data]);
   const [active, setActive] = useState(libraries[0]?.key ?? "");
   const current = libraries.find((l) => l.key === active) ?? libraries[0];
@@ -158,8 +183,9 @@ export function TraceView({
             How we picked for {name}
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            The whole run for this person, one library at a time — from what
-            they watched all the way to what we put in their row.
+            {sharedRow
+              ? "The whole run for this shared row, one library at a time — from what the server has been watching all the way to what we put in the row."
+              : "The whole run for this person, one library at a time — from what they watched all the way to what we put in their row."}
           </p>
         </header>
 
@@ -183,6 +209,7 @@ export function TraceView({
             {current && (
               <LibraryFlow
                   lib={current}
+                  sharedRow={sharedRow}
                   userId={userId}
                   ratings={data.trace?.history?.ratings}
                   selection={(data.trace?.selection ?? []).filter(
@@ -485,11 +512,15 @@ function LibraryFlow({
   userId,
   ratings,
   selection = [],
+  sharedRow = false,
 }: {
   lib: LibraryView;
   userId?: number;
   ratings?: TraceRatings;
   selection?: TraceSelection[];
+  /** A SHARED row belongs to nobody, so every "they / their" in this flow is wrong for it — and it
+   *  records no per-person history stage at all, by design. */
+  sharedRow?: boolean;
 }) {
   const searchNoun = mediaLabel(lib.media).toLowerCase();
   const hasWeb = Boolean(lib.web || lib.webSource);
@@ -514,7 +545,9 @@ function LibraryFlow({
         <Muted>
           {isCold
             ? "Too little watch history here to search from — so we fell back to what's popular on the server (below)."
-            : "No recent watches recorded here — seeds may come from a shared media type."}
+            : sharedRow
+              ? "Pooled across everyone in this row's audience — no single person's history is read for a shared row."
+              : "No recent watches recorded here — seeds may come from a shared media type."}
         </Muted>
       )}
       {/* A watch that is silently ABSENT from the seed list above is the hardest thing to explain
@@ -530,8 +563,12 @@ function LibraryFlow({
       icon: History,
       rail: "Watched recently",
       count: lib.seeds.length || totalWatched || lib.watched.length,
-      title: `What they watched recently in ${lib.label}`,
-      subtitle: isCold
+      title: sharedRow
+        ? `What the server watched in ${lib.label}`
+        : `What they watched recently in ${lib.label}`,
+      subtitle: sharedRow
+        ? "A shared row is built from what SEVERAL people watched, pooled — so it records no single person's history. The seeds below are the titles that cleared the row's minimum number of watchers."
+        : isCold
         ? `${watchedSummary(lib) || "Not enough watched here yet"} — too little to recommend from, so this is a cold start.`
         : totalWatched > 0
           ? `${watchedSummary(lib)}. Their most recent are below — what someone reached for lately is the best signal of what to recommend tonight, so each becomes a search seed for the step below.`
