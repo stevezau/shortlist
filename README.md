@@ -159,6 +159,9 @@ docker run -d --name shortlist \
   ghcr.io/stevezau/shortlist:latest
 ```
 
+Mirrored to Docker Hub as [`stevezzau/shortlist`](https://hub.docker.com/r/stevezzau/shortlist) —
+same image, same tags. **Prefer GHCR**: Docker Hub rate-limits anonymous pulls and GHCR doesn't.
+
 Then open **http://your-host:5959** and follow the setup wizard — it connects your Plex account,
 picks your server, and walks you to your first rows (about 10 minutes).
 
