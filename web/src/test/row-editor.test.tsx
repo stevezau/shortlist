@@ -1524,3 +1524,33 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
     ).not.toBeInTheDocument();
   });
 });
+
+describe("RowPreview — what a shared row says it will do", () => {
+  // The panel exists to explain the row, so naming behaviour the engine no longer has is worse than
+  // leaving a line out. A shared row shows what people HAVE watched, pools everyone's viewing,
+  // searches nothing, and is ordered by watcher count.
+  it("describes the tally, not the search it used to run", () => {
+    renderEditor(row({ build: "shared", min_watchers: 2 }));
+
+    expect(
+      screen.getByText("What people here have watched most"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/pooled — no search, no AI/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Most watched first")).toBeInTheDocument();
+    expect(screen.queryByText("Found via")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Only things they haven.t seen/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves a per-person row's summary alone", () => {
+    renderEditor(row({ build: "per_person" }));
+
+    expect(screen.getByText("Found via")).toBeInTheDocument();
+    expect(
+      screen.queryByText("What people here have watched most"),
+    ).not.toBeInTheDocument();
+  });
+});
