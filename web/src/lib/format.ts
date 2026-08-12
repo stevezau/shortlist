@@ -253,11 +253,16 @@ export function jobStatusLabel(job: {
 }
 
 /**
- * The sidebar footer's build line: `Shortlist · 1.4.0 · dev · ba891f5`.
+ * The sidebar footer's build line.
  *
- * The version alone cannot identify a `:dev` build — every push between two releases reports the
- * same number — so the branch and short commit are what answer "which build am I actually running".
- * A source checkout carries neither and shows the version on its own.
+ * `Shortlist · dev · 2ee14f8` on a pre-release build, `Shortlist · 1.4.0` on a release.
+ *
+ * The version is deliberately DROPPED on a pre-release. `current_version` is the last released
+ * version, so on `:dev` it names the release this build came after — five commits ago, in the case
+ * that prompted this — and printing it claims a version the running code is not. On `:dev` the
+ * commit is the only thing that identifies a build anyway, since every push between two releases
+ * reports the same version number. A release build is the mirror image: the tag IS the version, so
+ * the sha would be noise. A source checkout has no provenance either way and shows its version.
  */
 export function buildLabel(
   info?: {
@@ -266,10 +271,15 @@ export function buildLabel(
     git_sha?: string;
   } | null,
 ): string {
-  const parts = [
-    info?.current_version,
-    info?.git_branch,
-    info?.git_sha?.slice(0, 7),
-  ].filter((part): part is string => Boolean(part));
-  return ["Shortlist", ...parts].join(" · ");
+  // CI passes the branch on a dev push and the TAG (`v1.4.1`) on a release, which is what separates
+  // the two cases — see `version_check.build_provenance`.
+  const branch = info?.git_branch;
+  const prerelease = Boolean(branch) && !branch!.startsWith("v");
+  const parts = prerelease
+    ? [branch, info?.git_sha?.slice(0, 7)]
+    : [info?.current_version];
+  return [
+    "Shortlist",
+    ...parts.filter((part): part is string => Boolean(part)),
+  ].join(" · ");
 }
