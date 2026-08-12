@@ -1,7 +1,7 @@
 import type {
   RunDetail,
-  RunLibraryBreakdown,
   RunSharedRowResult,
+  RunUserResult,
 } from "@/lib/types";
 
 /** What a run decided about one row FOR ONE PERSON, before anything was built.
@@ -12,18 +12,18 @@ import type {
 export type RowDecision = "due" | "not_due" | "muted" | "not_in_audience";
 
 export type RunRowPerson = {
-  slug: string;
-  displayName: string;
-  /** The person's own outcome: ok / skipped / error / cold_start / pending. */
-  status: string;
-  /** Their failure, when they have one — shown in the picks panel instead of an empty list. */
-  error: string | null;
   decision: RowDecision | null;
-  hasTrace: boolean;
-  /** What this row delivered to them, per library. Empty when the row built nothing for them. */
-  breakdown: RunLibraryBreakdown[];
   /** Present only for people still on the Users page — a departed account has no page to link to. */
   userId?: number;
+  /**
+   * Their whole run result, with `breakdown` and `picks` narrowed to THIS row.
+   *
+   * Kept as a `RunUserResult` rather than a reduced shape of its own so the row view can render it
+   * with the very components the People tab uses — the search-and-filter person list and the
+   * formatted picks panel. Rebuilding thinner versions of those is what made the row view read as
+   * a lesser page than the one it replaced.
+   */
+  result: RunUserResult;
 };
 
 /** One row as this run built it. Per-person rows carry their people; a shared row carries its result.
@@ -142,14 +142,16 @@ export function groupRunByRow(
       if (!ran.has(slug)) continue;
       const mine = breakdown.filter((entry) => entry.row_slug === slug);
       ensure(slug, "per_person").people.push({
-        slug: user.slug,
-        displayName: user.display_name,
-        status: user.status,
-        error: user.error,
         decision: asDecision(decisions[slug]),
-        hasTrace: user.has_trace,
-        breakdown: mine,
         userId: idBySlug.get(user.slug),
+        // `picks` is the person's list across EVERY row and cannot be split by row (the API does not
+        // carry a pick's row), so it is dropped when this row delivered nothing to them — otherwise
+        // the panel would fall back to it and show another row's picks under this one.
+        result: {
+          ...user,
+          breakdown: mine as RunUserResult["breakdown"],
+          picks: mine.length ? user.picks : [],
+        },
       });
     }
   }
@@ -158,7 +160,7 @@ export function groupRunByRow(
   for (const group of groups.values()) {
     const seen = new Set<string>();
     for (const person of group.people) {
-      for (const entry of person.breakdown) {
+      for (const entry of person.result.breakdown) {
         if (entry.library_title && !seen.has(entry.library_title)) {
           seen.add(entry.library_title);
           group.libraries.push(entry.library_title);
@@ -219,10 +221,10 @@ export function rowCounts(group: RunRowGroup): {
     unrecorded: 0,
   };
   for (const person of group.people) {
-    if (person.status === "error") counts.failed += 1;
+    if (person.result.status === "error") counts.failed += 1;
     else if (person.decision === "muted") counts.muted += 1;
     else if (person.decision === "not_in_audience") counts.notInAudience += 1;
-    else if (person.breakdown.length > 0 || person.status === "ok")
+    else if (person.result.breakdown.length > 0 || person.result.status === "ok")
       counts.built += 1;
     else if (person.decision === null) counts.unrecorded += 1;
   }

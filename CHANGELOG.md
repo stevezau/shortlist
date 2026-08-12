@@ -36,6 +36,25 @@ All notable changes to this project are documented here. This project follows
   push between two releases carries the same version number, so "is my container actually on the
   fix?" had no answer short of shelling in.
 
+### Changed
+
+- **A "Popular on this server" row now actually shows what's popular on this server.** It was built
+  the same way a personal row is: your server's most-watched titles became the *starting point* for a
+  TMDB similar-titles search and an AI web search — and that search deliberately excludes the titles
+  it started from, so the most-watched titles on your server were the one thing the row could never
+  contain. Every pick was a suggestion captioned "Popular on this server", which was untrue of all of
+  them. It also cost around 10,000 AI tokens and a minute a night to produce.
+
+  The row is now the count: the titles the most people on your server have actually watched, in that
+  order, and each says how many ("11 people watched it"). No searching, no AI, and it builds in
+  seconds. Your existing shared rows will change contents on their next run — this is the row you
+  were asking for the whole time.
+
+  Two consequences worth knowing. **Recent releases** no longer applies to a shared row and is hidden
+  in its editor: that dial weights a title's release date when *scoring* search results, and there is
+  no search left to score — order by **Newest first** instead. And your **Don't seed** list now keeps
+  a title out of a shared row entirely, rather than only stopping it being a search starting point.
+
 ### Fixed
 
 - **A shared row's result is kept.** It was thrown away at the end of every run: the row was built,

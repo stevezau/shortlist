@@ -1438,11 +1438,23 @@ describe("RowEditor — a shared row hides the dials that do not apply to it", (
   });
 
   it("keeps the controls a shared row DOES honour", () => {
-    // Sources, libraries, seed budget, release-date weight and display order all work on the
-    // shared path — hiding those would remove real function.
+    // Sources, libraries and display order all work on the shared path — hiding those would remove
+    // real function.
     renderEditor(row({ build: "shared", min_watchers: 2 }));
     expect(
-      screen.getByRole("switch", { name: /global recent-releases default/i }),
+      screen.getByRole("group", { name: /order/i }),
     ).toBeInTheDocument();
+  });
+
+  it("hides the release-date weight, which a shared row has nothing to apply it to", () => {
+    // Recency weights a title's release date inside a SCORED CANDIDATE POOL. A shared row is the
+    // server's most-watched titles ranked by how many people watched them, so there is no pool and
+    // no score for the weight to act on — offering a dial that silently does nothing is the bug
+    // this row type already had with `watched_pct` and `rewatch`. "Newest first" is how a shared
+    // row leans modern now.
+    renderEditor(row({ build: "shared", min_watchers: 2 }));
+    expect(
+      screen.queryByRole("switch", { name: /global recent-releases default/i }),
+    ).not.toBeInTheDocument();
   });
 });

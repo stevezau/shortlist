@@ -607,7 +607,16 @@ def test_shared_row_is_public_built_from_aggregate_and_never_excluded(fakes, tmp
     # Aggregate framing — never per-person, and no seed leaks through.
     shared_report = next(r for r in report.users if r.slug == "shared_popular")
     assert shared_report.picks
-    assert all(pick.reason == "Popular on this server" for pick in shared_report.picks)
+    # Aggregate framing, and now the actual number: a shared row is the server's most-watched titles,
+    # so "N people watched it" is both the reason it is here and the thing that ranked it. The old
+    # fixed "Popular on this server" sat on picks that came from a TMDB similar-titles search and was
+    # untrue of every one of them.
+    assert all(re.fullmatch(r"\d+ people watched it", pick.reason) for pick in shared_report.picks), [
+        pick.reason for pick in shared_report.picks
+    ]
+    assert all(pick.seed_title is None for pick in shared_report.picks), (
+        "a shared row must never surface one person's title as its seed"
+    )
     assert all(pick.seed_title is None for pick in shared_report.picks)
 
 

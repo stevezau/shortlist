@@ -3,23 +3,22 @@ import { useState } from "react";
 import { Link } from "react-router";
 
 import { PickList } from "@/components/pick-list";
+import { UserPanel } from "@/components/runs/user-panel";
+import { UserTabs } from "@/components/runs/user-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { UserAvatar } from "@/components/user-avatar";
 import { formatDuration, runStatusLabel, runStatusVariant } from "@/lib/format";
-import { friendlyError } from "@/lib/run-format";
 import {
   groupRunByRow,
   libraryLabel,
   rowSummary,
   type RunRowGroup,
-  type RunRowPerson,
 } from "@/lib/run-rows";
-import type { RunDetail, RunLibraryBreakdown } from "@/lib/types";
+import type { RunDetail, RunLibraryBreakdown, RunLogEntry } from "@/lib/types";
 
-/** Why this person got, or did not get, this row — shown beside their name. */
+/** Why this person got, or did not get, this row. */
 const DECISION_LABEL: Record<string, string> = {
-  muted: "muted",
+  muted: "muted for them",
   not_in_audience: "not in the audience",
   not_due: "not due",
 };
@@ -31,117 +30,54 @@ function diffLabel(entry: RunLibraryBreakdown): string {
   return parts.join(" · ");
 }
 
-/**
- * What a row produced, per library — the same panel for a person's slice of a per-person row and
- * for a shared row's single result.
- *
- * This is the consistency the view turns on: every row expands to its picks, and the only thing a
- * per-person row adds is somebody to choose first. Before this, expanding a row gave a list of
- * names with a status and nothing else, so you could see WHO ran but never what they got without
- * leaving the page.
- */
-function RowPicks({
-  breakdown,
-  fallbackPicks,
-  note,
-}: {
-  breakdown: RunLibraryBreakdown[];
-  fallbackPicks?: { rank: number; title: string }[];
-  note?: string;
-}) {
-  if (breakdown.length === 0) {
-    // A legacy run has no per-library breakdown, but its picks are still worth showing flat.
-    const picks = fallbackPicks ?? [];
-    if (picks.length === 0) {
-      return (
-        <p className="p-4 text-sm text-muted-foreground">
-          {note ?? "This row delivered nothing here."}
-        </p>
-      );
-    }
-    return (
-      <div className="space-y-2 p-4">
-        {note && <p className="text-sm text-muted-foreground">{note}</p>}
-        <PickList picks={picks as never} collapseAfter={10} />
-      </div>
-    );
-  }
+/** A shared row's result: the same per-library shape a person's panel uses, with nobody to choose. */
+function SharedRowPanel({ group }: { group: RunRowGroup }) {
+  const shared = group.shared;
+  if (!shared) return null;
+  const libraries = libraryLabel(group);
+  const breakdown = shared.breakdown ?? [];
   return (
-    <div className="space-y-4 p-4">
-      {note && <p className="text-sm text-muted-foreground">{note}</p>}
-      {breakdown.map((entry) => (
-        <div
-          key={`${entry.row_slug}:${entry.library_key}`}
-          className="space-y-2"
-        >
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="font-medium">{entry.library_title}</span>
-            <Badge variant="outline">{diffLabel(entry)}</Badge>
-            {entry.created && <Badge variant="outline">new row</Badge>}
-          </div>
-          <PickList picks={entry.picks} collapseAfter={10} />
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** One person's line in a per-person row's picker. */
-function PersonButton({
-  person,
-  selected,
-  onSelect,
-  runId,
-}: {
-  person: RunRowPerson;
-  selected: boolean;
-  onSelect: () => void;
-  runId: number;
-}) {
-  const why = person.decision ? DECISION_LABEL[person.decision] : "";
-  return (
-    <li className="flex items-center gap-1 border-b last:border-b-0">
-      <button
-        type="button"
-        onClick={onSelect}
-        aria-current={selected ? "true" : undefined}
-        className={`flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm hover:bg-muted/50 ${
-          selected
-            ? "bg-muted/60 font-medium shadow-[inset_2px_0_0_currentColor]"
-            : ""
-        }`}
-      >
-        <UserAvatar name={person.displayName} className="h-6 w-6 text-[10px]" />
-        <span className="min-w-0 flex-1 truncate">{person.displayName}</span>
-        {why && (
-          <span className="shrink-0 text-xs text-muted-foreground">{why}</span>
-        )}
-        <Badge variant={runStatusVariant(person.status)} className="shrink-0">
-          {runStatusLabel(person.status)}
-        </Badge>
-      </button>
-      {person.hasTrace && person.userId !== undefined && (
-        <Button asChild variant="ghost" size="sm" className="mr-1 shrink-0">
-          <Link
-            to={`/runs/${runId}/trace/${person.userId}`}
-            title={`How ${person.displayName}'s picks were chosen`}
+    <div className="space-y-5 p-5">
+      <p className="text-sm text-muted-foreground">
+        Built once for the whole server from what several people have watched
+        {libraries ? ` · ${libraries}` : ""}
+      </p>
+      {breakdown.length === 0 ? (
+        shared.picks.length > 0 ? (
+          <PickList picks={shared.picks} collapseAfter={10} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            This row delivered nothing.
+          </p>
+        )
+      ) : (
+        breakdown.map((entry) => (
+          <div
+            key={`${entry.row_slug}:${entry.library_key}`}
+            className="space-y-2.5"
           >
-            <Telescope aria-hidden="true" />
-            <span className="sr-only">Trace {person.displayName}</span>
-          </Link>
-        </Button>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-medium">{entry.library_title}</span>
+              <Badge variant="outline">{diffLabel(entry)}</Badge>
+              {entry.created && <Badge variant="outline">new row</Badge>}
+            </div>
+            <PickList picks={entry.picks} collapseAfter={10} />
+          </div>
+        ))
       )}
-    </li>
+    </div>
   );
 }
 
 function RowCard({
   group,
-  runId,
+  run,
+  liveLog,
   defaultOpen,
 }: {
   group: RunRowGroup;
-  runId: number;
+  run: RunDetail;
+  liveLog?: RunLogEntry[];
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -149,38 +85,24 @@ function RowCard({
   const shared = group.shared;
   const libraries = libraryLabel(group);
 
+  const results = group.people.map((person) => person.result);
   // Default to the first FAILED person — what you opened the row to see — else the first.
   const chosen =
-    group.people.find((p) => p.slug === picked) ??
-    group.people.find((p) => p.status === "error") ??
-    group.people[0];
-
-  const header = (
-    <div className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
-      <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-        <span className="font-medium">{group.title}</span>
-        {libraries && (
-          <span className="text-xs tracking-wide text-muted-foreground uppercase">
-            {libraries}
-          </span>
-        )}
-      </span>
-      <span className="text-xs text-muted-foreground">
-        {group.kind === "shared" ? "Shared" : "Per-person"} ·{" "}
-        {rowSummary(group)}
-        {shared?.duration_ms ? ` · ${formatDuration(shared.duration_ms)}` : ""}
-      </span>
-    </div>
-  );
+    results.find((r) => r.slug === picked) ??
+    results.find((r) => r.error !== null) ??
+    results[0];
+  const decision = group.people.find(
+    (person) => person.result.slug === chosen?.slug,
+  )?.decision;
 
   return (
     <div className="rounded-lg border">
-      <div className="flex flex-wrap items-center gap-2 p-3">
+      <div className="flex flex-wrap items-center gap-2 p-4">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
         >
           <ChevronRight
             aria-hidden="true"
@@ -188,18 +110,34 @@ function RowCard({
               open ? "rotate-90" : ""
             }`}
           />
-          {header}
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="font-medium">{group.title}</span>
+              {libraries && (
+                <span className="text-xs tracking-wide text-muted-foreground uppercase">
+                  {libraries}
+                </span>
+              )}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {group.kind === "shared" ? "Shared" : "Per-person"} ·{" "}
+              {rowSummary(group)}
+              {shared?.duration_ms
+                ? ` · ${formatDuration(shared.duration_ms)}`
+                : ""}
+            </span>
+          </span>
         </button>
         {shared && (
           <Badge variant={runStatusVariant(shared.status)} className="shrink-0">
             {runStatusLabel(shared.status)}
           </Badge>
         )}
-        {/* Trace sits on the thing it traces: the row itself when the row is shared, each person
-            when it is per-person. Same edge either way, so there is one place to look. */}
+        {/* Trace sits on the thing it traces: the row when the row is shared, the person otherwise
+            (each person's panel carries their own "How we picked"). */}
         {shared?.has_trace && (
           <Button asChild variant="ghost" size="sm" className="shrink-0">
-            <Link to={`/runs/${runId}/trace/row/${group.slug}`}>
+            <Link to={`/runs/${run.id}/trace/row/${group.slug}`}>
               <Telescope aria-hidden="true" />
               Trace
             </Link>
@@ -208,12 +146,12 @@ function RowCard({
       </div>
 
       {shared?.reason && (
-        <p className="border-t px-3 py-2 text-sm text-muted-foreground">
+        <p className="border-t px-4 py-3 text-sm text-muted-foreground">
           {shared.reason}
         </p>
       )}
       {shared?.error && (
-        <pre className="max-h-40 overflow-auto border-t px-3 py-2 font-mono text-xs whitespace-pre-wrap break-all text-destructive-text">
+        <pre className="max-h-40 overflow-auto border-t px-4 py-3 font-mono text-xs whitespace-pre-wrap break-all text-destructive-text">
           {shared.error}
         </pre>
       )}
@@ -221,49 +159,28 @@ function RowCard({
       {open &&
         (group.kind === "shared" ? (
           <div className="border-t">
-            <RowPicks
-              breakdown={shared?.breakdown ?? []}
-              fallbackPicks={shared?.picks as never}
-              note={`Built once for the whole server from what several people have watched${
-                libraries ? ` · ${libraries}` : ""
-              }`}
-            />
+            <SharedRowPanel group={group} />
           </div>
         ) : (
-          <div className="grid border-t md:grid-cols-[minmax(0,16rem)_1fr]">
-            <ul className="max-h-96 divide-y overflow-y-auto border-b md:border-b-0 md:border-r">
-              {group.people.map((person) => (
-                <PersonButton
-                  key={person.slug}
-                  person={person}
-                  selected={person.slug === chosen?.slug}
-                  onSelect={() => setPicked(person.slug)}
-                  runId={runId}
-                />
-              ))}
-            </ul>
+          // The People tab's own two components, scoped to this row: the searchable, status-grouped
+          // person list, and the formatted panel with its libraries, diff legend and "How we picked".
+          // Reusing them is what keeps the two tabs one design rather than two.
+          <div className="grid gap-4 border-t p-4 lg:grid-cols-[minmax(0,20rem)_1fr]">
+            <UserTabs
+              results={results}
+              selected={chosen?.slug ?? ""}
+              onSelect={setPicked}
+            />
             <div className="min-w-0">
-              {chosen ? (
-                chosen.status === "error" ? (
-                  <div role="alert" className="space-y-2 p-4">
-                    <p className="text-sm font-medium">
-                      {friendlyError(chosen.error ?? "")}
-                    </p>
-                    <pre className="max-h-40 overflow-auto rounded bg-muted/40 p-2.5 font-mono text-xs whitespace-pre-wrap break-all text-destructive-text">
-                      {chosen.error}
-                    </pre>
-                  </div>
-                ) : (
-                  <RowPicks
-                    breakdown={chosen.breakdown}
-                    note={
-                      chosen.decision && chosen.decision !== "due"
-                        ? `${chosen.displayName} — ${DECISION_LABEL[chosen.decision] ?? chosen.decision}`
-                        : undefined
-                    }
-                  />
-                )
-              ) : null}
+              {decision && decision !== "due" && (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  This row was {DECISION_LABEL[decision] ?? decision} on this
+                  run.
+                </p>
+              )}
+              {chosen && (
+                <UserPanel run={run} result={chosen} liveLog={liveLog} />
+              )}
             </div>
           </div>
         ))}
@@ -282,10 +199,12 @@ export function RunRowsTab({
   run,
   titles,
   idBySlug,
+  liveLog,
 }: {
   run: RunDetail;
   titles: Record<string, string>;
   idBySlug: Map<string, number>;
+  liveLog?: RunLogEntry[];
 }) {
   const { groups, notInRun } = groupRunByRow(run, titles, idBySlug);
   const [showSkipped, setShowSkipped] = useState(false);
@@ -315,9 +234,10 @@ export function RunRowsTab({
         <RowCard
           key={`${group.kind}:${group.slug}`}
           group={group}
-          runId={run.id}
-          // One row is the whole story of a scoped run — make it open on arrival rather than
-          // making the operator click to see the only thing that happened.
+          run={run}
+          liveLog={liveLog}
+          // One row is the whole story of a scoped run — open it on arrival rather than making the
+          // operator click to see the only thing that happened.
           defaultOpen={groups.length === 1}
         />
       ))}
