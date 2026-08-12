@@ -865,6 +865,36 @@ class TestUserSync:
         assert listed["sarah"]["departed"] is True
         assert listed["teen"]["departed"] is False
 
+    def test_someone_who_left_while_switched_off_is_still_marked_as_gone(self, client: TestClient, plextv, monkeypatch):
+        """Being switched off does not make somebody present.
+
+        The sweep only ever compared ENABLED accounts against the roster, so a user who was off when
+        they left Plex was stuck twice over: nothing explained the blank row, and Remove refuses
+        anyone not marked departed (409) — so they could not be filed away either. Recorded from a
+        live server, where five deleted Home accounts sat in the Users list with no way to act on them.
+        """
+        from shortlist.server.services import user_sync
+
+        removed: list[list[str]] = []
+
+        async def spy(state, slugs):
+            removed.append(list(slugs))
+
+        monkeypatch.setattr(user_sync, "remove_users_rows", spy)
+        client.post("/api/users/sync")  # new accounts land disabled — "kid" is never switched on
+        uid = self._users(client)["kid"]["id"]
+        assert self._users(client)["kid"]["enabled"] is False
+        removed.clear()
+
+        plextv.roster.mock(return_value=httpx.Response(200, text=self._roster_without("kid")))
+        client.post("/api/users/sync")
+
+        listed = self._users(client)
+        assert listed["kid"]["departed"] is True, "off is not the same as gone — the list must say which"
+        assert listed["teen"]["departed"] is False, "still on the roster, just switched off"
+        assert not any(removed), "somebody who was already off has no rows on Plex to take down"
+        assert client.delete(f"/api/users/{uid}").status_code == 200, "and now they can be filed away"
+
     def test_sync_adds_the_owner_disabled_and_badged(self, client: TestClient, plextv):
         r = client.post("/api/users/sync")
         assert r.status_code == 200

@@ -325,19 +325,42 @@ async def sync_users_from_state(state) -> dict:
         # incomplete picture must do nothing rather than guess, the same way `_converge_phase` gates
         # orphan deletion on a non-empty user list.
         on_roster = {r.id for r in roster} | ({owner_account_id} if owner_account_id else set())
+        # Everyone the Users list can still show. Being switched off does not make somebody present,
+        # and this used to compare only ENABLED accounts against the roster — so a user who was
+        # already off when they left Plex was stuck twice over: nothing explained why their row was
+        # blank, and Remove refuses anyone not marked departed (409), so they could not be filed away
+        # either. Marking is separate from the disable-and-delete below precisely because it touches
+        # no Plex server at all: it only records what plex.tv just said.
+        #
+        # `owner` is excluded BY TYPE, not left to `on_roster`. plex.tv's `/api/users` never returns
+        # the account that owns the server, so an owner row is off-roster by construction and would
+        # read as a departure any sync where `owner_account_id` came back empty.
+        known = session.query(User).filter(User.removed_at.is_(None), User.user_type != UserType.OWNER.value).all()
+        gone = [u for u in known if u.plex_account_id not in on_roster] if roster else []
         enabled = session.query(User).filter(User.enabled).all()
-        departed = [u.slug for u in enabled if u.plex_account_id not in on_roster] if roster else []
+        departed = [u.slug for u in gone if u.enabled]
         if not roster:
             logger.info("plex.tv listed no shared users — skipping the departure sweep rather than disabling everyone")
-        elif len(departed) > 1 and len(departed) * 2 >= len(enabled):
+        elif (len(gone) > 1 and len(gone) * 2 >= len(known)) or (
+            len(departed) > 1 and len(departed) * 2 >= len(enabled)
+        ):
             # One person leaving the share is routine and acts immediately. HALF of them leaving at once
             # is not a thing that happens — it is a partial read — and acting on it would switch off a
             # whole server's worth of people, each needing a manual re-enable and a full LLM rebuild.
             # Reported as a notification rather than silently dropped, so a genuine mass removal is
             # still visible and the owner can do it by hand.
+            #
+            # Two ratios, and either one refuses the whole sweep. The ENABLED one is the original and
+            # guards the destructive half (disable + delete their collections); it stays measured
+            # against the enabled population, because widening its denominator to everyone would let
+            # a partial read through on a server whose accounts are mostly switched off. The second
+            # covers the marking half, which is not destructive but UNLOCKS Remove — and Remove drops
+            # picks and run history for good.
             logger.error(
-                "plex.tv says {} of {} enabled users left the share — refusing to act on what looks like "
-                "a partial read. Disable them by hand if it is real.",
+                "plex.tv says {} of {} accounts left the share ({} of {} enabled) — refusing to act on what "
+                "looks like a partial read. Disable them by hand if it is real.",
+                len(gone),
+                len(known),
                 len(departed),
                 len(enabled),
             )
@@ -345,23 +368,38 @@ async def sync_users_from_state(state) -> dict:
                 Event(
                     scope="user.departed.refused",
                     level="error",
-                    message={"users": departed, "enabled": len(enabled), "at": datetime.now(UTC).isoformat()},
+                    message={
+                        "users": [u.slug for u in gone],
+                        "known": len(known),
+                        "enabled": len(enabled),
+                        "at": datetime.now(UTC).isoformat(),
+                    },
                 )
             )
-            departed = []
-        for user in session.query(User).filter(User.slug.in_(departed)) if departed else []:
-            logger.warning("{} no longer shares this server — turning them off and removing their rows", user.username)
+            gone, departed = [], []
+        newly_gone = [u.slug for u in gone if u.departed_at is None]
+        for user in gone:
+            if user.enabled:
+                logger.warning(
+                    "{} no longer shares this server — turning them off and removing their rows", user.username
+                )
+            elif user.departed_at is None:
+                logger.info("{} is no longer on this Plex server — marking them gone (already off)", user.username)
             user.enabled = False
             # Recorded as a DEPARTURE, not just an off switch. `enabled=0` is also what the owner sets
             # by hand, and the Users list cannot explain a row it cannot tell apart — nor prompt for
             # the clean-up that a departure, unlike a manual toggle, leaves behind.
-            user.departed_at = datetime.now(UTC)
-        if departed:
+            #
+            # Stamped at the FIRST sync that missed them and never re-stamped: a departed account stays
+            # in `known` until the owner removes it, so re-deriving the time every night would make
+            # "gone since" permanently read as today.
+            user.departed_at = user.departed_at or datetime.now(UTC)
+        if newly_gone:
             session.add(
                 Event(
                     scope="user.departed",
                     level="warning",
-                    message={"users": departed, "at": datetime.now(UTC).isoformat()},
+                    message={"users": newly_gone, "rows_removed": departed, "at": datetime.now(UTC).isoformat()},
                 )
             )
         session.commit()

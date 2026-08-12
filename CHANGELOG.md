@@ -4,6 +4,20 @@ All notable changes to this project are documented here. This project follows
 [Conventional Commits](https://www.conventionalcommits.org/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Accounts that were switched off when they left your server now show as gone.** The daily roster
+  sweep only compared **enabled** accounts against Plex, so anyone already turned off when they were
+  deleted from Plex stayed in the Users list looking like an ordinary disabled account — with nothing
+  to say why, and no way to clear them out, because **Remove** only offers itself for someone Plex no
+  longer lists. Deleted Home users were the common case (one real server had five of them stuck).
+  They are now badged **Left the server** and offer **Remove** like anyone else. Nothing is touched on
+  Plex for them: an account that was already off has no rows to take down, so this only writes the
+  badge. The partial-read protection that refuses a sweep when half the server appears to vanish at
+  once now covers the badge as well as the switch-off.
+
 ## [1.4.0] - 2026-08-12
 
 ### Added
